@@ -2,49 +2,131 @@
 
 {% block content %}
 <div class="row">
-	<table class="table table-striped">
-		<thead>
-			<tr>
-				<th>ID#</th>
-				<th>Name</th>
-				<th>Info</th>
-				<th>Building</th>
-				<th>Units</th>
-				<th>Actions</th>
-			</tr>
-		</thead>
-		<tbody>
-			{% for village_id in data.bot %}
-				<tr>
-					<td>{{village_id}}</td>
-					<td>{{data.bot[village_id].public.name}}</td>
-					<td>
-						<img src="/static/images/wood.png" /> {{data.bot[village_id].resources.wood}}
-						<img src="/static/images/stone.png" /> {{data.bot[village_id].resources.stone}}
-						<img src="/static/images/iron.png" /> {{data.bot[village_id].resources.iron}}
-						<img src="/static/images/worker.png" /> {{data.bot[village_id].resources["pop"]}}
-					</td>
-					<td>{% if village_id in data.config.villages %} {{data.config.villages[village_id].building}} {% else %} No config {% endif %}</td>
-					<td>{% if village_id in data.config.villages %} {{data.config.villages[village_id].units}} {% else %} No config {% endif %}</td>
-					<td>
-						<a href="map?center={{village_id}}" class="btn btn-success btn-sm">Map</a>
-						<a href="village?id={{village_id}}" class="btn btn-success btn-sm">Config</a>
-					</td>
-				</tr>
-				<tr>
-					<td></td>
-					<td>
-						{% for unit in data.bot[village_id].troops %}
-							<img src="/static/images/unit_{{unit}}.png" alt="{{unit}}" /> {{data.bot[village_id].troops[unit]}}
-						{% endfor %}
-					</td>
-					<td>
-						Building: {{data.bot[village_id].queued | count}}
-					</td>
-				</tr>
-			{% endfor %}
-		</tbody>
-	</table>
-</div>
+  <div class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Aldeias gerenciadas</h5>
+        <table class="table table-sm table-striped align-middle">
+          <thead class="thead-dark">
+            <tr>
+              <th>ID</th>
+              <th>Nome</th>
+              <th>Perfil</th>
+              <th>Recursos</th>
+              <th>Tropas</th>
+              <th>Construção</th>
+              <th>Template</th>
+              <th>Zona</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for village_id in data.bot %}
+            {% set v = data.bot[village_id] %}
+            {% set storage = v.resources.storage_max | default(10000) %}
+            <tr class="align-middle">
+              <td class="text-muted small">{{ village_id }}</td>
 
+              <td>
+                <strong>{{ v.public.name }}</strong>
+                <br/><small class="text-muted">{{ v.public.location }}</small>
+              </td>
+
+              <td>
+                {% if v.profile == 'offensive' %}
+                  <span class="badge badge-danger">Ofensivo</span>
+                {% elif v.profile == 'defensive' %}
+                  <span class="badge badge-primary">Defensivo</span>
+                {% else %}
+                  <span class="badge badge-secondary">—</span>
+                {% endif %}
+              </td>
+
+              <!-- Recursos com barra de progresso -->
+              <td style="min-width:140px">
+                {% if v.resources %}
+                  {% set wood = v.resources.wood | default(0) %}
+                  {% set stone = v.resources.stone | default(0) %}
+                  {% set iron = v.resources.iron | default(0) %}
+                  {% set wood_pct = [(wood / storage * 100), 100] | min | int %}
+                  {% set stone_pct = [(stone / storage * 100), 100] | min | int %}
+                  {% set iron_pct = [(iron / storage * 100), 100] | min | int %}
+
+                  <div class="d-flex align-items-center mb-1">
+                    <img src="/static/images/wood.png" class="res-icon mr-1"/>
+                    <div class="progress flex-grow-1" style="height:8px">
+                      <div class="progress-bar bg-success" style="width:{{ wood_pct }}%"></div>
+                    </div>
+                    <small class="ml-1" style="min-width:45px">{{ wood }}</small>
+                  </div>
+                  <div class="d-flex align-items-center mb-1">
+                    <img src="/static/images/stone.png" class="res-icon mr-1"/>
+                    <div class="progress flex-grow-1" style="height:8px">
+                      <div class="progress-bar bg-warning" style="width:{{ stone_pct }}%"></div>
+                    </div>
+                    <small class="ml-1" style="min-width:45px">{{ stone }}</small>
+                  </div>
+                  <div class="d-flex align-items-center">
+                    <img src="/static/images/iron.png" class="res-icon mr-1"/>
+                    <div class="progress flex-grow-1" style="height:8px">
+                      <div class="progress-bar bg-secondary" style="width:{{ iron_pct }}%"></div>
+                    </div>
+                    <small class="ml-1" style="min-width:45px">{{ iron }}</small>
+                  </div>
+                {% else %}
+                  <small class="text-muted">—</small>
+                {% endif %}
+              </td>
+
+              <!-- Tropas: apenas > 0, com ícones -->
+              <td style="min-width:180px">
+                <div class="d-flex flex-wrap">
+                {% for unit, qty in v.troops.items() %}
+                  {% if qty and qty > 0 %}
+                  <span class="mr-2 mb-1 small" title="{{ unit }}">
+                    <img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"/>
+                    {{ qty }}
+                  </span>
+                  {% endif %}
+                {% endfor %}
+                </div>
+              </td>
+
+              <td>
+                {% if v.queued | count > 0 %}
+                  <span class="badge badge-info">{{ v.queued | count }} na fila</span>
+                {% else %}
+                  <span class="badge badge-light border">Livre</span>
+                {% endif %}
+              </td>
+
+              <td class="small">
+                {% if village_id in data.config.villages %}
+                  <span class="d-block">{{ data.config.villages[village_id].building }}</span>
+                  <span class="text-muted">{{ data.config.villages[village_id].units }}</span>
+                {% else %}
+                  <span class="text-muted">Sem config</span>
+                {% endif %}
+              </td>
+
+              <td>
+                {% set vzone = v.get('zone') if v.get else v['zone'] if 'zone' in v else None %}
+                {% if vzone %}
+                  <a href="/zones" class="badge badge-secondary text-decoration-none">{{ vzone }}</a>
+                {% else %}
+                  <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
+
+              <td>
+                <a href="/map?center={{ village_id }}" class="btn btn-outline-success btn-sm d-block mb-1">Mapa</a>
+                <a href="/village?id={{ village_id }}" class="btn btn-outline-primary btn-sm d-block">Config</a>
+              </td>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

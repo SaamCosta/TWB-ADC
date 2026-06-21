@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import time
@@ -8,7 +9,8 @@ from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.templates import TemplateManager
 from core.twstats import TwStats
-from game.attack import AttackManager
+from game.attack import AttackManager, ConquestManager
+from game.resource_sharing import ResourceSharingManager
 from game.buildingmanager import BuildingManager
 from game.defence_manager import DefenceManager
 from game.map import Map
@@ -178,6 +180,26 @@ class Village:
         self.def_man.auto_evacuate = self.get_village_config(
             self.village_id, parameter="evacuate_fragile_units_on_attack", default=False
         )
+
+        # Populate other villages state so support/evacuation logic can execute.
+        # Reads cache/managed/*.json written by set_cache_vars() each cycle.
+        other_villages = {}
+        for cache_file in FileManager.list_directory("cache/managed", ends_with=".json"):
+            cached_vid = cache_file.replace(".json", "")
+            if cached_vid == self.village_id:
+                continue
+            if cached_vid not in self.config.get("villages", {}):
+                continue
+            cached = FileManager.load_json_file(f"cache/managed/{cache_file}")
+            if cached:
+                other_villages[cached_vid] = cached.get("under_attack", False)
+        self.def_man.my_other_villages = other_villages
+        if other_villages:
+            self.logger.debug(
+                "DefenceManager: %d other villages loaded %s",
+                len(other_villages), list(other_villages.keys())
+            )
+
         self.def_man.update(
             data.text,
             with_defence=self.get_config(
@@ -257,7 +279,7 @@ class Village:
             return
         if not self.build_config:
             self.logger.warning(
-                "Village %d does not have 'building' config override!", self.village_id
+                "Village %s does not have 'building' config override, using global default!", self.village_id
             )
             self.build_config = self.get_config(
                 section="building", parameter="default", default="purple_predator"
@@ -405,6 +427,27 @@ class Village:
                         continue
                     self.units.start_update(building, self.disabled_units)
 
+    def run_resource_sharing(self):
+        """
+        Feature 9: Transferência automática de recursos entre aldeias do jogador.
+        Só executa se resource_sharing.enabled = true no config.
+        Deve rodar após manage_local_resources() para que resman.requested
+        reflita as necessidades reais do ciclo atual.
+        """
+        if not self.config.get("resource_sharing", {}).get("enabled", False):
+            return
+
+        if not self.builder or not self.builder.get_level("market"):
+            self.logger.debug("ResourceSharing: mercado não construído em %s, pulando", self.village_id)
+            return
+
+        sharing = ResourceSharingManager(
+            wrapper=self.wrapper,
+            current_village_id=self.village_id,
+            config=self.config,
+        )
+        sharing.run(current_resman=self.resman)
+
     def manage_local_resources(self):
         to_dell = []
         for x in self.resman.requested:
@@ -449,14 +492,53 @@ class Village:
         if self.current_unit_entry:
             self.attack.template = self.current_unit_entry["farm"]
 
+    def run_conquest(self):
+        """
+        Feature 8: Runs the noble train conquest logic for any village with nobles.
+        Skipped if conquest is globally disabled or if the village has
+        conquest_enabled: false in its individual config.
+        """
+        if not self.config.get("conquest", {}).get("enabled", False):
+            return
+
+        village_cfg = self.config.get("villages", {}).get(self.village_id, {})
+        if not village_cfg.get("conquest_enabled", True):
+            self.logger.debug(
+                "Conquest: skipping village %s (conquest_enabled: false)", self.village_id
+            )
+            return
+
+        if not self.area or not self.units:
+            self.logger.debug("Conquest: map or troop data not ready, skipping")
+            return
+
+        conquest = ConquestManager(
+            wrapper=self.wrapper,
+            village_id=self.village_id,
+            troopmanager=self.units,
+            map_obj=self.area,
+            config=self.config,
+        )
+        conquest.run()
+
+    def ensure_map_loaded(self):
+        """
+        Ensures self.area (Map) is initialised and populated before conquest
+        or farming runs. Called once per cycle so both modules share the same
+        Map instance without duplicating the HTTP request.
+        """
+        if not self.area:
+            self.area = Map(wrapper=self.wrapper, village_id=self.village_id)
+        self.area.get_map()
+
     def run_farming(self):
         """
         Runs the farming logic
         """
         if not self.forced_peace and self.units.can_attack:
-            if not self.area:
-                self.area = Map(wrapper=self.wrapper, village_id=self.village_id)
-            self.area.get_map()
+            # Map already loaded by ensure_map_loaded() earlier in the cycle.
+            # Re-calling get_map() here is safe (it uses cache), but area is
+            # guaranteed non-None so the conquest guard at line 491 always passes.
             if self.area.villages:
                 self.units.can_scout = self.get_config(
                     section="farms", parameter="force_scout_if_available", default=True
@@ -566,6 +648,9 @@ class Village:
         if not self.get_config(section="villages", parameter=self.village_id):
             raise VillageInitException
 
+        # Feature 6: apply nearest-village config inheritance on first run of a new village
+        self.apply_nearest_village_inheritance(config)
+
         vdata = self.get_config(section="villages", parameter=self.village_id)
         if not self.get_village_config(
                 self.village_id, parameter="managed", default=False
@@ -588,7 +673,10 @@ class Village:
         self.run_snob_recruit()
         self.do_recruit()
         self.manage_local_resources()
+        self.run_resource_sharing()
 
+        self.ensure_map_loaded()
+        self.run_conquest()
         self.run_farming()
 
         self.do_gather()
@@ -665,9 +753,207 @@ class Village:
         self.logger.debug("There where no (more) quest rewards")
         return len(rewards) > 0
 
+    @staticmethod
+    def get_needed_profile(config):
+        """
+        Feature 7: Calculates which profile (offensive/defensive) the next village
+        should receive in order to maintain the configured empire ratio.
+        """
+        empire = config.get("empire", {})
+        off_ratio = empire.get("offensive_ratio", 3)
+        def_ratio = empire.get("defensive_ratio", 1)
+        target_off_pct = off_ratio / (off_ratio + def_ratio)
+
+        villages = config.get("villages", {})
+        total = 0
+        offensive = 0
+        for vcfg in villages.values():
+            if isinstance(vcfg, dict):
+                total += 1
+                if vcfg.get("profile") == "offensive":
+                    offensive += 1
+
+        if total == 0:
+            return "offensive"
+
+        current_off_pct = offensive / total
+        if current_off_pct < target_off_pct:
+            return "offensive"
+        return "defensive"
+
+    def apply_nearest_village_inheritance(self, config):
+        """
+        Feature 6 + 7: If a village was just added (inherit_on_first_run=True),
+        copies the config from the nearest already-managed village.
+        In 'empire_ratio' mode (Feature 7), filters donor candidates by the profile
+        (offensive/defensive) needed to maintain the configured empire ratio.
+        Falls back to global template if no suitable donor is found.
+        """
+        village_cfg = config["villages"].get(self.village_id, {})
+        if not village_cfg.get("inherit_on_first_run", False):
+            return
+
+        inheritance_mode = config.get("inheritance", {}).get("mode", "empire_ratio")
+
+        def clear_flag():
+            config["villages"][self.village_id]["inherit_on_first_run"] = False
+            FileManager.save_json_file(config, "config.json")
+
+        if inheritance_mode == "global_template":
+            self.logger.info(
+                "Village %s: inheritance mode is 'global_template', keeping global template",
+                self.village_id
+            )
+            clear_flag()
+            return
+
+        my_x = self.game_data["village"].get("x", 0)
+        my_y = self.game_data["village"].get("y", 0)
+
+        if not my_x or not my_y:
+            self.logger.warning(
+                "Village %s: no coordinates available for inheritance, keeping global template",
+                self.village_id
+            )
+            clear_flag()
+            return
+
+        # Build candidate list from cache
+        candidates = []
+        for cache_file in FileManager.list_directory("cache/managed", ends_with=".json"):
+            cached_vid = cache_file.replace(".json", "")
+            if cached_vid == self.village_id:
+                continue
+            if cached_vid not in config["villages"]:
+                continue
+            cached = FileManager.load_json_file(f"cache/managed/{cache_file}")
+            if not cached or not cached.get("x") or not cached.get("y"):
+                continue
+            candidates.append((cached_vid, cached))
+
+        if not candidates:
+            # No donor available — this is the first village or all caches are fresh.
+            # Fall back to the global village_template from config instead of doing nothing.
+            template_cfg = config.get("village_template", {})
+            fallback_profile = template_cfg.get("profile") or "defensive"
+            fallback_building = template_cfg.get("building") or config.get("building", {}).get("default", "purple_predator")
+            fallback_units = template_cfg.get("units") or config.get("units", {}).get("default", "basic")
+
+            self.logger.info(
+                "Village %s: no donor village found — applying village_template fallback "
+                "(profile=%s, building=%s, units=%s)",
+                self.village_id, fallback_profile, fallback_building, fallback_units
+            )
+
+            # Write directly to config.json via FileManager
+            import collections
+            cfg_path = "config.json"
+            raw = FileManager.load_json_file(cfg_path, object_pairs_hook=collections.OrderedDict) or {}
+            if "villages" not in raw:
+                raw["villages"] = {}
+            if self.village_id not in raw["villages"]:
+                raw["villages"][self.village_id] = {}
+            raw["villages"][self.village_id]["profile"] = fallback_profile
+            raw["villages"][self.village_id]["building"] = fallback_building
+            raw["villages"][self.village_id]["units"] = fallback_units
+            FileManager.save_json_file(raw, cfg_path)
+            clear_flag()
+            return
+
+        # Feature 11: prefer donors from the same geographic zone
+        zone_data = FileManager.load_json_file("cache/zones.json") or {}
+        my_zone = zone_data.get("village_zone", {}).get(self.village_id)
+        if my_zone:
+            zone_candidates = [
+                (vid, data) for vid, data in candidates
+                if zone_data.get("village_zone", {}).get(vid) == my_zone
+            ]
+            if zone_candidates:
+                self.logger.info(
+                    "Village %s: restricting inheritance donors to zone '%s' (%d candidate(s))",
+                    self.village_id, my_zone, len(zone_candidates)
+                )
+                candidates = zone_candidates
+            else:
+                self.logger.debug(
+                    "Village %s: no donors in zone '%s', using all managed villages",
+                    self.village_id, my_zone
+                )
+
+        # Feature 7: filter by needed profile when mode is empire_ratio
+        needed_profile = None
+        used_profile_template = False
+        if inheritance_mode == "empire_ratio":
+            needed_profile = Village.get_needed_profile(config)
+            self.logger.info(
+                "Village %s: empire_ratio inheritance — needed profile = %s",
+                self.village_id, needed_profile
+            )
+            filtered = [
+                (vid, data) for vid, data in candidates
+                if data.get("profile") == needed_profile
+            ]
+            if filtered:
+                candidates = filtered
+            else:
+                self.logger.warning(
+                    "Village %s: no donor with profile '%s' found, "
+                    "will apply profile_templates overrides after inheritance.",
+                    self.village_id, needed_profile
+                )
+                used_profile_template = True
+
+        # Find nearest candidate
+        def dist(data):
+            return ((my_x - data["x"]) ** 2 + (my_y - data["y"]) ** 2) ** 0.5
+
+        best_vid, best_data = min(candidates, key=lambda c: dist(c[1]))
+        best_dist = dist(best_data)
+
+        donor_config = copy.deepcopy(config["villages"][best_vid])
+        donor_config["inherit_on_first_run"] = False
+
+        # Feature 7: stamp the correct profile on the new village
+        if needed_profile:
+            donor_config["profile"] = needed_profile
+
+        # Feature 7: when no profile-matching donor existed, override building and units
+        # from profile_templates to guarantee the correct template regardless of donor
+        if used_profile_template and needed_profile:
+            profile_tpl = config.get("profile_templates", {}).get(needed_profile, {})
+            if profile_tpl:
+                for key, value in profile_tpl.items():
+                    donor_config[key] = value
+                self.logger.info(
+                    "Village %s: applied profile_templates[%s] overrides (building=%s, units=%s)",
+                    self.village_id, needed_profile,
+                    profile_tpl.get("building", "n/a"),
+                    profile_tpl.get("units", "n/a")
+                )
+            else:
+                self.logger.warning(
+                    "Village %s: profile_templates[%s] not found in config, "
+                    "donor templates kept as-is.",
+                    self.village_id, needed_profile
+                )
+
+        config["villages"][self.village_id] = donor_config
+        FileManager.save_json_file(config, "config.json")
+        self.logger.info(
+            "Village %s inherited config from village %s (profile: %s, %.1f tiles away)",
+            self.village_id, best_vid, donor_config.get("profile", "n/a"), best_dist
+        )
+
     def set_cache_vars(self):
+        # Feature 11: load zone assignment from last cycle's zones.json (one cycle lag is acceptable)
+        zone_data = FileManager.load_json_file("cache/zones.json") or {}
+        current_zone = zone_data.get("village_zone", {}).get(self.village_id, None)
+
         village_entry = {
             "name": self.game_data["village"]["name"],
+            "x": self.game_data["village"].get("x", 0),
+            "y": self.game_data["village"].get("y", 0),
+            "profile": self.config["villages"].get(self.village_id, {}).get("profile", "offensive"),
             "public": self.area.in_cache(self.village_id) if self.area else None,
             "resources": self.resman.actual,
             "required_resources": self.resman.requested,
@@ -677,5 +963,6 @@ class Village:
             "troops": self.units.total_troops,
             "under_attack": self.def_man.under_attack,
             "last_run": int(time.time()),
+            "zone": current_zone,
         }
         FileManager.save_json_file(village_entry, f"cache/managed/{self.village_id}.json")

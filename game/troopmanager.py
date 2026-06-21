@@ -69,7 +69,13 @@ class TroopManager:
         """
         self.wrapper = wrapper
         self.village_id = village_id
-        self.wait_for[village_id] = {"barracks": 0, "stable": 0, "garage": 0}
+        self.wait_for = {village_id: {"barracks": 0, "stable": 0, "garage": 0}}
+        # Feature 8: troops reserved for noble train escort.
+        # Set by ConquestManager when nobles are ready but escort is insufficient.
+        # Respected by AttackManager (farm) and gather() so reserved troops
+        # are never consumed before the conquest train fires.
+        # Cleared by ConquestManager after the train is sent.
+        self.conquest_reserve = {}
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
@@ -373,6 +379,12 @@ class TroopManager:
             self.troops[k] = v
 
         troops = dict(self.troops)
+
+        # Feature 8: subtract conquest reserve so escort troops are not sent to gather
+        if self.conquest_reserve:
+            for unit, reserved_qty in self.conquest_reserve.items():
+                if unit in troops:
+                    troops[unit] = str(max(0, int(troops[unit]) - reserved_qty))
 
         haul_dict = [
             "spear:25",

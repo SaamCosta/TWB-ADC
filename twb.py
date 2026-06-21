@@ -37,6 +37,8 @@ from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
 from game.village import Village
+from game.hunter import Hunter
+from game.zone_manager import ZoneManager
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -75,6 +77,7 @@ class TWB:
     should_run = True
     runs = 0
     found_villages = []
+    hunter = None
 
     @staticmethod
     def internet_online():
@@ -213,6 +216,34 @@ class TWB:
         """
         overview_page = OverviewPage(self.wrapper)
         self.found_villages = Extractor.village_ids_from_overview(overview_page.result_get.text)
+
+        # Remove stale entries for villages no longer owned by the player.
+        # Cleans both cache/managed/ and config["villages"] so the UI stays accurate.
+        managed_cache_dir = os.path.join("cache", "managed")
+        if os.path.exists(managed_cache_dir):
+            for fname in os.listdir(managed_cache_dir):
+                if not fname.endswith(".json"):
+                    continue
+                cached_vid = fname.replace(".json", "")
+                if cached_vid not in self.found_villages:
+                    stale_path = os.path.join(managed_cache_dir, fname)
+                    try:
+                        os.remove(stale_path)
+                        logging.info("Removed stale managed cache for lost village %s", cached_vid)
+                    except OSError as e:
+                        logging.warning("Could not remove stale cache %s: %s", stale_path, e)
+
+        stale_config_ids = [vid for vid in config.get("villages", {}) if vid not in self.found_villages]
+        if stale_config_ids:
+            FileManager.copy_file("config.json", "config.bak")
+            cfg = self.config()
+            for vid in stale_config_ids:
+                cfg["villages"].pop(vid, None)
+                logging.info("Removed lost village %s from config", vid)
+            with open("config.json", "w") as cf:
+                json.dump(cfg, cf, indent=2)
+            config = self.config()
+
         if config["bot"].get("add_new_villages", False):
             for found_vid in self.found_villages:
                 if found_vid not in config["villages"]:
@@ -275,6 +306,30 @@ class TWB:
         active_h = [int(hour) for hour in config["bot"]["active_hours"].split("-")]
         get_h = time.localtime().tm_hour
         return get_h in range(active_h[0], active_h[1])
+    
+    @staticmethod
+    def is_village_active_hours(village_id, config):
+        """
+        Checks active hours for a specific village.
+        If the village has its own 'active_hours' defined, uses that.
+        Falls back to the global bot active_hours if not set or set to null.
+        """
+        village_cfg = config.get("villages", {}).get(village_id, {})
+        village_hours = village_cfg.get("active_hours", None)
+
+        if not village_hours:
+            return TWB.is_active_hours(config)
+
+        try:
+            active_h = [int(h) for h in village_hours.split("-")]
+            get_h = time.localtime().tm_hour
+            return get_h in range(active_h[0], active_h[1])
+        except (ValueError, AttributeError):
+            logging.warning(
+                "Village %s has invalid active_hours format '%s', falling back to global",
+                village_id, village_hours
+            )
+            return TWB.is_active_hours(config)
 
     def run(self):
         """
@@ -376,6 +431,14 @@ class TWB:
                         template = template.replace("{num}", num_pad)
                         village.village_set_name = template
 
+                    if not TWB.is_village_active_hours(village.village_id, config):
+                        logging.info(
+                            "Village %s is outside its active hours, skipping this cycle",
+                            village.village_id
+                        )
+                        village_number += 1
+                        continue
+
                     village.run(config=config)
 
                     if (
@@ -396,6 +459,9 @@ class TWB:
                         print("Syncing attack states")
                         village.def_man.my_other_villages = defense_states
 
+                # Feature 11: rebuild geographic zones from managed village cache
+                ZoneManager.build_from_cache(config)
+
                 sleep = 0
                 if self.is_active_hours(config=config):
                     sleep = config["bot"]["active_delay"]
@@ -404,6 +470,27 @@ class TWB:
                         sleep = config["bot"]["inactive_delay"]
 
                 sleep += random.randint(20, 120)
+
+                # Feature 10: Hunter — coordinated attack scheduling
+                if config.get("hunter", {}).get("enabled", False):
+                    if not self.hunter:
+                        self.hunter = Hunter(wrapper=self.wrapper)
+                    self.hunter.villages = {
+                        v.village_id: v
+                        for v in self.villages
+                        if v.village_id in self.found_villages
+                    }
+                    self.hunter.build_schedules_from_config(config)
+                    nearest = self.hunter.nearest_send_time()
+                    if nearest:
+                        # Wake up in time to enter the send window
+                        time_to_window = nearest - time.time() - self.hunter.window
+                        if time_to_window < sleep:
+                            sleep = max(0, time_to_window)
+                            logging.info(
+                                "Hunter: shortened sleep to %.0fs to catch upcoming send_time",
+                                sleep
+                            )
                 dtn = datetime.datetime.now()
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
@@ -416,6 +503,10 @@ class TWB:
                 sys.stdout.flush()
                 time.sleep(sleep)
 
+                # Feature 10: fire any attacks that became due during the sleep
+                if self.hunter:
+                    self.hunter.run(config)
+
     def start(self):
         """
         First run, verify if dirctory structure exist
@@ -427,7 +518,8 @@ class TWB:
             "cache/world",
             "cache/logs",
             "cache/managed",
-            "cache/hunter"
+            "cache/hunter",
+            "cache/zones",
         ]
         FileManager.create_directories(directories)
 

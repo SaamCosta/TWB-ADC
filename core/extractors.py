@@ -233,6 +233,28 @@ class Extractor:
         return data
 
     @staticmethod
+    def loyalty_from_report(res):
+        """
+        Extrai lealdade após ataque de noble (snob) do HTML do relatório.
+        Tenta span dedicado primeiro, depois linha de tabela PT-BR.
+        Retorna float ou None.
+        """
+        if type(res) != str:
+            res = res.text
+        # Primário: span dedicado
+        match = re.search(r'id=["\']loyalty_new_value["\'][^>]*>(\d+(?:\.\d+)?)<', res)
+        if match:
+            return float(match.group(1))
+        # Fallback: linha de tabela PT-BR ("Lealdade") ou EN ("Loyalty")
+        match = re.search(
+            r'(?:Lealdade|Loyalty)[^<]*</t[dh]>\s*<t[dh][^>]*>(\d+(?:\.\d+)?)<',
+            res, re.IGNORECASE
+        )
+        if match:
+            return float(match.group(1))
+        return None
+
+    @staticmethod
     def get_daily_reward(res):
         """
         Detects if there are unopened daily rewards

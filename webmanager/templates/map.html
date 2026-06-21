@@ -2,96 +2,198 @@
 
 {% block content %}
 <style>
-    #grid {
-      margin-left: auto;
-      margin-right: auto;
-      transform: rotate(-90deg);
-    }
-
-    #grid TR TD{
-      border:1px solid white;
-      background: #FFFFFF;
-      width: 30px;
-      height: 30px;
-      text-align: center;
-    }
-
-    #grid TR TD:hover {
-        background: #333333;
-    }
-
-    #grid TR TD.owner {
-        background: #00FF00;
-    }
-
-    #grid TR TD.enemy {
-        background: #FF0000;
-    }
-
-    #grid TR TD.tribe {
-        background: #0001FF;
-    }
-
-    #grid TR TD.barbarian {
-        background: #AAAAAA;
-    }
+  #map-canvas {
+    border-radius: 8px;
+    background: #1a2233;
+    display: block;
+    cursor: crosshair;
+  }
+  #map-tooltip {
+    position: fixed; pointer-events: none;
+    background: rgba(20,20,30,0.93); color: #f0f0f0;
+    border-radius: 6px; padding: 8px 12px; font-size: 0.82rem;
+    border: 1px solid #555; display: none; z-index: 9999; max-width: 220px;
+  }
+  .map-legend span { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 5px; }
 </style>
-<div class="row">
-    <div class="col-lg-10">
-        <table id="grid"></table>
+
+<div id="map-tooltip"></div>
+
+<div class="row align-items-start">
+  <!-- Canvas -->
+  <div class="col-lg-10">
+    <div class="card" style="border-color:#c8a96e;">
+      <div class="card-body p-2">
+        <canvas id="map-canvas"></canvas>
+      </div>
     </div>
-    <div class="col-lg-2">
-        <h4 id="v_name"></h4>
-        <p id="v_data"></p>
+  </div>
+
+  <!-- Info panel -->
+  <div class="col-lg-2">
+    <div class="card mb-2" style="border-color:#c8a96e;">
+      <div class="card-body p-2">
+        <h6 class="card-title mb-2">Legenda</h6>
+        <div class="map-legend small">
+          <div class="mb-1"><span style="background:#27ae60;"></span>Suas aldeias</div>
+          <div class="mb-1"><span style="background:#2980b9;"></span>Tribo aliada</div>
+          <div class="mb-1"><span style="background:#c0392b;"></span>Inimigo</div>
+          <div class="mb-1"><span style="background:#7f8c8d;"></span>Bárbara</div>
+        </div>
+      </div>
     </div>
 
+    <div class="card mb-2" style="border-color:#c8a96e;">
+      <div class="card-body p-2">
+        <h6 class="card-title mb-2">Centrar em</h6>
+        <select id="center-select" class="form-control form-control-sm" onchange="recenter()">
+          {% for village in data.bot %}
+          <option value="{{ village }}" {% if village == request.args.get('center') %}selected{% endif %}>
+            {{ data.bot[village].public.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div class="card" style="border-color:#c8a96e;">
+      <div class="card-body p-2">
+        <h6 id="v_name" class="card-title mb-1">—</h6>
+        <div id="v_data" class="small text-muted"></div>
+      </div>
+    </div>
+  </div>
 </div>
+
 <script>
-	var map_data = {{map | safe}}
-    function generateGrid(x, y, data) {
-      grid.innerHTML="";
-      for (var i=0; i<x; i++) {
-        row = grid.insertRow(i);
-        for (var j=0; j<y; j++) {
-          cell = row.insertCell(j);
+var mapData = {{ map | safe }};
 
-          if(i in data.grid && j in data.grid[i] && data.grid[i][j]) {
-            var village = data.grid[i][j];
-            cell.onclick = function() { clickCell(this); };
-            cell.onmouseover = function() { clickCell(this); };
-            if(village.owner != "0") {
-                cell.setAttribute("village", JSON.stringify(village));
-                if(data.extra && village.owner == data.extra.owner) {
-                    cell.setAttribute("class", "owner");
-                } else if(data.extra && data.extra.tribe != "0" && data.extra.tribe == village.tribe) {
-                    cell.setAttribute("class", "tribe");
-                } else {
-                    cell.setAttribute("class", "enemy");
-                }
-            } else {
-                cell.setAttribute("class", "barbarian");
-            }
-          }
+(function () {
+  var canvas = document.getElementById('map-canvas');
+  var parent = canvas.parentElement;
+  var W = parent.clientWidth - 4;
+  var H = Math.max(480, Math.round(W * 0.65));
+  canvas.width  = W;
+  canvas.height = H;
+  var ctx = canvas.getContext('2d');
+  var tooltip = document.getElementById('map-tooltip');
 
+  var grid  = mapData.grid;
+  var extra = mapData.extra || {};
+  var rows  = Object.keys(grid).map(Number).sort(function(a,b){return a-b;});
+  var cols  = rows.length > 0
+    ? Object.keys(grid[rows[0]]).map(Number).sort(function(a,b){return a-b;})
+    : [];
+
+  if (!rows.length || !cols.length) {
+    ctx.fillStyle = '#ccc'; ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Nenhum dado de mapa disponível.', W/2, H/2);
+    return;
+  }
+
+  var CELL = Math.floor(Math.min(W / cols.length, H / rows.length));
+  CELL = Math.max(4, Math.min(CELL, 28));
+  var offX = Math.floor((W - CELL * cols.length) / 2);
+  var offY = Math.floor((H - CELL * rows.length) / 2);
+
+  // Color scheme
+  function cellColor(v) {
+    if (!v || !v.owner || v.owner === '0') return '#4a4a5a';  // barbarian
+    if (extra.owner && v.owner === extra.owner)  return '#27ae60';  // own
+    if (extra.tribe && extra.tribe !== '0' && v.tribe === extra.tribe) return '#2980b9';  // tribe
+    return '#c0392b';  // enemy
+  }
+
+  function draw() {
+    // Background
+    ctx.fillStyle = '#1a2233';
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid lines (subtle)
+    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.lineWidth = 0.5;
+    rows.forEach(function(_, ri) {
+      var y = offY + ri * CELL;
+      ctx.beginPath(); ctx.moveTo(offX, y); ctx.lineTo(offX + cols.length*CELL, y); ctx.stroke();
+    });
+    cols.forEach(function(_, ci) {
+      var x = offX + ci * CELL;
+      ctx.beginPath(); ctx.moveTo(x, offY); ctx.lineTo(x, offY + rows.length*CELL); ctx.stroke();
+    });
+
+    // Cells
+    rows.forEach(function(ri, rIdx) {
+      cols.forEach(function(ci, cIdx) {
+        var v = grid[ri] && grid[ri][ci];
+        var x = offX + cIdx * CELL;
+        var y = offY + rIdx * CELL;
+        var color = cellColor(v);
+        ctx.fillStyle = color;
+        var pad = CELL > 8 ? 1 : 0;
+        ctx.fillRect(x + pad, y + pad, CELL - pad*2, CELL - pad*2);
+
+        // Dot for own villages
+        if (v && extra.owner && v.owner === extra.owner && CELL > 10) {
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(x + CELL/2, y + CELL/2, 2, 0, Math.PI*2);
+          ctx.fill();
         }
-      }
+      });
+    });
+  }
+
+  draw();
+
+  // Hit detection
+  canvas.addEventListener('mousemove', function(e) {
+    var rect  = canvas.getBoundingClientRect();
+    var mx    = e.clientX - rect.left;
+    var my    = e.clientY - rect.top;
+    var cIdx  = Math.floor((mx - offX) / CELL);
+    var rIdx  = Math.floor((my - offY) / CELL);
+    if (cIdx < 0 || cIdx >= cols.length || rIdx < 0 || rIdx >= rows.length) {
+      tooltip.style.display = 'none';
+      document.getElementById('v_name').textContent = '—';
+      document.getElementById('v_data').innerHTML = '';
+      return;
     }
+    var ri = rows[rIdx], ci = cols[cIdx];
+    var v = grid[ri] && grid[ri][ci];
+    if (!v) { tooltip.style.display = 'none'; return; }
 
-    generateGrid(Object.keys(map_data.grid).length, Object.keys(map_data.grid).length, map_data);
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top  = (e.clientY - 10) + 'px';
 
-    function clickCell(cell) {
-        var village_data = $(cell).attr("village");
-        if(!village_data) return;
-        var data = JSON.parse(village_data);
-        $('#v_name').text(data.name);
+    var ownerLabel = v.owner === '0' ? 'Bárbara'
+      : (extra.owner && v.owner === extra.owner) ? 'Sua aldeia'
+      : (extra.tribe && v.tribe === extra.tribe) ? 'Tribo aliada'
+      : 'Inimigo';
 
-        var output = '';
-        $.each(data, function(k, v){
-            if(jQuery.type(v) !== "object") {
-                output += '<strong>' + k + '</strong> ' + v + '<br />';
-            }
-        });
-        $('#v_data').html(output);
+    tooltip.innerHTML =
+      '<strong>' + (v.name || '—') + '</strong>' +
+      '<br/>Owner: ' + ownerLabel +
+      '<br/>Pontos: ' + (v.points || '—') +
+      '<br/>Coord: ' + (v.location ? v.location[0] + '|' + v.location[1] : '—');
+
+    document.getElementById('v_name').textContent = v.name || '—';
+    var html = '';
+    for (var k in v) {
+      if (typeof v[k] !== 'object')
+        html += '<strong>' + k + '</strong>: ' + v[k] + '<br/>';
     }
+    document.getElementById('v_data').innerHTML = html;
+  });
+
+  canvas.addEventListener('mouseleave', function() {
+    tooltip.style.display = 'none';
+  });
+})();
+
+function recenter() {
+  var vid = document.getElementById('center-select').value;
+  window.location.href = '/map?center=' + vid;
+}
 </script>
 {% endblock %}

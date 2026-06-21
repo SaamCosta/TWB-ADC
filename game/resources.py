@@ -532,6 +532,54 @@ class ResourceManager:
         # No useful offers found
         return False
 
+    def send_resources(self, target_village_id, resources: dict):
+        """
+        Feature 9: Envia recursos diretamente para outra aldeia do próprio jogador
+        via mercado interno (screen=market&mode=send_res).
+        Diferente de trade(), não cria oferta pública — é uma transferência direta.
+
+        Args:
+            target_village_id: ID da aldeia destino (string ou int)
+            resources: dict com os recursos a enviar, ex: {"wood": 500, "stone": 200}
+
+        Returns:
+            True se o envio foi submetido com sucesso, False caso contrário
+        """
+        url = f"game.php?village={self.village_id}&screen=market&mode=send_res"
+        res = self.wrapper.get_url(url=url)
+        if not res:
+            self.logger.warning("send_resources: não foi possível carregar tela de mercado")
+            return False
+
+        # Verifica mercadores disponíveis
+        import re
+        match = re.search(r'market_merchant_available_count["\s>]+(\d+)', res.text)
+        if match and int(match.group(1)) < 1:
+            self.logger.debug("send_resources: sem mercadores disponíveis")
+            return False
+
+        payload = {
+            "target_village": str(target_village_id),
+            "wood": resources.get("wood", 0),
+            "stone": resources.get("stone", 0),
+            "iron": resources.get("iron", 0),
+            "h": self.wrapper.last_h,
+        }
+
+        post_url = (
+            f"game.php?village={self.village_id}"
+            f"&screen=market&mode=send_res&action=send_res"
+        )
+        try:
+            self.wrapper.post_url(post_url, data=payload)
+            self.logger.info(
+                "send_resources: enviado %s → aldeia %s", resources, target_village_id
+            )
+            return True
+        except Exception as e:
+            self.logger.warning("send_resources: erro ao enviar recursos: %s", e)
+            return False
+
     def parse_res_offer(self, res_offer, id):
         """
         Parse an offer

@@ -261,6 +261,16 @@ class ReportManager:
                 data_away = self.re_unit(Extractor.units_in_total(units_away.group(1)))
                 extra["units_away"] = data_away
 
+        # Feature 8: extrair lealdade real de relatórios de noble
+        if results and extra.get("units_sent", {}).get("snob"):
+            loyalty = Extractor.loyalty_from_report(report)
+            if loyalty is not None:
+                extra["loyalty_after"] = loyalty
+                self.logger.info(
+                    "Noble report %s -> %s: loyalty after = %.1f",
+                    from_village, to_village, loyalty
+                )
+
         attack_type = "scout" if scout_results and not results else "attack"
         res = self.put(
             report_id, attack_type, from_village, to_village, data=extra, losses=losses

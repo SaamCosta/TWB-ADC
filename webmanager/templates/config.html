@@ -1,113 +1,123 @@
 {% extends "main.html" %}
 
 {% block content %}
-<div class="row">
-	<ul class="nav nav-tabs">
-		{% for section in config %}
-		  <li class="nav-item">
-			<a class="nav-link" role="tab" data-toggle="tab" href="#{{section}}">{{section}}</a>
-		  </li>
-		{% endfor %}
-	</ul>
-	 <a id="save_config" class="btn btn-success disabled">Save</a>
+<div class="row mb-2 align-items-center">
+  <div class="col">
+    <ul class="nav nav-tabs flex-wrap" id="configTabs">
+      {% for section in config %}
+      <li class="nav-item">
+        <a class="nav-link {% if loop.first %}active{% endif %}"
+           role="tab" data-toggle="tab" href="#tab-{{ section }}">
+          {{ section | capitalize }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  <div class="col-auto mt-1">
+    <button id="save_config" class="btn btn-success disabled">💾 Salvar alterações</button>
+  </div>
 </div>
 
-<div class="row border">
-	<div class="tab-content">
-		{% for section in config %}
-		<div role="tabpanel" class="tab-pane container fade" id="{{section}}">
-			<h4>{{section}}</h4>
-			{% if section in helpfile %}
-				<i>{{helpfile[section]}}</i>
-			{% endif %}
+<div class="tab-content border bg-white p-3 rounded shadow-sm">
+  {% for section in config %}
+  <div role="tabpanel"
+       class="tab-pane fade {% if loop.first %}show active{% endif %}"
+       id="tab-{{ section }}">
+    <h5 class="mb-1">{{ section | capitalize }}</h5>
+    {% if section in helpfile %}
+      <p class="text-muted small mb-3">{{ helpfile[section] }}</p>
+    {% endif %}
 
-			<div class="form-vertical">
-				{{ config[section]|safe }}
-			</div>
-		</div>
-		{% endfor %}
-	</div>
+    <div class="form-vertical config-section">
+      {{ config[section] | safe }}
+    </div>
+  </div>
+  {% endfor %}
 </div>
 {% endblock %}
 
 {% block scripts %}
+<style>
+  /* Conter botões toggle para não ocupar largura total */
+  .config-section .btn[data-type="toggle"] {
+    display: inline-block;
+    width: auto;
+    min-width: 100px;
+  }
+  .config-section hr {
+    margin-top: 1rem;
+    margin-bottom: 0.25rem;
+  }
+  .config-section strong {
+    font-size: 0.95rem;
+  }
+  .config-section i {
+    font-size: 0.82rem;
+    color: #6c757d;
+  }
+  .config-section input.form-control,
+  .config-section select.form-control {
+    max-width: 400px;
+  }
+</style>
 <script>
-    var set_values = {};
-	function set_config(parameter, value) {
-		$.getJSON("/app/config/set?parameter="+encodeURIComponent(parameter)+"&value="+encodeURIComponent(value), function(data){
-			console.log("Set values", parameter, value);
-		});
-	}
+var set_values = {};
 
-	function set_toggle_value(target, value) {
-		if(!value) {
-			target.removeClass("btn-success");
-			target.addClass("btn-danger");
-			target.text("Disabled");
-		} else {
-			target.addClass("btn-success");
-			target.removeClass("btn-danger");
-			target.text("Enabled");
-		}
-	}
+function set_config(parameter, value) {
+  $.getJSON("/app/config/set?parameter=" + encodeURIComponent(parameter) + "&value=" + encodeURIComponent(value));
+}
 
-	function toggle_event(event) {
-		var target = $(event.target);
-		var name = target.attr("data-type-option");
-		if(name == undefined) alert("Error setting target");
-		var current_value = target.hasClass("btn-success");
-		var next_value = !current_value;
-		set_config(name, next_value);
-		set_toggle_value(target, next_value);
-	}
+function set_toggle_value(target, value) {
+  if (!value) {
+    target.removeClass("btn-success").addClass("btn-danger").text("Disabled");
+  } else {
+    target.addClass("btn-success").removeClass("btn-danger").text("Enabled");
+  }
+}
 
-	function select_event(event) {
-	  var target = $(event.target);
-		var name = target.attr("data-type-option");
-		if(name == undefined) alert("Error setting target");
-		set_config(name, target.val());
-	}
+function toggle_event(event) {
+  var target = $(event.target);
+  var name = target.attr("data-type-option");
+  if (!name) return;
+  var next_value = !target.hasClass("btn-success");
+  set_config(name, next_value);
+  set_toggle_value(target, next_value);
+}
 
-	function num_event() {
-      var target = $(event.target);
-      var name = target.attr("data-type-option");
-      if(name == undefined) alert("Error setting target");
-      set_values[name] = parseInt(target.val());
-      $('#save_config').removeClass('disabled');
-	}
+function select_event(event) {
+  var target = $(event.target);
+  var name = target.attr("data-type-option");
+  if (!name) return;
+  set_config(name, target.val());
+}
 
-	function text_event() {
-      var target = $(event.target);
-      var name = target.attr("data-type-option");
-      if(name == undefined) alert("Error setting target");
-      set_values[name] = target.val();
-      $('#save_config').removeClass('disabled');
-	}
+function num_event(event) {
+  var target = $(event.target);
+  var name = target.attr("data-type-option");
+  if (!name) return;
+  set_values[name] = parseFloat(target.val());
+  $('#save_config').removeClass('disabled');
+}
 
-	$( document ).ready(function() {
-		$( "[data-type=toggle]" ).click(function(e) {
-		  toggle_event(e);
-		});
+function text_event(event) {
+  var target = $(event.target);
+  var name = target.attr("data-type-option");
+  if (!name) return;
+  set_values[name] = target.val();
+  $('#save_config').removeClass('disabled');
+}
 
-		$( "[data-type=select]" ).change(function(e) {
-		  select_event(e);
-		});
+$(document).ready(function () {
+  $(document).on("click", "[data-type=toggle]", toggle_event);
+  $(document).on("change", "[data-type=select]", select_event);
+  $(document).on("change", "[data-type=number]", num_event);
+  $(document).on("change", "[data-type=text]", text_event);
 
-		$( "[data-type=number]" ).change(function(e) {
-		  num_event(e);
-		});
-
-		$( "[data-type=text]" ).change(function(e) {
-		  text_event(e);
-		});
-
-		$('#save_config').click(function(){
-		  $.each(set_values, function(set_key, set_value){
-		    set_config(set_key, set_value);
-		  });
-		  setTimeout(function(){location.reload()}, 500);
-		});
-	});
+  $('#save_config').click(function () {
+    $.each(set_values, function (k, v) { set_config(k, v); });
+    setTimeout(function () { location.reload(); }, 600);
+  });
+});
 </script>
-
 {% endblock %}

@@ -72,7 +72,7 @@ class DefenceManager:
         ok = True
         self.manage_flags()
         self.runs += 1
-        if "command/attack.png" in main:
+        if 'no_ignored_command' in main:
             self.under_attack = True
             ok = False
             self.flag_logic(self.set_flag_under_attack)
@@ -116,11 +116,11 @@ class DefenceManager:
         for u in self.hide_units:
             if u in self.units.troops and int(self.units.troops[u]) > 0:
                 to_hide[u] = int(self.units.troops[u])
-        if to_hide and len(self.my_other_villages) == 1:
-            # good luck ;)
+        if not to_hide or len(self.my_other_villages) == 0:
+            # nothing to evacuate or nowhere to send
             return False
-        for v_obj in self.my_other_villages:
-            vid, attack_state = v_obj
+        for vid in self.my_other_villages:
+            attack_state = self.my_other_villages[vid]
             if vid == self.village_id:
                 continue
             if not attack_state:

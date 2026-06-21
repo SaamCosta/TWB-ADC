@@ -39,8 +39,9 @@ class FileManager:
     @staticmethod
     def list_directory(directory, ends_with=None):
         """Returns a list of files in a directory. If ends_with is specified, only files ending with the specified
-        string will be returned."""
+        string will be returned. Creates the directory if it does not exist."""
         full_path = os.path.join(FileManager.get_root(), directory)
+        os.makedirs(full_path, exist_ok=True)
         files = os.listdir(full_path)
         if ends_with:
             files = [f for f in files if f.endswith(ends_with)]

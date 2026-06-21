@@ -1,50 +1,221 @@
 {% extends "main.html" %}
 
 {% block content %}
-
 <div class="row">
-    <div class="col-lg-8">
-        <h4>Reports</h4>
-        <table class="table table-striped">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Type</th>
-                    <th>Data</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for report in data.reports %}
-                    <tr>
-                        <td>{{ report }}</td>
-                        <td>{{ data.reports[report].type }}</td>
-                        <td>{{ data.reports[report] }}</td>
-                    </tr>
-                {% endfor %}
-            </tbody>
+  <!-- Sidebar esquerda -->
+  <div class="col-lg-4">
+
+    <!-- Status do Bot -->
+    <div class="card mb-3 border-left-success">
+      <div class="card-body">
+        <h5 class="card-title mb-3">Status do Bot</h5>
+        <div id="bot-status-area">
+          {% if data.status %}
+            <span class="badge badge-success px-3 py-2" id="status-badge">● Ativo</span>
+            <button class="btn btn-danger btn-sm ml-2" id="btn-stop" onclick="bot_action('stop')">Parar</button>
+          {% else %}
+            <span class="badge badge-warning px-3 py-2" id="status-badge">● Inativo</span>
+            <button class="btn btn-success btn-sm ml-2" id="btn-start" onclick="bot_action('start')">Iniciar</button>
+            <p class="text-muted small mt-2 mb-0">Ignore se estiver rodando twb.py manualmente.</p>
+          {% endif %}
+        </div>
+        <div id="bot-action-msg" class="small mt-2 text-muted"></div>
+
+        <hr/>
+        <h6>Sessão atual</h6>
+        <p class="text-muted small mb-1">{{ session.endpoint }}</p>
+        <input type="text" id="session_data" class="form-control form-control-sm mb-2" value="{{ session.raw }}"/>
+        <button class="btn btn-primary btn-sm" onclick="set_session_data()">Atualizar sessão</button>
+      </div>
+    </div>
+
+    <!-- Resumo do Império -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <h5 class="card-title">Resumo do Império</h5>
+        {% set ns = namespace(total_wood=0, total_stone=0, total_iron=0, off=0, def_count=0) %}
+        {% for vid in data.bot %}
+          {% set v = data.bot[vid] %}
+          {% if v.resources %}
+            {% set ns.total_wood = ns.total_wood + (v.resources.wood | default(0)) %}
+            {% set ns.total_stone = ns.total_stone + (v.resources.stone | default(0)) %}
+            {% set ns.total_iron = ns.total_iron + (v.resources.iron | default(0)) %}
+          {% endif %}
+          {% if v.profile == 'offensive' %}{% set ns.off = ns.off + 1 %}{% endif %}
+          {% if v.profile == 'defensive' %}{% set ns.def_count = ns.def_count + 1 %}{% endif %}
+        {% endfor %}
+        <p class="mb-2"><strong>Aldeias gerenciadas:</strong> {{ data.bot | length }}</p>
+        <p class="mb-3">
+          <span class="badge badge-danger mr-1">Ofensivas: {{ ns.off }}</span>
+          <span class="badge badge-primary">Defensivas: {{ ns.def_count }}</span>
+        </p>
+        <table class="table table-sm table-borderless mb-0">
+          <tr>
+            <td><img src="/static/images/wood.png" class="res-icon"/> Madeira</td>
+            <td class="text-right font-weight-bold">{{ ns.total_wood | int }}</td>
+          </tr>
+          <tr>
+            <td><img src="/static/images/stone.png" class="res-icon"/> Argila</td>
+            <td class="text-right font-weight-bold">{{ ns.total_stone | int }}</td>
+          </tr>
+          <tr>
+            <td><img src="/static/images/iron.png" class="res-icon"/> Ferro</td>
+            <td class="text-right font-weight-bold">{{ ns.total_iron | int }}</td>
+          </tr>
         </table>
+      </div>
     </div>
-    <div class="col-lg-4">
-        <h4>Bot</h4>
-        Status:
-        {% if data.status %}
-            <button class="btn btn-sm btn-success">Active</button>
-        {% else %}
-            <button class="btn btn-sm btn-warning">Inactive</button>
-            <br />
-            <i>Ignore this if you are running twb.py yourself</i>
-        {% endif %}
 
-        <p>Current session: {{session.endpoint}}</p>
-        <input type="text" id="session_data" class="form-control" value="{{session.raw}}"/>
-        <button class="btn btn-success btn-sm" onclick="set_session_data()">Update</button>
+  </div>
+
+  <!-- Coluna direita: relatórios + output log -->
+  <div class="col-lg-8">
+
+    <!-- Output do processo -->
+    <div class="card mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="card-title mb-0">Output do processo</h5>
+          <button class="btn btn-outline-secondary btn-sm" onclick="refresh_output()">↺ Atualizar</button>
+        </div>
+        <div id="bot-output"
+             style="background:#1e1e1e; color:#d4d4d4; font-family:monospace; font-size:0.78rem;
+                    height:200px; overflow-y:auto; border-radius:4px; padding:10px;">
+          <span class="text-muted">Carregando...</span>
+        </div>
+      </div>
     </div>
+
+    <!-- Relatórios -->
+    <div class="card">
+      <div class="card-body">
+        <h5 class="card-title">Relatórios recentes</h5>
+        {% for report_id in data.reports %}
+          {% set r = data.reports[report_id] %}
+          <div class="report-item border rounded mb-2 p-2">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                {% if r.type == 'attack' %}
+                  <span class="badge badge-danger mr-1">Ataque</span>
+                {% elif r.type == 'scout' %}
+                  <span class="badge badge-secondary mr-1">Scout</span>
+                {% elif r.type == 'support' %}
+                  <span class="badge badge-success mr-1">Apoio</span>
+                {% elif r.type == 'ReportFoundCrew' %}
+                  <span class="badge badge-info mr-1">Crew</span>
+                {% else %}
+                  <span class="badge badge-light border mr-1">{{ r.type }}</span>
+                {% endif %}
+                <small class="text-muted">#{{ report_id }}</small>
+              </div>
+              {% if r.origin and r.dest %}
+              <small class="text-muted">{{ r.origin }} → {{ r.dest }}</small>
+              {% endif %}
+            </div>
+
+            {% if r.type == 'attack' or r.type == 'scout' %}
+            <div class="mt-1 ml-1">
+              {% if r.loot %}
+              <small>
+                <img src="/static/images/wood.png" class="res-icon"/> {{ r.loot.wood | default(0) }}
+                &nbsp;<img src="/static/images/stone.png" class="res-icon"/> {{ r.loot.stone | default(0) }}
+                &nbsp;<img src="/static/images/iron.png" class="res-icon"/> {{ r.loot.iron | default(0) }}
+              </small>
+              {% endif %}
+              {% if r.extra and r.extra.units_sent %}
+              <small class="text-muted ml-2">
+                Enviados:
+                {% for unit, qty in r.extra.units_sent.items() %}
+                  {% if qty and qty > 0 %}
+                    <img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"/> {{ qty }}
+                  {% endif %}
+                {% endfor %}
+              </small>
+              {% endif %}
+              {% if r.losses %}
+              <small class="text-danger ml-2">
+                Perdas:
+                {% for unit, qty in r.losses.items() %}
+                  {% if qty and qty > 0 %}
+                    <img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"/> {{ qty }}
+                  {% endif %}
+                {% endfor %}
+              </small>
+              {% endif %}
+            </div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+
+  </div>
 </div>
-
 {% endblock %}
+
 {% block scripts %}
 <script>
+function set_session_data() {
+  var val = $('#session_data').val();
+  $.getJSON('/app/config/set?parameter=session&value=' + encodeURIComponent(val), function(){
+    alert('Sessão atualizada.');
+  });
+}
 
+function bot_action(action) {
+  var msg = $('#bot-action-msg');
+  msg.text(action === 'start' ? 'Iniciando...' : 'Parando...');
+  $.getJSON('/bot/' + action, function(data) {
+    var running = (data === true) || (data && data.running);
+    var badge = $('#status-badge');
+    if (running) {
+      badge.removeClass('badge-warning').addClass('badge-success').text('● Ativo');
+      $('#bot-status-area button').replaceWith(
+        '<button class="btn btn-danger btn-sm ml-2" id="btn-stop" onclick="bot_action(\'stop\')">Parar</button>'
+      );
+      msg.text(data.pid ? 'Bot iniciado (PID ' + data.pid + ')' : 'Bot ativo');
+    } else {
+      badge.removeClass('badge-success').addClass('badge-warning').text('● Inativo');
+      $('#bot-status-area button').replaceWith(
+        '<button class="btn btn-success btn-sm ml-2" id="btn-start" onclick="bot_action(\'start\')">Iniciar</button>'
+      );
+      msg.text('Bot parado.');
+    }
+    setTimeout(refresh_output, 800);
+  }).fail(function() {
+    msg.text('Erro ao comunicar com o servidor.');
+  });
+}
 
+function refresh_output() {
+  $.getJSON('/bot/output', function(data) {
+    var box = $('#bot-output');
+    if (!data.lines || data.lines.length === 0) {
+      box.html('<span class="text-muted">Sem output ainda. Inicie o bot para ver os logs aqui.</span>');
+      return;
+    }
+    var html = data.lines.map(function(line) {
+      var cls = 'color:#d4d4d4';
+      if (line.indexOf('ERROR') !== -1 || line.indexOf('Traceback') !== -1 || line.indexOf('Exception') !== -1) {
+        cls = 'color:#f48771';
+      } else if (line.indexOf('WARNING') !== -1 || line.indexOf('Warning') !== -1) {
+        cls = 'color:#dcdcaa';
+      } else if (line.indexOf('---') !== -1) {
+        cls = 'color:#569cd6';
+      }
+      return '<div style="' + cls + '">' + $('<div>').text(line).html() + '</div>';
+    }).join('');
+    box.html(html);
+  });
+}
+
+// Carrega output ao abrir a página
+$(document).ready(function() {
+  refresh_output();
+  // Auto-refresh do output a cada 30s se o bot estiver ativo
+  setInterval(function() {
+    {% if data.status %}refresh_output();{% endif %}
+  }, 30000);
+});
 </script>
 {% endblock %}

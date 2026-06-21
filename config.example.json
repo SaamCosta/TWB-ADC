@@ -10,7 +10,7 @@
     "server_on_twstats": false
   },
   "reporting": {
-    "enabled": false,
+    "enabled": true,
     "connection_string": "file://cache/logs/twb_{ts}.log"
   },
   "notifications": {
@@ -46,10 +46,30 @@
     "remove_manual_queued": false,
     "randomize_unit_queue": true
   },
+  "inheritance": {
+    "mode": "empire_ratio"
+  },
+  "empire": {
+    "offensive_ratio": 3,
+    "defensive_ratio": 1
+  },
+  "profile_templates": {
+    "offensive": {
+      "building": "purple_predator_into_off",
+      "units": "offensive"
+    },
+    "defensive": {
+      "building": "purple_predator_into_def",
+      "units": "defensive_1"
+    }
+  },
   "village_template": {
-    "building": "purple_predator",
+    "inherit_on_first_run": true,
+    "profile": null,
+    "building": null,
     "units": "basic",
     "managed": true,
+    "active_hours": null,
     "scout_first": false,
     "additional_farms": [],
     "prioritize_building": false,
@@ -64,6 +84,24 @@
     "support_others_factor": 0.25,
     "support_others_max_villages": 2,
     "request_support_on_attack": false
+  },
+  "conquest": {
+    "enabled": false,
+    "target": "barbarian",
+    "max_radius": 20,
+    "priority": "fill_gaps",
+    "min_points": 100,
+    "max_points": 3000,
+    "loyalty_regen_per_hour": 1.5,
+    "loyalty_drop_per_noble": 25,
+    "escort_ratio": 0.5,
+    "min_escort": {},
+    "min_escort_total": 50
+  },
+  "resource_sharing": {
+    "enabled": false,
+    "threshold_pct": 80,
+    "priority": "new_villages"
   },
   "farms": {
     "farm": true,
@@ -97,7 +135,36 @@
     "building_destruction_enabled": true,
     "boosters_enabled": null
   },
-  "villages": {
-
-  }
+  "hunter": {
+    "enabled": false,
+    "schedules": [
+      {
+        "target_id": "TARGET_VILLAGE_ID",
+        "arrival_time": "2026-06-22 20:00:00",
+        "attacks": [
+          {
+            "source_village_id": "VILLAGE_ID",
+            "troops": {
+              "axe": 5000,
+              "light": 500,
+              "snob": 1
+            },
+            "is_fake": false
+          },
+          {
+            "source_village_id": "VILLAGE_ID_2",
+            "troops": {
+              "axe": 3000
+            },
+            "is_fake": true
+          }
+        ]
+      }
+    ]
+  },
+  "zones": {
+    "enabled": true,
+    "radius": 10
+  },
+  "villages": {}
 }
