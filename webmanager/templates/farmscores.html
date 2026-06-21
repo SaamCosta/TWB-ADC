@@ -1,0 +1,133 @@
+{% extends "main.html" %}
+
+{% block content %}
+<div class="row mb-2 align-items-center">
+  <div class="col">
+    <h5 class="mb-0">Farm Score — Ranking de Eficiência</h5>
+    <small class="text-muted">Ordenado por eficiência real (loot ÷ distância). Menor = mais eficiente.</small>
+  </div>
+  <div class="col-auto d-flex align-items-center">
+    <select id="village-filter" class="form-control form-control-sm mr-2" style="max-width:160px">
+      <option value="">Todas as aldeias</option>
+      {% for vid in village_ids %}
+      <option value="{{ vid }}">{{ vid }}</option>
+      {% endfor %}
+    </select>
+    <select id="status-filter" class="form-control form-control-sm mr-2" style="max-width:160px">
+      <option value="">Todos os status</option>
+      <option value="scored">Com score</option>
+      <option value="new">Sem histórico</option>
+      <option value="unsafe">Não seguro</option>
+    </select>
+    <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">↺ Atualizar</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0" id="farm-table">
+      <thead class="thead-dark">
+        <tr>
+          <th style="width:50px">#</th>
+          <th style="width:100px">Alvo</th>
+          <th style="width:110px">Reservado por</th>
+          <th style="width:90px">Farm Score</th>
+          <th style="width:80px">Ataques</th>
+          <th style="width:80px">Último ataque</th>
+          <th style="width:80px">Status</th>
+          <th>Flags</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in farms %}
+        <tr class="farm-row"
+            data-village="{{ entry.reserved_by }}"
+            data-status="{{ entry.status_key }}">
+          <td class="text-muted">{{ loop.index }}</td>
+          <td><code>{{ entry.target_id }}</code></td>
+          <td>
+            {% if entry.reserved_by %}
+              <small>{{ entry.reserved_by }}</small>
+            {% else %}
+              <small class="text-muted">—</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.farm_score is not none and entry.farm_score != 9999 %}
+              <span class="font-weight-bold
+                {% if entry.farm_score >= 500 %}text-success
+                {% elif entry.farm_score >= 200 %}text-warning
+                {% else %}text-danger{% endif %}">
+                {{ "%.1f"|format(entry.farm_score) }}
+              </span>
+            {% elif entry.farm_score == 9999 %}
+              <span class="text-muted">Novo</span>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>{{ entry.attack_count | default(0) }}</td>
+          <td>
+            {% if entry.last_attack %}
+              <small>{{ entry.last_attack_fmt }}</small>
+            {% else %}
+              <small class="text-muted">—</small>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.safe %}
+              <span class="badge badge-success">Seguro</span>
+            {% else %}
+              <span class="badge badge-danger">Inseguro</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if entry.scout %}
+              <span class="badge badge-info mr-1">Scout</span>
+            {% endif %}
+            {% if entry.high_profile %}
+              <span class="badge badge-warning text-dark mr-1">High</span>
+            {% endif %}
+            {% if entry.low_profile %}
+              <span class="badge badge-secondary mr-1">Low</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not farms %}
+    <div class="text-center text-muted py-4">
+      Nenhum farm encontrado em <code>cache/attacks/</code>.<br/>
+      <small>Os dados aparecem após o primeiro ciclo de farming.</small>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="text-muted small mt-2">
+  <span id="visible-count">{{ farms | count }}</span> farms exibidos
+  &nbsp;·&nbsp; Score alto = muito loot por distância &nbsp;·&nbsp;
+  "Novo" = ainda sem histórico (prioridade máxima de descoberta)
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function apply_filters() {
+  var village = $('#village-filter').val();
+  var status  = $('#status-filter').val();
+  var visible = 0;
+  $('#farm-table tbody tr').each(function() {
+    var rv  = $(this).attr('data-village') || '';
+    var rs  = $(this).attr('data-status')  || '';
+    var ok_v = !village || rv === village;
+    var ok_s = !status  || rs === status;
+    if (ok_v && ok_s) { $(this).show(); visible++; }
+    else { $(this).hide(); }
+  });
+  $('#visible-count').text(visible);
+}
+$('#village-filter, #status-filter').change(apply_filters);
+</script>
+{% endblock %}

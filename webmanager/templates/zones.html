@@ -1,0 +1,301 @@
+{% extends "main.html" %}
+{% block title %}Zonas Geográficas{% endblock %}
+
+{% block content %}
+<style>
+  #zone-canvas { border-radius: 8px; background: #1a2233; display: block; cursor: crosshair; }
+  .zone-pill { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; }
+  .zone-card { border-left: 4px solid; border-radius: 4px; }
+  #tooltip {
+    position: fixed; pointer-events: none; background: rgba(20,20,30,0.92);
+    color: #f0f0f0; border-radius: 6px; padding: 8px 12px; font-size: 0.8rem;
+    border: 1px solid #444; display: none; z-index: 9999; max-width: 200px;
+  }
+</style>
+
+<div id="tooltip"></div>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0" style="color:#2c1810;">
+    🗺 Zonas Geográficas
+  </h4>
+  <div class="d-flex align-items-center gap-2">
+    <span class="badge bg-secondary mr-2">{{ zone_data.zones | length }} zona(s)</span>
+    <span class="badge bg-info mr-3">Radius atual: {{ radius }} campos</span>
+    <button id="btn-toggle-zones"
+            class="btn btn-sm {% if enabled %}btn-success{% else %}btn-danger{% endif %}"
+            onclick="toggleZones()">
+      {% if enabled %}Ativado{% else %}Desativado{% endif %}
+    </button>
+  </div>
+</div>
+
+<div class="row">
+
+  <!-- Mapa -->
+  <div class="col-lg-8 mb-3">
+    <div class="card" style="border-color:#c8a96e;">
+      <div class="card-body p-2">
+        {% if not zone_data.zones %}
+          <div class="alert mb-0" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+            <strong>Nenhuma zona disponível ainda.</strong>
+            O bot precisa completar ao menos um ciclo com aldeias gerenciadas para calcular as zonas.
+            Os dados ficam em <code>cache/zones.json</code>.
+          </div>
+        {% else %}
+          <canvas id="zone-canvas" width="700" height="480"></canvas>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Painel lateral -->
+  <div class="col-lg-4">
+
+    <!-- Configuração de radius -->
+    <div class="card mb-3" style="border-color:#c8a96e;">
+      <div class="card-body">
+        <h6 class="card-title">Configuração</h6>
+        <label class="small fw-bold">Radius de agrupamento</label>
+        <div class="d-flex align-items-center mt-1">
+          <input type="range" id="radius-slider" min="1" max="50"
+                 value="{{ radius }}" class="flex-grow-1 mr-2"
+                 oninput="document.getElementById('radius-val').textContent = this.value"/>
+          <span id="radius-val" class="font-weight-bold" style="min-width:28px">{{ radius }}</span>
+          <span class="small text-muted ml-1">campos</span>
+        </div>
+        <button class="btn btn-primary btn-sm mt-2 w-100" onclick="saveRadius()">
+          💾 Salvar radius
+        </button>
+        <small class="text-muted d-block mt-1">
+          O bot reagrupará as aldeias no próximo ciclo.
+        </small>
+      </div>
+    </div>
+
+    <!-- Legenda de zonas -->
+    <div class="card" style="border-color:#c8a96e;">
+      <div class="card-body p-2">
+        <h6 class="card-title px-2 pt-1">Zonas</h6>
+        {% if not zone_data.zones %}
+          <p class="text-muted small px-2">Sem zonas calculadas.</p>
+        {% else %}
+          {% for zone in zone_data.zones %}
+          <div class="zone-card p-2 mb-2" style="border-left-color:{{ zone.color }};background:#fdfaf3;">
+            <div class="d-flex align-items-center justify-content-between">
+              <div>
+                <span class="zone-pill" style="background:{{ zone.color }};"></span>
+                <strong class="small">{{ zone.name }}</strong>
+              </div>
+              <span class="badge badge-secondary">{{ zone.count }} aldeia(s)</span>
+            </div>
+            <ul class="list-unstyled mb-0 mt-1 ml-3">
+              {% for v in zone.villages %}
+              <li class="small text-muted">
+                {% if v.under_attack %}⚠{% endif %}
+                {{ v.name }}
+                <span class="text-muted">({{ v.x }}|{{ v.y }})</span>
+                {% if v.profile == 'offensive' %}
+                  <span class="badge badge-danger" style="font-size:0.65rem">OFF</span>
+                {% elif v.profile == 'defensive' %}
+                  <span class="badge badge-primary" style="font-size:0.65rem">DEF</span>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var zoneData = {{ zones_json | safe }};
+var currentRadius = {{ radius }};
+
+// ── Canvas map ────────────────────────────────────────────────────────────────
+(function () {
+  var canvas = document.getElementById('zone-canvas');
+  if (!canvas) return;
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  var PAD = 48;
+
+  var villages = zoneData.all_villages || [];
+  if (!villages.length) return;
+
+  // Coordinate bounds
+  var xs = villages.map(function(v){ return v.x; });
+  var ys = villages.map(function(v){ return v.y; });
+  var minX = Math.min.apply(null, xs) - currentRadius - 2;
+  var maxX = Math.max.apply(null, xs) + currentRadius + 2;
+  var minY = Math.min.apply(null, ys) - currentRadius - 2;
+  var maxY = Math.max.apply(null, ys) + currentRadius + 2;
+
+  function toCanvas(wx, wy) {
+    var cx = PAD + ((wx - minX) / (maxX - minX)) * (W - 2*PAD);
+    var cy = PAD + ((wy - minY) / (maxY - minY)) * (H - 2*PAD);
+    return [cx, cy];
+  }
+
+  // Pixels per world unit (for radius circle)
+  var scaleX = (W - 2*PAD) / (maxX - minX);
+  var scaleY = (H - 2*PAD) / (maxY - minY);
+  var scale  = Math.min(scaleX, scaleY);
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // Background
+    ctx.fillStyle = '#1a2233';
+    ctx.fillRect(0, 0, W, H);
+
+    // Grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (var gx = Math.ceil(minX); gx <= maxX; gx += 5) {
+      var cx = toCanvas(gx, minY)[0];
+      ctx.beginPath(); ctx.moveTo(cx, PAD); ctx.lineTo(cx, H - PAD); ctx.stroke();
+    }
+    for (var gy = Math.ceil(minY); gy <= maxY; gy += 5) {
+      var cy = toCanvas(minX, gy)[1];
+      ctx.beginPath(); ctx.moveTo(PAD, cy); ctx.lineTo(W - PAD, cy); ctx.stroke();
+    }
+
+    // Zone radius halos
+    (zoneData.zones || []).forEach(function(zone) {
+      if (!zone.villages.length) return;
+      // Use first village as zone anchor for halo
+      var anchor = zone.villages[0];
+      var p = toCanvas(anchor.x, anchor.y);
+      var r = currentRadius * scale;
+      ctx.beginPath();
+      ctx.arc(p[0], p[1], r, 0, Math.PI * 2);
+      ctx.fillStyle = zone.color + '18';
+      ctx.fill();
+      ctx.strokeStyle = zone.color + '55';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // Coordinate axis labels
+    ctx.fillStyle = 'rgba(200,200,200,0.5)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    for (var lx = Math.ceil(minX); lx <= maxX; lx += 5) {
+      var lp = toCanvas(lx, minY);
+      ctx.fillText(lx, lp[0], H - 6);
+    }
+    ctx.textAlign = 'right';
+    for (var ly = Math.ceil(minY); ly <= maxY; ly += 5) {
+      var lyp = toCanvas(minX, ly);
+      ctx.fillText(ly, PAD - 4, lyp[1] + 4);
+    }
+
+    // Villages
+    villages.forEach(function(v) {
+      var p = toCanvas(v.x, v.y);
+      var r = 9;
+
+      // Glow ring for under_attack
+      if (v.under_attack) {
+        ctx.beginPath(); ctx.arc(p[0], p[1], r + 5, 0, Math.PI*2);
+        ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.stroke();
+      }
+
+      // Outer ring
+      ctx.beginPath(); ctx.arc(p[0], p[1], r + 2, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
+
+      // Village circle
+      ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI*2);
+      ctx.fillStyle = v.color; ctx.fill();
+
+      // Profile icon inside circle
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(v.profile === 'offensive' ? 'O' : v.profile === 'defensive' ? 'D' : '?', p[0], p[1]);
+
+      // Name label
+      ctx.fillStyle = '#e0e0e0';
+      ctx.font = '11px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(v.name, p[0], p[1] + r + 4);
+    });
+  }
+
+  draw();
+
+  // ── Tooltip on hover ──────────────────────────────────────────────────────
+  var tooltip = document.getElementById('tooltip');
+
+  canvas.addEventListener('mousemove', function(e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var hit = null;
+    villages.forEach(function(v) {
+      var p = toCanvas(v.x, v.y);
+      var dx = mx - p[0], dy = my - p[1];
+      if (Math.sqrt(dx*dx + dy*dy) < 14) hit = v;
+    });
+    if (hit) {
+      tooltip.style.display = 'block';
+      tooltip.style.left = (e.clientX + 14) + 'px';
+      tooltip.style.top  = (e.clientY - 10) + 'px';
+      var atk = hit.under_attack ? '<br/><span style="color:#f66">⚠ Sob ataque</span>' : '';
+      tooltip.innerHTML =
+        '<strong>' + hit.name + '</strong>' +
+        '<br/>ID: ' + hit.id +
+        '<br/>Coord: ' + hit.x + '|' + hit.y +
+        '<br/>Zona: ' + hit.zone +
+        '<br/>Perfil: ' + (hit.profile || '—') + atk;
+    } else {
+      tooltip.style.display = 'none';
+    }
+  });
+
+  canvas.addEventListener('mouseleave', function() {
+    tooltip.style.display = 'none';
+  });
+})();
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+function saveRadius() {
+  var val = document.getElementById('radius-slider').value;
+  $.getJSON('/app/config/set?parameter=zones.radius&value=' + val, function() {
+    currentRadius = parseInt(val);
+    var badge = document.querySelector('.badge.bg-info');
+    if (badge) badge.textContent = 'Radius atual: ' + val + ' campos';
+    // notify user
+    var btn = $('button[onclick="saveRadius()"]');
+    btn.text('✓ Salvo!').removeClass('btn-primary').addClass('btn-success');
+    setTimeout(function() {
+      btn.text('💾 Salvar radius').removeClass('btn-success').addClass('btn-primary');
+    }, 2000);
+  });
+}
+
+function toggleZones() {
+  var btn = $('#btn-toggle-zones');
+  var isEnabled = btn.hasClass('btn-success');
+  $.getJSON('/app/config/set?parameter=zones.enabled&value=' + (!isEnabled), function() {
+    if (!isEnabled) {
+      btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
+    } else {
+      btn.removeClass('btn-success').addClass('btn-danger').text('Desativado');
+    }
+  });
+}
+</script>
+{% endblock %}

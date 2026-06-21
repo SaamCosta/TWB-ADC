@@ -1,0 +1,300 @@
+{% extends "main.html" %}
+{% block title %}Hunter — Ataques Coordenados{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+
+  <!-- Cabeçalho -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="mb-0" style="color:#2c1810;">
+      ⚔ Hunter — Ataques Coordenados
+    </h4>
+    <div class="d-flex align-items-center">
+      <span class="mr-3 small text-muted">Hunter:</span>
+      <button id="btn-toggle-hunter"
+              class="btn btn-sm {% if enabled %}btn-success{% else %}btn-danger{% endif %} mr-3"
+              onclick="toggleHunter()">
+        {% if enabled %}Ativado{% else %}Desativado{% endif %}
+      </button>
+      <span class="badge bg-secondary mr-2">Pendentes: {{ schedules | selectattr('status','equalto','pending') | list | length }}</span>
+      <span class="badge bg-warning text-dark mr-2">Enviados: {{ schedules | selectattr('status','equalto','sent') | list | length }}</span>
+      <span class="badge bg-success mr-2">Completos: {{ schedules | selectattr('status','equalto','complete') | list | length }}</span>
+      <button class="btn btn-primary btn-sm ml-3" data-toggle="modal" data-target="#modal-new-schedule">
+        + Novo Schedule
+      </button>
+    </div>
+  </div>
+
+  <!-- Aviso se desativado -->
+  {% if not enabled %}
+  <div class="alert alert-warning mb-3">
+    <strong>Hunter desativado.</strong> Ative acima para que o bot dispare os schedules automaticamente.
+  </div>
+  {% endif %}
+
+  <!-- Tabela de schedules -->
+  {% if not schedules %}
+  <div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+    <strong>Nenhum schedule registrado.</strong>
+    Clique em <strong>+ Novo Schedule</strong> para criar um ataque coordenado.
+    Os dados ficam em <code>cache/hunter/schedules.json</code>.
+  </div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table table-hover align-middle" id="hunter-table">
+      <thead style="background:#2c1810;color:#d4a843;">
+        <tr>
+          <th>Alvo</th>
+          <th>Chegada</th>
+          <th style="min-width:120px">Status</th>
+          <th>Ataques</th>
+          <th style="min-width:170px">Progresso</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in schedules %}
+        <tr>
+          <!-- Alvo -->
+          <td>
+            <span class="font-weight-bold font-monospace">#{{ s.target_id }}</span>
+          </td>
+
+          <!-- Chegada -->
+          <td>
+            <span class="small">{{ s.arrival_str }}</span>
+            {% if s.time_to_arrival is not none %}
+              {% if s.time_to_arrival > 0 %}
+                <br><small class="text-muted">em {{ s.time_to_arrival_fmt }}</small>
+              {% else %}
+                <br><small class="text-danger">Passado</small>
+              {% endif %}
+            {% endif %}
+          </td>
+
+          <!-- Status -->
+          <td>
+            <span class="badge badge-{{ s.status_color }}">{{ s.status_label }}</span>
+          </td>
+
+          <!-- Ataques resumidos -->
+          <td>
+            <div class="small">
+              {% for atk in s.attacks %}
+              <div class="mb-1">
+                <span class="badge badge-{% if atk.is_fake %}secondary{% else %}danger{% endif %} mr-1">
+                  {% if atk.is_fake %}FAKE{% else %}REAL{% endif %}
+                </span>
+                <span class="text-muted">{{ atk.source_village_id }}</span>
+                {% if atk.send_time_fmt %}
+                  <span class="ml-1 text-muted">→ envia {{ atk.send_time_fmt }}</span>
+                {% else %}
+                  <span class="ml-1 text-warning">⏳ aguardando probe</span>
+                {% endif %}
+                <span class="badge badge-{% if atk.status == 'sent' %}success{% elif atk.status == 'failed' %}danger{% else %}light border{% endif %} ml-1">
+                  {{ atk.status }}
+                </span>
+              </div>
+              {% endfor %}
+            </div>
+          </td>
+
+          <!-- Barra de progresso -->
+          <td>
+            {% set sent = s.attacks | selectattr('status','equalto','sent') | list | length %}
+            {% set total = s.attacks | length %}
+            {% set pct = ((sent / total) * 100) | int if total > 0 else 0 %}
+            <div class="d-flex align-items-center">
+              <div class="progress flex-grow-1 mr-2" style="height:8px;min-width:80px;">
+                <div class="progress-bar bg-{{ 'success' if s.status == 'complete' else 'warning' }}"
+                     style="width:{{ pct }}%"></div>
+              </div>
+              <small class="text-nowrap">{{ sent }}/{{ total }}</small>
+            </div>
+          </td>
+
+          <!-- Ações -->
+          <td>
+            {% if s.status == 'pending' %}
+            <form method="post" action="/hunter/delete" style="display:inline">
+              <input type="hidden" name="sched_key" value="{{ s.sched_key }}"/>
+              <button type="submit" class="btn btn-outline-danger btn-sm"
+                      onclick="return confirm('Remover schedule {{ s.target_id }}?')">✕ Remover</button>
+            </form>
+            {% else %}
+            <form method="post" action="/hunter/delete" style="display:inline">
+              <input type="hidden" name="sched_key" value="{{ s.sched_key }}"/>
+              <button type="submit" class="btn btn-outline-secondary btn-sm">Limpar</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Nota de rodapé -->
+  <div class="text-muted small mt-2">
+    Os <code>send_time</code> de cada ataque são calculados automaticamente pelo bot no próximo ciclo (probe via página de confirmação do servidor).
+    Ataques marcados como <em>aguardando probe</em> terão o horário de envio calculado em breve.
+  </div>
+
+</div>
+
+<!-- ========================= MODAL NOVO SCHEDULE ========================= -->
+<div class="modal fade" id="modal-new-schedule" tabindex="-1" role="dialog">
+  <div class="modal-dialog modal-lg" role="document">
+    <div class="modal-content">
+      <form method="post" action="/hunter/add" id="form-new-schedule">
+        <div class="modal-header" style="background:#2c1810;color:#d4a843;">
+          <h5 class="modal-title">Novo Schedule de Ataque Coordenado</h5>
+          <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+        </div>
+
+        <div class="modal-body">
+
+          <!-- Alvo e chegada -->
+          <div class="form-row mb-3">
+            <div class="col-md-4">
+              <label class="font-weight-bold">ID da aldeia alvo</label>
+              <input type="text" name="target_id" class="form-control" placeholder="ex: 201810" required/>
+              <small class="text-muted">ID numérico da aldeia no TW</small>
+            </div>
+            <div class="col-md-5">
+              <label class="font-weight-bold">Horário de chegada</label>
+              <input type="datetime-local" name="arrival_time" class="form-control" required/>
+              <small class="text-muted">Quando os ataques devem chegar simultaneamente</small>
+            </div>
+          </div>
+
+          <hr/>
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h6 class="mb-0">Ataques</h6>
+            <button type="button" class="btn btn-outline-success btn-sm" onclick="addAttackRow()">+ Adicionar ataque</button>
+          </div>
+
+          <div id="attacks-container">
+            <!-- Linha de ataque inicial -->
+            <div class="attack-row border rounded p-2 mb-2" id="atk-row-0">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong class="small">Ataque #1</strong>
+                <div class="d-flex align-items-center">
+                  <label class="mr-2 mb-0 small">Fake?</label>
+                  <input type="checkbox" name="attacks[0][is_fake]" value="1" class="mr-3"/>
+                  <button type="button" class="btn btn-outline-danger btn-sm btn-remove-row" onclick="removeRow(0)">✕</button>
+                </div>
+              </div>
+              <div class="form-row mb-2">
+                <div class="col-md-4">
+                  <label class="small">Aldeia fonte</label>
+                  <select name="attacks[0][source_village_id]" class="form-control form-control-sm">
+                    {% for vid in villages %}
+                    <option value="{{ vid }}">{{ vid }}{% if villages[vid] %} — {{ villages[vid] }}{% endif %}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+              <div class="form-row troop-inputs">
+                {% for unit in units %}
+                <div class="col-auto mb-1">
+                  <label class="small d-block text-center mb-0">
+                    <img src="/static/images/unit_{{ unit }}.png" style="width:16px;height:16px;" onerror="this.style.display='none'"/>
+                    {{ unit }}
+                  </label>
+                  <input type="number" name="attacks[0][troops][{{ unit }}]"
+                         class="form-control form-control-sm text-center" style="width:72px"
+                         min="0" value="0" placeholder="0"/>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Criar Schedule</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var rowCount = 1;
+var unitNames = {{ units | tojson }};
+var villageOptions = {{ village_options_json | safe }};
+
+function addAttackRow() {
+  var idx = rowCount++;
+  var html = '<div class="attack-row border rounded p-2 mb-2" id="atk-row-' + idx + '">';
+  html += '<div class="d-flex justify-content-between align-items-center mb-2">';
+  html += '<strong class="small">Ataque #' + (idx + 1) + '</strong>';
+  html += '<div class="d-flex align-items-center">';
+  html += '<label class="mr-2 mb-0 small">Fake?</label>';
+  html += '<input type="checkbox" name="attacks[' + idx + '][is_fake]" value="1" class="mr-3"/>';
+  html += '<button type="button" class="btn btn-outline-danger btn-sm" onclick="removeRow(' + idx + ')">✕</button>';
+  html += '</div></div>';
+  html += '<div class="form-row mb-2"><div class="col-md-4">';
+  html += '<label class="small">Aldeia fonte</label>';
+  html += '<select name="attacks[' + idx + '][source_village_id]" class="form-control form-control-sm">';
+  for (var vid in villageOptions) {
+    html += '<option value="' + vid + '">' + vid + (villageOptions[vid] ? ' — ' + villageOptions[vid] : '') + '</option>';
+  }
+  html += '</select></div></div>';
+  html += '<div class="form-row troop-inputs">';
+  unitNames.forEach(function(unit) {
+    html += '<div class="col-auto mb-1">';
+    html += '<label class="small d-block text-center mb-0">';
+    html += '<img src="/static/images/unit_' + unit + '.png" style="width:16px;height:16px;" onerror="this.style.display=\'none\'"/>';
+    html += unit + '</label>';
+    html += '<input type="number" name="attacks[' + idx + '][troops][' + unit + ']" ';
+    html += 'class="form-control form-control-sm text-center" style="width:72px" min="0" value="0"/>';
+    html += '</div>';
+  });
+  html += '</div></div>';
+  $('#attacks-container').append(html);
+}
+
+function removeRow(idx) {
+  $('#atk-row-' + idx).remove();
+}
+
+function toggleHunter() {
+  var btn = $('#btn-toggle-hunter');
+  var isEnabled = btn.hasClass('btn-success');
+  $.getJSON('/hunter/toggle?enabled=' + (!isEnabled ? '1' : '0'), function(data) {
+    if (data.enabled) {
+      btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
+      $('.alert-warning').hide();
+    } else {
+      btn.removeClass('btn-success').addClass('btn-danger').text('Desativado');
+      $('.alert-warning').show();
+    }
+  });
+}
+
+// Validação: pelo menos 1 unidade > 0 por ataque antes de submeter
+$('#form-new-schedule').submit(function(e) {
+  var ok = true;
+  $('.attack-row').each(function() {
+    var total = 0;
+    $(this).find('input[type=number]').each(function() { total += parseInt($(this).val()) || 0; });
+    if (total === 0) {
+      alert('Cada ataque deve ter pelo menos 1 unidade especificada.');
+      ok = false; return false;
+    }
+  });
+  if ($('.attack-row').length === 0) {
+    alert('Adicione pelo menos 1 ataque.');
+    ok = false;
+  }
+  if (!ok) e.preventDefault();
+});
+</script>
+{% endblock %}

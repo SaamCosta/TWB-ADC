@@ -1,0 +1,200 @@
+{% extends "main.html" %}
+{% block title %}Conquistas{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+
+  <!-- Cabeçalho -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="mb-0" style="color:#2c1810;">
+      <img src="/static/images/unit_snob.png" height="24" class="me-2" onerror="this.style.display='none'">
+      Painel de Conquistas
+    </h4>
+    <div>
+      <span class="badge bg-secondary me-1">Total: {{ targets|length }}</span>
+      <span class="badge bg-warning text-dark me-1">Em andamento: {{ targets|selectattr('status','in',['train_sent','extra_pending'])|list|length }}</span>
+      <span class="badge bg-success">Completas: {{ targets|selectattr('status','equalto','complete')|list|length }}</span>
+    </div>
+  </div>
+
+  <!-- Filtros -->
+  <div class="card mb-3" style="border-color:#c8a96e;">
+    <div class="card-body py-2">
+      <div class="row g-2 align-items-center">
+        <div class="col-auto">
+          <label class="form-label mb-0 small fw-bold">Status</label>
+          <select id="filter-status" class="form-select form-select-sm" style="min-width:160px;">
+            <option value="">Todos</option>
+            <option value="train_sent">Train Enviado</option>
+            <option value="extra_pending">Extra Pendente</option>
+            <option value="complete">Conquistada</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-0 small fw-bold">Aldeia reservante</label>
+          <select id="filter-village" class="form-select form-select-sm" style="min-width:160px;">
+            <option value="">Todas</option>
+            {% set villages_seen = [] %}
+            {% for t in targets %}
+              {% if t.reserved_by and t.reserved_by not in villages_seen %}
+                {% set _ = villages_seen.append(t.reserved_by) %}
+                <option value="{{ t.reserved_by }}">{{ t.reserved_by }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-auto ms-auto">
+          <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
+            ↻ Atualizar
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabela vazia -->
+  {% if not targets %}
+  <div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+    <strong>Nenhum alvo de conquista em cache.</strong>
+    Certifique-se de que <code>conquest.enabled: true</code> está configurado e que o bot já selecionou alvos.
+    Os arquivos de cache ficam em <code>cache/conquest/*.json</code>.
+  </div>
+  {% else %}
+
+  <div class="table-responsive">
+    <table class="table table-hover align-middle" id="conquest-table">
+      <thead style="background:#2c1810;color:#d4a843;">
+        <tr>
+          <th>Alvo</th>
+          <th>Coord</th>
+          <th>Pts</th>
+          <th>Reservada por</th>
+          <th>Status</th>
+          <th style="min-width:140px;">Nobles ({{ '{' }}hits/total{{ '}' }})</th>
+          <th style="min-width:170px;">Lealdade</th>
+          <th>Último hit</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in targets %}
+        <tr class="conquest-row"
+            data-status="{{ t.status }}"
+            data-village="{{ t.reserved_by }}"
+            style="{% if t.status == 'complete' %}opacity:0.65;{% endif %}">
+
+          <!-- Alvo -->
+          <td>
+            <span class="fw-bold">{{ t.target_name }}</span>
+            <br><small class="text-muted font-monospace">#{{ t.target_id }}</small>
+          </td>
+
+          <!-- Coordenadas -->
+          <td>
+            <span class="font-monospace small">{{ t.location_str }}</span>
+          </td>
+
+          <!-- Pontos -->
+          <td>{{ t.target_points }}</td>
+
+          <!-- Reservada por -->
+          <td>
+            {% if t.reserved_by and t.reserved_by != '—' %}
+              <a href="/village?id={{ t.reserved_by }}" class="text-decoration-none" style="color:#2c1810;">
+                🏰 {{ t.reserved_by }}
+              </a>
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+
+          <!-- Status badge -->
+          <td>
+            <span class="badge bg-{{ t.status_color }}">{{ t.status_label }}</span>
+          </td>
+
+          <!-- Nobles progress -->
+          <td>
+            <div class="d-flex align-items-center gap-2">
+              <div class="progress flex-grow-1" style="height:8px;min-width:80px;">
+                <div class="progress-bar bg-{{ 'success' if t.status == 'complete' else 'warning' }}"
+                     style="width:{{ t.hits_pct }}%"></div>
+              </div>
+              <small class="text-nowrap">{{ t.hits_done }}/{{ t.hits_needed }}</small>
+            </div>
+          </td>
+
+          <!-- Lealdade -->
+          <td>
+            {% if t.status == 'complete' %}
+              <span class="badge bg-success">Conquistada</span>
+            {% else %}
+              <div class="d-flex align-items-center gap-2">
+                <div class="progress flex-grow-1" style="height:10px;min-width:90px;">
+                  <div class="progress-bar bg-{{ t.loyalty_color }}"
+                       style="width:{{ t.loyalty_now }}%"
+                       title="{{ t.loyalty_now }}%"></div>
+                </div>
+                <small class="fw-bold text-{{ t.loyalty_color }} text-nowrap">
+                  {{ t.loyalty_now }}
+                </small>
+                {% if t.loyalty_source == 'report' %}
+                  <span title="Lealdade confirmada por relatorio" style="cursor:default;font-size:0.9rem;">&#128202;</span>
+                {% elif t.loyalty_source == 'ownership' %}
+                  <span title="Aldeia confirmada como sua" style="cursor:default;font-size:0.9rem;">&#127984;</span>
+                {% else %}
+                  <span title="Lealdade estimada (sem relatorio de noble)" style="cursor:default;opacity:0.5;font-size:0.9rem;">&#8776;</span>
+                {% endif %}
+              </div>
+              {% if t.loyalty_now <= 10 %}
+                <small class="text-danger d-block mt-1">⚠ Risco de regen alto!</small>
+              {% endif %}
+            {% endif %}
+          </td>
+
+          <!-- Último hit -->
+          <td>
+            <small class="text-muted">{{ t.last_hit_fmt }}</small>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Legenda de lealdade -->
+  <div class="mt-2 mb-4">
+    <small class="text-muted">
+      Lealdade: 
+      <span class="badge bg-success">Baixa (≤30%)</span>
+      <span class="badge bg-warning text-dark ms-1">Média (31–70%)</span>
+      <span class="badge bg-danger ms-1">Alta (&gt;70%)</span>
+      &nbsp;|
+      &#128202; real (relatório) &nbsp;
+      &#127984; posse confirmada &nbsp;
+      &#8776; estimada
+    </small>
+  </div>
+
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  const statusSel  = document.getElementById('filter-status');
+  const villageSel = document.getElementById('filter-village');
+
+  function applyFilters() {
+    const statusVal  = statusSel.value;
+    const villageVal = villageSel.value;
+    document.querySelectorAll('.conquest-row').forEach(function (row) {
+      const matchStatus  = !statusVal  || row.dataset.status  === statusVal;
+      const matchVillage = !villageVal || row.dataset.village === villageVal;
+      row.style.display  = (matchStatus && matchVillage) ? '' : 'none';
+    });
+  }
+
+  statusSel.addEventListener('change', applyFilters);
+  villageSel.addEventListener('change', applyFilters);
+})();
+</script>
+{% endblock %}

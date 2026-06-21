@@ -1,0 +1,132 @@
+{% extends "main.html" %}
+
+{% block content %}
+<div class="row mb-2 align-items-center">
+  <div class="col">
+    <h5 class="mb-0">Log Viewer</h5>
+  </div>
+  <div class="col-auto d-flex align-items-center">
+    <!-- Filtro por arquivo de log -->
+    <select id="log-file-select" class="form-control form-control-sm mr-2" style="max-width:220px">
+      {% for lf in log_files %}
+      <option value="{{ lf }}" {% if lf == selected_file %}selected{% endif %}>{{ lf }}</option>
+      {% endfor %}
+    </select>
+
+    <!-- Filtro por tipo de evento -->
+    <select id="event-filter" class="form-control form-control-sm mr-2" style="max-width:180px">
+      <option value="">Todos os eventos</option>
+      {% for et in event_types %}
+      <option value="{{ et }}">{{ et }}</option>
+      {% endfor %}
+    </select>
+
+    <!-- Filtro por aldeia -->
+    <select id="village-filter" class="form-control form-control-sm mr-2" style="max-width:150px">
+      <option value="">Todas as aldeias</option>
+      {% for vid in village_ids %}
+      <option value="{{ vid }}">{{ vid }}</option>
+      {% endfor %}
+    </select>
+
+    <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">↺ Atualizar</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-sm table-hover mb-0" id="log-table">
+      <thead class="thead-dark">
+        <tr>
+          <th style="width:160px">Horário</th>
+          <th style="width:90px">Aldeia</th>
+          <th style="width:180px">Evento</th>
+          <th>Mensagem</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in entries %}
+        <tr class="log-row"
+            data-event="{{ entry.event_type }}"
+            data-village="{{ entry.village_id }}">
+          <td class="text-muted small text-nowrap">{{ entry.datetime }}</td>
+          <td>
+            {% if entry.village_id %}
+              <small>{{ entry.village_id }}</small>
+            {% else %}
+              <small class="text-muted">—</small>
+            {% endif %}
+          </td>
+          <td>
+            {% set et = entry.event_type %}
+            {% if 'ERROR' in et or 'FAIL' in et %}
+              <span class="badge badge-danger">{{ et }}</span>
+            {% elif 'WARNING' in et or 'WARN' in et %}
+              <span class="badge badge-warning text-dark">{{ et }}</span>
+            {% elif 'START' in et %}
+              <span class="badge badge-success">{{ et }}</span>
+            {% elif 'ATTACK' in et or 'FARM' in et or 'CONQUEST' in et %}
+              <span class="badge badge-danger">{{ et }}</span>
+            {% elif 'RESOURCE' in et or 'MARKET' in et or 'TRADE' in et %}
+              <span class="badge badge-info">{{ et }}</span>
+            {% elif 'BUILD' in et or 'QUEUE' in et %}
+              <span class="badge badge-primary">{{ et }}</span>
+            {% elif 'RECRUIT' in et or 'UNIT' in et %}
+              <span class="badge" style="background:#8b6914;color:#fff">{{ et }}</span>
+            {% elif 'QUEST' in et %}
+              <span class="badge badge-success">{{ et }}</span>
+            {% elif et == 'BOT_START' %}
+              <span class="badge badge-secondary">{{ et }}</span>
+            {% else %}
+              <span class="badge badge-light border">{{ et }}</span>
+            {% endif %}
+          </td>
+          <td class="small">{{ entry.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not entries %}
+    <div class="text-center text-muted py-4">Nenhuma entrada encontrada.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="text-muted small mt-2">
+  <span id="visible-count">{{ entries | count }}</span> entradas exibidas
+  {% if entries %}· arquivo: <code>{{ selected_file }}</code>{% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Troca de arquivo de log — recarrega a página com o arquivo selecionado
+$('#log-file-select').change(function() {
+  window.location.href = '/logs?f=' + encodeURIComponent($(this).val());
+});
+
+// Filtros client-side por evento e aldeia
+function apply_filters() {
+  var event_filter  = $('#event-filter').val().toLowerCase();
+  var village_filter = $('#village-filter').val();
+  var visible = 0;
+
+  $('#log-table tbody tr').each(function() {
+    var ev  = $(this).attr('data-event') || '';
+    var vid = $(this).attr('data-village') || '';
+    var match_event   = !event_filter  || ev.toLowerCase() === event_filter;
+    var match_village = !village_filter || vid === village_filter;
+    if (match_event && match_village) {
+      $(this).show();
+      visible++;
+    } else {
+      $(this).hide();
+    }
+  });
+  $('#visible-count').text(visible);
+}
+
+$('#event-filter, #village-filter').change(apply_filters);
+</script>
+{% endblock %}
