@@ -18,6 +18,7 @@ from game.reports import ReportManager
 from game.resources import ResourceManager
 from game.snobber import SnobManager
 from game.troopmanager import TroopManager
+from game.zone_manager import ZoneManager
 from core.exceptions import *
 
 
@@ -215,6 +216,96 @@ class Village:
             )
         self.last_attack = self.def_man.under_attack
 
+        # Feature 12: preemptive regional evacuation
+        self._check_zone_evacuation()
+
+    def _check_zone_evacuation(self):
+        """
+        Feature 12 — Evacuação preventiva regional.
+
+        Se um número configurável de aldeias vizinhas na mesma zona geográfica
+        estiverem sob ataque, aciona evacuação das unidades frágeis (snob, axe)
+        desta aldeia antes que ela própria seja atacada.
+
+        Pré-requisitos por aldeia:
+          - evacuate_on_zone_attack: true
+          - evacuate_fragile_units_on_attack: true  (reutiliza a flag existente)
+          - zone_attack_threshold: N  (quantidade mínima de vizinhos sob ataque)
+
+        Idempotente: DefenceManager.evacuate() não faz nada se já não há
+        unidades frágeis em casa, portanto chamadas repetidas são seguras.
+        """
+        # Não duplicar com a evacuação normal (aldeia já sob ataque)
+        if self.def_man.under_attack:
+            return
+
+        if not self.get_village_config(
+            self.village_id, "evacuate_on_zone_attack", default=False
+        ):
+            return
+
+        if not self.get_village_config(
+            self.village_id, "evacuate_fragile_units_on_attack", default=False
+        ):
+            self.logger.debug(
+                "Feature 12: evacuate_on_zone_attack=true mas "
+                "evacuate_fragile_units_on_attack=false — evacuação não executada"
+            )
+            return
+
+        # Carrega dados de zona do ciclo anterior (lag de 1 ciclo aceitável)
+        zone_data = ZoneManager.load()
+        if not zone_data:
+            self.logger.debug("Feature 12: cache de zonas não disponível ainda")
+            return
+
+        zm = ZoneManager()
+        zm.zones = zone_data.get("zones", {})
+        zm.village_zone = zone_data.get("village_zone", {})
+
+        neighbors = zm.get_neighbors(self.village_id)
+        if not neighbors:
+            self.logger.debug(
+                "Feature 12: aldeia %s não possui vizinhos de zona", self.village_id
+            )
+            return
+
+        # Carrega estado de ataque dos vizinhos
+        managed_cache = {}
+        for nid in neighbors:
+            cached = FileManager.load_json_file(f"cache/managed/{nid}.json")
+            if cached:
+                managed_cache[nid] = cached
+
+        neighbors_under_attack = sum(
+            1 for nid in neighbors
+            if managed_cache.get(nid, {}).get("under_attack", False)
+        )
+
+        threshold = self.get_village_config(
+            self.village_id, "zone_attack_threshold", default=1
+        )
+
+        if neighbors_under_attack < threshold:
+            self.logger.debug(
+                "Feature 12: %d/%d vizinhos sob ataque (threshold=%d) — sem evacuação",
+                neighbors_under_attack, len(neighbors), threshold
+            )
+            return
+
+        self.logger.warning(
+            "Feature 12: %d/%d vizinho(s) de zona sob ataque — "
+            "acionando evacuação preventiva para aldeia %s",
+            neighbors_under_attack, len(neighbors), self.village_id
+        )
+        self.wrapper.reporter.report(
+            self.village_id,
+            "TWB_ZONE_EVACUATE",
+            f"Evacuação preventiva: {neighbors_under_attack}/{len(neighbors)} "
+            f"vizinho(s) de zona sob ataque (threshold={threshold})"
+        )
+        self.def_man.evacuate()
+
     def run_quest_actions(self, config):
         if self.get_config(section="world", parameter="quests_enabled", default=False):
             if self.get_quests():
@@ -246,7 +337,7 @@ class Village:
         )
         if not unit_config:
             self.logger.warning(
-                "Village %d does not have 'units' config override!", self.village_id
+                "Village %s does not have 'units' config override!", self.village_id
             )
             unit_config = self.get_config(
                 section="units", parameter="default", default="basic"

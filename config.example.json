@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.1",
+    "version": "2.2",
     "author": "stefan2200"
   },
   "server": {
@@ -80,6 +80,8 @@
     "advanced_gather": true,
     "snobs": 0,
     "evacuate_fragile_units_on_attack": false,
+    "evacuate_on_zone_attack": false,
+    "zone_attack_threshold": 1,
     "support_others": false,
     "support_others_factor": 0.25,
     "support_others_max_villages": 2,
