@@ -38,6 +38,7 @@ from core.filemanager import FileManager
 from core.request import WebWrapper
 from game.village import Village
 from game.hunter import Hunter
+from game.pvp_conquest import PvpConquestManager
 from game.zone_manager import ZoneManager
 from manager import VillageManager
 from pages.overview import OverviewPage
@@ -507,6 +508,20 @@ class TWB:
                 if self.hunter:
                     self.hunter.run(config)
 
+                # Feature 13: PvP Conquest — processa alvos semi-manuais
+                if config.get("pvp_conquest", {}).get("enabled", False):
+                    managed_villages_dict = {
+                        v.village_id: v
+                        for v in self.villages
+                        if v.village_id in self.found_villages
+                    }
+                    pvp = PvpConquestManager(
+                        wrapper=self.wrapper,
+                        villages=managed_villages_dict,
+                        config=config,
+                    )
+                    pvp.run()
+
     def start(self):
         """
         First run, verify if dirctory structure exist
@@ -520,6 +535,7 @@ class TWB:
             "cache/managed",
             "cache/hunter",
             "cache/zones",
+            "cache/pvp_conquest",
         ]
         FileManager.create_directories(directories)
 

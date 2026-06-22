@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.2",
+    "version": "2.3",
     "author": "stefan2200"
   },
   "server": {
@@ -167,6 +167,14 @@
   "zones": {
     "enabled": true,
     "radius": 10
+  },
+  "pvp_conquest": {
+    "enabled": false,
+    "clear_ratio": 0.8,
+    "min_attack_power": 50000,
+    "nobles_per_target": 4,
+    "arrival_buffer_seconds": 2,
+    "scout_amount": 5
   },
   "villages": {}
 }

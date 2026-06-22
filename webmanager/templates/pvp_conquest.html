@@ -1,0 +1,287 @@
+{% extends "main.html" %}
+{% block title %}Conquista PvP{% endblock %}
+
+{% block content %}
+<style>
+  .sim-bar { height: 8px; border-radius: 4px; }
+  .unit-chip { display:inline-flex; align-items:center; gap:3px; background:#f8f0d8;
+               border:1px solid #c8a96e; border-radius:3px; padding:1px 5px;
+               font-size:0.75rem; margin:1px; }
+  .status-timeline { display:flex; gap:0; }
+  .status-step { flex:1; text-align:center; font-size:0.7rem; padding:3px 0;
+                 border-bottom:3px solid #dee2e6; color:#aaa; }
+  .status-step.done { border-color:#28a745; color:#28a745; font-weight:600; }
+  .status-step.active { border-color:#d4a843; color:#2c1810; font-weight:700; }
+  .status-step.failed { border-color:#dc3545; color:#dc3545; font-weight:600; }
+  .sim-block { background:#fdfaf3; border:1px solid #e8d9a0; border-radius:4px; padding:8px 12px; font-size:0.82rem; }
+</style>
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0" style="color:#2c1810;">⚔ Conquista PvP</h4>
+  <div class="d-flex align-items-center">
+    <button id="btn-toggle-pvp"
+            class="btn btn-sm {% if enabled %}btn-success{% else %}btn-danger{% endif %} mr-3"
+            onclick="togglePvp()">
+      {% if enabled %}Ativado{% else %}Desativado{% endif %}
+    </button>
+    <span class="badge bg-secondary mr-2">{{ targets | selectattr('status','equalto','pending_scout') | list | length }} aguardando scout</span>
+    <span class="badge bg-warning text-dark mr-2">{{ targets | selectattr('status','equalto','pending_sim') | list | length }} aguardando sim</span>
+    <span class="badge bg-primary mr-2">{{ targets | selectattr('status','equalto','scheduled') | list | length }} agendados</span>
+    <span class="badge bg-success mr-2">{{ targets | selectattr('status','equalto','complete') | list | length }} completos</span>
+    <button class="btn btn-primary btn-sm ml-2" data-toggle="modal" data-target="#modal-new-target">
+      + Novo Alvo
+    </button>
+  </div>
+</div>
+
+{% if not enabled %}
+<div class="alert alert-warning mb-3">
+  <strong>PvP Conquest desativado.</strong> Ative acima para que o bot processe os alvos automaticamente.
+</div>
+{% endif %}
+
+{% if not targets %}
+<div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+  <strong>Nenhum alvo registrado.</strong>
+  Clique em <strong>+ Novo Alvo</strong> para definir uma aldeia inimiga a conquistar.
+  Os dados ficam em <code>cache/pvp_conquest/*.json</code>.
+</div>
+{% else %}
+
+{% for t in targets %}
+<div class="card mb-3" style="border-color:{% if t.status == 'complete' %}#28a745{% elif t.status == 'failed' %}#dc3545{% elif t.status == 'scheduled' %}#2471a3{% else %}#c8a96e{% endif %};">
+  <div class="card-body pb-2">
+
+    <!-- Cabeçalho -->
+    <div class="d-flex justify-content-between align-items-start mb-2">
+      <div>
+        <h6 class="mb-0">
+          Alvo <span class="font-monospace">#{{ t.target_id }}</span>
+          {% if t.target_name %}<small class="text-muted ml-2">{{ t.target_name }}</small>{% endif %}
+        </h6>
+        <small class="text-muted">Chegada: {{ t.arrival_str }}</small>
+        {% if t.time_to_arrival is not none %}
+          {% if t.time_to_arrival > 0 %}
+            <small class="text-muted ml-2">— em {{ t.time_to_arrival_fmt }}</small>
+          {% else %}
+            <small class="text-danger ml-2">— passado</small>
+          {% endif %}
+        {% endif %}
+      </div>
+      <div class="d-flex align-items-center">
+        <span class="badge badge-{{ t.status_color }} mr-2">{{ t.status_label }}</span>
+        {% if t.status in ['pending_scout','pending_sim','failed'] %}
+        <form method="post" action="/pvp_conquest/delete" style="display:inline">
+          <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
+          <button type="submit" class="btn btn-outline-danger btn-sm"
+                  onclick="return confirm('Remover alvo {{ t.target_id }}?')">✕</button>
+        </form>
+        {% else %}
+        <form method="post" action="/pvp_conquest/delete" style="display:inline">
+          <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
+          <button type="submit" class="btn btn-outline-secondary btn-sm">Limpar</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Timeline de status -->
+    <div class="status-timeline mb-3">
+      {% set steps = [('pending_scout','Scout'),('pending_sim','Simulação'),('scheduled','Agendado'),('complete','Conquistado')] %}
+      {% set status_order = {'pending_scout':0,'pending_sim':1,'scheduled':2,'complete':3,'failed':99} %}
+      {% for s_key, s_label in steps %}
+        {% set this_order = status_order[s_key] %}
+        {% set cur_order = status_order.get(t.status, 0) %}
+        {% if t.status == 'failed' and s_key == 'scheduled' %}
+          <div class="status-step failed">{{ s_label }} ✕</div>
+        {% elif this_order < cur_order %}
+          <div class="status-step done">{{ s_label }} ✓</div>
+        {% elif this_order == cur_order %}
+          <div class="status-step active">{{ s_label }}</div>
+        {% else %}
+          <div class="status-step">{{ s_label }}</div>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    <div class="row">
+
+      <!-- Coluna esquerda: configuração -->
+      <div class="col-md-5">
+        <table class="table table-sm table-borderless mb-0" style="font-size:0.82rem;">
+          <tr>
+            <td class="text-muted" style="width:110px">Aldeia de limpeza</td>
+            <td>
+              {% if t.clear_village_id %}
+                <strong>{{ t.clear_village_id }}</strong>
+                {% if t.clear_village_name %}<small class="text-muted">({{ t.clear_village_name }})</small>{% endif %}
+              {% else %}
+                <small class="text-muted">Seleção automática</small>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td class="text-muted">Aldeias nobles</td>
+            <td>
+              {% if t.noble_villages %}
+                {% for nvid in t.noble_villages %}
+                  <span class="unit-chip">{{ nvid }}</span>
+                {% endfor %}
+              {% else %}
+                <small class="text-muted">Auto (todas com noble)</small>
+              {% endif %}
+            </td>
+          </tr>
+          {% if t.scout_village_id %}
+          <tr>
+            <td class="text-muted">Scout enviado de</td>
+            <td><small>{{ t.scout_village_id }}</small></td>
+          </tr>
+          {% endif %}
+        </table>
+      </div>
+
+      <!-- Coluna direita: resultado de simulação -->
+      <div class="col-md-7">
+        {% if t.last_simulation %}
+        <div class="sim-block">
+          <div class="d-flex justify-content-between mb-1">
+            <strong class="small">Última simulação</strong>
+            <span class="badge badge-{% if t.last_simulation.viable %}success{% else %}danger{% endif %}">
+              {% if t.last_simulation.viable %}Viável{% else %}Inviável{% endif %}
+            </span>
+          </div>
+          <div class="row g-1" style="font-size:0.78rem;">
+            <div class="col-6">
+              <span class="text-muted">Poder de ataque:</span>
+              <strong>{{ t.last_simulation.att_power | int }}</strong>
+            </div>
+            <div class="col-6">
+              <span class="text-muted">Muralha:</span>
+              {{ t.last_simulation.wall_before }} → {{ t.last_simulation.wall_after }}
+            </div>
+            <div class="col-6">
+              <span class="text-muted">Baixas do ataque:</span>
+              {% set loss_pct = (t.last_simulation.att_losses / [t.last_simulation.att_total,1]|max * 100) | int %}
+              <span class="{% if loss_pct > 50 %}text-danger{% elif loss_pct > 25 %}text-warning{% else %}text-success{% endif %}">
+                {{ t.last_simulation.att_losses }}/{{ t.last_simulation.att_total }} ({{ loss_pct }}%)
+              </span>
+            </div>
+            <div class="col-6">
+              <span class="text-muted">Defensores eliminados:</span>
+              {% set def_pct = (t.last_simulation.def_losses / [t.last_simulation.def_total,1]|max * 100) | int %}
+              <span class="{% if def_pct >= 90 %}text-success{% elif def_pct >= 50 %}text-warning{% else %}text-danger{% endif %}">
+                {{ t.last_simulation.def_losses }}/{{ t.last_simulation.def_total }} ({{ def_pct }}%)
+              </span>
+            </div>
+          </div>
+          {% if t.fail_reason %}
+          <div class="mt-1 text-danger small">Motivo: {{ t.fail_reason_label }}</div>
+          {% endif %}
+        </div>
+        {% elif t.status == 'failed' and t.fail_reason %}
+        <div class="sim-block">
+          <span class="text-danger small">{{ t.fail_reason_label }}</span>
+        </div>
+        {% elif t.status in ['pending_scout','pending_sim'] %}
+        <div class="text-muted small mt-1">
+          {% if t.status == 'pending_scout' %}Aguardando envio do scout…{% else %}Scout enviado, aguardando relatório…{% endif %}
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Override manual de clear village (pending_scout ou pending_sim) -->
+    {% if t.status in ['pending_scout','pending_sim'] %}
+    <hr class="my-2"/>
+    <form method="post" action="/pvp_conquest/set_clear" class="form-inline">
+      <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
+      <label class="mr-2 small">Forçar aldeia de limpeza:</label>
+      <select name="clear_village_id" class="form-control form-control-sm mr-2" style="max-width:200px">
+        <option value="">Automático</option>
+        {% for vid in managed_villages %}
+        <option value="{{ vid }}" {% if t.clear_village_id == vid %}selected{% endif %}>
+          {{ vid }}{% if managed_villages[vid] %} — {{ managed_villages[vid] }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-outline-secondary btn-sm">Definir</button>
+    </form>
+    {% endif %}
+
+  </div>
+</div>
+{% endfor %}
+{% endif %}
+
+<div class="text-muted small mt-2">
+  O bot avança o status automaticamente a cada ciclo.
+  Simulações usam o relatório de scout mais recente disponível em <code>cache/reports/</code>.
+</div>
+
+<!-- ===================== MODAL NOVO ALVO ===================== -->
+<div class="modal fade" id="modal-new-target" tabindex="-1" role="dialog">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <form method="post" action="/pvp_conquest/add">
+        <div class="modal-header" style="background:#2c1810;color:#d4a843;">
+          <h5 class="modal-title">Novo Alvo PvP</h5>
+          <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
+        </div>
+        <div class="modal-body">
+
+          <div class="form-group">
+            <label class="font-weight-bold">ID da aldeia alvo</label>
+            <input type="text" name="target_id" class="form-control" placeholder="ex: 123456" required/>
+            <small class="text-muted">ID numérico da aldeia no TW.</small>
+          </div>
+
+          <div class="form-group">
+            <label class="font-weight-bold">Horário de chegada dos nobles</label>
+            <input type="datetime-local" name="arrival_time" class="form-control" required/>
+            <small class="text-muted">O clear chegará {{ pvp_cfg.arrival_buffer_seconds | default(2) }}s antes.</small>
+          </div>
+
+          <div class="form-group">
+            <label class="font-weight-bold">Aldeia de limpeza (opcional)</label>
+            <select name="clear_village_id" class="form-control">
+              <option value="">Automático (maior poder ofensivo)</option>
+              {% for vid in managed_villages %}
+              <option value="{{ vid }}">
+                {{ vid }}{% if managed_villages[vid] %} — {{ managed_villages[vid] }}{% endif %}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="alert alert-info small mb-0">
+            <strong>Noble villages:</strong> o bot seleciona automaticamente todas as aldeias gerenciadas com noble disponível.
+            Você pode sobrescrever isso editando <code>cache/pvp_conquest/{id}.json</code> diretamente.
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Registrar alvo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function togglePvp() {
+  var btn = $('#btn-toggle-pvp');
+  var isEnabled = btn.hasClass('btn-success');
+  $.getJSON('/app/config/set?parameter=pvp_conquest.enabled&value=' + (!isEnabled), function() {
+    if (!isEnabled) {
+      btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
+    } else {
+      btn.removeClass('btn-success').addClass('btn-danger').text('Desativado');
+    }
+  });
+}
+</script>
+{% endblock %}

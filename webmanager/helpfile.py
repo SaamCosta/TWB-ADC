@@ -104,10 +104,17 @@ help_file = {
     'zones': 'Agrupamento geográfico de aldeias em zonas por proximidade (Feature 11)',
     'zones.enabled': 'Ativar o sistema de zonas geográficas',
     'zones.radius': 'Raio em campos para agrupar aldeias na mesma zona (padrão: 10)',
+    'pvp_conquest': 'Agendamento semi-manual de conquistas PvP com scout + simulação + Hunter (Feature 13)',
+    'pvp_conquest.enabled': 'Ativar o módulo de conquista PvP',
+    'pvp_conquest.clear_ratio': 'Fração das tropas da aldeia ofensiva usada no clear (ex: 0.8 = 80%)',
+    'pvp_conquest.min_attack_power': 'Poder de ataque mínimo (soma ATT × quantidade) para considerar o clear viável',
+    'pvp_conquest.nobles_per_target': 'Número máximo de nobles a enviar por alvo',
+    'pvp_conquest.arrival_buffer_seconds': 'Segundos de antecedência do clear em relação aos nobles',
+    'pvp_conquest.scout_amount': 'Número de espiões usados no scout inicial do alvo',
 }
 
 buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "place", "statue", "market", "wood",
              "stone", "iron", "farm", "hide", "wall", "snob", "church"]
 
 # Sections that contain nested dicts and need special rendering in the config UI
-nested_sections = ["conquest", "resource_sharing", "inheritance", "empire", "profile_templates"]
+nested_sections = ["conquest", "resource_sharing", "inheritance", "empire", "profile_templates", "pvp_conquest"]

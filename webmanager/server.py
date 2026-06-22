@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -308,6 +308,52 @@ def get_zones():
     enabled = config.get("zones", {}).get("enabled", True)
     return render_template('zones.html', data=sync_data, zone_data=zone_data,
                            zones_json=zones_json, radius=radius, enabled=enabled)
+
+
+@app.route('/pvp_conquest', methods=['GET'])
+def get_pvp_conquest():
+    config = DataReader.config_grab()
+    enabled = config.get("pvp_conquest", {}).get("enabled", False)
+    pvp_cfg = config.get("pvp_conquest", {})
+    targets = PvpConquestReader.load()
+    managed = sync()["bot"]
+    managed_villages = {vid: managed[vid].get("public", {}).get("name", "") for vid in managed}
+    return render_template(
+        "pvp_conquest.html",
+        enabled=enabled,
+        targets=targets,
+        managed_villages=managed_villages,
+        pvp_cfg=pvp_cfg,
+    )
+
+
+@app.route('/pvp_conquest/add', methods=['POST'])
+def pvp_conquest_add():
+    target_id = request.form.get("target_id", "").strip()
+    arrival_raw = request.form.get("arrival_time", "").strip()
+    arrival_str = arrival_raw.replace("T", " ")
+    if len(arrival_str) == 16:
+        arrival_str += ":00"
+    clear_vid = request.form.get("clear_village_id", "").strip() or None
+    PvpConquestReader.add(target_id, arrival_str, clear_village_id=clear_vid)
+    return redirect(url_for("get_pvp_conquest"))
+
+
+@app.route('/pvp_conquest/delete', methods=['POST'])
+def pvp_conquest_delete():
+    target_id = request.form.get("target_id", "")
+    if target_id:
+        PvpConquestReader.delete(target_id)
+    return redirect(url_for("get_pvp_conquest"))
+
+
+@app.route('/pvp_conquest/set_clear', methods=['POST'])
+def pvp_conquest_set_clear():
+    target_id = request.form.get("target_id", "")
+    clear_vid  = request.form.get("clear_village_id", "").strip() or None
+    if target_id:
+        PvpConquestReader.set_clear_village(target_id, clear_vid)
+    return redirect(url_for("get_pvp_conquest"))
 
 
 if len(sys.argv) > 1:

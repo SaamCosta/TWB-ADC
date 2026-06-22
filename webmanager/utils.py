@@ -686,6 +686,148 @@ class ZoneReader:
         return {"zones": zones_out, "radius": radius, "all_villages": all_villages}
 
 
+class PvpConquestReader:
+    """
+    Lê, cria e deleta alvos PvP em cache/pvp_conquest/*.json.
+    """
+
+    DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
+
+    STATUS_LABELS = {
+        "pending_scout": "Aguardando Scout",
+        "pending_sim":   "Aguardando Simulação",
+        "scheduled":     "Agendado",
+        "complete":      "Conquistado",
+        "failed":        "Falhou",
+    }
+    STATUS_COLORS = {
+        "pending_scout": "secondary",
+        "pending_sim":   "warning",
+        "scheduled":     "primary",
+        "complete":      "success",
+        "failed":        "danger",
+    }
+    FAIL_REASON_LABELS = {
+        "no_clear_village":  "Nenhuma aldeia ofensiva disponível para limpeza.",
+        "simulation_failed": "Simulação indicou ataque inviável (tropas insuficientes).",
+        "no_nobles":         "Nenhuma aldeia com noble disponível.",
+    }
+
+    @staticmethod
+    def _dir():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "pvp_conquest")
+
+    @staticmethod
+    def _load_all():
+        d = PvpConquestReader._dir()
+        os.makedirs(d, exist_ok=True)
+        out = {}
+        for fname in os.listdir(d):
+            if not fname.endswith(".json"):
+                continue
+            tid = fname.replace(".json", "")
+            try:
+                with open(os.path.join(d, fname)) as f:
+                    out[tid] = json.load(f)
+            except Exception:
+                pass
+        return out
+
+    @staticmethod
+    def _save(target_id, data):
+        d = PvpConquestReader._dir()
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, f"{target_id}.json"), "w") as f:
+            json.dump(data, f, indent=2)
+
+    @staticmethod
+    def load():
+        raw = PvpConquestReader._load_all()
+        now = datetime.datetime.now().timestamp()
+        out = []
+        for tid, data in raw.items():
+            arrival_ts = data.get("arrival_time", 0)
+            arrival_str = data.get("arrival_str", "")
+            if not arrival_str and arrival_ts:
+                arrival_str = datetime.datetime.fromtimestamp(arrival_ts).strftime(
+                    PvpConquestReader.DATETIME_FMT
+                )
+
+            time_to_arrival = round(arrival_ts - now) if arrival_ts else None
+            if time_to_arrival is not None:
+                abs_t = abs(time_to_arrival)
+                h, rem = divmod(abs_t, 3600)
+                m, s   = divmod(rem, 60)
+                time_to_arrival_fmt = "%dh%02dm%02ds" % (h, m, s)
+            else:
+                time_to_arrival_fmt = ""
+
+            status = data.get("status", "pending_scout")
+            sim    = data.get("last_simulation")
+
+            out.append({
+                "target_id":           tid,
+                "target_name":         data.get("target_name", ""),
+                "arrival_str":         arrival_str,
+                "arrival_ts":          arrival_ts,
+                "time_to_arrival":     time_to_arrival,
+                "time_to_arrival_fmt": time_to_arrival_fmt,
+                "status":              status,
+                "status_label":        PvpConquestReader.STATUS_LABELS.get(status, status),
+                "status_color":        PvpConquestReader.STATUS_COLORS.get(status, "secondary"),
+                "clear_village_id":    data.get("clear_village_id"),
+                "clear_village_name":  data.get("clear_village_name", ""),
+                "noble_villages":      data.get("noble_villages", []),
+                "scout_village_id":    data.get("scout_village_id"),
+                "last_simulation":     sim,
+                "fail_reason":         data.get("fail_reason"),
+                "fail_reason_label":   PvpConquestReader.FAIL_REASON_LABELS.get(
+                                           data.get("fail_reason", ""), data.get("fail_reason", "")
+                                       ),
+            })
+
+        order = {"pending_scout": 0, "pending_sim": 1, "scheduled": 2, "failed": 3, "complete": 4}
+        out.sort(key=lambda x: (order.get(x["status"], 9), x["arrival_ts"]))
+        return out
+
+    @staticmethod
+    def add(target_id, arrival_str, clear_village_id=None):
+        try:
+            arrival_ts = datetime.datetime.strptime(
+                arrival_str, PvpConquestReader.DATETIME_FMT
+            ).timestamp()
+        except ValueError:
+            return False
+        data = {
+            "target_id":        str(target_id),
+            "arrival_time":     arrival_ts,
+            "arrival_str":      arrival_str,
+            "status":           "pending_scout",
+            "clear_village_id": str(clear_village_id) if clear_village_id else None,
+        }
+        PvpConquestReader._save(str(target_id), data)
+        return True
+
+    @staticmethod
+    def delete(target_id):
+        path = os.path.join(PvpConquestReader._dir(), f"{target_id}.json")
+        if os.path.exists(path):
+            os.remove(path)
+        return True
+
+    @staticmethod
+    def set_clear_village(target_id, clear_village_id):
+        path = os.path.join(PvpConquestReader._dir(), f"{target_id}.json")
+        if not os.path.exists(path):
+            return False
+        with open(path) as f:
+            data = json.load(f)
+        data["clear_village_id"] = str(clear_village_id) if clear_village_id else None
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        return True
+
+
 class FarmScoreReader:
     @staticmethod
     def load():
