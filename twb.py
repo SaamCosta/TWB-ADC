@@ -213,9 +213,16 @@ class TWB:
 
     def get_overview(self, config):
         """
-        Gets the overview page to automatically detect world options and owned villages
+        Gets the overview page to automatically detect world options and owned villages.
+        Returns (None, config) if the page could not be fetched due to a network issue,
+        so the caller can skip this cycle instead of crashing.
         """
-        overview_page = OverviewPage(self.wrapper)
+        try:
+            overview_page = OverviewPage(self.wrapper)
+        except RuntimeError as e:
+            logging.warning("get_overview: %s — skipping this cycle.", e)
+            return None, config
+
         self.found_villages = Extractor.village_ids_from_overview(overview_page.result_get.text)
 
         # Remove stale entries for villages no longer owned by the player.
@@ -307,7 +314,7 @@ class TWB:
         active_h = [int(hour) for hour in config["bot"]["active_hours"].split("-")]
         get_h = time.localtime().tm_hour
         return get_h in range(active_h[0], active_h[1])
-    
+
     @staticmethod
     def is_village_active_hours(village_id, config):
         """
@@ -400,6 +407,16 @@ class TWB:
             else:
                 config = self.config()
                 overview_page, config = self.get_overview(config)
+
+                # Network timeout or expired session — sleep and retry next cycle
+                if overview_page is None:
+                    sleep = config["bot"]["active_delay"] + random.randint(20, 60)
+                    logging.warning(
+                        "Overview unavailable, sleeping %.0fs before retry.", sleep
+                    )
+                    time.sleep(sleep)
+                    continue
+
                 has_changed, new_cf = self.get_world_options(overview_page, config)
                 if has_changed:
                     print("Updated world options")

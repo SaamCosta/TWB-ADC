@@ -212,10 +212,21 @@ class OverviewPage:
 
         Args:
             wrapper: The wrapper object for making HTTP requests.
+
+        Raises:
+            RuntimeError: If the overview page cannot be fetched (e.g. network timeout).
         """
         self.wrapper: WebWrapper = wrapper
         self.world_settings: WorldSettings = WorldSettings()
         self.result_get: Response = self._get_overview_villages_data()
+
+        # Guard: network timeout or session error returns None from get_url
+        if self.result_get is None:
+            raise RuntimeError(
+                "Overview page returned None — likely a network timeout or expired session. "
+                "The bot will retry on the next cycle."
+            )
+
         self.soup = BeautifulSoup(self.result_get.text, "html.parser")
         self.header_info = self.soup.find("table", id="header_info")
         self.production_table = self.soup.find("table", id="production_table")
