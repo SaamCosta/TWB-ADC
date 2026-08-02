@@ -6,6 +6,21 @@ import time
 
 from core.extractors import Extractor
 
+# Mapeamento dos 8 tipos de bandeira do jogo (ver docs/bugs_flags.md).
+# O bot hoje só gerencia ativamente os tipos 1 (produção) e 4 (defesa) via
+# set_flag_not_under_attack/set_flag_under_attack, mas o mapeamento completo
+# é usado para exibir nomes legíveis no webmanager (Feature 19).
+FLAG_TYPES = {
+    1: "Produção",
+    2: "Recrutamento",
+    3: "Ataque",
+    4: "Defesa",
+    5: "Sorte",
+    6: "População",
+    7: "Custo de cunhagem",
+    8: "Saque",
+}
+
 
 class DefenceManager:
     wrapper = None

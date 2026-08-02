@@ -1045,6 +1045,22 @@ class Village:
         zone_data = FileManager.load_json_file("cache/zones.json") or {}
         current_zone = zone_data.get("village_zone", {}).get(self.village_id, None)
 
+        # Feature 19: expose DefenceManager's in-memory flag state so the
+        # webmanager (separate process, only reads cache/) can show it.
+        # _upgrade_attempts has tuple keys (flag_type, level) which aren't
+        # valid JSON object keys -- flatten to "type:level" strings.
+        flag_state = {
+            "current_flag": self.def_man.current_flag,
+            "flag_state_confirmed": self.def_man._flag_state_confirmed,
+            "can_change_flag": self.def_man._can_change_flag,
+            "manage_flags_enabled": self.def_man.manage_flags_enabled,
+            "available_flags": self.def_man.flags,
+            "upgrade_attempts": {
+                f"{flag_type}:{level}": count
+                for (flag_type, level), count in self.def_man._upgrade_attempts.items()
+            },
+        }
+
         village_entry = {
             "name": self.game_data["village"]["name"],
             "x": self.game_data["village"].get("x", 0),
@@ -1061,5 +1077,6 @@ class Village:
             "last_run": int(time.time()),
             "zone": current_zone,
             "points": self.points,
+            "flags": flag_state,
         }
         FileManager.save_json_file(village_entry, f"cache/managed/{self.village_id}.json")

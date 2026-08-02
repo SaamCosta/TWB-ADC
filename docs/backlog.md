@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager
 
@@ -47,7 +47,7 @@ para dar o dado de pontos do atacante. **Fórmula de moral é aproximação
 best-effort** (sem fórmula oficial pública) — aguardando validação de campo do
 usuário antes de virar default `true`. Build version bumpada 2.3 → 2.4.
 
-## Feature 19 — Página de status de bandeiras no webmanager
+## Feature 19 — Página de status de bandeiras no webmanager ✅ Implementado (2026-08-02)
 
 Não existe rota nem template no webmanager para visualizar o estado de
 bandeiras por aldeia (`current_flag`, cooldown via `_can_change_flag`,
@@ -57,6 +57,23 @@ dashboard ajudaria a validar em campo que os fixes funcionam sem precisar ler
 logs brutos. Consumiria estado hoje só mantido em memória em `DefenceManager`
 (considerar persistir em `cache/` se for exposto via webmanager, que roda
 como processo separado).
+
+**Status:** `Village.set_cache_vars()` (`game/village.py`) agora persiste um
+bloco `"flags"` em `cache/managed/{village_id}.json` a cada ciclo — snapshot
+de `current_flag`, `_flag_state_confirmed`, `_can_change_flag`,
+`manage_flags_enabled`, bandeiras disponíveis no inventário (`self.flags`) e
+`_upgrade_attempts` (achatado de tupla para string `"tipo:nível"`, já que
+chaves de dict em JSON precisam ser string). Novo `FlagReader` em
+`webmanager/utils.py` lê e formata esse bloco (nomes dos 8 tipos de bandeira
+via `FLAG_TYPE_NAMES`, espelhando `game/defence_manager.py::FLAG_TYPES`).
+Nova rota `/flags` e template `webmanager/templates/flags.html` — um card por
+aldeia com bandeira atual, estado de cooldown, inventário de bandeiras e
+tentativas de upgrade em curso, com aviso de que o dado reflete o último
+ciclo concluído (não é live). Link adicionado na nav de `main.html`. Nenhuma
+config nova — não foi necessário bumpar `build.version`.
+**Limitação conhecida:** só mostra dados depois do primeiro ciclo completo de
+cada aldeia; aldeias novas ou com `manage_flags_enabled: false` desde sempre
+não aparecem/aparecem vazias até rodar.
 
 ## Feature 20 — Página de resource sharing no webmanager
 

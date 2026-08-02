@@ -828,6 +828,92 @@ class PvpConquestReader:
         return True
 
 
+class FlagReader:
+    """
+    Le o estado de bandeiras persistido por Village.set_cache_vars() em
+    cache/managed/{village_id}.json (chave "flags", Feature 19).
+
+    DefenceManager mantem esse estado apenas em memoria, um processo por
+    aldeia dentro do bot -- o webmanager roda separado e so ve o que foi
+    salvo em disco no ultimo ciclo daquela aldeia.
+    """
+
+    # Mesmo mapeamento de game/defence_manager.py::FLAG_TYPES, duplicado aqui
+    # para nao acoplar o webmanager a um import de game/ (mantem o webmanager
+    # rodavel mesmo sem as dependencias do bot instaladas).
+    FLAG_TYPE_NAMES = {
+        1: "Produção", 2: "Recrutamento", 3: "Ataque", 4: "Defesa",
+        5: "Sorte", 6: "População", 7: "Custo de cunhagem", 8: "Saque",
+    }
+
+    @staticmethod
+    def load(managed_cache):
+        """
+        managed_cache: dict {village_id: cache/managed/{id}.json content},
+        ja carregado por DataReader.cache_grab("managed") via sync().
+        Retorna lista de entradas formatadas para o template, uma por aldeia
+        que tenha alguma informacao de flags salva.
+        """
+        out = []
+        for vid, vdata in managed_cache.items():
+            flags = vdata.get("flags")
+            if flags is None:
+                continue
+            pub = vdata.get("public", {}) or {}
+            current = flags.get("current_flag")
+            current_type = current[0] if current else None
+            current_level = current[1] if current else None
+            confirmed = flags.get("flag_state_confirmed", False)
+
+            if not confirmed:
+                flag_label = "Estado ainda não lido"
+                flag_color = "secondary"
+            elif current_type is None:
+                flag_label = "Nenhuma bandeira equipada"
+                flag_color = "warning"
+            else:
+                type_name = FlagReader.FLAG_TYPE_NAMES.get(current_type, "Tipo %s" % current_type)
+                flag_label = "%s (nível %s)" % (type_name, current_level)
+                flag_color = "success"
+
+            can_change = flags.get("can_change_flag", True)
+            cooldown_label = "Livre" if can_change else "Em cooldown"
+            cooldown_color = "success" if can_change else "danger"
+
+            available = flags.get("available_flags", {}) or {}
+            available_fmt = [
+                {"type_id": t, "type_name": FlagReader.FLAG_TYPE_NAMES.get(int(t), "Tipo %s" % t), "level": lvl}
+                for t, lvl in available.items()
+            ]
+
+            attempts_fmt = []
+            for key, count in (flags.get("upgrade_attempts") or {}).items():
+                flag_type, level = (key.split(":") + ["?"])[:2]
+                attempts_fmt.append({
+                    "type_name": FlagReader.FLAG_TYPE_NAMES.get(int(flag_type), "Tipo %s" % flag_type) if flag_type.isdigit() else flag_type,
+                    "level": level,
+                    "count": count,
+                    "exhausted": count >= 2,
+                })
+
+            out.append({
+                "village_id": vid,
+                "village_name": pub.get("name", vdata.get("name", "Aldeia %s" % vid)),
+                "manage_flags_enabled": flags.get("manage_flags_enabled", True),
+                "flag_label": flag_label,
+                "flag_color": flag_color,
+                "cooldown_label": cooldown_label,
+                "cooldown_color": cooldown_color,
+                "under_attack": vdata.get("under_attack", False),
+                "available_flags": available_fmt,
+                "upgrade_attempts": attempts_fmt,
+                "last_run": vdata.get("last_run", 0),
+            })
+
+        out.sort(key=lambda v: v["village_name"])
+        return out
+
+
 class FarmScoreReader:
     @staticmethod
     def load():
