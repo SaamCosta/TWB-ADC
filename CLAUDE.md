@@ -63,9 +63,6 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 ## Bugs conhecidos / débito técnico
 
-- `game/defence_manager.py::support()` — `if x not in confirm_data: confirm_data[x] = x`
-  usa `x` (coordenada int) como chave em vez da string `"x"`. Comparar com
-  `AttackManager.attack()`, que faz certo (`if "x" not in confirm_data: ...`).
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
