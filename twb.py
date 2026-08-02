@@ -18,6 +18,50 @@ TWB - an open source Tribal Wars bot
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
+# --- Session log capture ---------------------------------------------------
+# Mirrors everything written to stdout/stderr into a single fixed-name file
+# (cache/logs/session_latest.log, overwritten each run) so a full record of
+# the session -- including logger output, prints, and tracebacks from crashes
+# that happen before logging is configured (e.g. import-time SyntaxError) --
+# survives after the console window is closed. Placed before any project
+# import that could fail, so even startup crashes are captured. ANSI color
+# codes (from coloredlogs) are kept in the console but stripped from the file
+# copy to keep it plain text.
+import os as _os
+import sys as _sys
+import re as _re
+
+_LOG_DIR = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "cache", "logs")
+_os.makedirs(_LOG_DIR, exist_ok=True)
+_session_log_file = open(
+    _os.path.join(_LOG_DIR, "session_latest.log"), "w", encoding="utf-8", buffering=1
+)
+_ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
+
+
+class _TeeStream:
+    """Writes to the original console stream and a plain-text log file."""
+
+    def __init__(self, console_stream, file_stream):
+        self._console = console_stream
+        self._file = file_stream
+
+    def write(self, data):
+        self._console.write(data)
+        self._file.write(_ANSI_RE.sub("", data))
+
+    def flush(self):
+        self._console.flush()
+        self._file.flush()
+
+    def isatty(self):
+        return self._console.isatty()
+
+
+_sys.stdout = _TeeStream(_sys.stdout, _session_log_file)
+_sys.stderr = _TeeStream(_sys.stderr, _session_log_file)
+# --- End session log capture ------------------------------------------------
+
 import collections
 import copy
 import datetime
