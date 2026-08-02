@@ -118,6 +118,40 @@ regenerável 1:1 — o jogo pode auto-deletar relatórios antigos da lista antes
 que o bot os releia). Só leitura nesta feature, nenhuma escrita/limpeza nesse
 diretório pelo webmanager.
 
+**Polimento pendente (funcional, mas com lacunas conhecidas):**
+- **Nomes de aldeia inimiga não resolvidos.** A tabela mostra `origin`/`dest`
+  como ID cru. `village_options` (dropdown de filtro) só cobre aldeias
+  *próprias* (`cache/managed/*.json`); aldeias-alvo de farm/ataque (a maioria
+  dos relatórios) não têm nome resolvido porque `ReportReader.load()` não
+  cruza com `cache/villages/*.json` (dados de mapa, já usados por
+  `MapBuilder`/`ZoneReader`). Devia enriquecer `origin`/`dest` com nome via
+  esse cache antes de exibir.
+- **Filtro de tipo hardcoded.** O dropdown em `reports.html` só lista
+  `attack`/`scout`/`support` fixos. Tipos reais no cache incluem outros
+  vistos em `bot.html` (ex: `ReportFoundCrew`) que ficam de fora do filtro
+  (ainda aparecem na tabela, só não são selecionáveis). Devia construir as
+  opções dinamicamente a partir dos tipos presentes no cache, como `/logs`
+  já faz com `event_types`.
+- **`safe_to_engage` não é o mesmo valor que o `AttackManager` usa.** O pedido
+  original citava `safe_to_engage` — o que foi implementado é um veredito
+  *por relatório individual* (`ReportReader._outcome`), não o agregado
+  *por aldeia-alvo* que `ReportManager.safe_to_engage()` realmente calcula
+  (que olha o relatório mais recente contra aquele alvo para decidir se vale
+  atacar de novo). Seria mais fiel adicionar uma view agregada por aldeia
+  usando a mesma lógica de `safe_to_engage()`, já que é isso que
+  efetivamente influencia as decisões do bot.
+- **Sem paginação real.** `ReportReader.load(limit=150)` corta silenciosamente
+  nos 150 relatórios mais recentes (ordenados por `extra.when`, quando
+  presente) — não há como navegar para relatórios mais antigos pela UI.
+- **I/O por request, sem cache.** `ReportReader.load()` varre e abre todo
+  arquivo em `cache/reports/*.json` a cada carregamento da página (não só os
+  150 exibidos — as estatísticas agregadas somam sobre a pasta inteira).
+  Mesma classe de gargalo já registrada em `CLAUDE.md` ("Débito técnico") para
+  `Hunter`/`PvpConquestManager`/`ZoneManager`/`ConquestManager` — com a pasta
+  crescendo (500+ arquivos já observados em campo), pode ficar perceptível.
+  Candidato a um índice incremental ou cache em memória por ciclo, em vez de
+  releitura completa a cada acesso.
+
 ## Feature 22 — Detecção de conta premium para fila de construção dinâmica
 
 `BuildingManager.max_queue_len` (`game/buildingmanager.py:34`) é fixo em 2,
