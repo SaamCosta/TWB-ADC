@@ -231,6 +231,12 @@ class OverviewPage:
         self.header_info = self.soup.find("table", id="header_info")
         self.production_table = self.soup.find("table", id="production_table")
         self.villages_data: Dict[str, Village] = {}
+        # Feature 22: premium accounts render an extra (empty) leading <td> in the
+        # production table for the mass-select checkbox column, which is exactly the
+        # signal parse_production_table() already relies on ("idx_offset") to locate
+        # the real village-name cell. Reusing that same, already-validated signal here
+        # instead of inventing a new one.
+        self.is_premium: bool = False
         self.parse_production_table()
         self.parse_header_info()
 
@@ -246,6 +252,8 @@ class OverviewPage:
                 if row.find_all("td"):
                     cells = row.find_all("td")
                     idx_offset = 1 if len(cells[0].contents) == 0 else 0  # Compatibility with premium account
+                    if idx_offset == 1:
+                        self.is_premium = True
                     village_id = cells[idx_offset].contents[1].attrs["data-id"]
 
                     name, coordinates, continent = self._extract_name_cords_continent(

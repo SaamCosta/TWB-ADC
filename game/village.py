@@ -395,9 +395,23 @@ class Village:
         self.builder.max_lookahead = self.get_config(
             section="building", parameter="max_lookahead", default=2
         )
-        self.builder.max_queue_len = self.get_config(
+        max_queue_len = self.get_config(
             section="building", parameter="max_queued_items", default=2
         )
+        # Feature 22: opt-in auto-bump of the build queue length for premium
+        # accounts. Off by default (auto_queue_len=False) so existing configs keep
+        # their current behaviour. premium_account is auto-detected once from the
+        # overview page (see twb.py::get_world_options) but can be overridden
+        # manually in config.json.
+        if self.get_config(
+                section="building", parameter="auto_queue_len", default=False
+        ) and self.get_config(
+            section="world", parameter="premium_account", default=False
+        ):
+            max_queue_len = self.get_config(
+                section="building", parameter="premium_max_queued_items", default=5
+            )
+        self.builder.max_queue_len = max_queue_len
         self.builder.start_update(
             build=self.get_config(
                 section="building", parameter="manage_buildings", default=True

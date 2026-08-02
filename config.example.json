@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.4",
+    "version": "2.5",
     "author": "stefan2200"
   },
   "server": {
@@ -35,7 +35,9 @@
     "manage_buildings": true,
     "default": "purple_predator",
     "max_lookahead": 2,
-    "max_queued_items": 2
+    "max_queued_items": 2,
+    "auto_queue_len": false,
+    "premium_max_queued_items": 5
   },
   "units": {
     "recruit": true,
@@ -135,7 +137,8 @@
     "trade_for_premium": false,
     "archers_enabled": true,
     "building_destruction_enabled": true,
-    "boosters_enabled": null
+    "boosters_enabled": null,
+    "premium_account": null
   },
   "hunter": {
     "enabled": false,

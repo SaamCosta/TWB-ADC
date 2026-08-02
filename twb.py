@@ -346,6 +346,10 @@ class TWB:
         check_and_set("knight_enabled", world_settings.knight)
         check_and_set("boosters_enabled", world_settings.boosters)
         check_and_set("quests_enabled", world_settings.quests, "Quests.setQuestData")
+        # Feature 22: auto-detect premium account status once, same pattern as the
+        # options above. Only fires while config["world"]["premium_account"] is null,
+        # so a manual override in config.json always wins over re-detection.
+        check_and_set("premium_account", overview_page.is_premium)
 
         return changed, config
 

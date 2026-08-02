@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager
 
@@ -152,13 +152,48 @@ diretório pelo webmanager.
   Candidato a um índice incremental ou cache em memória por ciclo, em vez de
   releitura completa a cada acesso.
 
-## Feature 22 — Detecção de conta premium para fila de construção dinâmica
+## Feature 22 — Detecção de conta premium para fila de construção dinâmica ✅ Implementado (2026-08-02)
 
 `BuildingManager.max_queue_len` (`game/buildingmanager.py:34`) é fixo em 2,
 mas contas premium liberam mais slots de fila simultânea. Detectar o status
 premium real (geralmente exposto na visão geral) e ajustar o limite
 dinamicamente evita deixar fila de construção subutilizada. Baixa
 prioridade — ver `docs/game_comparison.md` item 6.
+
+**Status:** `pages/overview.py::OverviewPage` já calculava, por linha da
+`production_table`, um `idx_offset` para lidar com uma coluna extra (checkbox
+de seleção em massa) presente apenas em contas premium — usado desde a
+Feature 18 para achar corretamente `village_id`/pontos. Reaproveitei esse
+mesmo sinal já validado em campo em vez de inventar um novo: agora
+`OverviewPage.is_premium` fica `True` assim que qualquer linha detecta esse
+offset.
+
+`twb.py::get_world_options` auto-detecta isso uma única vez (mesmo padrão de
+`flags_enabled`/`knight_enabled`/`boosters_enabled`/`quests_enabled`) e grava
+em `config["world"]["premium_account"]` — só roda enquanto o valor estiver
+`null`, então um override manual no `config.json` sempre prevalece.
+
+O ajuste de fila é **opt-in**, para não mudar comportamento de configs
+existentes: `building.auto_queue_len` (default `false`). Quando `true` **e**
+`world.premium_account` é `true`, `game/village.py::run_building_manager`
+usa `building.premium_max_queued_items` (default `5`) em vez de
+`building.max_queued_items` (default `2`) para `self.builder.max_queue_len`.
+
+Config novo em `config.example.json`: `world.premium_account` (null),
+`building.auto_queue_len` (false), `building.premium_max_queued_items` (5).
+`build.version` bumpado para `2.5` — o bot vai mesclar essas chaves no
+`config.json` real automaticamente no próximo start (backup automático em
+`config.bak`). `webmanager/helpfile.py` atualizado com as 3 novas chaves.
+
+**Limitação conhecida:** a detecção depende inteiramente do sinal estrutural
+do HTML (coluna extra vazia). Não tenho como confirmar 100% contra o HTML
+real do br143 nesta sessão — testado isoladamente com HTML sintético
+reproduzindo os dois formatos (com/sem coluna extra), e a lógica é a mesma
+já usada para extrair `village_id`/pontos desde a Feature 18. Se
+`config["world"]["premium_account"]` vier errado após o primeiro ciclo, basta
+corrigir manualmente no `config.json` (o auto-detect não sobrescreve valores
+não-nulos). Como o ajuste de fila é opt-in (`auto_queue_len=false` por
+padrão), nada muda para quem não habilitar essa opção.
 
 ## Feature 23 — Variância comportamental para automação mais "orgânica"
 
