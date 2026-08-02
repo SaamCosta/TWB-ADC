@@ -78,7 +78,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 ## Backlog de features pendentes
 
-Ver `docs/backlog.md` para a lista priorizada (Features 14–17 e seguintes).
+Ver `docs/backlog.md` para a lista priorizada (Features 14–22 e seguintes).
+Features 18–22 vieram de uma comparação entre as mecânicas reais do jogo e o
+que o bot cobre hoje — ver `docs/game_comparison.md` para o raciocínio
+completo por trás delas.
 
 ## Features já implementadas (referência rápida)
 
