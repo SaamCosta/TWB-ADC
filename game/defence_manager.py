@@ -2,6 +2,7 @@ import json
 import logging
 import random
 import re
+import time
 
 from core.extractors import Extractor
 
@@ -55,6 +56,9 @@ class DefenceManager:
         self.village_id = village_id
         self.wrapper = wrapper
         self.logger = logging.getLogger("Defence Manager")
+        # {(flag_type, level): attempt_count} - limita tentativas de upgrade
+        # por sessão para evitar loop infinito (ver docs/bugs_flags.md Bug 2)
+        self._upgrade_attempts = {}
 
     def support_other(self, requesting_village):
 
@@ -247,15 +251,34 @@ class DefenceManager:
             for level in raw_flags[flag_type]:
                 for amount in raw_flags[flag_type][level]:
                     if int(amount) >= 3:
-                        self.flag_upgrade(flag=flag_type, level=level)
-                        self.logger.info("Upgraded flag %s", flag_type)
-                        upgraded += 1
+                        attempt_key = (flag_type, level)
+                        attempts = self._upgrade_attempts.get(attempt_key, 0)
+                        if attempts >= 2:
+                            self.logger.warning(
+                                "Upgrade de bandeira %s/%s falhou apos %d tentativas, desistindo",
+                                flag_type, level, attempts
+                            )
+                        else:
+                            self._upgrade_attempts[attempt_key] = attempts + 1
+                            upgrade_result = self.flag_upgrade(flag=flag_type, level=level)
+                            if upgrade_result:
+                                self.logger.info("Upgraded flag %s", flag_type)
+                                self._upgrade_attempts.pop(attempt_key, None)
+                                upgraded += 1
+                            else:
+                                self.logger.warning(
+                                    "Upgrade de bandeira %s/%s falhou (tentativa %d/2)",
+                                    flag_type, level, attempts + 1
+                                )
                     if int(amount) > 0:
                         if int(flag_type) not in self.flags or self.flags[
                             int(flag_type)
                         ] < int(level):
                             self.flags[int(flag_type)] = int(level)
         if upgraded:
+            # Da tempo do inventario do servidor refletir o upgrade antes
+            # de reler o HTML, evitando reler a mesma contagem obsoleta.
+            time.sleep(2)
             return self.manage_flags()
 
     def support(self, vid, troops=None):

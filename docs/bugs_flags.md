@@ -195,12 +195,12 @@ FLAG_TYPES = {
 
 | Item | Status | Ação necessária |
 |------|--------|------------------|
-| Bug 1 — troca constante | ⚠️ Aguardando log | Confirmar causa raiz com log de `flag_logic`/`manage_flags` antes de aplicar fix |
-| Bug 2 — loop de upgrade | ⚠️ Ativo | Aplicar `sleep(2)` + limite de tentativas |
+| Bug 1 — troca constante | ✅ Corrigido (código) | Aplicado guard `_flag_state_confirmed` + comparação `==` em `flag_logic()`. Aguardando validação em campo. |
+| Bug 2 — loop de upgrade | ✅ Corrigido (código) | Aplicado `sleep(2)` + limite de 2 tentativas por `(flag_type, level)` em `manage_flags()`. Aguardando validação em campo. |
 | Mapeamento de 8 tipos | 📋 Documentado | Implementar `FLAG_TYPES` no código; ativar tipos 7/8 quando relevante |
 | Cooldown de 24h ativo | 🔴 Em curso | Aguardar expirar; monitorar logs após fix do Bug 1 |
 
 **Pré-requisito para fechar este item:**
-- Log de `flag_logic`/`manage_flags` colado para confirmar diagnóstico do Bug 1.
-- Validação em campo do fix do Bug 2 (upgrade sem loop).
+- Validação em campo dos fixes dos Bugs 1 e 2 (branch `master`, commits de correção
+  em `game/defence_manager.py`).
 - Feature 8 (conquest) validada antes de ativar uso do tipo 7 (coin_cost).

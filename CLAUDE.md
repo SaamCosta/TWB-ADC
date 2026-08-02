@@ -72,8 +72,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   leem/escrevem cache via varredura de diretório (`os.listdir` + `json.load` por
   arquivo) a cada ciclo. Pode virar gargalo de I/O conforme o número de aldeias/cache
   cresce — considerar indexação ou cache em memória por ciclo.
-- Sistema de bandeiras (`DefenceManager`): ver `docs/bugs_flags.md` para diagnóstico
-  detalhado de dois bugs ativos (troca constante de bandeira, loop de upgrade).
+- Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
+  constante de bandeira, loop de upgrade), aguardando validação em campo — ver
+  `docs/bugs_flags.md` para o diagnóstico original e o estado atual.
 
 ## Backlog de features pendentes
 
