@@ -320,7 +320,7 @@ class BuildingManager:
                 response = self.wrapper.get_url(check["build_link"].replace("amp;", ""))
                 if response is None:
                     self.logger.warning("Builder: build request timed out for %s, skipping", entry)
-                    continue
+                    return self.get_next_building_action(index + 1)
                 if self.can_build_three_min:
                     # Wait some random time
                     time.sleep(random.randint(3, 7) / 10)
