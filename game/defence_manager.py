@@ -37,6 +37,10 @@ class DefenceManager:
     current_flag = []
 
     _can_change_flag = False
+    # True once manage_flags() has confirmed the real flag state from the
+    # server at least once. Distinguishes "no flag equipped" (current_flag
+    # is None, confirmed) from "state not read yet" (also falsy, but unknown).
+    _flag_state_confirmed = False
 
     # increased production
     set_flag_not_under_attack = 1
@@ -134,30 +138,44 @@ class DefenceManager:
         if not self.manage_flags_enabled:
             return
 
+        # Sem confirmação do estado real via manage_flags() ainda (primeiro
+        # ciclo, ou ciclo intermediário pulado pela randomização), não age.
+        # Evita disparar flag_set() em todo ciclo enquanto current_flag
+        # está vazio apenas por falta de leitura, não por ausência real.
+        if not self._flag_state_confirmed:
+            return
+
         highest_flag_possible = self.get_highest_flag_possible(flag_id=set_flag)
         if not highest_flag_possible:
             return
 
-        if (
-                not self.current_flag
-                or self.current_flag[0] is not set_flag
-                or highest_flag_possible and highest_flag_possible > self.current_flag[1]
-        ):
-            if not self._can_change_flag:
-                if not self._sf_logged:
-                    self.logger.info(
-                        "Unable to set new flag on village %s because of cool down", self.village_id
-                    )
-                    self._sf_logged = True
-                return
-            self._sf_logged = False
-            self.flag_set(
-                set_flag, level=self.get_highest_flag_possible(flag_id=set_flag)
-            )
-            self.logger.info(
-                "Setting flag %d level %d for village %s",
-                set_flag, self.get_highest_flag_possible(flag_id=set_flag), self.village_id
-            )
+        if self.current_flag:
+            already_correct = self.current_flag[0] == set_flag
+            already_best = self.current_flag[1] >= highest_flag_possible
+        else:
+            # Estado confirmado: nenhuma bandeira equipada no momento.
+            already_correct = False
+            already_best = False
+
+        if already_correct and already_best:
+            return
+
+        if not self._can_change_flag:
+            if not self._sf_logged:
+                self.logger.info(
+                    "Unable to set new flag on village %s because of cool down", self.village_id
+                )
+                self._sf_logged = True
+            return
+        self._sf_logged = False
+        self.flag_set(set_flag, level=highest_flag_possible)
+        # Atualiza o estado local imediatamente para não re-disparar
+        # flag_set() nos ciclos seguintes antes da próxima confirmação.
+        self.current_flag = [set_flag, highest_flag_possible]
+        self.logger.info(
+            "Setting flag %d level %d for village %s",
+            set_flag, highest_flag_possible, self.village_id
+        )
 
     def flag_upgrade(self, flag, level):
         return self.wrapper.get_api_action(
@@ -221,6 +239,7 @@ class DefenceManager:
                     self.logger.info(
                         "Current village flag: %s", get_current_flag.group(3).strip()
                     )
+            self._flag_state_confirmed = True
         upgraded = 0
         raw_flags = json.loads(get_flag_data.group(1))
         self.flags = {}
