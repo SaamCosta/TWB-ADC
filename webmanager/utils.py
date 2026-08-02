@@ -994,6 +994,150 @@ class ResourceSharingReader:
         return entries[:limit], totals
 
 
+class ReportReader:
+    """
+    Le cache/reports/*.json (escrito por game/reports.py::ReportManager) e
+    formata uma view resumida para o webmanager (Feature 21) -- perdas,
+    ganhos e um veredito "safe to engage" por relatorio, sem precisar abrir
+    os JSONs manualmente.
+
+    Estrutura de cada arquivo (ver ReportManager.put/attack_report):
+    {
+        "type": "attack" | "scout" | outro (ex: "ReportFoundCrew"),
+        "origin": "12345" | None,
+        "dest": "54321" | None,
+        "losses": {"axe": 10, ...},
+        "extra": {
+            "when": 1718000000,
+            "units_sent": {...}, "units_losses": {...},
+            "defence_units": {...}, "defence_losses": {...},
+            "loot": {"wood": ..., "stone": ..., "iron": ...},
+            "resources": {...} (scout),
+            "loyalty_after": 45.0 (noble),
+        }
+    }
+    """
+
+    TYPE_LABELS = {
+        "attack": "Ataque", "scout": "Scout", "support": "Apoio",
+    }
+
+    @staticmethod
+    def _outcome(report):
+        """
+        Classifica o relatorio do ponto de vista de quem enviou as tropas
+        (mesma logica de ReportManager.safe_to_engage, mas por relatorio
+        individual em vez de "ultimo relatorio contra a aldeia X").
+        Retorna (label, color).
+        """
+        r_type = report.get("type")
+        losses = report.get("losses") or {}
+        extra = report.get("extra") or {}
+
+        if r_type == "scout":
+            def_units = extra.get("defence_units") or {}
+            def_losses = extra.get("defence_losses") or {}
+            if not losses and (not def_units or def_units == def_losses):
+                return "Seguro (sem defesa detectada)", "success"
+            return "Alvo com defesa", "warning"
+
+        if r_type != "attack":
+            return "—", "secondary"
+
+        units_sent = extra.get("units_sent") or {}
+        if not losses:
+            return "Sem perdas", "success"
+
+        # Perda total: todas as unidades enviadas foram perdidas
+        total_loss = bool(units_sent) and all(
+            losses.get(u, 0) >= units_sent.get(u, 0) for u in units_sent
+        )
+        if total_loss:
+            return "Perda total", "danger"
+        return "Perdas parciais", "warning"
+
+    @staticmethod
+    def load(dest_filter=None, type_filter=None, limit=150):
+        reports_dir = os.path.join(os.path.dirname(__file__), "..", "cache", "reports")
+        if not os.path.exists(reports_dir):
+            return [], {}
+
+        entries = []
+        stats = {"total": 0, "attacks": 0, "scouts": 0, "clean": 0, "with_losses": 0,
+                  "loot": {"wood": 0, "stone": 0, "iron": 0}}
+
+        for fname in os.listdir(reports_dir):
+            if not fname.endswith(".json"):
+                continue
+            report_id = fname.replace(".json", "")
+            try:
+                with open(os.path.join(reports_dir, fname), "r") as f:
+                    data = json.load(f)
+            except Exception:
+                continue
+
+            r_type = data.get("type", "?")
+            dest = data.get("dest")
+            origin = data.get("origin")
+            extra = data.get("extra") or {}
+            losses = data.get("losses") or {}
+
+            if dest_filter and dest != dest_filter:
+                continue
+            if type_filter and r_type != type_filter:
+                continue
+
+            when = extra.get("when", 0)
+            when_fmt = "—"
+            if when:
+                try:
+                    when_fmt = datetime.datetime.fromtimestamp(int(when)).strftime("%d/%m %H:%M:%S")
+                except Exception:
+                    pass
+
+            outcome_label, outcome_color = ReportReader._outcome(data)
+            loot = extra.get("loot") or {}
+
+            entries.append({
+                "report_id": report_id,
+                "type": r_type,
+                "type_label": ReportReader.TYPE_LABELS.get(r_type, r_type),
+                "origin": origin,
+                "dest": dest,
+                "when": when,
+                "when_fmt": when_fmt,
+                "loot": loot,
+                "units_sent": extra.get("units_sent") or {},
+                "losses": losses,
+                "loyalty_after": extra.get("loyalty_after"),
+                "outcome_label": outcome_label,
+                "outcome_color": outcome_color,
+            })
+
+            # Stats agregadas sobre TODOS os relatorios (nao so os filtrados na pagina),
+            # respeitando apenas o type_filter para nao misturar contextos.
+            if type_filter and r_type != type_filter:
+                pass
+            else:
+                stats["total"] += 1
+                if r_type == "attack":
+                    stats["attacks"] += 1
+                elif r_type == "scout":
+                    stats["scouts"] += 1
+                if losses:
+                    stats["with_losses"] += 1
+                else:
+                    stats["clean"] += 1
+                for res in ("wood", "stone", "iron"):
+                    try:
+                        stats["loot"][res] += int(loot.get(res, 0) or 0)
+                    except (TypeError, ValueError):
+                        pass
+
+        entries.sort(key=lambda e: (int(e["when"] or 0), e["report_id"]), reverse=True)
+        return entries[:limit], stats
+
+
 class FarmScoreReader:
     @staticmethod
     def load():

@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager
 
@@ -96,13 +96,27 @@ agrega o total enviado por recurso. Nova rota `/resource_sharing` e template
 priority), totais agregados e uma tabela com o histórico recente (mais
 recente primeiro). Link adicionado na nav. Nenhuma config nova.
 
-## Feature 21 — Página de reports no webmanager
+## Feature 21 — Página de reports no webmanager ✅ Implementado (2026-08-02)
 
 `ReportManager` (`game/reports.py`) lê e cacheia relatórios de ataque/defesa
 em `cache/reports/*.json`, mas o webmanager não expõe essa informação em
 nenhuma rota — só `/logs` (log de texto bruto) e `/farmscores`. Uma view
 resumida de relatórios recentes (perdas, ganhos, `safe_to_engage`) ajudaria a
 diagnosticar decisões do `AttackManager` sem abrir os JSONs manualmente.
+
+**Status:** novo `ReportReader` em `webmanager/utils.py` lê `cache/reports/*.json`
+e calcula, por relatório, um veredito ("Sem perdas" / "Perdas parciais" /
+"Perda total" para ataques, "Seguro" / "Alvo com defesa" para scouts) com a
+mesma lógica de `ReportManager.safe_to_engage`, mas aplicada por relatório
+individual em vez de agregada por aldeia-alvo. Nova rota `/reports` (filtros
+por aldeia-destino e tipo via query string) e template `reports.html` — cards
+de estatísticas agregadas (total, ataques/scouts, sem perdas/com perdas, loot
+total) mais uma tabela com os relatórios mais recentes primeiro. Link
+adicionado na nav. Nenhuma config nova.
+**Nota de segurança:** `cache/reports/` acumula estado real do jogo (não é
+regenerável 1:1 — o jogo pode auto-deletar relatórios antigos da lista antes
+que o bot os releia). Só leitura nesta feature, nenhuma escrita/limpeza nesse
+diretório pelo webmanager.
 
 ## Feature 22 — Detecção de conta premium para fila de construção dinâmica
 

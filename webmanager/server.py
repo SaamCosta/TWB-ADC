@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -330,6 +330,23 @@ def get_resource_sharing():
         sharing_cfg=sharing_cfg,
         entries=entries,
         totals=totals,
+    )
+
+
+@app.route('/reports', methods=['GET'])
+def get_reports():
+    dest_filter = request.args.get("dest", "").strip() or None
+    type_filter = request.args.get("type", "").strip() or None
+    entries, stats = ReportReader.load(dest_filter=dest_filter, type_filter=type_filter)
+    managed = sync()["bot"]
+    village_options = {vid: managed[vid].get("public", {}).get("name", "") for vid in managed}
+    return render_template(
+        'reports.html',
+        entries=entries,
+        stats=stats,
+        village_options=village_options,
+        dest_filter=dest_filter,
+        type_filter=type_filter,
     )
 
 

@@ -1,0 +1,117 @@
+{% extends "main.html" %}
+{% block title %}Relatórios{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0" style="color:#2c1810;">📜 Relatórios</h4>
+  <span class="badge badge-secondary">{{ entries | length }} exibido(s) (máx. 150)</span>
+</div>
+
+<div class="row mb-3">
+  <div class="col-lg-3 col-6 mb-2">
+    <div class="card h-100"><div class="card-body py-2 px-3">
+      <div class="text-muted small">Total (no filtro)</div>
+      <div class="h5 mb-0">{{ stats.total }}</div>
+    </div></div>
+  </div>
+  <div class="col-lg-3 col-6 mb-2">
+    <div class="card h-100"><div class="card-body py-2 px-3">
+      <div class="text-muted small">Ataques / Scouts</div>
+      <div class="h5 mb-0">{{ stats.attacks }} / {{ stats.scouts }}</div>
+    </div></div>
+  </div>
+  <div class="col-lg-3 col-6 mb-2">
+    <div class="card h-100 border-left-success"><div class="card-body py-2 px-3">
+      <div class="text-muted small">Sem perdas / Com perdas</div>
+      <div class="h5 mb-0"><span class="text-success">{{ stats.clean }}</span> / <span class="text-danger">{{ stats.with_losses }}</span></div>
+    </div></div>
+  </div>
+  <div class="col-lg-3 col-6 mb-2">
+    <div class="card h-100"><div class="card-body py-2 px-3">
+      <div class="text-muted small">Loot total (madeira/pedra/ferro)</div>
+      <div class="h6 mb-0">{{ stats.loot.wood }} / {{ stats.loot.stone }} / {{ stats.loot.iron }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="card mb-3" style="border-color:#c8a96e;">
+  <div class="card-body py-2">
+    <form method="get" class="form-inline">
+      <label class="mr-2 small">Aldeia alvo (dest):</label>
+      <select name="dest" class="form-control form-control-sm mr-3">
+        <option value="">Todas</option>
+        {% for vid, name in village_options.items() %}
+          <option value="{{ vid }}" {% if dest_filter == vid %}selected{% endif %}>{{ name or vid }} (#{{ vid }})</option>
+        {% endfor %}
+      </select>
+      <label class="mr-2 small">Tipo:</label>
+      <select name="type" class="form-control form-control-sm mr-3">
+        <option value="">Todos</option>
+        <option value="attack" {% if type_filter == 'attack' %}selected{% endif %}>Ataque</option>
+        <option value="scout" {% if type_filter == 'scout' %}selected{% endif %}>Scout</option>
+        <option value="support" {% if type_filter == 'support' %}selected{% endif %}>Apoio</option>
+      </select>
+      <button type="submit" class="btn btn-primary btn-sm">Filtrar</button>
+      {% if dest_filter or type_filter %}
+      <a href="/reports" class="btn btn-outline-secondary btn-sm ml-2">Limpar</a>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+{% if not entries %}
+<div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+  <strong>Nenhum relatório encontrado.</strong>
+  Os dados ficam em <code>cache/reports/*.json</code>, lidos e cacheados pelo <code>ReportManager</code>.
+</div>
+{% else %}
+<div class="card" style="border-color:#c8a96e;">
+  <div class="card-body p-2">
+    <table class="table table-sm table-striped mb-0">
+      <thead class="thead-dark">
+        <tr>
+          <th>Quando</th>
+          <th>Tipo</th>
+          <th>Origem → Destino</th>
+          <th>Enviado</th>
+          <th>Perdas</th>
+          <th>Loot</th>
+          <th>Veredito</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in entries %}
+        <tr>
+          <td class="small text-nowrap">{{ e.when_fmt }}</td>
+          <td><span class="badge badge-light border">{{ e.type_label }}</span></td>
+          <td class="small">
+            {{ e.origin or '—' }} → {{ e.dest or '—' }}
+            <a href="/reports?dest={{ e.dest }}" class="small ml-1" title="Filtrar por esta aldeia">🔍</a>
+          </td>
+          <td class="small">
+            {% for unit, qty in e.units_sent.items() %}
+              {% if qty and qty > 0 %}<span class="badge badge-light border mr-1">{{ unit }}: {{ qty }}</span>{% endif %}
+            {% endfor %}
+          </td>
+          <td class="small">
+            {% for unit, qty in e.losses.items() %}
+              {% if qty and qty > 0 %}<span class="badge badge-danger mr-1">{{ unit }}: {{ qty }}</span>{% endif %}
+            {% endfor %}
+          </td>
+          <td class="small">
+            {% if e.loot %}
+              {{ e.loot.wood | default(0) }} / {{ e.loot.stone | default(0) }} / {{ e.loot.iron | default(0) }}
+            {% else %}—{% endif %}
+            {% if e.loyalty_after is not none %}
+              <br/><span class="text-muted">Lealdade após: {{ e.loyalty_after }}</span>
+            {% endif %}
+          </td>
+          <td><span class="badge badge-{{ e.outcome_color }}">{{ e.outcome_label }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
