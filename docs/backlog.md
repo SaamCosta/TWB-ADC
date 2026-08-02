@@ -73,6 +73,47 @@ premium real (geralmente exposto na visão geral) e ajustar o limite
 dinamicamente evita deixar fila de construção subutilizada. Baixa
 prioridade — ver `docs/game_comparison.md` item 6.
 
+## Feature 23 — Variância comportamental para automação mais "orgânica"
+
+**Objetivo:** reduzir a assinatura de automação do bot variando o *quando* e
+a *ordem* das ações — não o *o quê* (decisões de jogo continuam as mesmas).
+Discutido em 2026-08-02: scraping adicional ou trocar para navegador headless
+não têm ganho real aqui (o bot já manda as mesmas requisições HTTP/headers/
+CSRF que um navegador real mandaria, e o Tribal Wars não tem fingerprinting
+de JS/TLS pesado além do gate de captcha já tratado em `core/request.py`
+via `data-bot-protect="forced"`). A alavanca real é comportamental.
+
+**Base parcial já existente:**
+- `delay_factor` + sleep aleatório 3–7s por requisição (`core/request.py`,
+  `get_url`/`post_url`).
+- `active_hours`/`active_delay`/`inactive_delay` com jitter de +20–120s por
+  ciclo (`twb.py`), inclusive por aldeia (`village.active_hours` override).
+- Pausa de 2s antes de recursão de upgrade de bandeira (fix do Bug 2, ver
+  `docs/bugs_flags.md`).
+
+**Lacunas:**
+- Ordem de iteração das aldeias gerenciadas em `twb.py` é sempre a mesma
+  sequência fixa a cada ciclo.
+- Janela de delay é sempre a mesma faixa previsível — sem variação de
+  "atenção" (ex: dias em que a reação demora mais, como aconteceria com um
+  jogador humano ocupado).
+
+**Proposta:**
+1. Embaralhar a ordem de processamento das aldeias a cada ciclo em `twb.py`.
+2. Jitter maior e configurável por aldeia (não só global) no delay entre
+   ações.
+3. Probabilidade baixa e configurável de "atraso de atenção" — um ciclo
+   ocasional com reação bem mais lenta que o normal, simulando um jogador
+   distraído.
+
+**Cuidado importante:** NÃO aplicar esse jitter/atraso extra em
+`DefenceManager` (reação a ataque recebido) nem em qualquer lógica de
+segurança — humanização não pode comprometer a efetividade defensiva real.
+Isolar essa variância nas ações não-críticas (farm, build, recruit, market).
+
+**Prioridade:** depois das Features 18–22 (ordem confirmada pelo usuário em
+2026-08-02).
+
 ---
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
@@ -92,3 +133,13 @@ prioridade — ver `docs/game_comparison.md` item 6.
   completo por trás das Features 18-22 acima, incluindo itens avaliados e
   descartados (watchtower e farm assistant nativo, já cobertos ou decisão de
   design válida).
+- Levantamento de telas do jogo (`screen=`) já cobertas pelo bot vs. não
+  cobertas, feito em 2026-08-02 a pedido do usuário (contexto: decidir se
+  scraping adicional é necessário para a Feature 23). Cobertas: `overview`,
+  `overview_villages`, `main`, `place` (+ `scavenge`/`scavenge_api`),
+  `smith`, `train`, `snob`, `flags`, `market`, `report`, `map`, sistema de
+  quests. Não cobertas em nenhum lugar do código: `info_player`, `am_farm`,
+  `ally`, `forum`, `ranking`, `statue` (só como prédio na fila, sem lógica de
+  Paladin — ver item 4 de `docs/game_comparison.md`), `inventory` (só
+  checado como flag de world settings, nunca navegado). Aguardando validação
+  do usuário sobre quais dessas ausências importam na prática.
