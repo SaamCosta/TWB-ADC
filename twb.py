@@ -387,6 +387,20 @@ class TWB:
             )
             return TWB.is_active_hours(config)
 
+    @staticmethod
+    def _jitter(config):
+        """
+        Feature 23: configurable randomization window for cycle delays.
+        Replaces the previously hardcoded random.randint(20, 120) — defaults are
+        identical to that old hardcoded range, so behaviour is unchanged unless
+        bot.jitter_min/bot.jitter_max are customized in config.
+        """
+        lo = config["bot"].get("jitter_min", 20)
+        hi = config["bot"].get("jitter_max", 120)
+        if hi < lo:
+            lo, hi = hi, lo
+        return random.randint(lo, hi)
+
     def run(self):
         """
         Run the bot
@@ -403,7 +417,7 @@ class TWB:
                 if config["bot"]["inactive_still_active"]:
                     sleep = config["bot"]["inactive_delay"]
 
-            sleep += random.randint(20, 120)
+            sleep += self._jitter(config)
             dtn = datetime.datetime.now()
             dt_next = dtn + datetime.timedelta(0, sleep)
             print(
@@ -445,7 +459,7 @@ class TWB:
                     if config["bot"]["inactive_still_active"]:
                         sleep = config["bot"]["inactive_delay"]
 
-                sleep += random.randint(20, 120)
+                sleep += self._jitter(config)
                 dtn = datetime.datetime.now()
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 print(
@@ -471,8 +485,24 @@ class TWB:
                     config = self.merge_configs(config, new_cf)
                     FileManager.save_json_file(config, "config.json")
                     print("Deployed new configuration file")
-                village_number = 1
-                for village in self.villages:
+                # Feature 23: numbering used only for auto_set_village_names templating
+                # is computed once from the original config order, independent of the
+                # order villages are actually processed in below. This lets processing
+                # order be shuffled for humanization without villages getting renamed
+                # back and forth across cycles.
+                village_numbers = {}
+                _village_number = 1
+                for _v in self.villages:
+                    if _v.village_id not in self.found_villages:
+                        continue
+                    village_numbers[_v.village_id] = _village_number
+                    _village_number += 1
+
+                processing_order = list(self.villages)
+                if config["bot"].get("humanize_village_order", False):
+                    random.shuffle(processing_order)
+
+                for village in processing_order:
                     if village.village_id not in self.found_villages:
                         print(
                             "Village %s will be ignored because it is not available anymore"
@@ -493,7 +523,7 @@ class TWB:
                                 + str(config["bot"]["village_name_number_length"])
                                 + "d"
                         )
-                        num_pad = fs % village_number
+                        num_pad = fs % village_numbers.get(village.village_id, 1)
                         template = template.replace("{num}", num_pad)
                         village.village_set_name = template
 
@@ -502,7 +532,6 @@ class TWB:
                             "Village %s is outside its active hours, skipping this cycle",
                             village.village_id
                         )
-                        village_number += 1
                         continue
 
                     # Feature 18: keep own-village points fresh from the overview page
@@ -525,7 +554,6 @@ class TWB:
                             if village.def_man.allow_support_recv
                             else False
                         )
-                    village_number += 1
 
                 if len(defense_states) and config["farms"]["farm"]:
                     for village in self.villages:
@@ -542,7 +570,30 @@ class TWB:
                     if config["bot"]["inactive_still_active"]:
                         sleep = config["bot"]["inactive_delay"]
 
-                sleep += random.randint(20, 120)
+                sleep += self._jitter(config)
+
+                # Feature 23: occasional, low-probability "attention lag" — an
+                # extra-slow cycle simulating a distracted human player. Disabled by
+                # default (attention_lag_chance=0). Safety guard: never applied if
+                # any managed village is currently known to be under attack, so
+                # DefenceManager keeps its normal (fast) cycle cadence — humanization
+                # must never delay a real defensive reaction.
+                attention_lag_chance = config["bot"].get("attention_lag_chance", 0)
+                if (
+                        attention_lag_chance > 0
+                        and not any(defense_states.values())
+                        and random.random() < attention_lag_chance
+                ):
+                    extra_lo = config["bot"].get("attention_lag_extra_min", 600)
+                    extra_hi = config["bot"].get("attention_lag_extra_max", 1800)
+                    if extra_hi < extra_lo:
+                        extra_lo, extra_hi = extra_hi, extra_lo
+                    extra = random.randint(extra_lo, extra_hi)
+                    sleep += extra
+                    logging.info(
+                        "Humanização: 'atraso de atenção' simulado neste ciclo (+%.0fs)",
+                        extra
+                    )
 
                 # Feature 10: Hunter — coordinated attack scheduling
                 if config.get("hunter", {}).get("enabled", False):

@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager
 
@@ -195,7 +195,7 @@ corrigir manualmente no `config.json` (o auto-detect não sobrescreve valores
 não-nulos). Como o ajuste de fila é opt-in (`auto_queue_len=false` por
 padrão), nada muda para quem não habilitar essa opção.
 
-## Feature 23 — Variância comportamental para automação mais "orgânica"
+## Feature 23 — Variância comportamental para automação mais "orgânica" ✅ Implementado (2026-08-02)
 
 **Objetivo:** reduzir a assinatura de automação do bot variando o *quando* e
 a *ordem* das ações — não o *o quê* (decisões de jogo continuam as mesmas).
@@ -235,6 +235,57 @@ Isolar essa variância nas ações não-críticas (farm, build, recruit, market)
 
 **Prioridade:** depois das Features 18–22 (ordem confirmada pelo usuário em
 2026-08-02).
+
+**Status:** as 3 propostas foram implementadas, todas com default que preserva
+o comportamento atual (opt-in / mesmos valores hardcoded de antes):
+
+1. **Ordem embaralhada:** `twb.py::TWB.run()` agora monta `processing_order`
+   (cópia de `self.villages`, embaralhada com `random.shuffle` quando
+   `bot.humanize_village_order=true`, default `false`) em vez de sempre
+   iterar `self.villages` na mesma ordem. Para não quebrar
+   `auto_set_village_names`, a numeração `{num}` do template deixou de vir de
+   um contador incremental durante o loop (que dependia da ordem de
+   processamento) e passou a vir de `village_numbers`, um dicionário
+   `village_id -> número` calculado uma vez a partir da ordem original do
+   `config["villages"]`, antes do embaralhamento — assim as aldeias não ficam
+   sendo renomeadas de ciclo em ciclo mesmo com a ordem de processamento
+   variando.
+2. **Jitter configurável (global e por aldeia):** novo helper
+   `TWB._jitter(config)` substitui os três `random.randint(20, 120)`
+   hardcoded em `twb.py` por `bot.jitter_min`/`bot.jitter_max` (defaults 20/120,
+   idênticos ao valor antigo). Para o delay *entre requisições* (não só entre
+   ciclos), `game/village.py::Village.run()` agora aceita um override por
+   aldeia: `village.delay_factor` (novo campo em `village_template`, default
+   `null` = usa `bot.delay_factor` global), mesmo padrão já usado por
+   `village.active_hours`.
+3. **Atraso de atenção:** `bot.attention_lag_chance` (default `0.0` =
+   desligado) é a probabilidade por ciclo de somar um atraso extra de
+   `bot.attention_lag_extra_min`–`bot.attention_lag_extra_max` segundos
+   (default 600–1800s) ao sleep do ciclo, simulando um jogador distraído.
+
+**Guarda de segurança (cuidado importante acima):** o atraso de atenção só
+pode disparar se `not any(defense_states.values())` — ou seja, se nenhuma
+aldeia gerenciada estiver com `under_attack=True` conhecido no ciclo que
+acabou de rodar. Isso usa o mesmo dict `defense_states` já existente (synced
+para `DefenceManager.my_other_villages` logo acima no código). Se qualquer
+aldeia estiver sob ataque, o ciclo mantém a cadência normal — a humanização
+nunca atrasa uma reação defensiva real. O embaralhamento de ordem e o jitter
+configurável não têm esse risco (todas as aldeias ainda são processadas
+dentro do mesmo ciclo, só a ordem/o timing dos requests muda).
+
+Testado isoladamente (sem servidor real): `TWB._jitter()` com config default,
+custom e min/max invertido; `OverviewPage`/`get_world_options` não afetados
+por esta feature. A lógica de `village_numbers` e o guard de
+`attention_lag` foram revisados por leitura mas **não foram exercitados
+com um ciclo real do bot** — pendente de validação em campo via
+`cache/logs/session_latest.log` (usuário confirmou que vai rodar o bot e
+revisar o log depois).
+
+Config novo: `bot.humanize_village_order` (false), `bot.jitter_min` (20),
+`bot.jitter_max` (120), `bot.attention_lag_chance` (0.0),
+`bot.attention_lag_extra_min` (600), `bot.attention_lag_extra_max` (1800),
+`village_template.delay_factor` (null). `build.version` bumpado para `2.6`.
+`webmanager/helpfile.py` atualizado com as 7 novas chaves.
 
 ## Feature 24 — Paladino (estátua): treino por XP, skills por perfil de aldeia e slots progressivos
 

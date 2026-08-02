@@ -741,9 +741,18 @@ class Village:
     def run(self, config=None, first_run=False):
         # setup and check if village still exists / is accessible
         self.config = config
-        self.wrapper.delay = self.get_config(
-            section="bot", parameter="delay_factor", default=1.0
+        # Feature 23: allow a per-village delay_factor override (bigger/smaller
+        # request jitter for specific villages), same override pattern already
+        # used for active_hours. null (default) falls back to the global
+        # bot.delay_factor, so existing configs are unaffected.
+        delay_factor = self.get_village_config(
+            self.village_id, parameter="delay_factor", default=None
         )
+        if delay_factor is None:
+            delay_factor = self.get_config(
+                section="bot", parameter="delay_factor", default=1.0
+            )
+        self.wrapper.delay = delay_factor
 
         data = self.village_init()
 

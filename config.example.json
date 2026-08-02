@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.5",
+    "version": "2.6",
     "author": "stefan2200"
   },
   "server": {
@@ -29,7 +29,13 @@
     "village_name_number_length": 3,
     "auto_set_village_names": false,
     "user_agent": null,
-    "check_update": true
+    "check_update": true,
+    "humanize_village_order": false,
+    "jitter_min": 20,
+    "jitter_max": 120,
+    "attention_lag_chance": 0.0,
+    "attention_lag_extra_min": 600,
+    "attention_lag_extra_max": 1800
   },
   "building": {
     "manage_buildings": true,
@@ -72,6 +78,7 @@
     "units": "basic",
     "managed": true,
     "active_hours": null,
+    "delay_factor": null,
     "scout_first": false,
     "additional_farms": [],
     "prioritize_building": false,
