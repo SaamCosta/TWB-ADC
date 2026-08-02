@@ -77,18 +77,35 @@ Nenhuma ação nova necessária aqui além de manter a prioridade dessa feature.
 
 ## 4. Paladin — unidade especial com experiência e equipamento
 
-**Mecânica real:** o Paladin ganha XP em 4 categorias (combate, suporte, construção,
-treino) e pode equipar armas que bonificam atributos específicos de tropas
-(dependendo do mundo). É uma unidade única por jogador, não recrutável em massa.
+**Mecânica real (revisada em 2026-08-02 com detalhe do usuário, servidor br143):**
+o Paladino é gerenciado pela tela `screen=statue` e é mais complexo do que a
+avaliação inicial supunha:
+- **Treino por XP:** botão dedicado ("Treinar por XP") converte recursos
+  diretamente em XP do Paladino, como via alternativa ao ganho por combate e
+  construção de edifícios. Decidir *quando* vale a pena gastar recursos nisso
+  exige comparar contra a taxa normal de ganho de XP — não é um cálculo trivial.
+- **3 árvores de skill:** Ofensiva, Aldeia (economia) e Defesa, com pontos de
+  habilidade investidos por tier e **re-especialização disponível** (botão
+  "Re-especialização") — ou seja, dá pra realinhar a build do Paladino ao
+  perfil da aldeia onde ele mora (`village.profile`: `offensive`/`defensive`,
+  já existente na config do bot).
+- **Slots progressivos:** só existe 1 Paladino por conta inicialmente; slots
+  adicionais desbloqueiam por número de aldeias conquistadas — 3, 5, 10, 20, 35
+  aldeias no print do usuário, indo **até 100 aldeias** para os slots mais altos
+  (confirmado pelo usuário, que joga no servidor). É um sistema de progressão de
+  late-game, alinhado com o foco declarado do projeto (`CLAUDE.md`: "mid/late
+  game").
 
-**O que o bot faz hoje:** Paladin é reconhecido como tipo de unidade (excluído do
+**O que o bot faz hoje:** Paladino é reconhecido como tipo de unidade (excluído do
 gather noturno em `game/troopmanager.py:413`, filtrado em `core/extractors.py:152`),
-mas não há gerenciamento ativo — sem lógica de recrutar o Paladin inicial, escolher
-categoria de treino de XP, ou equipar arma.
+mas não há nenhuma leitura ou gerenciamento ativo de `screen=statue` — nem para
+recrutar o Paladino inicial, nem treino por XP, nem skills, nem múltiplos slots.
 
-**Sugestão:** prioridade baixa. É uma unidade única (não escala como tropas normais),
-o ganho por automação é pequeno comparado a farm/conquest/defesa. Vale como item de
-backlog de baixa prioridade, não como próximo passo.
+**Sugestão:** revisada para prioridade média (era baixa) dado o potencial de
+otimização de skills por perfil de aldeia e a progressão de slots em late-game —
+mas ainda precisa de mais desenho antes de virar tarefa de implementação,
+principalmente a economia de decisão do treino por XP (combate vs. construção vs.
+recursos). Ver Feature 24 em `docs/backlog.md`.
 
 ## 5. Farm Assistant nativo (Plunder List) vs. lógica própria do bot
 

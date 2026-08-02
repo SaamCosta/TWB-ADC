@@ -114,6 +114,47 @@ Isolar essa variância nas ações não-críticas (farm, build, recruit, market)
 **Prioridade:** depois das Features 18–22 (ordem confirmada pelo usuário em
 2026-08-02).
 
+## Feature 24 — Paladino (estátua): treino por XP, skills por perfil de aldeia e slots progressivos
+
+Detalhe completo em `docs/game_comparison.md` item 4 (revisado em 2026-08-02
+com prints do usuário). Resumo:
+- `screen=statue` não é lido nem gerenciado pelo bot hoje — só existe como
+  prédio na fila de construção (`buildingmanager`).
+- **Treino por XP:** converte recursos em XP diretamente. Decidir quando vale
+  a pena exige modelar a taxa de XP normal (combate + construção) contra o
+  custo em recursos — não é trivial, precisa de mais desenho.
+- **3 árvores de skill** (Ofensiva/Aldeia/Defesa) com re-especialização
+  disponível — dá pra alinhar a build à `village.profile` (offensive/defensive)
+  já existente na config.
+- **Slots progressivos** por número de aldeias conquistadas (3, 5, 10, 20, 35,
+  ..., até 100 aldeias confirmado pelo usuário) — sistema de late-game.
+
+**Escopo proposto (fase 1, menor):** só leitura — expor estado do(s)
+Paladino(s) (nível, XP, skills investidos, slots desbloqueados/bloqueados) no
+webmanager, sem automação ativa.
+**Escopo futuro (fase 2):** automatizar re-especialização por perfil de
+aldeia e decidir treino por XP via threshold configurável.
+**Prioridade:** depois da Feature 23. Fase 1 é pequena e escopada; fase 2
+precisa de mais design antes de virar tarefa de implementação.
+
+## Feature 25 — Catálogo e otimização de itens de inventário (boosts)
+
+`Perfil > Inventário` (não coberto hoje, nem lido) tem itens obtidos via
+missões/eventos: boosts percentuais de recursos por tipo (madeira/pedra/
+ferro), possivelmente bandeiras, baús, medalhas. Segundo o usuário (2026-08-02),
+os boosts variam bastante — percentual, recurso-alvo, tipo de bônus (ataque,
+defesa, produção) — e precisam ser catalogados individualmente antes de dar
+pra desenhar uma lógica de uso eficiente (ex: qual boost ativar e quando).
+
+**Nota a confirmar:** os ícones de bandeira que aparecem no inventário podem
+ser instâncias consumíveis do mesmo sistema já gerenciado por
+`DefenceManager` (ver `docs/bugs_flags.md`) — ou um sistema totalmente
+separado. Confirmar antes de desenhar a automação, pra não duplicar lógica.
+
+**Prioridade:** depois da Feature 23/24. Precisa de levantamento mais
+detalhado (usuário tem mais contexto de jogo aqui) antes de virar plano de
+implementação — ainda não é uma tarefa pronta para começar.
+
 ---
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
@@ -141,5 +182,23 @@ Isolar essa variância nas ações não-críticas (farm, build, recruit, market)
   quests. Não cobertas em nenhum lugar do código: `info_player`, `am_farm`,
   `ally`, `forum`, `ranking`, `statue` (só como prédio na fila, sem lógica de
   Paladin — ver item 4 de `docs/game_comparison.md`), `inventory` (só
-  checado como flag de world settings, nunca navegado). Aguardando validação
-  do usuário sobre quais dessas ausências importam na prática.
+  checado como flag de world settings, nunca navegado).
+  **Validado pelo usuário em 2026-08-02:** `statue` e `inventory` importam de
+  fato — viraram Features 24 e 25. `info_player`, `am_farm`, `ally`, `forum`,
+  `ranking` seguem sem uso confirmado por enquanto.
+- **Sub-abas de `screen=place`** — o usuário notou que o bot pode não cobrir
+  todas as sub-abas da Praça de Reunião. Conferido no código: `Comandos`
+  (envio de ataque/suporte) e `Tropas` (`mode=units`) e `Coletando`
+  (`mode=scavenge`/`scavenge_api`) estão cobertas. `Simulador` e `Modelos de
+  tropas` não precisam de cobertura — o bot tem simulador próprio
+  (`game/simulator.py`) e sistema de templates próprio (`templates/troops/*.txt`,
+  ver Feature 14). **Em aberto:** `Coleta em Massa` (envio de coleta para
+  várias aldeias de uma vez) não tem uso confirmado no código — pode já estar
+  coberta indiretamente (o bot processa cada aldeia individualmente em loop,
+  então o efeito final seria o mesmo do botão de massa), mas precisa de
+  confirmação antes de assumir isso.
+- **Outras abas do Perfil** apontadas pelo usuário: `Tesouraria` — feature
+  muito recente do jogo, adiada a pedido do usuário, sem feature registrada
+  ainda. `Estatísticas` — não vira feature própria por ora, mas é candidata a
+  fonte de dados para Feature 18 (cálculo de moral real) ou Feature 17
+  (relatório de império) quando essas forem implementadas.
