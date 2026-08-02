@@ -189,6 +189,34 @@ FLAG_TYPES = {
 }
 ```
 
+## Bug 3 — `supported` compartilhado entre todas as aldeias (não corrigido)
+
+**Status:** ativo, encontrado em 2026-08-02, não corrigido ainda.
+
+`DefenceManager` declara `supported = []` como atributo de **classe** (não é
+reatribuído em `__init__`). `game/village.py` instancia um `DefenceManager` por
+aldeia gerenciada, mas como o código só faz `self.supported.append(vil)`
+(mutação in-place, dentro de `update()`) e nunca `self.supported = [...]`, todas
+as instâncias — ou seja, todas as aldeias — compartilham o mesmo objeto lista em
+memória. Suporte enviado pela aldeia A marca o alvo como "já suportado" também
+para a aldeia B, mesmo que B nunca tenha enviado nada, bloqueando indevidamente
+`support_max_villages` por aldeia.
+
+`current_flag` e `flags` (mesma classe) parecem seguros porque são sempre
+reatribuídos por completo (`self.current_flag = cflag`, `self.flags = {}`) antes
+de qualquer mutação — a primeira atribuição já cria um atributo de instância que
+sombreia o de classe. `my_other_villages` também é seguro pois é reatribuído
+externamente em `game/village.py`.
+
+**Correção sugerida:** mover `self.supported = []` para dentro de `__init__`.
+Revisar também se a lista deveria resetar periodicamente (hoje acumula
+indefinidamente dentro de uma mesma instância, sem reset por ciclo).
+
+**Nota:** existe uma tarefa em background já criada para isso
+(`task_82df90dc`, chip pendente no momento em que este doc foi atualizado) —
+se ainda não foi iniciada ou descartada, pode ser usada diretamente em vez de
+reabrir a investigação do zero.
+
 ---
 
 ## Estado atual e próximos passos
@@ -197,10 +225,13 @@ FLAG_TYPES = {
 |------|--------|------------------|
 | Bug 1 — troca constante | ✅ Corrigido (código) | Aplicado guard `_flag_state_confirmed` + comparação `==` em `flag_logic()`. Aguardando validação em campo. |
 | Bug 2 — loop de upgrade | ✅ Corrigido (código) | Aplicado `sleep(2)` + limite de 2 tentativas por `(flag_type, level)` em `manage_flags()`. Aguardando validação em campo. |
+| Bug 3 — `supported` compartilhado entre aldeias | 🔴 Não corrigido | Mover `self.supported = []` para `__init__`; revisar reset por ciclo. Ver `task_82df90dc`. |
 | Mapeamento de 8 tipos | 📋 Documentado | Implementar `FLAG_TYPES` no código; ativar tipos 7/8 quando relevante |
 | Cooldown de 24h ativo | 🔴 Em curso | Aguardar expirar; monitorar logs após fix do Bug 1 |
 
 **Pré-requisito para fechar este item:**
 - Validação em campo dos fixes dos Bugs 1 e 2 (branch `master`, commits de correção
   em `game/defence_manager.py`).
+- Corrigir Bug 3 (`supported` compartilhado) — impacta o mesmo arquivo, mas é
+  um problema distinto (suporte entre aldeias, não bandeiras).
 - Feature 8 (conquest) validada antes de ativar uso do tipo 7 (coin_cost).

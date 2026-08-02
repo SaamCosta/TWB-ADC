@@ -75,6 +75,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 - Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
   constante de bandeira, loop de upgrade), aguardando validação em campo — ver
   `docs/bugs_flags.md` para o diagnóstico original e o estado atual.
+- `game/defence_manager.py::DefenceManager.supported` — atributo de classe
+  mutável (`[]`) nunca reatribuído em `__init__`, só mutado in-place via
+  `.append()`. Como uma instância de `DefenceManager` existe por aldeia, todas
+  as aldeias compartilham a mesma lista — suporte enviado por uma aldeia marca
+  o alvo como "já suportado" para as outras também. Não corrigido ainda, ver
+  Bug 3 em `docs/bugs_flags.md`.
 
 ## Backlog de features pendentes
 
