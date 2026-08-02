@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.3",
+    "version": "2.4",
     "author": "stefan2200"
   },
   "server": {
@@ -174,7 +174,8 @@
     "min_attack_power": 50000,
     "nobles_per_target": 4,
     "arrival_buffer_seconds": 2,
-    "scout_amount": 5
+    "scout_amount": 5,
+    "dynamic_moral_night_bonus": false
   },
   "villages": {}
 }

@@ -111,6 +111,7 @@ help_file = {
     'pvp_conquest.nobles_per_target': 'Número máximo de nobles a enviar por alvo',
     'pvp_conquest.arrival_buffer_seconds': 'Segundos de antecedência do clear em relação aos nobles',
     'pvp_conquest.scout_amount': 'Número de espiões usados no scout inicial do alvo',
+    'pvp_conquest.dynamic_moral_night_bonus': 'Calcula moral (por pontos atacante/defensor) e night bonus (horário + world settings) reais no simulador, em vez de valores neutros fixos (moral=100, sem night bonus). Estimativa best-effort — valide contra o simulador do próprio jogo antes de confiar totalmente (ver docs/game_comparison.md item 1)',
 }
 
 buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "place", "statue", "market", "wood",

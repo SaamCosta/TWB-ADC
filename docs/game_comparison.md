@@ -40,6 +40,34 @@ do servidor + world setting de night bonus (checar se o mundo tem essa opção a
 via `game.php?screen=info_player` ou settings do mundo). `luck` pode continuar 0
 (neutro) como aproximação conservadora, já que é aleatório por natureza.
 
+**✅ Implementado em 2026-08-02 (Feature 18), atrás de flag opt-in.** Novo módulo
+`core/world_config.py` busca `interface.php?func=get_config` (endpoint público, sem
+autenticação, confirmado ao vivo contra br143 — retorna `<night>` com
+`active/start_hour/end_hour` e `<mood>` com `loss_max/loss_min`), com cache de 6h em
+`cache/world/config_{server}.json`. `game/pvp_conquest.py::_step_simulate` agora
+calcula `nightbonus` real (horário local da máquina do bot vs. janela do mundo — ver
+ressalva de timezone abaixo) e uma estimativa de `moral` a partir dos pontos reais do
+atacante (`Village.points`, agora persistido em `cache/managed/*.json` a cada ciclo via
+`twb.py`/`game/village.py`) e do defensor (`cache/villages/{id}.json`, já preenchido
+pelo scan de mapa).
+
+**Ressalvas importantes (por que ficou atrás de flag, `pvp_conquest.dynamic_moral_night_bonus`,
+default `false`):**
+- **Fórmula de moral não é oficialmente documentada.** O suporte da Innogames confirma
+  que não existe fórmula pública exata. `core/world_config.py::estimate_moral` usa uma
+  interpolação linear simples parametrizada pelo `mood.loss_max` real do mundo (não um
+  valor chutado) — mas é uma aproximação best-effort, não a fórmula real do jogo. Não
+  modela o mecanismo de "moral sobe com o tempo para jogador pequeno antigo" (exigiria
+  data de entrada do oponente no mundo, que o bot não rastreia).
+- **Horário de servidor é aproximado.** `WorldConfig.is_night_bonus_active` usa o
+  horário local da máquina que roda o bot, assumindo que coincide com o fuso do
+  servidor — verdadeiro para br143 (Brasil), mas não extraído do HTML do jogo (o bot
+  não tem essa extração hoje). Documentado como limitação conhecida em
+  `core/world_config.py`.
+- **Recomendação:** antes de confiar 100% na flag ligada, validar os valores de moral
+  calculados contra o simulador nativo do jogo (`Praça de Reunião > Simulador`, que tem
+  calculadora de moral própria) para alguns alvos reais.
+
 ## 2. Igreja (Church) — influência de moral por raio geográfico
 
 **Mecânica real:** em mundos com igreja ativa, tropas atacando/defendendo dentro do

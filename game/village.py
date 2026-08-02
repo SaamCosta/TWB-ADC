@@ -46,6 +46,11 @@ class Village:
     forced_peace = False
     forced_peace_today_start = None
     disabled_units = []
+    # Own village points, set once per cycle by twb.py from OverviewPage.villages_data
+    # before village.run() -- used by Feature 18 (PvP conquest moral estimate).
+    # Safe as a class default: always fully reassigned (self.points = X), never
+    # mutated in-place, so it doesn't share state across Village instances.
+    points = 0
 
     twp = TwStats()
 
@@ -1055,5 +1060,6 @@ class Village:
             "under_attack": self.def_man.under_attack,
             "last_run": int(time.time()),
             "zone": current_zone,
+            "points": self.points,
         }
         FileManager.save_json_file(village_entry, f"cache/managed/{self.village_id}.json")

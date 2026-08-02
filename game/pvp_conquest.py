@@ -17,6 +17,7 @@ import time
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+from core.world_config import WorldConfig
 from game.simulator import Simulator
 
 logger = logging.getLogger("PvpConquest")
@@ -73,6 +74,12 @@ class PvpConquestManager:
         self.villages = villages      # {village_id: Village}
         self.config = config
         self.sim = Simulator()
+        # Feature 18: cached world settings (night bonus, moral) -- refreshed
+        # at most every WorldConfig.CACHE_TTL, cheap to call every cycle.
+        self.world_config = WorldConfig.get(
+            server=config.get("server", {}).get("server"),
+            endpoint=config.get("server", {}).get("endpoint"),
+        )
 
     # ------------------------------------------------------------------
     # Entry point
@@ -198,13 +205,41 @@ class PvpConquestManager:
 
         # Run simulator
         wall_level = scout_report.get("extra", {}).get("buildings", {}).get("wall", 0)
+
+        # Feature 18: moral/night bonus were previously hardcoded to neutral
+        # values (moral=100, nightbonus=False), which could make the bot
+        # recommend conquests that fail in practice against much smaller
+        # targets or during the world's night bonus window. Opt-in via
+        # config (pvp_conquest.dynamic_moral_night_bonus) since the moral
+        # estimate is a best-effort approximation (see
+        # core/world_config.py::estimate_moral docstring) -- validate
+        # against the in-game simulator before relying on it.
+        nightbonus = False
+        moral = 100
+        if cfg.get("dynamic_moral_night_bonus", False):
+            nightbonus = WorldConfig.is_night_bonus_active(self.world_config)
+            target_points = self._target_points(target_id)
+            attacker_points = getattr(clear_village, "points", 0)
+            if target_points is not None and attacker_points:
+                moral = WorldConfig.estimate_moral(self.world_config, attacker_points, target_points)
+            else:
+                logger.warning(
+                    "PvpConquest: missing points data for %s (attacker=%s, defender=%s) "
+                    "-- falling back to moral=100 for this simulation",
+                    target_id, attacker_points, target_points
+                )
+            logger.info(
+                "PvpConquest: dynamic sim inputs for %s -- moral=%d%%, nightbonus=%s",
+                target_id, moral, nightbonus
+            )
+
         try:
             sim_result = self.sim.simulate(
                 attackerUnits=dict(attacker_units),
                 defenderUnits=dict({u: int(q) for u, q in defender_units.items()}),
                 wall=wall_level,
-                nightbonus=False,
-                moral=100,
+                nightbonus=nightbonus,
+                moral=moral,
                 luck=0,
             )
         except Exception as e:
@@ -353,6 +388,17 @@ class PvpConquestManager:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _target_points(self, target_id):
+        """
+        Feature 18: reads the target's points from cache/villages/{id}.json,
+        populated by game/map.py scans. Returns None if the target hasn't
+        been seen by any managed village's map scan yet.
+        """
+        village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
+        if not village_data:
+            return None
+        return village_data.get("points")
 
     def _find_scout_report(self, target_id):
         """Returns the most recent scout report against target_id, or None."""

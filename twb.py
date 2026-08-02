@@ -501,6 +501,13 @@ class TWB:
                         village_number += 1
                         continue
 
+                    # Feature 18: keep own-village points fresh from the overview page
+                    # so PvpConquestManager can estimate real moral instead of a
+                    # hardcoded neutral value.
+                    overview_village = overview_page.villages_data.get(village.village_id)
+                    if overview_village:
+                        village.points = overview_village.points
+
                     village.run(config=config)
 
                     if (

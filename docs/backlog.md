@@ -28,7 +28,7 @@ aldeias), gráfico de recursos por aldeia, mapa de calor de atividade de farm,
 histórico de conquistas com timeline. Consome `cache/managed/*.json`,
 `cache/attacks/*.json`, `cache/conquest/*.json`.
 
-## Feature 18 — Moral e night bonus dinâmicos no simulador de PvP conquest
+## Feature 18 — Moral e night bonus dinâmicos no simulador de PvP conquest ✅ Implementado (2026-08-02)
 
 `PvpConquestManager` (`game/pvp_conquest.py:202-208`) chama `Simulator.simulate()`
 com `moral=100`, `nightbonus=False`, `luck=0` fixos, mesmo o simulador já
@@ -38,6 +38,14 @@ real de moral por diferença de pontos e o bônus noturno de defesa do mundo,
 podendo recomendar conquistas que falhariam na prática. Calcular moral real a
 partir da razão de pontos atacante/defensor e nightbonus a partir do horário
 do servidor + world setting. Ver `docs/game_comparison.md` item 1 para detalhe.
+
+**Status:** implementado atrás de flag opt-in (`pvp_conquest.dynamic_moral_night_bonus`,
+default `false`) — novo `core/world_config.py` lê `interface.php?func=get_config`
+(endpoint público do mundo) para night bonus e moral (`mood.loss_max`), e
+`Village.points` passou a ser persistido em `cache/managed/*.json` a cada ciclo
+para dar o dado de pontos do atacante. **Fórmula de moral é aproximação
+best-effort** (sem fórmula oficial pública) — aguardando validação de campo do
+usuário antes de virar default `true`. Build version bumpada 2.3 → 2.4.
 
 ## Feature 19 — Página de status de bandeiras no webmanager
 
