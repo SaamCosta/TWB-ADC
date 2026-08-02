@@ -194,6 +194,9 @@ class DefenceManager:
 
         url = f"game.php?village={self.village_id}&screen=flags"
         result = self.wrapper.get_url(url=url)
+        if result is None:
+            self.logger.warning("Flags: request timed out, skipping this cycle")
+            return
 
         self._can_change_flag = '<span class="timer cooldown">' not in result.text
 
@@ -239,6 +242,9 @@ class DefenceManager:
     def support(self, vid, troops=None):
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
         pre_support = self.wrapper.get_url(url)
+        if pre_support is None:
+            self.logger.warning("[Support] %s -> %s: request timed out, aborting", self.village_id, vid)
+            return False
         pre_data = {}
         for u in Extractor.attack_form(pre_support):
             k, v = u
@@ -257,6 +263,9 @@ class DefenceManager:
 
         confirm_url = f"game.php?village={self.village_id}&screen=place&try=confirm"
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
+        if conf is None:
+            self.logger.warning("[Support] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
+            return False
         if '<div class="error_box">' in conf.text:
             return False
         duration = Extractor.attack_duration(conf)

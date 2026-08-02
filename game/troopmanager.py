@@ -9,6 +9,8 @@ import time
 from core.extractors import Extractor
 from game.resources import ResourceManager
 
+logger = logging.getLogger("TroopManager")
+
 
 class TroopManager:
     """
@@ -88,6 +90,9 @@ class TroopManager:
         main_data = self.wrapper.get_action(
             action="overview", village_id=self.village_id
         )
+        if main_data is None:
+            (self.logger or logger).warning("TroopManager: request timed out, skipping this cycle")
+            return
         self.game_data = Extractor.game_state(main_data)
 
         if self.resman:
@@ -104,6 +109,9 @@ class TroopManager:
                 f"game.php?village={self.village_id}&screen=place&mode=units&display=units"
         )
         result_all = self.wrapper.get_url(get_all)
+        if result_all is None:
+            self.logger.warning("TroopManager: units request timed out, skipping this cycle")
+            return
 
         for u in Extractor.units_in_village(result_all):
             k, v = u
@@ -364,6 +372,9 @@ class TroopManager:
             return False
         url = f"game.php?village={self.village_id}&screen=place&mode=scavenge"
         result = self.wrapper.get_url(url=url)
+        if result is None:
+            self.logger.warning("Gather: request timed out, skipping this cycle")
+            return False
         village_data = Extractor.village_data(result)
 
         sleep = 0
@@ -373,6 +384,9 @@ class TroopManager:
 
         get_all = f"game.php?village={self.village_id}&screen=place&mode=units&display=units"
         result_all = self.wrapper.get_url(get_all)
+        if result_all is None:
+            self.logger.warning("Gather: units request timed out, skipping this cycle")
+            return False
 
         for u in Extractor.units_in_village(result_all):
             k, v = u

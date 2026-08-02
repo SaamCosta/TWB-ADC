@@ -143,6 +143,9 @@ class ResourceManager:
         if gpl and self.do_premium_trade:
             url = f"game.php?village={self.village_id}&screen=market&mode=exchange"
             res = self.wrapper.get_url(url=url)
+            if res is None:
+                self.logger.warning("Premium trade: request timed out, skipping")
+                return
             data = Extractor.premium_data(res.text)
 
             premium_exchange = PremiumExchange(
@@ -339,6 +342,9 @@ class ResourceManager:
         """
         url = f"game.php?village={self.village_id}&screen=market&mode=own_offer"
         res = self.wrapper.get_url(url=url)
+        if res is None:
+            self.logger.warning("Trade: request timed out, skipping")
+            return False
         if 'market_merchant_available_count">0' in res.text:
             self.logger.debug("Not trading because not enough merchants available")
             return False
@@ -362,6 +368,9 @@ class ResourceManager:
         """
         url = f"game.php?village={self.village_id}&screen=market&mode=all_own_offer"
         data = self.wrapper.get_url(url)
+        if data is None:
+            self.logger.warning("Drop trades: request timed out, skipping")
+            return
         existing = re.findall(r'data-id="(\d+)".+?data-village="(\d+)"', data.text)
         for entry in existing:
             offer, village = entry
@@ -414,6 +423,9 @@ class ResourceManager:
                 # check incoming resources
                 url = f"game.php?village={self.village_id}&screen=market&mode=other_offer"
                 res = self.wrapper.get_url(url=url)
+                if res is None:
+                    self.logger.warning("Market: request timed out, skipping this cycle")
+                    return
                 p = re.compile(
                     r"Aankomend:\s.+\"icon header (.+?)\".+?<\/span>(.+) ", re.M
                 )
@@ -469,6 +481,9 @@ class ResourceManager:
         """
         url = f"game.php?village={self.village_id}&screen=market&mode=other_offer"
         res = self.wrapper.get_url(url=url)
+        if res is None:
+            self.logger.warning("Market offers: request timed out, skipping")
+            return False
         p = re.compile(
             r"(?:<!-- insert the offer -->\n+)\s+<tr>(.*?)<\/tr>", re.S | re.M
         )

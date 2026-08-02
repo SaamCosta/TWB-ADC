@@ -323,6 +323,9 @@ class Hunter:
         except Exception as e:
             self.logger.error("Hunter: probe GET failed: %s", e)
             return None
+        if pre is None:
+            self.logger.warning("Hunter: probe GET timed out for %s -> %s", source_id, target_id)
+            return None
 
         pre_data = {}
         for k, v in Extractor.attack_form(pre):
@@ -337,6 +340,9 @@ class Hunter:
             conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
         except Exception as e:
             self.logger.error("Hunter: probe POST failed: %s", e)
+            return None
+        if conf is None:
+            self.logger.warning("Hunter: probe POST timed out for %s -> %s", source_id, target_id)
             return None
 
         if '<div class="error_box">' in conf.text:

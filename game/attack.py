@@ -371,6 +371,9 @@ class AttackManager:
         """
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
         pre_attack = self.wrapper.get_url(url)
+        if pre_attack is None:
+            self.logger.warning("[Attack] %s -> %s: request timed out, aborting", self.village_id, vid)
+            return False
         pre_data = {}
         for u in Extractor.attack_form(pre_attack):
             k, v = u
@@ -389,6 +392,9 @@ class AttackManager:
 
         confirm_url = f"game.php?village={self.village_id}&screen=place&try=confirm"
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
+        if conf is None:
+            self.logger.warning("[Attack] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
+            return False
         if '<div class="error_box">' in conf.text:
             return False
         duration = Extractor.attack_duration(conf)

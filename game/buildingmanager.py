@@ -63,6 +63,10 @@ class BuildingManager:
         Start a building manager run
         """
         main_data = self.wrapper.get_action(village_id=self.village_id, action="main")
+        if main_data is None:
+            if self.logger:
+                self.logger.warning("Builder: request timed out, skipping this cycle")
+            return False
         self.game_state = Extractor.game_state(main_data)
         vname = self.game_state["village"]["name"]
 
@@ -128,6 +132,9 @@ class BuildingManager:
                 return False
         # Check for instant build after putting something in the queue
         main_data = self.wrapper.get_action(village_id=self.village_id, action="main")
+        if main_data is None:
+            self.logger.warning("Builder: request timed out, skipping instant-build check")
+            return True
         if self.complete_actions(main_data.text):
             self.can_build_three_min = True
             return self.start_update(build=build, set_village_name=set_village_name)
@@ -311,6 +318,9 @@ class BuildingManager:
                 )
                 self.levels[entry] += 1
                 response = self.wrapper.get_url(check["build_link"].replace("amp;", ""))
+                if response is None:
+                    self.logger.warning("Builder: build request timed out for %s, skipping", entry)
+                    continue
                 if self.can_build_three_min:
                     # Wait some random time
                     time.sleep(random.randint(3, 7) / 10)
