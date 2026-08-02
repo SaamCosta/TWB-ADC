@@ -200,11 +200,10 @@ implementação — ainda não é uma tarefa pronta para começar.
   (`mode=scavenge`/`scavenge_api`) estão cobertas. `Simulador` e `Modelos de
   tropas` não precisam de cobertura — o bot tem simulador próprio
   (`game/simulator.py`) e sistema de templates próprio (`templates/troops/*.txt`,
-  ver Feature 14). **Em aberto:** `Coleta em Massa` (envio de coleta para
-  várias aldeias de uma vez) não tem uso confirmado no código — pode já estar
-  coberta indiretamente (o bot processa cada aldeia individualmente em loop,
-  então o efeito final seria o mesmo do botão de massa), mas precisa de
-  confirmação antes de assumir isso.
+  ver Feature 14). `Coleta em Massa` — **confirmado pelo usuário em 2026-08-02:
+  exclusivo de conta premium**, não vira feature (o bot já processa cada
+  aldeia individualmente em loop, que é o efeito equivalente sem depender de
+  premium).
 - **Outras abas do Perfil** apontadas pelo usuário: `Tesouraria` — feature
   muito recente do jogo, adiada a pedido do usuário, sem feature registrada
   ainda. `Estatísticas` — não vira feature própria por ora, mas é candidata a
