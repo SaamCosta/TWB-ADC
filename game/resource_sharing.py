@@ -13,6 +13,12 @@ logger = logging.getLogger("ResourceSharing")
 
 RESOURCES = ["wood", "stone", "iron"]
 
+# Feature 20: histórico de transferências para o webmanager (processo
+# separado, só enxerga o que for persistido em cache/). Mantém só as N
+# entradas mais recentes para não crescer sem limite.
+HISTORY_PATH = "cache/resource_sharing/history.json"
+HISTORY_MAX_ENTRIES = 300
+
 
 class ResourceSharingManager:
     """
@@ -78,6 +84,10 @@ class ResourceSharingManager:
         merchants_available = self._get_available_merchants()
         if merchants_available < 1:
             logger.info("ResourceSharing: sem mercadores disponíveis em %s", self.current_village_id)
+            self._log_event(
+                source=self.current_village_id, target=None, resources=None,
+                success=False, reason="no_merchants",
+            )
             return
 
         sent_count = 0
@@ -112,6 +122,10 @@ class ResourceSharingManager:
                     "ResourceSharing: enviado %s de %s → %s",
                     to_send, self.current_village_id, receiver_id
                 )
+                self._log_event(
+                    source=self.current_village_id, target=receiver_id, resources=to_send,
+                    success=True, reason=None,
+                )
                 # Desconta do excedente local para evitar envios duplos no mesmo ciclo
                 for res, amt in to_send.items():
                     surplus[res] = max(0, surplus[res] - amt)
@@ -120,6 +134,10 @@ class ResourceSharingManager:
                 logger.warning(
                     "ResourceSharing: falha ao enviar de %s → %s",
                     self.current_village_id, receiver_id
+                )
+                self._log_event(
+                    source=self.current_village_id, target=receiver_id, resources=to_send,
+                    success=False, reason="send_failed",
                 )
 
     # ------------------------------------------------------------------
@@ -231,6 +249,35 @@ class ResourceSharingManager:
                     needed[res] = needed.get(res, 0) + amount
 
         return needed
+
+    def _log_event(self, source, target, resources, success, reason):
+        """
+        Feature 20: acrescenta uma entrada ao histórico persistido em
+        HISTORY_PATH, para o webmanager (processo separado) poder mostrar
+        quanto foi transferido, quando, e falhas (ex: sem mercadores).
+        Best-effort — nunca deve derrubar o ciclo do bot por erro de I/O.
+        """
+        try:
+            # twb.py::start() já cria cache/resource_sharing na inicialização
+            # normal do bot, mas recriar aqui é defensivo/idempotente caso
+            # este método seja chamado fora desse fluxo (ex: testes).
+            FileManager.create_directory(FileManager.get_path(os.path.dirname(HISTORY_PATH)))
+            history = FileManager.load_json_file(HISTORY_PATH) or []
+            if not isinstance(history, list):
+                history = []
+            history.append({
+                "timestamp": int(time.time()),
+                "source": source,
+                "target": target,
+                "resources": resources,
+                "success": bool(success),
+                "reason": reason,
+            })
+            if len(history) > HISTORY_MAX_ENTRIES:
+                history = history[-HISTORY_MAX_ENTRIES:]
+            FileManager.save_json_file(history, HISTORY_PATH)
+        except Exception as e:
+            logger.warning("ResourceSharing: falha ao gravar histórico: %s", e)
 
     def _get_available_merchants(self):
         """

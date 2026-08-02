@@ -914,6 +914,86 @@ class FlagReader:
         return out
 
 
+class ResourceSharingReader:
+    """
+    Le o historico de transferencias diretas de recursos entre aldeias
+    (Feature 9, game/resource_sharing.py), persistido em
+    cache/resource_sharing/history.json a cada envio/falha (Feature 20).
+    """
+
+    REASON_LABELS = {
+        "no_merchants": "Sem mercadores disponíveis",
+        "send_failed":  "Falha ao enviar (mercado recusou)",
+    }
+
+    RES_ICONS = {"wood": "🌲", "stone": "🪨", "iron": "⛏"}
+
+    @staticmethod
+    def _path():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "resource_sharing", "history.json")
+
+    @staticmethod
+    def load(managed_cache=None, limit=100):
+        """
+        Retorna (entries, totals) onde entries é a lista formatada (mais
+        recente primeiro, limitada a `limit`) e totals é um dict agregando
+        o total enviado por recurso entre todas as entradas com sucesso.
+        managed_cache (opcional): dict {village_id: cache/managed/*.json} usado
+        para resolver nomes de aldeia em vez de só o ID.
+        """
+        path = ResourceSharingReader._path()
+        if not os.path.exists(path):
+            return [], {}
+        try:
+            with open(path, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            return [], {}
+        if not isinstance(raw, list):
+            return [], {}
+
+        managed_cache = managed_cache or {}
+
+        def _name(vid):
+            if not vid:
+                return "—"
+            vdata = managed_cache.get(str(vid), {})
+            pub = vdata.get("public", {}) or {}
+            return pub.get("name") or vdata.get("name") or ("Aldeia %s" % vid)
+
+        entries = []
+        totals = {}
+        for entry in raw:
+            success = entry.get("success", False)
+            resources = entry.get("resources") or {}
+            ts = entry.get("timestamp", 0)
+            ts_fmt = "—"
+            if ts:
+                try:
+                    ts_fmt = datetime.datetime.fromtimestamp(ts).strftime("%d/%m %H:%M:%S")
+                except Exception:
+                    pass
+            reason = entry.get("reason")
+            entries.append({
+                "timestamp": ts,
+                "timestamp_fmt": ts_fmt,
+                "source_id": entry.get("source"),
+                "source_name": _name(entry.get("source")),
+                "target_id": entry.get("target"),
+                "target_name": _name(entry.get("target")),
+                "resources": resources,
+                "success": success,
+                "reason": reason,
+                "reason_label": ResourceSharingReader.REASON_LABELS.get(reason, reason),
+            })
+            if success:
+                for res, amt in resources.items():
+                    totals[res] = totals.get(res, 0) + amt
+
+        entries.sort(key=lambda e: e["timestamp"], reverse=True)
+        return entries[:limit], totals
+
+
 class FarmScoreReader:
     @staticmethod
     def load():

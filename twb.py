@@ -604,6 +604,7 @@ class TWB:
             "cache/hunter",
             "cache/zones",
             "cache/pvp_conquest",
+            "cache/resource_sharing",
         ]
         FileManager.create_directories(directories)
 

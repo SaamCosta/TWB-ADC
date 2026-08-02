@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -315,6 +315,22 @@ def get_flags():
     sync_data = sync()
     flag_entries = FlagReader.load(sync_data["bot"])
     return render_template('flags.html', entries=flag_entries)
+
+
+@app.route('/resource_sharing', methods=['GET'])
+def get_resource_sharing():
+    config = DataReader.config_grab()
+    sharing_cfg = config.get("resource_sharing", {})
+    enabled = sharing_cfg.get("enabled", False)
+    sync_data = sync()
+    entries, totals = ResourceSharingReader.load(managed_cache=sync_data["bot"])
+    return render_template(
+        'resource_sharing.html',
+        enabled=enabled,
+        sharing_cfg=sharing_cfg,
+        entries=entries,
+        totals=totals,
+    )
 
 
 @app.route('/pvp_conquest', methods=['GET'])

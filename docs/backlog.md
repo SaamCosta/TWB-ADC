@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager
 
@@ -75,12 +75,26 @@ config nova — não foi necessário bumpar `build.version`.
 cada aldeia; aldeias novas ou com `manage_flags_enabled: false` desde sempre
 não aparecem/aparecem vazias até rodar.
 
-## Feature 20 — Página de resource sharing no webmanager
+## Feature 20 — Página de resource sharing no webmanager ✅ Implementado (2026-08-02)
 
 `ResourceSharingManager` (`game/resource_sharing.py`, Feature 9) não tem
 rota/template correspondente no webmanager — sem visibilidade de quanto
 recurso foi transferido entre aldeias, quando, ou se houve falha por falta
 de mercadores.
+
+**Status:** `ResourceSharingManager` ganhou `_log_event()`, chamado em três
+pontos de `run()` — envio bem-sucedido, envio que falhou no mercado
+(`send_resources()` retornou `False`) e skip por falta de mercadores. Cada
+evento é acrescentado a `cache/resource_sharing/history.json` (lista, capada
+em 300 entradas). `cache/resource_sharing` foi adicionado à lista de
+diretórios criados em `Twb.start()` (`twb.py`), e o próprio `_log_event()`
+recria o diretório defensivamente antes de escrever. Novo `ResourceSharingReader`
+em `webmanager/utils.py` lê e formata o histórico (nomes de aldeia via
+`cache/managed/*.json`, timestamps formatados, motivo de falha traduzido) e
+agrega o total enviado por recurso. Nova rota `/resource_sharing` e template
+`resource_sharing.html` — mostra status/config atual (enabled, threshold_pct,
+priority), totais agregados e uma tabela com o histórico recente (mais
+recente primeiro). Link adicionado na nav. Nenhuma config nova.
 
 ## Feature 21 — Página de reports no webmanager
 
