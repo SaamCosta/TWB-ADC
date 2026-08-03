@@ -1,12 +1,59 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1)` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14` (✅ todas)
 
-## Feature 14 — Templates de tropas editáveis no webmanager
+## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
 
 Nova página `/unit_templates`. Listar, criar, deletar e editar templates de
 tropas (JSON em `templates/troops/*.txt`) inline no webmanager. Elimina a
 necessidade de editar os arquivos `.txt` manualmente.
+
+**Status:** diferente de `BuildingTemplateManager` (formato simples
+`building:level` por linha, já editável via `/building_templates` com um
+formulário por campo), os templates de tropas são JSON aninhado e bem mais
+variável entre estágios (`building`, `level`, `build` por prédio de
+recrutamento, `upgrades` opcional, `farm` como dict único ou lista de dicts
+sequenciais — ver `templates/troops/basic.txt` e `offensive.txt`). Montar um
+formulário por campo para essa estrutura seria um esforço bem maior e mais
+frágil do que o ganho justifica; a edição foi implementada como um textarea
+de JSON bruto, com validação antes de gravar no disco (JSON inválido ou que
+não seja uma lista é rejeitado com mensagem de erro, nada é escrito).
+
+Novo `UnitTemplateManager` (`webmanager/utils.py`): `template_cache_list()`
+lê `templates/troops/*.txt`, parseia cada um (detecta e sinaliza arquivos
+corrompidos sem lançar), `create()`/`save()`/`delete()` para as operações de
+CRUD. Nova rota `/unit_templates` (GET/POST) e template
+`unit_templates.html` — lista de templates com contagem de estágios à
+esquerda, textarea de edição à direita, criação de novo template vazio
+(`[]`), delete com confirmação JS. Link adicionado na nav de `main.html`.
+Nenhuma config nova.
+
+**Guarda de segurança:** um template ausente/corrompido faz
+`game/village.py::units_get_template()` levantar `InvalidUnitTemplateException`,
+que não é capturada em nenhum lugar do loop por-aldeia — propaga até
+`twb.py`'s `try/except` mais externo e **derruba o bot inteiro** (reporta,
+notifica, mas o processo termina). Por isso `UnitTemplateManager.used_by()`
+varre `config.json` (`units.default`, `village_template.units`,
+`villages.*.units` e, importante, `profile_templates.*.units` — usado pela
+lógica de herança de aldeias conquistadas da Feature 23) antes de permitir
+delete; se o template estiver em uso em qualquer um desses lugares, o delete
+é bloqueado com uma mensagem listando onde. Salvar (`save`) também nunca
+escreve no disco se o JSON for inválido ou não for uma lista.
+
+Testado isoladamente (sem servidor real, sem tocar `templates/troops/` real
+durante os testes de escrita — usado diretório temporário): parse dos 5
+templates reais existentes (`basic`, `basic_into_def`, `basic_into_off`,
+`defensive_1`, `offensive` — todos válidos), detecção de JSON corrompido,
+`create`/`save`/`delete` end-to-end em diretório isolado, rejeição de JSON
+inválido e de JSON que não é lista. `used_by()` validado em modo só-leitura
+contra o `config.json` real do usuário — confirmou corretamente `basic.txt`
+em uso via `units.default` + `village_template`, `offensive.txt` via aldeia
+41123 + `profile_templates.offensive`, `defensive_1.txt` via
+`profile_templates.defensive`, e `basic_into_def.txt`/`basic_into_off.txt`
+como não referenciados atualmente (logo, deletáveis). Os 3 estados do
+template (sem seleção, seleção válida, seleção com erro de validação)
+renderizados isoladamente via Jinja2 standalone. **Não validado:** a rota
+Flask `/unit_templates` via app real — pendente de validação em campo.
 
 ## Feature 15 — Seleção manual de alvo de conquista bárbara no webmanager
 

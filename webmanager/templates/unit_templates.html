@@ -1,0 +1,89 @@
+{% extends "main.html" %}
+{% block title %}Templates de tropas{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0" style="color:#2c1810;">⚔️ Templates de tropas</h4>
+</div>
+
+{% if error %}
+<div class="alert alert-danger mb-3">{{ error }}</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-lg-4 mb-3">
+    <div class="card h-100" style="border-color:#c8a96e;">
+      <div class="card-body">
+        <h6 class="card-title">Templates existentes</h6>
+        <table class="table table-sm table-striped mb-3">
+          <thead><tr><th>Nome</th><th>Estágios</th><th></th></tr></thead>
+          <tbody>
+            {% for name, tpl in templates.items() %}
+            <tr class="{% if name == selected %}table-primary{% endif %}">
+              <td><a href="?t={{ name }}">{{ name }}</a></td>
+              <td>
+                {% if tpl.valid %}
+                  {{ tpl.stages }}
+                {% else %}
+                  <span class="badge badge-danger">JSON inválido</span>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" onsubmit="return confirm('Deletar {{ name }}? Isso não pode ser desfeito.');" class="d-inline">
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="template" value="{{ name }}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Deletar</button>
+                </form>
+              </td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="text-muted">Nenhum template em templates/troops/</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <form method="post" class="form-inline">
+          <input type="hidden" name="action" value="new">
+          <input type="text" class="form-control form-control-sm mr-2" name="new"
+                 placeholder="novo_template (.txt opcional)" required>
+          <button type="submit" class="btn btn-sm btn-info">Criar</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-8 mb-3">
+    {% if not selected or selected not in templates %}
+    <div class="alert mb-0" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+      Selecione um template na lista ao lado para editar, ou crie um novo.
+    </div>
+    {% else %}
+    <div class="card" style="border-color:#c8a96e;">
+      <div class="card-body">
+        <h6 class="card-title">Editando: {{ selected }}</h6>
+        {% if not templates[selected].valid %}
+        <div class="alert alert-warning py-2">
+          Conteúdo atual não é um JSON válido de lista de estágios
+          {% if templates[selected].error %}({{ templates[selected].error }}){% endif %}.
+          Corrija abaixo e salve.
+        </div>
+        {% endif %}
+        <form method="post">
+          <input type="hidden" name="action" value="save">
+          <input type="hidden" name="template" value="{{ selected }}">
+          <textarea name="raw" class="form-control" rows="24" style="font-family: monospace; font-size: 0.85rem;"
+                    spellcheck="false">{{ templates[selected].raw }}</textarea>
+          <button type="submit" class="btn btn-success mt-2">Salvar</button>
+          <span class="text-muted small ml-2">
+            Lista JSON de estágios — cada estágio: <code>building</code>, <code>level</code>,
+            <code>build</code> (unidades por prédio de recrutamento), opcionalmente
+            <code>upgrades</code> (nível de pesquisa desejado por unidade) e <code>farm</code>
+            (tropas usadas para coleta). Ver <code>templates/troops/basic.txt</code> como exemplo.
+          </span>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

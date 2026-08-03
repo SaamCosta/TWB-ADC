@@ -168,6 +168,125 @@ class BuildingTemplateManager:
         return rows
 
 
+class UnitTemplateManager:
+    """
+    Feature 14 — CRUD de templates de tropas (JSON em templates/troops/*.txt)
+    via webmanager. Diferente de BuildingTemplateManager (formato simples
+    "building:level" por linha), templates de tropas são JSON aninhado
+    (build/farm/upgrades/research por estágio) — em vez de tentar montar um
+    formulário por campo para uma estrutura tão variável, a edição é feita
+    via textarea de JSON bruto, validado antes de gravar no disco.
+    """
+
+    @staticmethod
+    def _dir():
+        return os.path.join(os.path.dirname(__file__), "..", "templates", "troops")
+
+    @staticmethod
+    def _safe_name(template_name):
+        base = os.path.basename(template_name or "")
+        if not base.endswith(".txt"):
+            base = "%s.txt" % base
+        return base
+
+    @staticmethod
+    def template_cache_list():
+        """
+        Retorna {nome_arquivo: {"raw": <json formatado>, "valid": bool,
+        "error": str|None, "stages": int}} — parseia cada arquivo só para
+        exibir contagem de estágios e detectar corrupção; nunca lança.
+        """
+        output = {}
+        t_dir = UnitTemplateManager._dir()
+        if not os.path.isdir(t_dir):
+            return output
+        for existing in sorted(os.listdir(t_dir)):
+            if not existing.endswith(".txt"):
+                continue
+            path = os.path.join(t_dir, existing)
+            try:
+                with open(path, 'r', encoding="utf-8") as tf:
+                    raw = tf.read()
+            except OSError:
+                continue
+            entry = {"raw": raw, "valid": True, "error": None, "stages": 0}
+            try:
+                parsed = json.loads(raw) if raw.strip() else []
+                if not isinstance(parsed, list):
+                    raise ValueError("O template deve ser uma lista JSON de estágios ([...])")
+                entry["stages"] = len(parsed)
+                entry["raw"] = json.dumps(parsed, indent=2, ensure_ascii=False)
+            except (json.JSONDecodeError, ValueError) as e:
+                entry["valid"] = False
+                entry["error"] = str(e)
+            output[existing] = entry
+        return output
+
+    @staticmethod
+    def used_by(template_name):
+        """
+        Verifica config.json em busca de referências a este template
+        (units.default, village_template.units, villages.*.units) — usado
+        para bloquear delete de um template em uso, já que um arquivo
+        faltando/corrompido faz o bot inteiro levantar
+        InvalidUnitTemplateException (game/village.py::units_get_template).
+        Best-effort: lê config.json diretamente, não falha se ausente.
+        """
+        base = os.path.splitext(UnitTemplateManager._safe_name(template_name))[0]
+        config_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
+        usages = []
+        try:
+            with open(config_path, 'r', encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return usages
+        if cfg.get("units", {}).get("default") == base:
+            usages.append("padrão global (units.default)")
+        village_template = cfg.get("village_template") or {}
+        if isinstance(village_template, dict) and village_template.get("units") == base:
+            usages.append("village_template (padrão de novas aldeias)")
+        for vid, vcfg in (cfg.get("villages") or {}).items():
+            if isinstance(vcfg, dict) and vcfg.get("units") == base:
+                usages.append("aldeia %s" % (vcfg.get("name") or vid))
+        for profile_name, pcfg in (cfg.get("profile_templates") or {}).items():
+            if isinstance(pcfg, dict) and pcfg.get("units") == base:
+                usages.append("profile_templates.%s (herança de aldeias conquistadas)" % profile_name)
+        return usages
+
+    @staticmethod
+    def create(template_name):
+        base = UnitTemplateManager._safe_name(template_name)
+        path = os.path.join(UnitTemplateManager._dir(), base)
+        if not os.path.exists(path):
+            with open(path, 'w', encoding="utf-8") as f:
+                f.write("[]")
+        return base
+
+    @staticmethod
+    def save(template_name, raw_text):
+        """
+        Valida e grava. Lança json.JSONDecodeError/ValueError se o texto não
+        for uma lista JSON válida — o caller decide como reportar o erro sem
+        nada ser escrito no disco.
+        """
+        parsed = json.loads(raw_text)
+        if not isinstance(parsed, list):
+            raise ValueError("O template deve ser uma lista JSON de estágios ([...])")
+        base = UnitTemplateManager._safe_name(template_name)
+        path = os.path.join(UnitTemplateManager._dir(), base)
+        with open(path, 'w', encoding="utf-8") as f:
+            json.dump(parsed, f, indent=2, ensure_ascii=False)
+        return True
+
+    @staticmethod
+    def delete(template_name):
+        base = UnitTemplateManager._safe_name(template_name)
+        path = os.path.join(UnitTemplateManager._dir(), base)
+        if os.path.exists(path):
+            os.remove(path)
+        return True
+
+
 class MapBuilder:
     @staticmethod
     def build(villages, current_village=None, size=None):

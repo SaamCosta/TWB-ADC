@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -191,6 +191,46 @@ def get_building_templates():
     selected = request.args.get('t', None)
     return render_template('templates.html', templates=BuildingTemplateManager.template_cache_list(),
                            selected=selected, buildings=buildings)
+
+@app.route('/unit_templates', methods=['GET', 'POST'])
+def get_unit_templates():
+    # Feature 14: CRUD de templates de tropas (templates/troops/*.txt).
+    # Edicao via textarea de JSON bruto (ver UnitTemplateManager para o
+    # porque — a estrutura de build/farm/upgrades/research varia demais
+    # para um formulario por campo). Nada e escrito se o JSON for invalido
+    # ou se o delete for bloqueado por uso em config.json.
+    error = None
+    selected = None
+    edited_raw = None
+    if request.method == 'POST':
+        action = request.form.get('action')
+        t_name = request.form.get('template')
+        if action == 'new':
+            new_name = request.form.get('new')
+            if new_name:
+                selected = UnitTemplateManager.create(new_name)
+        elif action == 'save' and t_name:
+            raw = request.form.get('raw', '')
+            selected = t_name
+            try:
+                UnitTemplateManager.save(t_name, raw)
+            except (json.JSONDecodeError, ValueError) as e:
+                error = "JSON inválido, nada foi salvo: %s" % str(e)
+                edited_raw = raw
+        elif action == 'delete' and t_name:
+            usages = UnitTemplateManager.used_by(t_name)
+            if usages:
+                error = "Não foi possível deletar: template em uso por %s" % ", ".join(usages)
+                selected = t_name
+            else:
+                UnitTemplateManager.delete(t_name)
+                selected = None
+    if selected is None:
+        selected = request.args.get('t', None)
+    templates = UnitTemplateManager.template_cache_list()
+    if edited_raw is not None and selected in templates:
+        templates[selected] = dict(templates[selected], raw=edited_raw, valid=False, error=error)
+    return render_template('unit_templates.html', templates=templates, selected=selected, error=error)
 
 @app.route('/', methods=['GET'])
 def get_home():
