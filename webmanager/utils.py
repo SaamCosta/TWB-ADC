@@ -2,6 +2,7 @@ import collections
 import datetime
 import json
 import os
+import re
 import subprocess
 
 import psutil
@@ -467,11 +468,15 @@ class ConquestReader:
         "train_sent":    "Train Enviado",
         "extra_pending": "Extra Pendente",
         "complete":      "Conquistada",
+        "manual":        "Alvo Manual (na fila)",
+        "invalid":       "Alvo Manual Inválido",
     }
     STATUS_COLORS = {
         "train_sent":    "warning",
         "extra_pending": "info",
         "complete":      "success",
+        "manual":        "primary",
+        "invalid":       "secondary",
     }
 
     @staticmethod
@@ -506,6 +511,15 @@ class ConquestReader:
         if loyalty <= 30:
             return "warning"
         return "success"
+
+    @staticmethod
+    def _fmt_ts(ts):
+        if not ts:
+            return "—"
+        try:
+            return datetime.datetime.fromtimestamp(ts).strftime("%d/%m %H:%M")
+        except (OSError, OverflowError, ValueError):
+            return "—"
 
     @staticmethod
     def load():
@@ -561,12 +575,154 @@ class ConquestReader:
                 "loyalty_source": loyalty_source,
                 "last_hit_fmt":   last_hit_fmt,
                 "last_hit_ts":    last_hit_ts or 0,
+                # Feature 15 — alvos manuais na fila (ainda não reivindicados
+                # por nenhuma aldeia) ou invalidados (deixaram de ser bárbaras).
+                "queued_at":      data.get("queued_at"),
+                "queued_at_fmt":  ConquestReader._fmt_ts(data.get("queued_at")),
+                "invalid_reason": data.get("invalid_reason"),
             })
 
-        # Ordenação: em andamento primeiro (train_sent, extra_pending), depois completas
-        order = {"train_sent": 0, "extra_pending": 1, "complete": 2}
+        # Ordenação: alvo manual pendente primeiro (precisa de atenção),
+        # depois em andamento (train_sent, extra_pending), completas, e por
+        # último inválidos (só relevantes para limpeza manual).
+        order = {"manual": -1, "train_sent": 0, "extra_pending": 1, "complete": 2, "invalid": 3}
         targets.sort(key=lambda t: (order.get(t["status"], 9), -t["last_hit_ts"]))
         return targets
+
+    # ------------------------------------------------------------------
+    # Feature 15 — seleção manual de alvo de conquista bárbara
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _villages_dir():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "villages")
+
+    @staticmethod
+    def _conquest_dir():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "conquest")
+
+    @staticmethod
+    def _resolve_identifier(identifier):
+        """
+        Aceita um ID de aldeia puro ("12345") ou coordenadas
+        ("512|487", "512,487", "512 487"). Resolve consultando
+        cache/villages/ (populado pelo fetch de mapa de qualquer aldeia
+        gerenciada — ver game/map.py::Map.build_cache_entry). Lança
+        ValueError com mensagem amigável se não encontrar; nunca inventa
+        dados.
+        """
+        identifier = (identifier or "").strip()
+        if not identifier:
+            raise ValueError("Informe um ID de aldeia ou coordenadas (ex: 512|487).")
+
+        v_dir = ConquestReader._villages_dir()
+        os.makedirs(v_dir, exist_ok=True)
+
+        if identifier.isdigit():
+            path = os.path.join(v_dir, "%s.json" % identifier)
+            if not os.path.exists(path):
+                raise ValueError(
+                    "Aldeia #%s não encontrada no cache local. Aguarde o bot "
+                    "mapear essa região (cache/villages/) e tente novamente." % identifier
+                )
+            with open(path, "r", encoding="utf-8") as f:
+                return identifier, json.load(f)
+
+        m = re.match(r"^\s*(\d+)\D+(\d+)\s*$", identifier)
+        if not m:
+            raise ValueError(
+                "Formato inválido. Use um ID de aldeia (ex: 12345) ou "
+                "coordenadas (ex: 512|487)."
+            )
+        x, y = int(m.group(1)), int(m.group(2))
+        for fname in os.listdir(v_dir):
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(v_dir, fname), "r", encoding="utf-8") as f:
+                    vdata = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            loc = vdata.get("location")
+            if loc and len(loc) == 2 and int(loc[0]) == x and int(loc[1]) == y:
+                return fname.replace(".json", ""), vdata
+
+        raise ValueError(
+            "Nenhuma aldeia encontrada em %d|%d no cache local. Aguarde o bot "
+            "mapear essa região e tente novamente." % (x, y)
+        )
+
+    @staticmethod
+    def add_manual_target(identifier):
+        """
+        Enfileira um alvo manual de conquista bárbara. Cria
+        cache/conquest/{id}.json com status "manual" -- será consumido pela
+        primeira aldeia com noble train pronto que rodar seu ciclo
+        (ConquestManager._get_manual_target(), game/attack.py), em ordem de
+        chegada (queued_at). Rejeita e lança ValueError (sem escrever nada)
+        se: identificador não resolver, aldeia não for bárbara, ou já
+        existir uma conquista ativa/pendente para o mesmo alvo.
+        """
+        target_id, village_data = ConquestReader._resolve_identifier(identifier)
+
+        owner = str(village_data.get("owner", "0"))
+        if owner != "0":
+            raise ValueError(
+                "Aldeia #%s (%s) não é bárbara (dono atual: %s) — apenas "
+                "aldeias bárbaras podem ser conquistadas." % (
+                    target_id, village_data.get("name", "?"), owner
+                )
+            )
+
+        conquest_path = os.path.join(ConquestReader._conquest_dir(), "%s.json" % target_id)
+        if os.path.exists(conquest_path):
+            with open(conquest_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if existing.get("status") in ("train_sent", "extra_pending", "manual"):
+                raise ValueError(
+                    "Já existe uma conquista (%s) para a aldeia #%s." % (
+                        ConquestReader.STATUS_LABELS.get(
+                            existing.get("status"), existing.get("status")
+                        ),
+                        target_id
+                    )
+                )
+
+        os.makedirs(ConquestReader._conquest_dir(), exist_ok=True)
+        entry = {
+            "status": "manual",
+            "queued_at": datetime.datetime.now().timestamp(),
+            "target_name": village_data.get("name") or ("Bárbara #%s" % target_id),
+            "target_points": village_data.get("points"),
+            "target_location": village_data.get("location"),
+        }
+        with open(conquest_path, "w", encoding="utf-8") as f:
+            json.dump(entry, f, indent=2, ensure_ascii=False)
+        return target_id
+
+    @staticmethod
+    def cancel_manual(target_id):
+        """
+        Cancela um alvo manual ainda não reivindicado (status "manual" ou
+        "invalid"). Bloqueia cancelamento de conquistas já em andamento --
+        apagar o cache nesse caso não recuperaria os nobles já enviados, só
+        quebraria o acompanhamento no webmanager.
+        """
+        target_id = (target_id or "").strip()
+        path = os.path.join(ConquestReader._conquest_dir(), "%s.json" % target_id)
+        if not os.path.exists(path):
+            return
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("status") not in ("manual", "invalid"):
+            raise ValueError(
+                "Não é possível cancelar: alvo #%s já está em '%s' (nobles podem "
+                "já ter sido enviados)." % (
+                    target_id,
+                    ConquestReader.STATUS_LABELS.get(data.get("status"), data.get("status"))
+                )
+            )
+        os.remove(path)
 
 
 class HunterReader:

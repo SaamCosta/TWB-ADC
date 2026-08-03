@@ -559,7 +559,19 @@ class ConquestManager:
         """
         Scans the map for barbarian villages within radius, scores them
         and returns the best unreserved target_id.
+
+        Feature 15: a manually queued target (set via webmanager /conquest)
+        always takes priority over automatic scoring, bypassing the
+        radius/points filters below (deliberate user choice).
         """
+        manual_target = self._get_manual_target()
+        if manual_target:
+            self.logger.info(
+                "Conquest: using manually queued target %s (overrides automatic selection)",
+                manual_target
+            )
+            return manual_target
+
         max_radius = min(cfg.get("max_radius", 20), self.MAX_RADIUS)
         min_pts = cfg.get("min_points", 100)
         max_pts = cfg.get("max_points", 3000)
@@ -628,6 +640,64 @@ class ConquestManager:
                 locations.append((data["x"], data["y"]))
         return locations
 
+    def _get_manual_target(self):
+        """
+        Feature 15: checks cache/conquest/*.json for a target queued manually
+        via the webmanager (/conquest), status == "manual". Processed
+        oldest-first (FIFO, by "queued_at"). Any village whose noble train
+        becomes ready will pick up the oldest pending manual target here,
+        before find_target() ever runs its automatic scoring loop.
+
+        Re-validates barbarian ownership against the shared cache/villages/
+        snapshot (populated by any managed village's map fetch) before
+        handing the target out -- if it's no longer a barbarian (someone
+        else conquered it, or it was never barbarian to begin with, e.g. a
+        bad manual entry), the queue entry is marked "invalid" instead of
+        being retried forever.
+
+        Returns target_id or None.
+        """
+        pending = []
+        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+            data = FileManager.load_json_file(f"cache/conquest/{fname}")
+            if data and data.get("status") == "manual":
+                target_id = fname.replace(".json", "")
+                pending.append((data.get("queued_at", 0), target_id, data))
+
+        pending.sort(key=lambda item: item[0])
+
+        for _, target_id, data in pending:
+            village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
+            if village_data and str(village_data.get("owner", "0")) != "0":
+                self.logger.warning(
+                    "Conquest: manual target %s is no longer a barbarian village "
+                    "(owner=%s) -- cancelling manual queue entry",
+                    target_id, village_data.get("owner")
+                )
+                ConquestCache.set(target_id, {
+                    **data,
+                    "status": "invalid",
+                    "invalid_reason": "Não é mais uma aldeia bárbara",
+                })
+                continue
+            return target_id
+        return None
+
+    def _get_village_meta(self, target_id):
+        """
+        Returns village metadata dict (name/points/location/owner) for
+        target_id, preferring this village's own live map scan
+        (self.map.villages) and falling back to the shared cache/villages/
+        snapshot. The fallback matters for Feature 15: a manually queued
+        target may lie outside the map region this particular village
+        fetched this cycle, but another managed village may have already
+        cached it.
+        """
+        village = self.map.villages.get(target_id)
+        if village:
+            return village
+        return FileManager.load_json_file(f"cache/villages/{target_id}.json") or {}
+
     # ------------------------------------------------------------------
     # Train dispatch
     # ------------------------------------------------------------------
@@ -682,15 +752,25 @@ class ConquestManager:
         # Train fired: release the troop reserve so farm/gather use full pool again
         self.troopmanager.conquest_reserve = {}
 
-
+        # Bugfix (auditoria Feature 15): faltavam os campos target_name/
+        # target_points/target_location/hits_needed, e a chave gravada era
+        # "hits" enquanto o webmanager (ConquestReader.load(), lê "hits_done").
+        # Resultado: a página /conquest sempre mostrava 0/4 nobles e nome/
+        # pontos/coordenada genéricos, independente do progresso real.
+        target_meta = self._get_village_meta(target_id)
 
         loyalty_after = max(0, 100 - (hits_sent * loyalty_drop))
         ConquestCache.set(target_id, {
             "reserved_by": self.village_id,
-            "hits": hits_sent,
+            "hits_done": hits_sent,
+            "hits_needed": self.TRAIN_SIZE,
             "loyalty_after_train": loyalty_after,
+            "loyalty_source": "estimate",
             "last_hit_timestamp": int(time.time()),
             "status": "train_sent" if hits_sent == self.TRAIN_SIZE else "extra_pending",
+            "target_name": target_meta.get("name") or ("Bárbara #%s" % target_id),
+            "target_points": target_meta.get("points"),
+            "target_location": target_meta.get("location"),
         })
 
         if loyalty_after > 0:
@@ -897,6 +977,7 @@ class ConquestManager:
             # Apply regen since that report's timestamp
             hours_since_report = (time.time() - last_hit) / 3600
             current_loyalty = min(100.0, real_loyalty + (hours_since_report * regen))
+            loyalty_source = "report"
             self.logger.info(
                 "Conquest: target %s — real loyalty from report: %.1f, "
                 "estimated now: %.1f (%.1fh regen)",
@@ -907,6 +988,7 @@ class ConquestManager:
             loyalty_after = conquest_data.get("loyalty_after_train", 0)
             hours_elapsed = (time.time() - last_hit) / 3600
             current_loyalty = min(100.0, loyalty_after + (hours_elapsed * regen))
+            loyalty_source = "estimate"
             self.logger.info(
                 "Conquest: target %s — no report data, using estimate: %.1f "
                 "(%.1fh elapsed)",
@@ -942,8 +1024,12 @@ class ConquestManager:
             new_loyalty = max(0.0, current_loyalty - loyalty_drop)
             ConquestCache.set(target_id, {
                 **conquest_data,
-                "hits": conquest_data.get("hits", 0) + 1,
+                # .get("hits", ...) e fallback p/ arquivos antigos gravados
+                # antes da correção do mismatch de chave (ver _send_train).
+                "hits_done": conquest_data.get("hits_done", conquest_data.get("hits", 0)) + 1,
+                "hits_needed": conquest_data.get("hits_needed", self.TRAIN_SIZE),
                 "loyalty_after_train": new_loyalty,
+                "loyalty_source": loyalty_source,
                 "last_hit_timestamp": int(time.time()),
                 "status": "extra_pending" if new_loyalty > 0 else "complete",
             })

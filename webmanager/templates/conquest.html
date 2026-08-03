@@ -12,8 +12,43 @@
     </h4>
     <div>
       <span class="badge bg-secondary me-1">Total: {{ targets|length }}</span>
+      <span class="badge bg-primary me-1">Manual pendente: {{ targets|selectattr('status','equalto','manual')|list|length }}</span>
       <span class="badge bg-warning text-dark me-1">Em andamento: {{ targets|selectattr('status','in',['train_sent','extra_pending'])|list|length }}</span>
       <span class="badge bg-success">Completas: {{ targets|selectattr('status','equalto','complete')|list|length }}</span>
+    </div>
+  </div>
+
+  {% if error %}
+  <div class="alert alert-danger mb-3">{{ error }}</div>
+  {% endif %}
+
+  {% if not conquest_enabled %}
+  <div class="alert mb-3" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+    <code>conquest.enabled</code> está <strong>desligado</strong> em <code>config.json</code>.
+    Alvos manuais definidos abaixo ficam na fila, mas só serão processados
+    quando o sistema de conquista automática estiver habilitado.
+  </div>
+  {% endif %}
+
+  <!-- Feature 15: alvo manual -->
+  <div class="card mb-3" style="border-color:#c8a96e;">
+    <div class="card-body py-2">
+      <h6 class="card-title mb-2">Definir alvo manual</h6>
+      <form method="post" class="form-inline row g-2 align-items-center">
+        <input type="hidden" name="action" value="manual_add">
+        <div class="col-auto">
+          <input type="text" name="identifier" class="form-control form-control-sm"
+                 placeholder="ID (ex: 12345) ou coordenadas (ex: 512|487)" style="min-width:280px;" required>
+        </div>
+        <div class="col-auto">
+          <button type="submit" class="btn btn-sm btn-primary">Enfileirar alvo</button>
+        </div>
+        <div class="col-auto text-muted small">
+          A aldeia bárbara precisa já estar no cache do mapa (<code>cache/villages/</code>).
+          O alvo é reivindicado pela primeira aldeia com noble train pronto,
+          sobrepondo a seleção automática.
+        </div>
+      </form>
     </div>
   </div>
 
@@ -25,9 +60,11 @@
           <label class="form-label mb-0 small fw-bold">Status</label>
           <select id="filter-status" class="form-select form-select-sm" style="min-width:160px;">
             <option value="">Todos</option>
+            <option value="manual">Alvo Manual (na fila)</option>
             <option value="train_sent">Train Enviado</option>
             <option value="extra_pending">Extra Pendente</option>
             <option value="complete">Conquistada</option>
+            <option value="invalid">Alvo Manual Inválido</option>
           </select>
         </div>
         <div class="col-auto">
@@ -73,6 +110,7 @@
           <th style="min-width:140px;">Nobles ({{ '{' }}hits/total{{ '}' }})</th>
           <th style="min-width:170px;">Lealdade</th>
           <th>Último hit</th>
+          <th>Ações</th>
         </tr>
       </thead>
       <tbody>
@@ -114,6 +152,9 @@
 
           <!-- Nobles progress -->
           <td>
+            {% if t.status in ('manual', 'invalid') %}
+              <small class="text-muted">Aguardando aldeia com noble train pronto</small>
+            {% else %}
             <div class="d-flex align-items-center gap-2">
               <div class="progress flex-grow-1" style="height:8px;min-width:80px;">
                 <div class="progress-bar bg-{{ 'success' if t.status == 'complete' else 'warning' }}"
@@ -121,12 +162,17 @@
               </div>
               <small class="text-nowrap">{{ t.hits_done }}/{{ t.hits_needed }}</small>
             </div>
+            {% endif %}
           </td>
 
           <!-- Lealdade -->
           <td>
             {% if t.status == 'complete' %}
               <span class="badge bg-success">Conquistada</span>
+            {% elif t.status == 'manual' %}
+              <span class="badge bg-primary">Na fila desde {{ t.queued_at_fmt }}</span>
+            {% elif t.status == 'invalid' %}
+              <span class="badge bg-secondary" title="{{ t.invalid_reason }}">{{ t.invalid_reason or 'Inválido' }}</span>
             {% else %}
               <div class="d-flex align-items-center gap-2">
                 <div class="progress flex-grow-1" style="height:10px;min-width:90px;">
@@ -154,6 +200,19 @@
           <!-- Último hit -->
           <td>
             <small class="text-muted">{{ t.last_hit_fmt }}</small>
+          </td>
+
+          <!-- Ações -->
+          <td>
+            {% if t.status in ('manual', 'invalid') %}
+            <form method="post" onsubmit="return confirm('Cancelar alvo manual {{ t.target_name }}?');" class="d-inline">
+              <input type="hidden" name="action" value="manual_cancel">
+              <input type="hidden" name="target_id" value="{{ t.target_id }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger">Cancelar</button>
+            </form>
+            {% else %}
+            <span class="text-muted">—</span>
+            {% endif %}
           </td>
         </tr>
         {% endfor %}

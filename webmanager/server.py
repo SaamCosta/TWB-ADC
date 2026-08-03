@@ -266,10 +266,33 @@ def get_farm_scores():
     farms, village_ids = FarmScoreReader.load()
     return render_template('farmscores.html', farms=farms, village_ids=village_ids)
 
-@app.route('/conquest', methods=['GET'])
+@app.route('/conquest', methods=['GET', 'POST'])
 def get_conquest():
+    # Feature 15: define/cancela alvo manual de conquista bárbara. Erros são
+    # exibidos inline (nada é escrito em cache/conquest se a validação falhar
+    # -- ver ConquestReader.add_manual_target/cancel_manual).
+    error = None
+    if request.method == 'POST':
+        action = request.form.get('action')
+        try:
+            if action == 'manual_add':
+                ConquestReader.add_manual_target(request.form.get('identifier', ''))
+                return redirect(url_for('get_conquest'))
+            elif action == 'manual_cancel':
+                ConquestReader.cancel_manual(request.form.get('target_id', ''))
+                return redirect(url_for('get_conquest'))
+        except ValueError as e:
+            error = str(e)
     targets = ConquestReader.load()
-    return render_template('conquest.html', data=sync(), targets=targets)
+    config = DataReader.config_grab()
+    conquest_enabled = config.get("conquest", {}).get("enabled", False)
+    return render_template(
+        'conquest.html',
+        data=sync(),
+        targets=targets,
+        error=error,
+        conquest_enabled=conquest_enabled,
+    )
 
 # Unidades disponíveis para o formulário de schedules
 HUNTER_UNITS = ["spear", "sword", "archer", "spy", "light", "marcher", "heavy", "axe", "ram", "catapult", "knight", "snob"]

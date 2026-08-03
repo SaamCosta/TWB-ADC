@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
 
@@ -55,11 +55,76 @@ template (sem seleção, seleção válida, seleção com erro de validação)
 renderizados isoladamente via Jinja2 standalone. **Não validado:** a rota
 Flask `/unit_templates` via app real — pendente de validação em campo.
 
-## Feature 15 — Seleção manual de alvo de conquista bárbara no webmanager
+## Feature 15 — Seleção manual de alvo de conquista bárbara no webmanager ✅ Implementado (2026-08-03)
 
 Botão "Definir alvo manual" na aba `/conquest`. Input de coordenadas ou ID.
 Cria `cache/conquest/{id}.json` com status `manual`, sobrepondo a seleção
 automática da Feature 8 (`ConquestManager.find_target()`).
+
+**Status:** implementado. `find_target()` (`game/attack.py`) agora chama
+`_get_manual_target()` antes de rodar o scoring automático — se houver um
+`cache/conquest/{id}.json` com `status == "manual"`, ele é devolvido
+diretamente (ignorando `max_radius`/`min_points`/`max_points`, já que é uma
+escolha deliberada do usuário), processado em ordem de chegada (`queued_at`,
+FIFO) quando há mais de um na fila. Antes de devolver o alvo,
+`_get_manual_target()` revalida que a aldeia ainda é bárbara consultando o
+cache compartilhado `cache/villages/{id}.json` (populado pelo fetch de mapa
+de qualquer aldeia gerenciada) — se o dono mudou nesse meio tempo, a entrada
+vira `status: "invalid"` com `invalid_reason`, em vez de ser retentada para
+sempre. Como o processamento de aldeias no loop principal (`twb.py`) é
+sequencial (não há concorrência real), não há risco de duas aldeias
+disputarem o mesmo alvo manual no mesmo ciclo — a primeira que envia o train
+já sobrescreve o status para `train_sent`/`extra_pending` antes da próxima
+aldeia rodar.
+
+No webmanager (`/conquest`): novo formulário "Definir alvo manual" aceita ID
+de aldeia (`12345`) ou coordenadas (`512|487`, `512,487`, `512 487`) —
+`ConquestReader.add_manual_target()` resolve o identificador contra
+`cache/villages/*.json`, valida que é bárbara e que não há conquista já
+ativa/pendente para o mesmo alvo, e só então grava o cache; qualquer rejeição
+levanta `ValueError` com mensagem amigável exibida inline (nada é escrito em
+caso de erro). Alvos com status `manual`/`invalid` ganham botão "Cancelar"
+(`ConquestReader.cancel_manual()`), bloqueado por design para qualquer outro
+status — cancelar uma conquista já em andamento no webmanager não recuperaria
+nobles já enviados, só quebraria o acompanhamento.
+
+**Limitação conhecida (documentada, não corrigida):** o envio do ataque
+(`AttackManager.attack()`) só funciona se o `target_id` estiver em
+`self.map.map_pos`, que é populado pelo fetch de mapa *daquela aldeia
+específica* a cada ciclo (não é compartilhado entre aldeias). Um alvo manual
+fora da região de mapa já visitada pela aldeia que eventualmente o reivindica
+falhará silenciosamente (log de tentativa, sem crash) até que essa aldeia
+finalmente "veja" a região automaticamente. Na prática o fetch de mapa cobre
+uma área ampla (bem além do `max_radius` de conquista configurado), então
+isso só deve importar para alvos muito distantes/fora do continente.
+
+**Correções feitas durante a auditoria do ecossistema de conquista
+automática** (pedido explícito do usuário antes de seguir para a Feature 15,
+nenhuma delas exigiu mudança de config nem bump de `build.version`):
+- **Bug real de dados**: `ConquestManager._send_train()`/`_handle_existing()`
+  gravavam a chave `"hits"` em `cache/conquest/{id}.json`, mas
+  `ConquestReader.load()` (webmanager) sempre leu `"hits_done"` — chaves
+  nunca bateram, então a página `/conquest` sempre mostrava "0/4" nobles
+  independente do progresso real. Também nunca eram gravados
+  `target_name`/`target_points`/`target_location`/`hits_needed`, então a
+  tabela sempre caía nos defaults do reader (nome genérico "Bárbara #id",
+  pontos "?", coordenada "—"). Corrigido: `_send_train()` agora grava
+  `hits_done`, `hits_needed` (= `TRAIN_SIZE`), `target_name`, `target_points`,
+  `target_location` (via novo helper `_get_village_meta()`) e
+  `loyalty_source`; `_handle_existing()` idem, com fallback
+  `.get("hits_done", .get("hits", 0))` para não quebrar em cima de qualquer
+  cache antigo já gravado com a chave errada.
+- `loyalty_source` também nunca era persistido, então o ícone de "lealdade
+  confirmada por relatório" 📊 vs. "estimada" ≈ no webmanager sempre caía no
+  default (`estimate`) mesmo quando `_handle_existing()` já tinha achado um
+  relatório real de noble. Corrigido — a origem (`"report"` vs `"estimate"`)
+  agora é rastreada e persistida junto com a lealdade recalculada.
+- Restante do fluxo (reserva de escolta via `conquest_reserve`,
+  respeitada por `AttackManager._get_farmable_troops()` e
+  `TroopManager.do_gather()`; `ConquestCache.all_reserved()`; ordem
+  `run_conquest()` → `run_farming()` → `do_gather()` em
+  `game/village.py::Village.run()`) foi revisado e está correto — nenhum
+  outro problema encontrado nessa auditoria.
 
 ## Feature 16 — DefenceManager avançado
 
