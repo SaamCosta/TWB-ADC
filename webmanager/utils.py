@@ -994,6 +994,162 @@ class ResourceSharingReader:
         return entries[:limit], totals
 
 
+class StatueReader:
+    """
+    Le cache/statue/status.json (persistido por game/statue_manager.py,
+    Feature 24 fase 1) e formata os dados do(s) Paladino(s) para o
+    webmanager -- nivel, XP, skills investidos por arvore, regimes de
+    treino por XP disponiveis e slots ainda bloqueados por numero de
+    aldeias.
+
+    Somente leitura: esta feature nao automatiza treino por XP nem
+    re-especializacao, so exibe o estado coletado no ultimo ciclo em que
+    config["statue"]["enabled"] esteve ligado. Ver docs/backlog.md Feature 24.
+    """
+
+    # Mapeamento dos 12 skills do Paladino, coletado de
+    # BuildingStatue.initImmutables(...) numa amostra real do br143
+    # (2026-08-02). Duplicado aqui em vez de importado de game/ pelo mesmo
+    # motivo de FlagReader: manter o webmanager rodavel sem as dependencias
+    # do bot instaladas.
+    SKILL_NAMES = {
+        1: "Investida", 2: "Equitação", 3: "Destruição", 4: "Arrebentar",
+        5: "Motivação", 6: "Arquitetura", 7: "Instrução", 8: "Persuasão",
+        9: "Esgrima", 10: "Falange", 11: "Fortificação", 12: "Óleo Fervente",
+    }
+
+    BRANCHES = [
+        {"name": "Ofensiva", "color": "danger", "skills": [1, 2, 3, 4]},
+        {"name": "Aldeia", "color": "success", "skills": [5, 6, 7, 8]},
+        {"name": "Defesa", "color": "primary", "skills": [9, 10, 11, 12]},
+    ]
+
+    @staticmethod
+    def _path():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "statue", "status.json")
+
+    @staticmethod
+    def _fmt_duration(seconds):
+        seconds = int(seconds or 0)
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        if hours and minutes:
+            return "%dh%02dm" % (hours, minutes)
+        if hours:
+            return "%dh" % hours
+        return "%dm" % minutes
+
+    @staticmethod
+    def load(managed_cache=None):
+        """
+        Retorna um dict pronto para o template, ou None se ainda nao houver
+        cache (feature desligada ou bot ainda nao completou um ciclo com ela
+        ligada).
+        """
+        path = StatueReader._path()
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r") as f:
+                raw = json.load(f)
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+
+        managed_cache = managed_cache or {}
+        fetched_at = raw.get("fetched_at", 0)
+        fetched_fmt = "—"
+        if fetched_at:
+            try:
+                fetched_fmt = datetime.datetime.fromtimestamp(fetched_at).strftime("%d/%m %H:%M:%S")
+            except Exception:
+                pass
+
+        village_used = raw.get("village_used")
+        village_used_name = village_used
+        if village_used and str(village_used) in managed_cache:
+            pub = managed_cache[str(village_used)].get("public", {}) or {}
+            village_used_name = pub.get("name") or village_used
+
+        knights = []
+        for kid, k in (raw.get("knights") or {}).items():
+            if not isinstance(k, dict):
+                continue
+            xp = k.get("xp") or {}
+            progress = xp.get("progress", 0)
+            goal = xp.get("goal", 0) or 1
+            xp_pct = round(min(100, (progress / goal) * 100), 1) if goal else 0
+
+            skills_by_id = {}
+            for sid, sdata in (k.get("skills") or {}).items():
+                try:
+                    skills_by_id[int(sid)] = sdata.get("level", 0)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+
+            investments = {
+                inv.get("branch_name"): inv.get("points", 0)
+                for inv in (k.get("branch_investments") or [])
+            }
+            branches = []
+            for branch in StatueReader.BRANCHES:
+                branch_skills = [
+                    {
+                        "id": sid,
+                        "name": StatueReader.SKILL_NAMES.get(sid, "Skill %s" % sid),
+                        "level": skills_by_id.get(sid, 0),
+                    }
+                    for sid in branch["skills"]
+                ]
+                branches.append({
+                    "name": branch["name"],
+                    "color": branch["color"],
+                    "points_invested": investments.get(branch["name"], 0),
+                    "skills": branch_skills,
+                })
+
+            home = k.get("home_village") or {}
+            activity = k.get("activity") or {}
+            regimens = []
+            for r in (k.get("usable_regimens") or []):
+                cost = r.get("res_cost") or {}
+                regimens.append({
+                    "id": r.get("id"),
+                    "wood": cost.get("wood", 0),
+                    "stone": cost.get("stone", 0),
+                    "iron": cost.get("iron", 0),
+                    "xp_payout": r.get("xp_payout", 0),
+                    "duration_fmt": StatueReader._fmt_duration(r.get("duration", 0)),
+                })
+
+            knights.append({
+                "id": kid,
+                "name": k.get("name") or ("Paladino %s" % kid),
+                "level": k.get("level", 0),
+                "xp_progress": progress,
+                "xp_goal": goal,
+                "xp_pct": xp_pct,
+                "skill_points_held": k.get("skill_points", 0),
+                "branches": branches,
+                "home_village_name": home.get("display_name") or home.get("name") or "—",
+                "activity_description": activity.get("description") or "—",
+                "has_active_regimen": bool(k.get("current_regimen")),
+                "usable_regimens": regimens,
+            })
+
+        knights.sort(key=lambda kn: kn["name"])
+
+        return {
+            "fetched_at": fetched_at,
+            "fetched_at_fmt": fetched_fmt,
+            "village_used_name": village_used_name,
+            "statue_level": raw.get("statue_level"),
+            "knights": knights,
+            "locked_slot_thresholds": raw.get("locked_slot_thresholds") or [],
+        }
+
+
 class ReportReader:
     """
     Le cache/reports/*.json (escrito por game/reports.py::ReportManager) e

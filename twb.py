@@ -84,6 +84,7 @@ from game.village import Village
 from game.hunter import Hunter
 from game.pvp_conquest import PvpConquestManager
 from game.zone_manager import ZoneManager
+from game.statue_manager import StatueManager
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -563,6 +564,11 @@ class TWB:
                 # Feature 11: rebuild geographic zones from managed village cache
                 ZoneManager.build_from_cache(config)
 
+                # Feature 24 (fase 1): leitura periódica do estado do(s)
+                # Paladino(s) — opt-in (config["statue"]["enabled"]), sem
+                # automação ativa. Roda uma vez por ciclo (não por aldeia).
+                StatueManager.run(self.wrapper, config, self.found_villages)
+
                 sleep = 0
                 if self.is_active_hours(config=config):
                     sleep = config["bot"]["active_delay"]
@@ -660,6 +666,7 @@ class TWB:
             "cache/zones",
             "cache/pvp_conquest",
             "cache/resource_sharing",
+            "cache/statue",
         ]
         FileManager.create_directories(directories)
 

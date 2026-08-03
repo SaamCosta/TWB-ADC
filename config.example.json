@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.6",
+    "version": "2.7",
     "author": "stefan2200"
   },
   "server": {
@@ -186,6 +186,9 @@
     "arrival_buffer_seconds": 2,
     "scout_amount": 5,
     "dynamic_moral_night_bonus": false
+  },
+  "statue": {
+    "enabled": false
   },
   "villages": {}
 }

@@ -122,6 +122,8 @@ help_file = {
     'pvp_conquest.arrival_buffer_seconds': 'Segundos de antecedência do clear em relação aos nobles',
     'pvp_conquest.scout_amount': 'Número de espiões usados no scout inicial do alvo',
     'pvp_conquest.dynamic_moral_night_bonus': 'Calcula moral (por pontos atacante/defensor) e night bonus (horário + world settings) reais no simulador, em vez de valores neutros fixos (moral=100, sem night bonus). Estimativa best-effort — valide contra o simulador do próprio jogo antes de confiar totalmente (ver docs/game_comparison.md item 1)',
+    'statue': 'Leitura periódica do estado do(s) Paladino(s) via screen=statue (Feature 24, fase 1 — só leitura, sem automação)',
+    'statue.enabled': 'Ativar a leitura periódica do estado do Paladino (nível, XP, skills, slots) e persistência em cache/statue/status.json para exibição em /statue',
 }
 
 buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "place", "statue", "market", "wood",

@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1)` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager
 
@@ -309,6 +309,67 @@ webmanager, sem automação ativa.
 aldeia e decidir treino por XP via threshold configurável.
 **Prioridade:** depois da Feature 23. Fase 1 é pequena e escopada; fase 2
 precisa de mais design antes de virar tarefa de implementação.
+
+### Fase 1 ✅ Implementado (2026-08-02)
+
+Diferente das Features 18-22 (que trabalharam em cima de sinais HTML já
+validados em campo), esta tela nunca tinha sido acessada pelo bot — o usuário
+forneceu duas amostras reais de HTML do br143 (`screen=statue&mode=overview`
+e `&mode=resident`), usadas para desenhar o parser em vez de adivinhar
+seletores às cegas.
+
+**Descoberta chave:** as duas telas embutem um payload JSON limpo no
+`<script>` via `BuildingStatue.receiveKnightsData([...], {...}, N);`
+(nível, XP, skills por id, `branch_investments`, aldeia principal, regime de
+treino atual, lista de regimes de XP disponíveis com custo/payout/duração,
+atividade atual) — não foi necessário raspar a árvore de skills renderizada
+em HTML/CSS. Os 12 skills (id, nome, descrição, magnitude por nível) e os
+limiares de slot (`[1,3,5,10,20,35,50,65,80,100]`) também vêm no mesmo
+`<script>`, mas os limiares de slots **bloqueados** são lidos do texto
+renderizado ("Obtenha N aldeias para desbloquear este slot") em vez do
+argumento posicional do JS, por refletir o que realmente foi exibido.
+
+**Novo `pages/statue.py::StatuePage`:** em vez do regex não-guloso
+`\{.+?\}` já usado em `core/extractors.py` (que quebraria com o JSON
+profundamente aninhado do Paladino, parando no primeiro `}` interno), usa
+uma varredura de colchetes balanceados (`_extract_balanced`, respeitando
+aspas/escapes) para extrair os dois argumentos do `receiveKnightsData(...)`
+com segurança.
+
+**Novo `game/statue_manager.py::StatueManager`:** roda uma vez por ciclo
+completo do bot (não por aldeia — o roster de Paladinos é compartilhado por
+toda a conta), pedindo `screen=statue&mode=overview` a partir da primeira
+aldeia gerenciada disponível. Persiste em `cache/statue/status.json`.
+Opt-in via `statue.enabled` (default `false`) — diferente de Features 19-21
+(que só passaram a persistir estado que managers já existentes calculavam),
+esta feature faz uma requisição HTTP nova por ciclo a uma tela nunca acessada
+antes, então fica desligada por padrão até validação em campo.
+
+**Webmanager:** `StatueReader` (`webmanager/utils.py`) formata o cache —
+progresso de XP em %, skills agrupados pelas 3 árvores com pontos investidos,
+tabela de regimes de treino por XP (custo/payout/duração), e status de slots
+bloqueados vs. número de aldeias atual. Nova rota `/statue` + template
+`statue.html` — um card por paladino, seção de slots bloqueados no fim. Link
+adicionado na nav.
+
+Config novo: `statue.enabled` (`false`). `build.version` bumpado para `2.7`.
+`webmanager/helpfile.py` atualizado com as 2 novas chaves.
+
+**Validado nesta sessão:** parser (`StatuePage`) testado contra as duas
+amostras reais de HTML fornecidas pelo usuário — extraiu corretamente nível,
+XP (`13.5%`, batendo com o `width: 13.5403%` da barra de progresso renderizada
+pelo próprio jogo), skills por árvore (conferido contra os `X/4` renderizados
+na árvore de skills do HTML), regimes de treino e limiares de slot. `StatueReader`
+e os 3 estados do template (`ativado+dados`, `desativado`, `ativado sem dados
+ainda`) testados isoladamente. **Não validado:** o ciclo real de
+`StatueManager.run()` dentro do loop do bot (`twb.py`) nem a rota Flask
+`/statue` via app real — pendente de validação em campo com `statue.enabled: true`.
+
+**Limitação conhecida:** não distingue um slot já desbloqueado mas ainda sem
+paladino recrutado (não há amostra desse estado) — nesse caso ele não aparece
+nem na lista de paladinos nem na de bloqueados. Fase 2 (treino por XP
+automático, re-especialização por perfil) segue sem desenho, precisa de mais
+definição do usuário antes de virar tarefa.
 
 ## Feature 25 — Catálogo e otimização de itens de inventário (boosts)
 

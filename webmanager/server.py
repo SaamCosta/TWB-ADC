@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -347,6 +347,21 @@ def get_reports():
         village_options=village_options,
         dest_filter=dest_filter,
         type_filter=type_filter,
+    )
+
+
+@app.route('/statue', methods=['GET'])
+def get_statue():
+    config = DataReader.config_grab()
+    enabled = config.get("statue", {}).get("enabled", False)
+    managed = sync()["bot"]
+    data = StatueReader.load(managed_cache=managed)
+    village_count = len(managed)
+    return render_template(
+        'statue.html',
+        enabled=enabled,
+        data=data,
+        village_count=village_count,
     )
 
 

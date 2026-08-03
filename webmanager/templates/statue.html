@@ -1,0 +1,129 @@
+{% extends "main.html" %}
+{% block title %}Paladino{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0" style="color:#2c1810;">🛡️ Paladino</h4>
+  <div class="d-flex align-items-center">
+    <span class="badge {% if enabled %}badge-success{% else %}badge-danger{% endif %} mr-2">
+      {% if enabled %}Ativado{% else %}Desativado{% endif %}
+    </span>
+    {% if data %}
+    <span class="badge badge-secondary">Lido em: {{ data.fetched_at_fmt }} (aldeia {{ data.village_used_name }})</span>
+    {% endif %}
+  </div>
+</div>
+
+{% if not enabled %}
+<div class="alert alert-warning mb-3">
+  <strong>Leitura do Paladino desativada.</strong> Ative <code>statue.enabled</code> em
+  <a href="/config">/config</a> para o bot ler o estado do(s) Paladino(s) a cada ciclo e
+  exibir aqui. Esta feature é <strong>só leitura</strong> — nenhum treino por XP,
+  re-especialização ou recrutamento é feito automaticamente.
+</div>
+{% endif %}
+
+{% if not data %}
+<div class="alert mb-0" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+  <strong>Nenhum dado ainda.</strong>
+  {% if enabled %}
+    O bot ainda não completou um ciclo com <code>statue.enabled</code> ligado, ou a
+    última tentativa falhou (verifique <code>/logs</code>).
+  {% else %}
+    Ative a feature acima para começar a coletar dados.
+  {% endif %}
+</div>
+{% else %}
+
+{% if data.statue_level %}
+<p class="text-muted small">Estátua (aldeia usada para leitura): nível {{ data.statue_level }}</p>
+{% endif %}
+
+{% if not data.knights %}
+<div class="alert alert-info mb-3">Nenhum paladino recrutado ainda.</div>
+{% endif %}
+
+<div class="row">
+  {% for k in data.knights %}
+  <div class="col-lg-6 mb-3">
+    <div class="card h-100" style="border-color:#c8a96e;">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between">
+          <h5 class="card-title mb-0">{{ k.name }} <span class="badge badge-dark">Nível {{ k.level }}</span></h5>
+          {% if k.has_active_regimen %}
+            <span class="badge badge-info">Treinando por XP</span>
+          {% endif %}
+        </div>
+        <p class="text-muted small mb-1">Página principal: {{ k.home_village_name }} — Estado: {{ k.activity_description }}</p>
+
+        <div class="progress mb-1" style="height: 18px;">
+          <div class="progress-bar" role="progressbar" style="width: {{ k.xp_pct }}%; background-color:#8a6d3b;"
+               aria-valuenow="{{ k.xp_pct }}" aria-valuemin="0" aria-valuemax="100">
+            {{ k.xp_pct }}%
+          </div>
+        </div>
+        <p class="text-muted small mb-2">
+          {{ "{:,}".format(k.xp_progress).replace(',', '.') }} / {{ "{:,}".format(k.xp_goal).replace(',', '.') }} XP
+          {% if k.skill_points_held %}
+            — <span class="badge badge-warning">{{ k.skill_points_held }} ponto(s) de habilidade disponível(is)</span>
+          {% endif %}
+        </p>
+
+        {% for branch in k.branches %}
+        <div class="mb-2">
+          <span class="badge badge-{{ branch.color }}">{{ branch.name }} — {{ branch.points_invested }} pts</span>
+          <div class="small mt-1">
+            {% for s in branch.skills %}
+              <span class="mr-2 {% if s.level == 0 %}text-muted{% endif %}">{{ s.name }}: {{ s.level }}/4</span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+
+        {% if k.usable_regimens %}
+        <details class="mt-2">
+          <summary class="small text-muted">Opções de treino por XP ({{ k.usable_regimens|length }})</summary>
+          <table class="table table-sm mt-1 mb-0">
+            <thead><tr><th>Custo</th><th>XP</th><th>Duração</th></tr></thead>
+            <tbody>
+              {% for r in k.usable_regimens %}
+              <tr>
+                <td class="small">🌲{{ r.wood }} 🪨{{ r.stone }} ⛏{{ r.iron }}</td>
+                <td class="small">{{ r.xp_payout }}</td>
+                <td class="small">{{ r.duration_fmt }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% if data.locked_slot_thresholds %}
+<div class="card mt-2" style="border-color:#c8a96e;">
+  <div class="card-body">
+    <h6 class="card-title">Slots bloqueados ({{ village_count }} aldeia(s) atualmente)</h6>
+    <div>
+      {% for threshold in data.locked_slot_thresholds %}
+        {% if threshold <= village_count %}
+          <span class="badge badge-success mr-1">{{ threshold }} aldeias — desbloqueado</span>
+        {% else %}
+          <span class="badge badge-secondary mr-1">{{ threshold }} aldeias — faltam {{ threshold - village_count }}</span>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <p class="text-muted small mt-2 mb-0">
+      Um slot pode já estar desbloqueado mas sem paladino recrutado ainda — este contador
+      só reflete o texto de bloqueio lido do jogo, não distingue esse caso (limitação
+      conhecida da fase 1, leia <code>docs/backlog.md</code>).
+    </p>
+  </div>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
