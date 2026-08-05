@@ -4,6 +4,7 @@ File used for data extraction
 
 import json
 import re
+import time
 
 
 class Extractor:
@@ -253,6 +254,56 @@ class Extractor:
         if match:
             return float(match.group(1))
         return None
+
+    @staticmethod
+    def incoming_commands(res):
+        """
+        Feature 16: extrai comandos recebidos (não ignorados) da página de
+        overview de uma aldeia -- usado pelo DefenceManager para priorizar
+        evacuação por urgência real (ETA) em vez de reagir igual a qualquer
+        comando recebido, esteja ele chegando em minutos ou horas.
+
+        Cada linha de comando no widget de "comandos recebidos" do jogo é
+        varrida via <tr ... data-command-id="N" ...>...</tr>; dentro do
+        bloco procura o contador de chegada, que no jogo aparece em duas
+        variantes conhecidas (ambas já usadas em outras páginas do jogo,
+        ver attack_duration() acima para data-duration):
+          - data-endtime="UNIX_TS" (timestamp absoluto de chegada)
+          - data-duration="SEGUNDOS" (segundos restantes já calculados)
+        e o nome do atacante via link para screen=info_player.
+
+        Retorna lista de dicts {command_id, eta_seconds, attacker} --
+        lista vazia se nada foi encontrado (markup não reconhecido ou
+        página sem comandos). Nunca lança exceção: chamadores devem tratar
+        lista vazia como "urgência desconhecida", não como "sem ataques",
+        e cair de volta no comportamento seguro anterior (ver
+        DefenceManager._parse_incoming_urgency).
+        """
+        if type(res) != str:
+            res = res.text
+        commands = []
+        try:
+            rows = re.findall(r'<tr[^>]*data-command-id="(\d+)"[^>]*>(.*?)</tr>', res, re.S)
+        except Exception:
+            return commands
+        for command_id, block in rows:
+            eta_seconds = None
+            endtime_match = re.search(r'data-endtime="(\d+)"', block)
+            if endtime_match:
+                eta_seconds = int(endtime_match.group(1)) - int(time.time())
+            else:
+                duration_match = re.search(r'data-duration="(\d+)"', block)
+                if duration_match:
+                    eta_seconds = int(duration_match.group(1))
+            if eta_seconds is None:
+                continue
+            attacker_match = re.search(r'screen=info_player[^"]*"[^>]*>([^<]+)</a>', block)
+            commands.append({
+                "command_id": command_id,
+                "eta_seconds": max(0, eta_seconds),
+                "attacker": attacker_match.group(1).strip() if attacker_match else None,
+            })
+        return commands
 
     @staticmethod
     def get_daily_reward(res):

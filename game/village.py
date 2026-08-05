@@ -186,6 +186,13 @@ class Village:
         self.def_man.auto_evacuate = self.get_village_config(
             self.village_id, parameter="evacuate_fragile_units_on_attack", default=False
         )
+        # Feature 16: só evacua de fato quando o comando recebido mais
+        # urgente estiver a <= N segundos de distância (ver
+        # DefenceManager._is_urgent). Comandos mais distantes só mantêm a
+        # bandeira de defesa e ficam visíveis em cache/managed (abaixo).
+        self.def_man.urgency_threshold_sec = self.get_village_config(
+            self.village_id, parameter="evacuate_urgency_threshold_sec", default=1800
+        )
 
         # Populate other villages state so support/evacuation logic can execute.
         # Reads cache/managed/*.json written by set_cache_vars() each cycle.
@@ -1084,6 +1091,17 @@ class Village:
             },
         }
 
+        # Feature 16: expõe o comando recebido mais urgente (ETA/atacante/
+        # command_id, calculado em DefenceManager._parse_incoming_urgency)
+        # para visibilidade em cache/, igual ao bloco "flags" da Feature 19.
+        incoming_state = {
+            "eta_seconds": self.def_man.incoming_eta,
+            "attacker": self.def_man.incoming_attacker,
+            "command_id": self.def_man.incoming_command_id,
+            "urgency_threshold_sec": self.def_man.urgency_threshold_sec,
+            "urgent": self.def_man._is_urgent(self.def_man.incoming_eta) if self.def_man.under_attack else False,
+        }
+
         village_entry = {
             "name": self.game_data["village"]["name"],
             "x": self.game_data["village"].get("x", 0),
@@ -1097,6 +1115,7 @@ class Village:
             "building_queue": self.builder.queue,
             "troops": self.units.total_troops,
             "under_attack": self.def_man.under_attack,
+            "incoming_attack": incoming_state,
             "last_run": int(time.time()),
             "zone": current_zone,
             "points": self.points,

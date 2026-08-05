@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
 
@@ -126,12 +126,66 @@ nenhuma delas exigiu mudança de config nem bump de `build.version`):
   `game/village.py::Village.run()`) foi revisado e está correto — nenhum
   outro problema encontrado nessa auditoria.
 
-## Feature 16 — DefenceManager avançado
+## Feature 16 — DefenceManager avançado ✅ Implementado (2026-08-05)
 
 Usar `data-endtime`, nome do atacante e `data-command-id` do HTML de overview
 para priorizar evacuação por urgência (ataques chegando em minutos têm
 prioridade sobre ataques em horas). Estende `DefenceManager.evacuate()` /
 `update()`.
+
+**Status:** antes desta feature, `DefenceManager.update()` reagia de forma
+binária a `'no_ignored_command' in main` — qualquer comando recebido (esteja
+a 2 minutos ou 5 horas de distância) disparava evacuação imediata das
+unidades frágeis (`evacuate()`) sempre que `evacuate_fragile_units_on_attack`
+estava ativo, o que podia tirar tropas ofensivas (axe) de produção/farm por
+horas para um ataque que ainda ia demorar a chegar.
+
+- Novo `Extractor.incoming_commands(res)` (`core/extractors.py`) varre o HTML
+  de overview por `<tr ... data-command-id="N" ...>...</tr>` e extrai, por
+  comando, o ETA e o nome do atacante (link `screen=info_player`). O ETA é
+  lido em duas variantes de markup já usadas em outras páginas do jogo pelo
+  próprio bot: `data-endtime="UNIX_TS"` (timestamp absoluto, ETA = endtime -
+  now) e `data-duration="SEGUNDOS"` (já é a duração restante — mesmo padrão
+  de `Extractor.attack_duration()`, que usa `data-duration` na página de
+  confirmação de ataque). Nunca lança exceção — markup não reconhecido
+  resulta em lista vazia, não em crash.
+- `DefenceManager._parse_incoming_urgency(main)` pega o comando mais próximo
+  (soonest) da lista e guarda `incoming_eta` / `incoming_attacker` /
+  `incoming_command_id`. `_is_urgent(eta_seconds)` compara contra o novo
+  `urgency_threshold_sec` (config `evacuate_urgency_threshold_sec`, padrão
+  1800s = 30 min).
+- **Fallback seguro:** se `incoming_commands()` não achar nada usável (ETA
+  `None` — markup não reconhecido, ou mudou no jogo), `_is_urgent()` assume
+  `True` (urgente) — preserva o comportamento anterior à Feature 16 (evacuar
+  sempre que houver comando recebido) em vez de arriscar não evacuar por
+  falha de parsing.
+- `update()` agora só chama `evacuate()` quando `_is_urgent()` é `True`;
+  fora isso, a bandeira de defesa (`flag_logic(set_flag_under_attack)`)
+  continua sendo ativada normalmente e o estado (`under_attack=True`) é
+  mantido — só a evacuação física das tropas é que espera o ataque ficar
+  realmente próximo. Cada detecção gera um log `WARNING` com atacante, ETA e
+  `command_id` para visibilidade.
+- `Village.set_cache_vars()` (`game/village.py`) passou a persistir um bloco
+  `"incoming_attack"` em `cache/managed/{id}.json` (eta_seconds, attacker,
+  command_id, urgency_threshold_sec, urgent) — mesma convenção da Feature 19
+  (bloco `"flags"`), dado pronto para uma futura página no webmanager sem
+  exigir nova infra de leitura.
+- Nova config por aldeia `evacuate_urgency_threshold_sec` (default 1800) em
+  `village_template` — `config.example.json` e `webmanager/helpfile.py`
+  atualizados; `build.version` 2.7 → 2.8.
+
+**Limitação conhecida / não validada em campo:** os nomes exatos dos
+atributos (`data-command-id`, `data-endtime`/`data-duration`, link
+`screen=info_player` para o atacante) foram inferidos a partir de padrões já
+usados em outras páginas do próprio jogo (`attack_duration()` já validado
+usa `data-duration`) e da descrição original deste item no backlog, mas
+**não foram confirmados contra o HTML real da página de overview do
+br143 com um ataque de verdade chegando**. Se o markup real divergir, o
+fallback seguro garante que o bot não passa a evacuar *menos* do que antes —
+na pior hipótese, `incoming_commands()` retorna lista vazia e o
+comportamento fica idêntico ao pré-Feature-16 (evacua sempre). Recomendado
+validar em campo (log `WARNING` mostra ETA/atacante quando o parsing
+funciona) antes de contar com a priorização por urgência de fato acontecendo.
 
 ## Feature 17 — Relatório de império no webmanager
 

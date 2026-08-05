@@ -109,6 +109,7 @@ help_file = {
     'village.conquest_enabled': 'Enable conquest actions from this village — overrides global conquest.enabled',
     'village.evacuate_on_zone_attack': 'Trigger preemptive evacuation of fragile units (axe, noble) when zone neighbors are under attack — requires evacuate_fragile_units_on_attack: true (Feature 12)',
     'village.zone_attack_threshold': 'Minimum number of zone neighbors that must be under attack simultaneously to trigger preemptive evacuation (Feature 12)',
+    'village.evacuate_urgency_threshold_sec': 'Only actually evacuate when the soonest incoming command is within this many seconds of arriving (default 1800 = 30 min) — farther-out commands just keep the defence flag active (Feature 16)',
     'hunter': 'Agendamento de ataques coordenados com chegada simultânea (Feature 10) — gerencie pela página /hunter',
     'hunter.enabled': 'Ativar o Hunter — quando true, o bot verifica e dispara os schedules a cada ciclo',
     'zones': 'Agrupamento geográfico de aldeias em zonas por proximidade (Feature 11)',

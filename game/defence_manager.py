@@ -49,6 +49,17 @@ class DefenceManager:
     support_factor = 0.25
     support_max_villages = 2
 
+    # Feature 16: só evacua imediatamente quando o comando recebido mais
+    # próximo está a <= urgency_threshold_sec segundos de distância.
+    # Comandos ainda distantes (horas) apenas mantêm a bandeira de defesa
+    # ativa e ficam registrados em log/cache -- evita evacuação prematura
+    # de tropas frágeis (e possível troca de bandeira redundante) para
+    # ataques que ainda vão demorar muitos ciclos para chegar.
+    urgency_threshold_sec = 1800
+    incoming_eta = None
+    incoming_attacker = None
+    incoming_command_id = None
+
     # flag_index, flag_level
     current_flag = []
 
@@ -96,12 +107,34 @@ class DefenceManager:
         self.manage_flags()
         self.runs += 1
         if 'no_ignored_command' in main:
+            self._parse_incoming_urgency(main)
+            urgent = self._is_urgent(self.incoming_eta)
+
+            if self.incoming_eta is not None:
+                self.logger.warning(
+                    "Village %s: incoming command from %s, eta %ds (command_id=%s) -- %s",
+                    self.village_id,
+                    self.incoming_attacker or "?",
+                    self.incoming_eta,
+                    self.incoming_command_id or "?",
+                    "urgent, evacuating now" if urgent else "not urgent yet, monitoring",
+                )
+            else:
+                self.logger.warning(
+                    "Village %s: incoming command detected, but ETA/attacker "
+                    "could not be parsed from overview HTML -- treating as urgent",
+                    self.village_id,
+                )
+
             self.under_attack = True
             ok = False
             self.flag_logic(self.set_flag_under_attack)
-            if self.auto_evacuate and with_defence:
+            if self.auto_evacuate and with_defence and urgent:
                 self.evacuate()
         else:
+            self.incoming_eta = None
+            self.incoming_attacker = None
+            self.incoming_command_id = None
             self.flag_logic(self.set_flag_not_under_attack)
             if not with_defence:
                 self.under_attack = False
@@ -131,6 +164,35 @@ class DefenceManager:
         if ok:
             self.logger.info("Area OK for village %s, nice and quiet", self.village_id)
             # All is well
+
+    def _parse_incoming_urgency(self, main):
+        """
+        Feature 16: lê os comandos recebidos (via Extractor.incoming_commands)
+        e guarda o mais urgente em self.incoming_eta/_attacker/_command_id.
+
+        Sem comandos parseáveis (lista vazia -- markup não reconhecido ou
+        já mudou no jogo), zera o ETA/atacante/command_id explicitamente:
+        _is_urgent() trata incoming_eta=None como "assume urgente", que é
+        o comportamento seguro de antes da Feature 16 (evacua sempre que
+        'no_ignored_command' aparece no HTML).
+        """
+        commands = Extractor.incoming_commands(main)
+        if not commands:
+            self.incoming_eta = None
+            self.incoming_attacker = None
+            self.incoming_command_id = None
+            return
+        soonest = min(commands, key=lambda c: c["eta_seconds"])
+        self.incoming_eta = soonest["eta_seconds"]
+        self.incoming_attacker = soonest.get("attacker")
+        self.incoming_command_id = soonest.get("command_id")
+
+    def _is_urgent(self, eta_seconds):
+        # eta_seconds is None quando o parsing não achou nada usável --
+        # assume urgente (fallback seguro, ver _parse_incoming_urgency).
+        if eta_seconds is None:
+            return True
+        return eta_seconds <= self.urgency_threshold_sec
 
     def evacuate(self):
         if not self.units:
