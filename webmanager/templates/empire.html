@@ -1,0 +1,278 @@
+{% extends "main.html" %}
+{% block title %}Império{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+
+  <!-- Cabeçalho -->
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="mb-0" style="color:#2c1810;">
+      <img src="/static/images/village.png" height="24" class="me-2" onerror="this.style.display='none'">
+      Painel do Império
+    </h4>
+    <div>
+      <span class="badge bg-secondary me-1">Aldeias: {{ totals.villages }}</span>
+      <span class="badge bg-primary me-1">Pontos: {{ totals.points }}</span>
+      <span class="badge bg-{{ 'danger' if totals.under_attack else 'success' }}">
+        Sob ataque: {{ totals.under_attack }}
+      </span>
+    </div>
+  </div>
+
+  {% if totals.villages == 0 %}
+  <div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
+    <strong>Nenhuma aldeia gerenciada em cache ainda.</strong>
+    Este painel lê <code>cache/managed/*.json</code>, escrito a cada ciclo completo por aldeia —
+    rode o bot ao menos uma vez antes de esperar dados aqui.
+  </div>
+  {% endif %}
+
+  <div class="row">
+    <!-- Tropas totais -->
+    <div class="col-lg-6 mb-3">
+      <div class="card h-100" style="border-color:#c8a96e;">
+        <div class="card-body">
+          <h6 class="card-title mb-3">Tropas totais do império</h6>
+          {% if troop_totals %}
+          <div class="d-flex flex-wrap gap-3">
+            {% for unit, qty in troop_totals %}
+            {% if qty and qty > 0 %}
+            <span class="d-flex align-items-center" title="{{ unit }}">
+              <img src="/static/images/unit_{{ unit }}.png" class="res-icon me-1" alt="{{ unit }}"
+                   onerror="this.style.display='none'">
+              <strong>{{ '{:,}'.format(qty).replace(',', '.') }}</strong>
+              <span class="text-muted ms-1 small">{{ unit }}</span>
+            </span>
+            {% endif %}
+            {% endfor %}
+          </div>
+          {% else %}
+          <small class="text-muted">Sem dados de tropas ainda.</small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Recursos por aldeia -->
+    <div class="col-lg-6 mb-3">
+      <div class="card h-100" style="border-color:#c8a96e;">
+        <div class="card-body">
+          <h6 class="card-title mb-3">Recursos por aldeia</h6>
+          {% if resources %}
+          <div class="table-responsive" style="max-height:260px;overflow-y:auto;">
+            <table class="table table-sm align-middle mb-0">
+              <thead style="background:#2c1810;color:#d4a843;">
+                <tr>
+                  <th>Aldeia</th>
+                  <th>Madeira</th>
+                  <th>Argila</th>
+                  <th>Ferro</th>
+                  <th>Pop</th>
+                  <th>Pontos</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in resources %}
+                <tr>
+                  <td>
+                    <a href="/village?id={{ r.village_id }}" class="text-decoration-none" style="color:#2c1810;">
+                      {{ r.name }}
+                    </a>
+                  </td>
+                  <td>{{ '{:,}'.format(r.wood).replace(',', '.') }}</td>
+                  <td>{{ '{:,}'.format(r.stone).replace(',', '.') }}</td>
+                  <td>{{ '{:,}'.format(r.iron).replace(',', '.') }}</td>
+                  <td>{{ r['pop'] }}</td>
+                  <td>{{ r.points or '—' }}</td>
+                  <td>
+                    {% if r.under_attack %}
+                    <span class="badge bg-danger">Sob ataque</span>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <small class="text-muted">Sem dados de recursos ainda.</small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <!-- Mapa de calor de farm -->
+    <div class="col-lg-8 mb-3">
+      <div class="card h-100" style="border-color:#c8a96e;">
+        <div class="card-body">
+          <h6 class="card-title mb-2">Mapa de calor de atividade de farm</h6>
+          {% if heatmap.points %}
+          <div id="empire-heatmap-tooltip" style="
+            position:fixed;pointer-events:none;background:rgba(20,20,30,0.93);color:#f0f0f0;
+            border-radius:6px;padding:6px 10px;font-size:0.8rem;border:1px solid #555;
+            display:none;z-index:9999;max-width:220px;"></div>
+          <canvas id="empire-heatmap-canvas" style="border-radius:8px;background:#1a2233;display:block;width:100%;"></canvas>
+          <small class="text-muted d-block mt-2">
+            🟢 aldeias próprias &nbsp;|&nbsp; pontos frios → quentes conforme o número de ataques
+            (<code>cache/attacks/*.json</code>). Alvos sem coordenada conhecida em
+            <code>cache/villages/</code> não aparecem.
+          </small>
+          {% else %}
+          <small class="text-muted">
+            Sem alvos de farm com coordenada conhecida ainda — precisa de pelo menos um ciclo
+            de <code>AttackManager</code> com o mapa já escaneado.
+          </small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Timeline de conquistas -->
+    <div class="col-lg-4 mb-3">
+      <div class="card h-100" style="border-color:#c8a96e;">
+        <div class="card-body">
+          <h6 class="card-title mb-3">Timeline de conquistas</h6>
+          {% if timeline %}
+          <div style="max-height:420px;overflow-y:auto;">
+            <ul class="list-unstyled mb-0">
+              {% for t in timeline %}
+              <li class="mb-3 pb-2" style="border-bottom:1px solid #e8d9a0;">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <span class="badge bg-{{ t.status_color }}">{{ t.status_label }}</span>
+                    <strong class="d-block mt-1">{{ t.target_name }}</strong>
+                    <small class="text-muted">{{ t.location_str }} · {{ t.target_points }} pts</small>
+                  </div>
+                  <small class="text-muted text-nowrap">{{ t.last_hit_fmt if t.last_hit_ts else t.queued_at_fmt }}</small>
+                </div>
+                {% if t.status not in ('manual', 'invalid') %}
+                <small class="d-block mt-1">Nobles: {{ t.hits_done }}/{{ t.hits_needed }} · Lealdade: {{ t.loyalty_now }}%</small>
+                {% endif %}
+                {% if t.reserved_by and t.reserved_by != '—' %}
+                <small class="d-block text-muted">Reservada por
+                  <a href="/village?id={{ t.reserved_by }}" class="text-decoration-none">{{ t.reserved_by }}</a>
+                </small>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% else %}
+          <small class="text-muted">
+            Nenhum evento de conquista registrado ainda — ver <a href="/conquest">/conquest</a>
+            para configurar/acompanhar alvos.
+          </small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var points = {{ heatmap.points | tojson }};
+  var own    = {{ heatmap.own | tojson }};
+  var maxCount = {{ heatmap.max_count | default(0) }};
+  if (!points.length) return;
+
+  var canvas = document.getElementById('empire-heatmap-canvas');
+  var tooltip = document.getElementById('empire-heatmap-tooltip');
+  if (!canvas) return;
+
+  var parent = canvas.parentElement;
+  var W = parent.clientWidth - 4;
+  var H = Math.max(360, Math.round(W * 0.5));
+  canvas.width = W;
+  canvas.height = H;
+  var ctx = canvas.getContext('2d');
+
+  var all = points.concat(own);
+  var minX = Math.min.apply(null, all.map(function (p) { return p.x; }));
+  var maxX = Math.max.apply(null, all.map(function (p) { return p.x; }));
+  var minY = Math.min.apply(null, all.map(function (p) { return p.y; }));
+  var maxY = Math.max.apply(null, all.map(function (p) { return p.y; }));
+  // Margem de 1 campo para os pontos não ficarem colados na borda
+  minX -= 1; maxX += 1; minY -= 1; maxY += 1;
+  var spanX = Math.max(1, maxX - minX);
+  var spanY = Math.max(1, maxY - minY);
+
+  var PAD = 24;
+  function toPx(p) {
+    return {
+      x: PAD + ((p.x - minX) / spanX) * (W - PAD * 2),
+      y: PAD + ((p.y - minY) / spanY) * (H - PAD * 2),
+    };
+  }
+
+  function heatColor(count) {
+    if (!maxCount) return 'rgba(120,170,255,0.85)';
+    var ratio = Math.max(0, Math.min(1, count / maxCount));
+    // azul frio (baixa intensidade) -> vermelho quente (alta intensidade)
+    var r = Math.round(80 + ratio * 175);
+    var g = Math.round(150 - ratio * 120);
+    var b = Math.round(230 - ratio * 200);
+    return 'rgba(' + r + ',' + g + ',' + b + ',0.85)';
+  }
+
+  function draw() {
+    ctx.fillStyle = '#1a2233';
+    ctx.fillRect(0, 0, W, H);
+
+    points.forEach(function (p) {
+      var px = toPx(p);
+      var radius = 3 + Math.min(9, (maxCount ? (p.attack_count / maxCount) : 0) * 9);
+      ctx.beginPath();
+      ctx.fillStyle = heatColor(p.attack_count);
+      ctx.arc(px.x, px.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    own.forEach(function (p) {
+      var px = toPx(p);
+      ctx.fillStyle = '#27ae60';
+      ctx.fillRect(px.x - 4, px.y - 4, 8, 8);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(px.x - 4, px.y - 4, 8, 8);
+    });
+  }
+
+  draw();
+
+  canvas.addEventListener('mousemove', function (e) {
+    var rect = canvas.getBoundingClientRect();
+    var mx = e.clientX - rect.left;
+    var my = e.clientY - rect.top;
+    var hit = null;
+    var hitDist = 8;
+    all.forEach(function (p) {
+      var px = toPx(p);
+      var d = Math.hypot(px.x - mx, px.y - my);
+      if (d <= hitDist) { hit = p; hitDist = d; }
+    });
+    if (!hit) { tooltip.style.display = 'none'; return; }
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top = (e.clientY - 10) + 'px';
+    if (hit.attack_count !== undefined) {
+      tooltip.innerHTML =
+        '<strong>' + hit.name + '</strong><br/>' +
+        'Coord: ' + hit.x + '|' + hit.y + '<br/>' +
+        'Ataques: ' + hit.attack_count +
+        (hit.farm_score !== null && hit.farm_score !== undefined ? '<br/>Farm score: ' + hit.farm_score : '') +
+        (hit.safe === false ? '<br/><span style="color:#e74c3c;">Não seguro</span>' : '');
+    } else {
+      tooltip.innerHTML = '<strong>' + hit.name + '</strong> (própria)<br/>Coord: ' + hit.x + '|' + hit.y;
+    }
+  });
+
+  canvas.addEventListener('mouseleave', function () {
+    tooltip.style.display = 'none';
+  });
+})();
+</script>
+{% endblock %}

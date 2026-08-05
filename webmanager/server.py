@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, EmpireReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, EmpireReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -472,6 +472,33 @@ def pvp_conquest_set_clear():
     if target_id:
         PvpConquestReader.set_clear_village(target_id, clear_vid)
     return redirect(url_for("get_pvp_conquest"))
+
+
+@app.route('/empire', methods=['GET'])
+def get_empire():
+    # Feature 17: dashboard agregado do imperio -- so leitura, reaproveita
+    # os mesmos caches que sync() ja grava (managed/villages/attacks) mais
+    # ConquestReader.load() (cache/conquest), sem nenhum cache novo.
+    data = sync()
+    managed = data["bot"]
+
+    totals = {
+        "villages": len(managed),
+        "points": sum(int(v.get("points") or 0) for v in managed.values()),
+        "under_attack": sum(1 for v in managed.values() if v.get("under_attack")),
+    }
+
+    conquest_targets = ConquestReader.load()
+
+    return render_template(
+        'empire.html',
+        data=data,
+        totals=totals,
+        troop_totals=EmpireReader.troop_totals(managed),
+        resources=EmpireReader.resources_by_village(managed),
+        heatmap=EmpireReader.farm_heatmap(data["attacks"], data["villages"], managed),
+        timeline=EmpireReader.conquest_timeline(conquest_targets),
+    )
 
 
 if len(sys.argv) > 1:

@@ -1,6 +1,6 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17` (✅ todas)
 
 ## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
 
@@ -187,12 +187,87 @@ comportamento fica idêntico ao pré-Feature-16 (evacua sempre). Recomendado
 validar em campo (log `WARNING` mostra ETA/atacante quando o parsing
 funciona) antes de contar com a priorização por urgência de fato acontecendo.
 
-## Feature 17 — Relatório de império no webmanager
+## Feature 17 — Relatório de império no webmanager ✅ Implementado (2026-08-05)
 
 Dashboard em `/empire` com: total de tropas por tipo agregado (todas as
 aldeias), gráfico de recursos por aldeia, mapa de calor de atividade de farm,
 histórico de conquistas com timeline. Consome `cache/managed/*.json`,
 `cache/attacks/*.json`, `cache/conquest/*.json`.
+
+**Status:** novo `EmpireReader` em `webmanager/utils.py` — puramente
+agregador, não cria nenhum diretório de cache novo, só cruza o que `sync()`
+já lê (`cache/managed`, `cache/villages`, `cache/attacks`) e a saída de
+`ConquestReader.load()` (`cache/conquest`):
+- `troop_totals(managed)` — soma `troops` (= `TroopManager.total_troops`,
+  persistido por `Village.set_cache_vars()`) de todas as aldeias, ordenado
+  por total desc.
+- `resources_by_village(managed)` — uma linha por aldeia (recursos, pontos,
+  `under_attack`).
+- `farm_heatmap(attacks, villages, managed)` — cruza `cache/attacks/*.json`
+  (contagem de ataques) com `cache/villages/*.json` (coordenada) para os
+  alvos de farm; aldeias próprias entram via `x`/`y` de `cache/managed`
+  (sempre presente, não depende do cache de mapa). Alvos sem coordenada
+  conhecida são ignorados. Renderizado como scatter plot colorido por
+  intensidade em canvas (`empire.html`), não como grid denso tipo
+  `MapBuilder`/`/map` — mais leve e mais fiel ao termo "mapa de calor" já
+  que os alvos de farm normalmente estão espalhados, não preenchendo uma
+  área contígua.
+- `conquest_timeline(conquest_targets, limit=30)` — reordena a saída já
+  processada de `ConquestReader.load()` por evento mais recente
+  (`last_hit_ts` ou `queued_at`), sem reler `cache/conquest` de novo.
+- Nova rota `GET /empire` (`webmanager/server.py`) e template
+  `empire.html` — cards de tropas totais, recursos por aldeia, heatmap
+  (canvas + tooltip, mesmo padrão de `/map`) e timeline de conquistas.
+  Link adicionado na nav de `main.html`. Nenhuma config nova.
+
+**Bug real encontrado e corrigido durante a implementação** (mesma classe
+do bug de `hits`/`hits_done` achado na auditoria da Feature 15): o campo
+`attack_count` em `cache/attacks/{id}.json` nunca era de fato atualizado —
+`AttackManager.attacked()` (`game/attack.py`) só preservava o valor
+existente (`existing.get("attack_count", 0)`), e nada em todo o código
+jamais escrevia um valor novo ali. A contagem real de ataques só existia
+calculada na hora, dentro de `VillageManager.farm_manager()`
+(`manager.py`), usada apenas para compor a linha de log
+("Farm village X attacked N times") — nunca persistida de volta. Isso
+deixava tanto a coluna "Ataques" de `/farmscores` quanto o novo heatmap da
+Feature 17 permanentemente zerados. Corrigido: `farm_manager()` agora
+grava `data["attack_count"] = len(num_attack)` de volta no cache sempre
+que o valor mudar. Validado rodando `VillageManager.farm_manager(verbose=True)`
+contra o cache real do br143 — os 10 alvos de farm existentes passaram de
+`attack_count: 0` para os valores reais (3 a 13, batendo exatamente com o
+log de produção já existente), e o heatmap do `/empire` passou a mostrar
+intensidade de verdade (`max_count` 0 → 13) em vez de tudo na mesma cor.
+
+**Bug de template encontrado por inspeção visual (usuário) e corrigido antes
+do commit:** a coluna "Pop" da tabela "Recursos por aldeia" mostrava o
+texto literal `<built-in method pop of dict object at 0x...>` em vez do
+valor numérico. Causa: `{{ r.pop }}` no Jinja2 tenta primeiro
+`getattr(r, "pop")` antes de cair para `r["pop"]` — como `r` é um `dict`
+Python puro e `pop` é também o nome de um método nativo de `dict`, o
+`getattr` "vence" e retorna o método em vez de buscar a chave. Corrigido
+para `{{ r['pop'] }}` (acesso por chave, sem ambiguidade). Vale lembrar
+disso para qualquer chave futura que colida com métodos de `dict`
+(`items`, `keys`, `values`, `update`, `get`, `copy`, etc.) — nenhuma outra
+ocorrência encontrada em `empire.html` nesta revisão.
+
+**Polimento pendente (funcional, mas com lacunas conhecidas — anotado,
+não implementado):**
+- **Ícones de tropas pequenos/pouco legíveis.** O card "Tropas totais do
+  império" lista ícone+número em uma única linha corrida (`d-flex
+  flex-wrap`); com poucos tipos de unidade (caso atual, só 1 aldeia) fica
+  compacto demais visualmente. Vale revisar espaçamento/tamanho dos ícones
+  (ou usar um layout em grade/cards por unidade) quando houver mais dados
+  reais para julgar o resultado.
+- **Sem linha de total agregado em "Recursos por aldeia".** Com várias
+  aldeias gerenciadas, seria útil uma linha de rodapé somando
+  madeira/argila/ferro/pop do império inteiro, além dos totais por aldeia
+  já mostrados.
+- **Heatmap sem números visíveis nos pontos.** A intensidade (cor/raio do
+  círculo) só é lida via hover (tooltip); poderia ganhar uma legenda de
+  escala de cor (frio→quente) fixa no card, sem depender do usuário passar
+  o mouse em cada ponto.
+- Nenhum desses itens bloqueia o uso da página — todos são melhorias de
+  UX, não bugs funcionais.
 
 ## Feature 18 — Moral e night bonus dinâmicos no simulador de PvP conquest ✅ Implementado (2026-08-02)
 

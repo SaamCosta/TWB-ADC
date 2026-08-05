@@ -59,6 +59,22 @@ class VillageManager:
                     "%sFarm village %s attacked %d times - Total loot: %s - Total units lost: %d (%.2f)",
                     perf, farm, len(num_attack), str(loot), total_loss_count, percentage_lost
                 )
+
+            # Bugfix (achado construindo a Feature 17 -- mapa de calor de
+            # farm no /empire): "attack_count" era gravado em
+            # cache/attacks/{id}.json apenas como valor herdado do cache
+            # anterior (game/attack.py::AttackManager.attacked(),
+            # "attack_count": existing.get("attack_count", 0)) e nunca era
+            # efetivamente atualizado em lugar nenhum -- ficava para sempre
+            # em 0. A
+            # contagem real só existia aqui, calculada na hora a partir de
+            # cache/reports e usada só para o log acima. Isso também deixava
+            # a coluna "Ataques" de /farmscores sempre zerada. Persistindo
+            # aqui corrige as duas telas de uma vez.
+            if data.get("attack_count") != len(num_attack):
+                data["attack_count"] = len(num_attack)
+                AttackCache.set_cache(farm, data)
+
             if len(num_attack):
                 total = 0
                 for k in loot:

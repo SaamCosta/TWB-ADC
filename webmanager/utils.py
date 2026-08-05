@@ -961,6 +961,123 @@ class ZoneReader:
         return {"zones": zones_out, "radius": radius, "all_villages": all_villages}
 
 
+class EmpireReader:
+    """
+    Feature 17 — dashboard /empire. Agrega dados já persistidos por outras
+    features/managers em uma visão de "império inteiro": tropas totais por
+    tipo, recursos por aldeia, mapa de calor de atividade de farm e
+    timeline de conquistas. Não cria nenhum diretório de cache novo — só
+    lê e cruza cache/managed, cache/villages, cache/attacks (já lidos por
+    sync(), ver server.py) e a saída de ConquestReader.load() (cache/conquest).
+    """
+
+    @staticmethod
+    def troop_totals(managed):
+        """
+        Soma o campo "troops" (TroopManager.total_troops, persistido por
+        Village.set_cache_vars() — conta unidades totais, incluindo as que
+        estão em rota, não só as paradas em casa) de todas as aldeias
+        gerenciadas. Retorna [(unit, total), ...] ordenado por total desc.
+        """
+        totals = {}
+        for data in (managed or {}).values():
+            for unit, count in (data.get("troops") or {}).items():
+                try:
+                    totals[unit] = totals.get(unit, 0) + int(count)
+                except (TypeError, ValueError):
+                    continue
+        return sorted(totals.items(), key=lambda kv: -kv[1])
+
+    @staticmethod
+    def resources_by_village(managed):
+        """
+        Uma linha por aldeia gerenciada com recursos atuais, pontos e
+        status de ataque — para a tabela "Recursos por aldeia".
+        """
+        rows = []
+        for vid, data in (managed or {}).items():
+            resources = data.get("resources") or {}
+            rows.append({
+                "village_id": vid,
+                "name": data.get("name") or vid,
+                "wood": resources.get("wood", 0),
+                "stone": resources.get("stone", 0),
+                "iron": resources.get("iron", 0),
+                "pop": resources.get("pop", 0),
+                "points": data.get("points"),
+                "under_attack": data.get("under_attack", False),
+            })
+        rows.sort(key=lambda r: r["name"])
+        return rows
+
+    @staticmethod
+    def farm_heatmap(attacks, villages, managed):
+        """
+        Cruza cache/attacks/*.json (contagem de ataques por alvo, mantida
+        por AttackManager) com cache/villages/*.json (coordenada do alvo,
+        populada pelo fetch de mapa de qualquer aldeia gerenciada — ver
+        game/map.py::Map.build_cache_entry) para plotar os alvos de farm
+        como pontos coloridos por intensidade (attack_count). Alvos nunca
+        vistos por nenhum fetch de mapa (sem entrada correspondente em
+        cache/villages) são ignorados — não há coordenada para posicioná-los.
+
+        As próprias aldeias gerenciadas entram como pontos separados
+        ("own"), usando x/y de cache/managed diretamente (sempre presente,
+        não depende do cache de mapa) para servir de referência visual no
+        mapa de calor.
+        """
+        points = []
+        max_count = 0
+        for target_id, adata in (attacks or {}).items():
+            vdata = (villages or {}).get(target_id)
+            if not vdata or not vdata.get("location"):
+                continue
+            count = adata.get("attack_count", 0) or 0
+            max_count = max(max_count, count)
+            points.append({
+                "target_id": target_id,
+                "name": vdata.get("name") or target_id,
+                "x": vdata["location"][0],
+                "y": vdata["location"][1],
+                "attack_count": count,
+                "farm_score": adata.get("farm_score"),
+                "safe": adata.get("safe", True),
+                "reserved_by": adata.get("reserved_by"),
+            })
+
+        own = []
+        for vid, data in (managed or {}).items():
+            if "x" not in data or "y" not in data:
+                continue
+            own.append({
+                "village_id": vid,
+                "name": data.get("name") or vid,
+                "x": data["x"],
+                "y": data["y"],
+            })
+
+        return {"points": points, "own": own, "max_count": max_count}
+
+    @staticmethod
+    def conquest_timeline(conquest_targets, limit=30):
+        """
+        Reordena a lista já processada por ConquestReader.load() em ordem
+        cronológica (evento mais recente primeiro) para exibir como linha
+        do tempo — usa last_hit_ts (progresso real do noble train) quando
+        disponível, senão queued_at (alvo manual ainda não reivindicado,
+        Feature 15). Entradas sem nenhum timestamp (não deveria acontecer,
+        mas por segurança) ficam de fora da timeline.
+        """
+        def event_ts(t):
+            return t.get("last_hit_ts") or t.get("queued_at") or 0
+
+        ordered = sorted(
+            (t for t in (conquest_targets or []) if event_ts(t) > 0),
+            key=event_ts, reverse=True,
+        )
+        return ordered[:limit]
+
+
 class PvpConquestReader:
     """
     Lê, cria e deleta alvos PvP em cache/pvp_conquest/*.json.
