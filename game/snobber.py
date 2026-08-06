@@ -50,10 +50,14 @@ class SnobManager:
                 return int(need_amount.group(1))
             return 0
 
-        if "gold_big.png" not in text:
+        # O jogo já serviu esse ícone como gold_big.png; hoje (br143) é
+        # gold_big.webp. Casa qualquer extensão em vez de fixar uma, para não
+        # quebrar de novo se o jogo trocar o formato do asset outra vez.
+        gold_icon = re.search(r"gold_big\.\w+", text)
+        if not gold_icon:
             self.logger.warning("Error parsing snob content")
             return 0
-        splits = text.split("gold_big.png")[1].split("<table")[1].split("</table")[0]
+        splits = text.split(gold_icon.group(0))[1].split("<table")[1].split("</table")[0]
         rows = re.search(r'<td class="nowrap">(\d+)', splits)
         if rows:
             return int(rows.group(1))
