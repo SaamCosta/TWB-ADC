@@ -170,7 +170,11 @@ class Village:
             self.def_man = DefenceManager(
                 wrapper=self.wrapper, village_id=self.village_id
             )
-            self.def_man.map = self.area
+        # self.area is only populated later by ensure_map_loaded(), so this
+        # must be re-synced every cycle (not just on def_man creation),
+        # otherwise def_man.map stays None forever if evacuate()/support()
+        # runs before the map is ever loaded.
+        self.def_man.map = self.area
 
         if not self.def_man.units and self.units:
             self.def_man.units = self.units

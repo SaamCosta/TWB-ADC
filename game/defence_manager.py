@@ -397,7 +397,7 @@ class DefenceManager:
         else:
             pre_data.update(self.units.troops)
 
-        if vid not in self.map.map_pos:
+        if not self.map or vid not in self.map.map_pos:
             return False
 
         x, y = self.map.map_pos[vid]
