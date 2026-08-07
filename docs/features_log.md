@@ -259,6 +259,37 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   do bot pra carregar o código novo (processos já rodando continuam com a
   ordem antiga em memória até serem reiniciados).
 
+- 2026-08-07 — trem de nobres do PvP Conquest desperdiçava nobres parados.
+  `_select_noble_villages(max_count)` escolhia até `nobles_per_target`
+  **aldeias** distintas com pelo menos 1 nobre e mandava exatamente 1 nobre
+  de cada — uma aldeia só podia contribuir com 1 ataque, não importa quantos
+  nobres tivesse sobrando. Com um único alvo real testado (38409), a aldeia
+  41123 tinha 6 nobres disponíveis e só 1 foi comprometido no agendamento.
+  Diagnosticado com a correção do usuário: em Tribal Wars a lealdade só cai
+  uma vez por batalha, não importa quantos nobres estejam no mesmo ataque —
+  então empilhar nobres num ataque só é desperdício. O jeito certo de usar
+  vários nobres é mandar vários **ataques separados**, cada um com
+  exatamente 1 nobre, convergindo pro mesmo horário de chegada — podem vir
+  de aldeias diferentes ou da mesma aldeia disparando comandos de ataque
+  distintos. Corrigido: `_select_noble_villages` virou
+  `_select_noble_attack_plan(max_count)`, que devolve uma lista de até
+  `max_count` entradas (uma por nobre disponível, não por aldeia), podendo
+  repetir a mesma aldeia várias vezes se ela tiver mais de um nobre. O loop
+  que monta `noble_attacks` já dividia a escolta por `noble_count =
+  len(noble_villages)` (agora = total de ataques, não de aldeias únicas),
+  então repetir a mesma aldeia várias vezes continua sem estourar o total de
+  tropas dela — testado isoladamente (7 checks: plano trava no teto mesmo
+  com mais nobres disponíveis, drena aldeias com poucos nobres antes de
+  passar pra próxima, pula aldeia com 0 nobres, e o total de escolta
+  comprometido por uma aldeia que contribui múltiplos ataques não ultrapassa
+  `escort_ratio` dela). **Não retroativo**: o alvo 38409 já estava com
+  `status: "scheduled"` e `noble_villages: ["41123"]` (1 nobre) gravados
+  *antes* desse fix — como `_step_simulate()` só roda quando o status é
+  `pending_sim`, essa correção não se aplica automaticamente ao que já foi
+  agendado; precisa de intervenção manual pra recalcular esse alvo
+  específico com o plano novo antes do Hunter disparar (arrival 10:30, ainda
+  sem `send_time` calculado no momento deste registro).
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

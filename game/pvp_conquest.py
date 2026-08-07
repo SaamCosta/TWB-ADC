@@ -318,8 +318,14 @@ class PvpConquestManager:
             PvpConquestCache.set(target_id, data)
             return
 
-        # Select noble villages (Feature 11b — auto-select all with snob > 0)
-        noble_villages = data.get("noble_villages") or self._select_noble_villages(nobles_per_target)
+        # Select the noble attack plan (Feature 11b — bugfix 2026-08-07: one
+        # entry per available noble, up to nobles_per_target, not one entry
+        # per village -- see _select_noble_attack_plan() docstring for why
+        # a village can now contribute more than one separate attack).
+        # data["noble_villages"] keeps its old key name for backward
+        # compatibility (used by _release_reserve()); may now contain the
+        # same village_id more than once.
+        noble_villages = data.get("noble_villages") or self._select_noble_attack_plan(nobles_per_target)
         if not noble_villages:
             logger.warning("PvpConquest: no villages with nobles available for %s", target_id)
             data["status"] = "failed"
@@ -380,6 +386,12 @@ class PvpConquestManager:
                 if int(qty) > 0 and unit not in ("spy", "snob")
             }
             troops = dict(escort_units)
+            # Always exactly 1 -- never stack multiple nobles into the same
+            # attack, loyalty only drops once per battle regardless of how
+            # many ride along, so extras would just be wasted. Additional
+            # nobles from the same village show up here as additional
+            # separate entries in noble_villages instead (see
+            # _select_noble_attack_plan()).
             troops["snob"] = 1
             noble_attacks.append({
                 "source_village_id": nvid,
@@ -503,20 +515,43 @@ class PvpConquestManager:
                 best_vid = vid
         return best_vid
 
-    def _select_noble_villages(self, max_count):
+    def _select_noble_attack_plan(self, max_count):
         """
-        Feature 11b: auto-select all managed villages with snob > 0,
-        up to max_count.
+        Feature 11b (bugfix 2026-08-07): builds a plan of up to `max_count`
+        *separate noble attacks*, one entry per available noble -- NOT one
+        entry per village.
+
+        Loyalty only drops once per battle no matter how many nobles ride
+        along in the same attack (extras in that attack are wasted); to get
+        N loyalty-reducing hits you need N separate attacks converging on
+        the target, each carrying exactly one noble. Those N attacks can
+        come from N different villages, or the same village firing several
+        of its nobles as several distinct attack commands -- both are
+        legitimate, and a village should never be capped at contributing
+        "at most one" just because it's one village.
+
+        The previous version (_select_noble_villages) picked one *village*
+        per slot and always sent exactly 1 noble from it, so a single
+        managed village sitting on 6 idle nobles would only ever commit 1
+        of them to a conquest, regardless of nobles_per_target.
+
+        Returns a list of village_ids, length <= max_count, where each
+        occurrence of a village_id represents one separate attack (1 noble)
+        to be built from that village -- the same village_id may repeat if
+        it has more than one noble to spare. Order follows self.villages
+        iteration order (dict insertion order), draining each village's
+        available nobles before moving to the next.
         """
-        result = []
+        plan = []
         for vid, village in self.villages.items():
             if not village.units:
                 continue
-            if int(village.units.troops.get("snob", 0)) > 0:
-                result.append(vid)
-            if len(result) >= max_count:
-                break
-        return result
+            available = int(village.units.troops.get("snob", 0))
+            for _ in range(available):
+                if len(plan) >= max_count:
+                    return plan
+                plan.append(vid)
+        return plan
 
     def _hunter_add_schedule(self, target_id, arrival_str, attacks, label=""):
         """
