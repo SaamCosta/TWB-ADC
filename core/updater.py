@@ -33,13 +33,13 @@ def check_update():
     with open(get_local_config_template_version, "r", encoding="utf-8") as local_cf:
         parsed = json.load(fp=local_cf)
         get_remote_version = requests.get(
-            "https://raw.githubusercontent.com/stefan2200/TWB/master/config.example.json"
+            "https://raw.githubusercontent.com/SaamCosta/TWB-ADC/master/config.example.json"
         ).json()
         if parsed["build"]["version"] != get_remote_version["build"]["version"]:
             logging.warning(
                 "There is a new version of the bot available. \n"
                 "Download the latest release from: \n"
-                "https://github.com/stefan2200/TWB"
+                "https://github.com/SaamCosta/TWB-ADC"
             )
             time.sleep(5)
         else:
