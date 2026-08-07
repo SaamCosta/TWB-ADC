@@ -382,16 +382,42 @@ class PvpConquestManager:
         # unit type entirely, or far fewer of it), Hunter would later try to
         # send more of that unit than the village actually had, and the
         # whole escort attack would fail once fired (server rejects it).
+        #
+        # Critical bugfix (2026-08-07, second pass): when a noble village is
+        # ALSO the clear village (the common case with few managed villages),
+        # its troops were being double-booked -- attacker_units above claims
+        # clear_ratio (default 0.8) of that village's troops, and this loop
+        # independently claims escort_ratio (default 0.5) of the SAME raw
+        # troop count for the escort, with neither claim aware of the other.
+        # 0.8 + 0.5 = 130% of what the village actually has. Observed for
+        # real on target 38409: the 4 noble escorts (sent first, since
+        # nobles are slower and must depart earlier) consumed their share,
+        # and the clear -- sent later -- failed outright with insufficient
+        # troops once it actually reached the server (confirm POST came back
+        # with an error_box, Hunter logged it FAILED). Fixed by subtracting
+        # attacker_units from clear_vid's own troop pool before computing
+        # its escort share, so the two claims add up to at most 100% of what
+        # exists instead of being computed independently against the same
+        # full total. Doesn't (yet) account for a village being shared
+        # across *multiple different* pvp_conquest targets scheduled at once
+        # -- only one target is in play in this environment today.
         noble_attacks = []
         for nvid in noble_villages:
             nv = self.villages.get(nvid)
             if not nv or not nv.units:
                 continue
+
+            available_troops = dict(nv.units.troops)
+            if str(nvid) == str(clear_vid):
+                for unit, qty in attacker_units.items():
+                    if unit in available_troops:
+                        available_troops[unit] = max(0, int(available_troops[unit]) - int(qty))
+
             # "knight" (Paladino) excluded -- see attacker_units above, same
             # rule applies to escort: never sent automatically.
             escort_units = {
                 unit: max(1, int(int(qty) * escort_ratio) // noble_count)
-                for unit, qty in nv.units.troops.items()
+                for unit, qty in available_troops.items()
                 if int(qty) > 0 and unit not in ("spy", "snob", "knight")
             }
             troops = dict(escort_units)

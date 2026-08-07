@@ -361,6 +361,47 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   resetado mais uma vez pra `pending_sim` pra recalcular do zero com o
   código corrigido assim que o bot reiniciar.
 
+- 2026-08-07 — **falha real em campo, primeira execução ponta a ponta do
+  fluxo completo**: com todos os fixes acima já rodando, o alvo `38409`
+  chegou a `scheduled` e o Hunter disparou de verdade pela primeira vez.
+  Os 4 ataques de nobre saíram OK (`09:41:15`-`09:43:34`, todos `[REAL] ...
+  OK`). O clear falhou (`09:59:17`, `[REAL] ... FAILED`) — a confirmação no
+  jogo voltou com `error_box` (tropa insuficiente) e o `Hunter` marcou o
+  schedule como `complete` sem reenviar.
+  Causa: `attacker_units` (clear, `clear_ratio` padrão 0.8) e `escort_units`
+  (escolta somada dos nobres, `escort_ratio` padrão 0.5) eram calculados
+  **cada um independente do outro**, como fração do total bruto de tropas
+  da aldeia — 0.8 + 0.5 = **130% das tropas que existem**. Como a aldeia de
+  clear e a dos 4 nobres eram a mesma (`41123`, único village gerenciado),
+  e os nobres (mais lentos, por causa do `snob`) precisavam sair primeiro
+  (`09:40:30` vs `09:58:51` do clear), eles consumiram a fatia deles
+  primeiro, deixando tropa insuficiente pro clear quando a vez dele chegou
+  — confirmado batendo os números reais do log (`spear/sword/axe/light`
+  disponíveis em `09:45`/`09:53` vs o que o clear tentou mandar em
+  `09:59:17`, diferença batendo quase exata com o que os 4 escoltas
+  consumiram). O sistema de reserva de tropas (protege contra farm e
+  conquista bárbara) não pega esse caso: ele protege contra *outros*
+  sistemas roubarem tropa reservada, não contra o próprio PvP Conquest
+  reservar mais do que existe entre suas duas ondas.
+  Corrigido em `game/pvp_conquest.py::_step_simulate()`: ao montar o
+  `escort_units` de cada aldeia de nobre, se essa aldeia também for a
+  `clear_vid`, o `attacker_units` já reservado por ela é subtraído do total
+  bruto **antes** de aplicar `escort_ratio` — garantindo que as duas
+  reivindicações somadas nunca passem de 100% do que a aldeia realmente
+  tem. Não cobre (ainda) o caso de uma mesma aldeia estar comprometida com
+  *múltiplos alvos* de PvP Conquest simultâneos — só um alvo estava ativo
+  neste ambiente.
+  Testado isoladamente reproduzindo os números reais do incidente (troca
+  de tropas de 41123 no momento do agendamento): confirma que, com o fix,
+  clear + escolta somados nunca ultrapassam o disponível pra
+  spear/sword/axe/light, e um teste de sanidade confirma que a lógica
+  antiga realmente estourava (axe: 4391 pedido vs 3379 disponível — bate
+  com o real).
+  **Consequência prática deste incidente específico**: sem impacto — o
+  usuário já tinha limpado a aldeia alvo manualmente antes (deve haver
+  relatório do ataque manual no jogo), então a ausência do clear automático
+  não deveria comprometer os 4 nobres já a caminho (chegada `10:30:00`).
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`
