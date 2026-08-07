@@ -72,16 +72,46 @@ class TroopManager:
         self.wrapper = wrapper
         self.village_id = village_id
         self.wait_for = {village_id: {"barracks": 0, "stable": 0, "garage": 0}}
-        # Feature 8: troops reserved for noble train escort.
-        # Set by ConquestManager when nobles are ready but escort is insufficient.
-        # Respected by AttackManager (farm) and gather() so reserved troops
-        # are never consumed before the conquest train fires.
-        # Cleared by ConquestManager after the train is sent.
+        # Feature 8 / Feature 13 bugfix (2026-08-07): troops reserved by any
+        # in-flight conquest commitment for this village, keyed by an owner
+        # id so multiple independent reservations can coexist without one
+        # overwriting another -- {owner_key: {unit: qty}}.
+        #
+        # Owners today:
+        #   "barbarian_conquest" -- ConquestManager (Feature 8), set when
+        #     nobles are ready but escort is still insufficient, so farm
+        #     doesn't spend the escort while waiting for it to build up.
+        #     Cleared once the train fires (or nobles are lost).
+        #   "pvp:{target_id}" -- PvpConquestManager (Feature 13), set the
+        #     moment a clear+noble Hunter schedule is built, since the
+        #     actual attacks may not fire for minutes to hours (Hunter
+        #     waits to synchronize arrival times). Without this, farm/gather
+        #     or the barbarian conquest above could spend those same troops
+        #     in the meantime, causing the scheduled attack to fail when
+        #     Hunter finally sends it. Released once those Hunter schedules
+        #     resolve (sent or failed) -- see PvpConquestManager._release_reserve.
+        #
+        # Respected by AttackManager (farm, via total_conquest_reserve()) and
+        # gather() below so reserved troops are never spent by either.
         self.conquest_reserve = {}
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
             )
+
+    def total_conquest_reserve(self):
+        """
+        Sums conquest_reserve across every owner_key into a single
+        {unit: qty} dict. This is what farm/gather should actually subtract
+        -- multiple independent reservations (e.g. a barbarian noble train
+        AND a PvP conquest escort from the same village at the same time)
+        must stack, not overwrite each other.
+        """
+        total = {}
+        for reservation in self.conquest_reserve.values():
+            for unit, qty in reservation.items():
+                total[unit] = total.get(unit, 0) + int(qty)
+        return total
 
     def update_totals(self):
         """
@@ -394,9 +424,12 @@ class TroopManager:
 
         troops = dict(self.troops)
 
-        # Feature 8: subtract conquest reserve so escort troops are not sent to gather
-        if self.conquest_reserve:
-            for unit, reserved_qty in self.conquest_reserve.items():
+        # Feature 8 / Feature 13: subtract all conquest reservations (summed
+        # across owners -- see total_conquest_reserve()) so escort/clear
+        # troops committed to any pending conquest are not sent to gather.
+        reserved = self.total_conquest_reserve()
+        if reserved:
+            for unit, reserved_qty in reserved.items():
                 if unit in troops:
                     troops[unit] = str(max(0, int(troops[unit]) - reserved_qty))
 

@@ -58,7 +58,8 @@ class AttackManager:
     def enough_in_village(self, units):
         """
         Checks if there are enough troops in a village,
-        respecting the conquest_reserve set by ConquestManager.
+        respecting the conquest_reserve set by ConquestManager /
+        PvpConquestManager.
         """
         farmable = self._get_farmable_troops()
         for unit in units:
@@ -69,11 +70,16 @@ class AttackManager:
 
     def _get_farmable_troops(self):
         """
-        Feature 8: Returns available troops minus conquest_reserve.
-        Ensures escort troops earmarked for a noble train are never
-        consumed by farm attacks while waiting for the train to fire.
+        Feature 8 / Feature 13: Returns available troops minus every active
+        conquest_reserve (summed across owners -- barbarian noble train
+        escort, PvP conquest clear/escort, etc. -- see
+        TroopManager.total_conquest_reserve()). Ensures troops earmarked for
+        any pending conquest are never consumed by farm attacks while
+        waiting for that attack to actually fire.
         """
-        reserve = getattr(self.troopmanager, "conquest_reserve", {})
+        reserve = self.troopmanager.total_conquest_reserve() if hasattr(
+            self.troopmanager, "total_conquest_reserve"
+        ) else {}
         farmable = {}
         for unit, qty in self.troopmanager.troops.items():
             reserved = reserve.get(unit, 0)
@@ -518,8 +524,10 @@ class ConquestManager:
                 "Conquest: %d/%d nobles available, waiting for full train",
                 available_nobles, self.TRAIN_SIZE
             )
-            # Clear any stale reserve (nobles were lost or used elsewhere)
-            self.troopmanager.conquest_reserve = {}
+            # Clear any stale reserve (nobles were lost or used elsewhere).
+            # Only touches this manager's own owner_key -- other pending
+            # reservations (e.g. a PvP conquest escort) must not be wiped.
+            self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
             return False
 
         # Check if this village already has a pending conquest
@@ -539,7 +547,7 @@ class ConquestManager:
         if escort is None:
             needed = self._calculate_needed_escort(cfg)
             if needed:
-                self.troopmanager.conquest_reserve = needed
+                self.troopmanager.conquest_reserve["barbarian_conquest"] = needed
                 self.logger.info(
                     "Conquest: escort insufficient — reserving %s for next cycle "
                     "(farm and gather will respect this reserve)",
@@ -548,7 +556,7 @@ class ConquestManager:
             return False
 
         # Escort is sufficient: clear any previous reserve and fire the train
-        self.troopmanager.conquest_reserve = {}
+        self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
         return self._send_train(target_id, cfg)
 
     # ------------------------------------------------------------------
@@ -749,8 +757,10 @@ class ConquestManager:
         if hits_sent == 0:
             return False
 
-        # Train fired: release the troop reserve so farm/gather use full pool again
-        self.troopmanager.conquest_reserve = {}
+        # Train fired: release this manager's reserve so farm/gather can use
+        # that portion of the pool again (other owners' reservations, if any,
+        # are left untouched).
+        self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
 
         # Bugfix (auditoria Feature 15): faltavam os campos target_name/
         # target_points/target_location/hits_needed, e a chave gravada era

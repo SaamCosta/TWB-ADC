@@ -115,6 +115,50 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   vivo de duas páginas de relatório reais (scout e attack) direto do br143 e
   um teste de integração rodando `ReportManager.attack_report()` de verdade
   contra esse HTML.
+- 2026-08-07 — reserva de tropas não cobria todos os sistemas que comprometem
+  tropas para conquista. `TroopManager.conquest_reserve` existia desde a
+  Feature 8 (conquista bárbara automática) como um dict simples
+  `{unit: qty}`, respeitado só pelo farm (`AttackManager.enough_in_village`)
+  e pelo gather. Problema: era um valor único — quem escrevesse por último
+  (`= {...}` / `= {}`) apagava qualquer reserva de outro dono. E o
+  `PvpConquestManager` (Feature 13) nunca escrevia nele: ele decide as tropas
+  do clear + escolta dos nobres em `_step_simulate()` mas só manda o ataque
+  de verdade via `Hunter`, que pode disparar minutos a horas depois (o
+  `send_time` é calculado de trás pra frente a partir do `arrival_time` pra
+  sincronizar clear + nobres). Nessa janela inteira, nada impedia o farm
+  normal (roda todo ciclo) ou a própria conquista bárbara de gastar essas
+  mesmas tropas primeiro — e o `Hunter._send_attack()` não reconfere
+  disponibilidade antes de disparar, só reenvia o dict de tropas gravado na
+  hora do agendamento; se elas já não estiverem mais lá, o jogo rejeita
+  (`error_box`) e o ataque agendado inteiro (clear ou trem de nobres) é
+  marcado `failed`, desperdiçando a coordenação. Corrigido transformando
+  `conquest_reserve` num dict aditivo por dono
+  (`{owner_key: {unit: qty}}`, somado via
+  `TroopManager.total_conquest_reserve()`):
+  `ConquestManager` (Feature 8) agora usa a chave fixa `"barbarian_conquest"`
+  (`.pop()`/atribuição só nessa chave, nunca mais `= {}` genérico);
+  `PvpConquestManager` reserva sob `"pvp:{target_id}"` no exato momento em
+  que registra os agendamentos no `Hunter` (`_reserve_troops`), e libera
+  (`_release_reserve`, via `_maybe_release_reserve` chamado a cada ciclo em
+  `_step_check_complete`) assim que os agendamentos `{target_id}_pvp_clear`/
+  `{target_id}_pvp_nobles` no `Hunter` deixam de estar `pending` (enviados ou
+  falhos) — com um fallback por tempo (`arrival_time + 3600s`) caso essa
+  checagem alguma vez falhe em detectar a resolução. Reservas de donos
+  diferentes na mesma aldeia agora coexistem sem se apagar. Testado
+  isoladamente (aditividade, isolamento entre donos, farm respeitando o
+  total agregado, liberação por schedule resolvido, liberação por timeout,
+  idempotência do release).
+
+  **Observação relacionada, não corrigida agora (fora do escopo deste fix):**
+  em `PvpConquestManager._step_simulate()`, o dict `escort_units` (tropas de
+  escolta dos nobres) é calculado a partir das tropas da **aldeia de clear**
+  (`clear_village.units.troops`), mas depois aplicado igual para o ataque de
+  **cada** aldeia de nobre (`troops = dict(escort_units)`), mesmo que essa
+  aldeia tenha um mix de tropas diferente (ou nem tenha as mesmas unidades).
+  Isso pode fazer o `Hunter` falhar ao disparar a escolta de um nobre por
+  falta daquela unidade específica na aldeia — vale revisar depois,
+  calculando a escolta a partir das tropas de cada aldeia de nobre
+  individualmente.
 
 ## Ambiente de referência
 

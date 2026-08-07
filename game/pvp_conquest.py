@@ -349,6 +349,17 @@ class PvpConquestManager:
                 label="nobles",
             )
 
+        # Bugfix (2026-08-07): reserve the exact troops just committed to
+        # Hunter (clear + each noble escort) so the regular farm loop and
+        # the barbarian ConquestManager don't spend them before Hunter
+        # actually fires -- which can be minutes to hours from now, since
+        # send times are back-computed to synchronize arrival. Without this,
+        # the scheduled attack can silently fail later (server rejects the
+        # attack once the troops it expects are no longer in the village).
+        # Released in _step_check_complete() once these Hunter schedules
+        # resolve (see _maybe_release_reserve).
+        self._reserve_troops(target_id, clear_vid, attacker_units, noble_attacks)
+
         data["status"] = "scheduled"
         data["scheduled_at"] = int(time.time())
         PvpConquestCache.set(target_id, data)
@@ -365,7 +376,12 @@ class PvpConquestManager:
         """
         Checks if the target village is now owned by us.
         Mirrors ConquestManager._target_is_mine().
+
+        Also releases the troop reservation created by _reserve_troops()
+        once it's safe to do so -- see _maybe_release_reserve().
         """
+        self._maybe_release_reserve(target_id, data)
+
         village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
         if not village_data:
             return
@@ -477,3 +493,100 @@ class PvpConquestManager:
             arrival_str=arrival_str,
             attacks=attacks,
         )
+
+    # ------------------------------------------------------------------
+    # Troop reservation (bugfix, 2026-08-07)
+    # ------------------------------------------------------------------
+    #
+    # Farm and the barbarian ConquestManager both run synchronously -- they
+    # decide to spend troops and send the attack in the same breath, so
+    # there's no window for another system to steal those troops first.
+    # PvpConquestManager is different: _step_simulate() commits to a set of
+    # troops *now*, but Hunter may not actually send the resulting attacks
+    # until much later (send_time is back-computed from arrival_time to
+    # synchronize clear + nobles). During that whole window the committed
+    # troops must be visibly reserved, or farm/gather/barbarian-conquest can
+    # spend them first and the scheduled attack fails when Hunter fires it.
+
+    def _add_reserve(self, village, key, troops):
+        """
+        Adds `troops` ({unit: qty}) to `village`'s conquest_reserve under
+        `key`, merging additively with whatever's already reserved under
+        that same key (relevant if the same village is both the clear
+        village and a noble village for this target).
+        """
+        if not village or not village.units:
+            return
+        current = village.units.conquest_reserve.get(key, {})
+        merged = dict(current)
+        for unit, qty in troops.items():
+            merged[unit] = merged.get(unit, 0) + int(qty)
+        village.units.conquest_reserve[key] = merged
+
+    def _reserve_troops(self, target_id, clear_vid, attacker_units, noble_attacks):
+        """
+        Reserves the clear troops (from clear_vid) and every noble attack's
+        escort+snob (from noble_attacks, as actually registered with
+        Hunter) under the shared key "pvp:{target_id}".
+        """
+        key = f"pvp:{target_id}"
+        self._add_reserve(self.villages.get(str(clear_vid)), key, attacker_units)
+        for atk in noble_attacks:
+            self._add_reserve(
+                self.villages.get(str(atk["source_village_id"])), key, atk["troops"]
+            )
+
+    def _release_reserve(self, target_id, data):
+        """
+        Removes the "pvp:{target_id}" reservation from every village that
+        had troops committed to it (clear_village_id + noble_villages, as
+        recorded in the target's cache). Idempotent -- safe to call even if
+        nothing is reserved (e.g. target failed before scheduling).
+        """
+        key = f"pvp:{target_id}"
+        village_ids = set()
+        if data.get("clear_village_id"):
+            village_ids.add(str(data["clear_village_id"]))
+        for vid in data.get("noble_villages") or []:
+            village_ids.add(str(vid))
+        for vid in village_ids:
+            village = self.villages.get(vid)
+            if village and village.units and village.units.conquest_reserve.pop(key, None):
+                logger.info(
+                    "PvpConquest: released troop reservation for target %s from village %s",
+                    target_id, vid
+                )
+
+    def _hunter_schedules_resolved(self, target_id):
+        """
+        Returns True once neither the clear nor the nobles Hunter schedule
+        for this target still has a status of "pending" -- i.e. every
+        attack in both has been sent or has failed. A schedule that was
+        never created (e.g. no noble villages ended up available) counts
+        as already resolved.
+        """
+        schedules = FileManager.load_json_file("cache/hunter/schedules.json") or {}
+        for label in ("clear", "nobles"):
+            sched = schedules.get(f"{target_id}_pvp_{label}")
+            if sched and sched.get("status") == "pending":
+                return False
+        return True
+
+    def _maybe_release_reserve(self, target_id, data):
+        """
+        Releases the troop reservation once it's safe: either the Hunter
+        schedules built for this target have all resolved (sent/failed), or
+        -- as a robustness fallback in case that check ever misses something
+        -- the arrival window is long past. Only acts once per target
+        (tracked via data["reserve_released"]) to avoid pointless repeated
+        cache writes every cycle.
+        """
+        if data.get("reserve_released"):
+            return
+        arrival_ts = data.get("arrival_time")
+        overdue = bool(arrival_ts) and (time.time() > arrival_ts + 3600)
+        if not (self._hunter_schedules_resolved(target_id) or overdue):
+            return
+        self._release_reserve(target_id, data)
+        data["reserve_released"] = True
+        PvpConquestCache.set(target_id, data)
