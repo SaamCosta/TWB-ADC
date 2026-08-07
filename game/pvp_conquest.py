@@ -565,6 +565,22 @@ class PvpConquestManager:
     def _hunter_add_schedule(self, target_id, arrival_str, attacks, label=""):
         """
         Adds a schedule to cache/hunter/schedules.json via HunterReader.
+
+        Critical bugfix (2026-08-07): this used to pass
+        target_id=f"{target_id}_pvp_{label}" (e.g. "38409_pvp_clear") to
+        HunterReader.add_schedule(), which stores that string verbatim as
+        the schedule's "target_id" field. Hunter.run() (game/hunter.py)
+        uses that exact field to look up village.area.map_pos and to call
+        village.attack.attack(target_id, ...) -- neither works with
+        anything other than a real village id, so every PvP-conquest
+        schedule failed at send time with "target ... not in map_pos" and
+        could never actually fire, from the very first version of this
+        integration. Fixed by passing the real target_id and moving the
+        clear/nobles distinction to HunterReader.add_schedule's `label`
+        param instead, which only affects the cache dict key (still
+        guarantees clear and nobles never collide, even if
+        arrival_buffer_seconds were ever set to 0) and is stored as its own
+        "label" field, never as "target_id".
         """
         try:
             from webmanager.utils import HunterReader
@@ -575,13 +591,11 @@ class PvpConquestManager:
                 logger.error("PvpConquest: cannot import HunterReader")
                 return
 
-        # Unique key includes label so clear and nobles don't collide
-        # HunterReader.add_schedule handles deduplication via sched_key
-        # We create a slightly different arrival to distinguish schedules
         HunterReader.add_schedule(
-            target_id=f"{target_id}_pvp_{label}",
+            target_id=target_id,
             arrival_str=arrival_str,
             attacks=attacks,
+            label=label,
         )
 
     # ------------------------------------------------------------------
@@ -655,22 +669,37 @@ class PvpConquestManager:
         never created (e.g. no noble villages ended up available) counts
         as already resolved.
 
-        Bugfix (2026-08-07): the dict key under which HunterReader.add_schedule
-        actually stores a schedule is "{target_id}_{arrival_str}" (see
-        webmanager/utils.py::HunterReader.add_schedule), NOT the bare
-        "{target_id}_pvp_{label}" we pass in as its `target_id` argument --
-        that value only ends up in the schedule's own "target_id" field, not
-        as the cache dict key. A direct `schedules.get(...)` lookup by that
-        bare string therefore never matched anything, which made this
-        always return True (missing == "already resolved" by design) and
-        release the PvP conquest troop reservation on the very next cycle,
-        defeating its whole purpose. Fixed to search by the "target_id"
+        Bugfix (2026-08-07, first pass): the dict key under which
+        HunterReader.add_schedule actually stores a schedule is
+        "{target_id}_{arrival_str}", NOT the bare "{target_id}_pvp_{label}"
+        that used to be passed in as its `target_id` argument -- that value
+        only ended up in the schedule's own "target_id" field, not as the
+        cache dict key. A direct `schedules.get(...)` lookup by that bare
+        string therefore never matched anything, which made this always
+        return True (missing == "already resolved" by design) and release
+        the PvP conquest troop reservation on the very next cycle, defeating
+        its whole purpose. Fixed (at the time) to search by the "target_id"
         field on each stored schedule instead of the dict key.
+
+        Bugfix (2026-08-07, second pass): that fix matched against
+        "{target_id}_pvp_{label}", which was only ever a valid value to
+        match against because _hunter_add_schedule() was, at the time,
+        *storing* that same bogus string as the schedule's real
+        "target_id" field -- which is also the field Hunter.run() uses to
+        actually fire the attack (village.area.map_pos lookup,
+        village.attack.attack() call). That meant every PvP-conquest
+        schedule could never fire for real. Now that _hunter_add_schedule()
+        stores the correct real target_id and puts "clear"/"nobles" in a
+        separate "label" field instead (see its docstring), this needs to
+        match on both fields together.
         """
         schedules = FileManager.load_json_file("cache/hunter/schedules.json") or {}
-        wanted = {f"{target_id}_pvp_{label}" for label in ("clear", "nobles")}
         for sched in schedules.values():
-            if sched.get("target_id") in wanted and sched.get("status") == "pending":
+            if (
+                str(sched.get("target_id")) == str(target_id)
+                and sched.get("label") in ("clear", "nobles")
+                and sched.get("status") == "pending"
+            ):
                 return False
         return True
 

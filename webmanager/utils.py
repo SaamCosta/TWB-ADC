@@ -829,10 +829,35 @@ class HunterReader:
         return schedules
 
     @staticmethod
-    def add_schedule(target_id, arrival_str, attacks):
+    def add_schedule(target_id, arrival_str, attacks, label=None):
         """
         Cria um novo schedule no cache.
         attacks: list of dicts {source_village_id, troops{unit: qty}, is_fake}
+
+        Bugfix (2026-08-07): `target_id` here MUST be the real game village
+        id -- it's stored verbatim as the schedule's "target_id" field, and
+        Hunter.run() (game/hunter.py) uses that exact field both to probe
+        travel duration (village.area.map_pos lookup) and to actually fire
+        the attack (village.attack.attack(target_id, ...)). Neither of
+        those work with anything other than a real village id.
+
+        PvpConquestManager used to pass "{target_id}_pvp_{label}" here (e.g.
+        "38409_pvp_clear") purely so its own clear/nobles schedules for the
+        same target wouldn't collide as the same sched_key. That silently
+        broke every single PvP-conquest-scheduled attack: the duration
+        probe always failed ("target ... not in map_pos"), and even if it
+        hadn't, the actual attack() call would have too (same map_pos
+        check). This bug meant no PvP Conquest attack could ever fire for
+        real, from the very first version of this Hunter integration --
+        masked because attacks silently stayed "pending" and the schedule
+        just failed once its arrival time passed, indistinguishable in the
+        logs from "hasn't happened yet".
+
+        Fixed by keeping `target_id` as the real id and moving the
+        distinguishing suffix to the optional `label` param instead, which
+        only affects `sched_key` (the cache dict key) and is stored
+        separately as its own "label" field -- never touches what Hunter
+        actually uses to act in-game.
         """
         try:
             arrival_ts = datetime.datetime.strptime(
@@ -842,6 +867,8 @@ class HunterReader:
             return False
 
         sched_key = "%s_%s" % (target_id, arrival_str.replace(" ", "T").replace(":", "-"))
+        if label:
+            sched_key = "%s_%s" % (sched_key, label)
 
         attack_entries = []
         for atk in attacks:
@@ -863,6 +890,7 @@ class HunterReader:
         raw = HunterReader._load_raw()
         raw[sched_key] = {
             "target_id":    str(target_id),
+            "label":        label,
             "arrival_time": arrival_ts,
             "arrival_str":  arrival_str,
             "status":       "pending",

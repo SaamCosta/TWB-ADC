@@ -311,6 +311,56 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   `noble_villages` removido) pra recalcular sem o Paladino assim que o bot
   reiniciar com o código novo — mesma mecânica do reset anterior.
 
+- 2026-08-07 — **bug crítico, raiz de tudo**: nenhum ataque agendado pelo
+  PvP Conquest jamais conseguiria disparar de verdade, desde a primeira
+  versão da integração com o Hunter (Feature 13, commit `41c353a`).
+  Descoberto ao ler o log real depois de reiniciar o bot com todos os fixes
+  de hoje: `Hunter: target 38409_pvp_clear not in map_pos for village
+  41123` (e o mesmo para `38409_pvp_nobles`, repetido pra cada ataque).
+  Causa: `PvpConquestManager._hunter_add_schedule()` passava
+  `target_id=f"{target_id}_pvp_{label}"` (ex: `"38409_pvp_clear"`) pro
+  `HunterReader.add_schedule()`, que grava esse valor **literalmente** no
+  campo `"target_id"` do schedule — e é esse mesmo campo que
+  `Hunter.run()` (`game/hunter.py`) usa tanto pra sondar a duração da
+  viagem (`village.area.map_pos[target_id]`) quanto pra disparar o ataque
+  de verdade (`village.attack.attack(target_id, ...)`). Nenhum dos dois
+  funciona com uma string tipo `"38409_pvp_clear"` — `map_pos` só tem IDs
+  reais de aldeia como chave. Resultado: a sondagem de duração falhava
+  pra sempre (o warning acima, repetido todo ciclo), `send_time` nunca era
+  calculado, e mesmo que fosse, `AttackManager.attack()` tem o mesmo
+  check (`if vid not in self.map.map_pos: return False`) e teria
+  rejeitado o ataque de qualquer forma. O sufixo `_pvp_{label}` existia só
+  pra `_hunter_add_schedule()` conseguir distinguir os dois schedules
+  (limpeza vs. trem de nobres) do mesmo alvo — motivo legítimo, execução
+  errada: em vez de afetar só a chave interna do cache
+  (`sched_key`), acabou virando o `target_id` real usado pelo Hunter pra
+  agir no jogo. Esse mesmo valor quebrado também alimentou o bug do
+  `_hunter_schedules_resolved()` corrigido mais cedo hoje (o "achar por
+  campo target_id" simplesmente reencontrava a mesma string quebrada).
+  Corrigido em duas pontas:
+  1. `webmanager/utils.py::HunterReader.add_schedule()` ganhou um parâmetro
+     `label=None` opcional. O `target_id` gravado agora é sempre o ID real
+     da aldeia; o rótulo (`"clear"`/`"nobles"`) vira um campo `"label"`
+     separado, e só afeta `sched_key` (garante que limpeza e trem de
+     nobres nunca colidam na mesma chave, mesmo se
+     `arrival_buffer_seconds` fosse configurado como 0 — antes disso só
+     era garantido pelo sufixo agora removido).
+  2. `game/pvp_conquest.py::_hunter_add_schedule()` passa `target_id` real
+     + `label=label`. `_hunter_schedules_resolved()` atualizado pra casar
+     por `target_id` real **e** `label in ("clear", "nobles")` juntos, em
+     vez de reconstruir a string suja antiga.
+  Testado isoladamente com um `HunterReader.add_schedule()` real
+  apontando pra um arquivo temporário (nunca tocou o cache real): 9
+  checks — `target_id` gravado é o real, `label` fica separado, limpeza +
+  nobres com o mesmo `arrival_str` não colidem na mesma chave,
+  `_hunter_schedules_resolved()` responde certo enquanto pendente e depois
+  de resolvido. Limpeza manual necessária no ambiente real: os dois
+  schedules quebrados de `38409` (`38409_pvp_clear_...`,
+  `38409_pvp_nobles_...`, ambos com `target_id` sujo, nunca poderiam ter
+  disparado) removidos de `cache/hunter/schedules.json`; alvo `38409`
+  resetado mais uma vez pra `pending_sim` pra recalcular do zero com o
+  código corrigido assim que o bot reiniciar.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`
