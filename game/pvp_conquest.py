@@ -196,11 +196,21 @@ class PvpConquestManager:
             logger.warning("PvpConquest: clear village %s has no troop data", clear_vid)
             return
 
-        # Build attacker dict using clear_ratio of available troops
+        # Build attacker dict using clear_ratio of available troops.
+        #
+        # Bugfix (2026-08-07): "spy" was never excluded here. Simulator.
+        # attack_sum() (called just below) indexes every unit through
+        # attack_pool, which has no "spy" entry -- so this crashed with
+        # KeyError("spy") for any clear village that simply has spies
+        # parked at home (i.e. virtually always, since TroopManager always
+        # reports the full in-village troop count). Also excluding "snob"
+        # for the same reason escort_units does: any noble sitting idle in
+        # the clear village shouldn't be thrown into the clear wave by
+        # accident -- it's needed for the noble train itself.
         attacker_units = {
             unit: int(int(qty) * clear_ratio)
             for unit, qty in clear_village.units.troops.items()
-            if int(qty) > 0
+            if int(qty) > 0 and unit not in ("spy", "snob")
         }
 
         # Run simulator
@@ -306,14 +316,10 @@ class PvpConquestManager:
         clear_arrival_ts = arrival_ts - arrival_buffer
         clear_arrival_str = datetime.datetime.fromtimestamp(clear_arrival_ts).strftime(DATETIME_FMT)
 
-        # Escort for nobles: reuse ConquestManager logic via config
+        # Escort for nobles: reuse ConquestManager's ratio via config.
         conquest_cfg = self.config.get("conquest", {})
         escort_ratio = conquest_cfg.get("escort_ratio", 0.5)
-        escort_units = {
-            unit: max(1, int(int(qty) * escort_ratio) // max(len(noble_villages), 1))
-            for unit, qty in clear_village.units.troops.items()
-            if int(qty) > 0 and unit not in ("spy", "snob")
-        }
+        noble_count = max(len(noble_villages), 1)
 
         # Register clear in Hunter
         self._hunter_add_schedule(
@@ -328,11 +334,25 @@ class PvpConquestManager:
         )
 
         # Register noble train in Hunter
+        #
+        # Bugfix (2026-08-07): escort per noble attack must be built from
+        # THAT noble village's own troops, not the clear village's. The
+        # previous code computed one shared escort_units dict from
+        # clear_village.units.troops and reused it verbatim for every noble
+        # attack -- if a noble village had a different troop mix (missing a
+        # unit type entirely, or far fewer of it), Hunter would later try to
+        # send more of that unit than the village actually had, and the
+        # whole escort attack would fail once fired (server rejects it).
         noble_attacks = []
         for nvid in noble_villages:
             nv = self.villages.get(nvid)
             if not nv or not nv.units:
                 continue
+            escort_units = {
+                unit: max(1, int(int(qty) * escort_ratio) // noble_count)
+                for unit, qty in nv.units.troops.items()
+                if int(qty) > 0 and unit not in ("spy", "snob")
+            }
             troops = dict(escort_units)
             troops["snob"] = 1
             noble_attacks.append({
@@ -564,11 +584,23 @@ class PvpConquestManager:
         attack in both has been sent or has failed. A schedule that was
         never created (e.g. no noble villages ended up available) counts
         as already resolved.
+
+        Bugfix (2026-08-07): the dict key under which HunterReader.add_schedule
+        actually stores a schedule is "{target_id}_{arrival_str}" (see
+        webmanager/utils.py::HunterReader.add_schedule), NOT the bare
+        "{target_id}_pvp_{label}" we pass in as its `target_id` argument --
+        that value only ends up in the schedule's own "target_id" field, not
+        as the cache dict key. A direct `schedules.get(...)` lookup by that
+        bare string therefore never matched anything, which made this
+        always return True (missing == "already resolved" by design) and
+        release the PvP conquest troop reservation on the very next cycle,
+        defeating its whole purpose. Fixed to search by the "target_id"
+        field on each stored schedule instead of the dict key.
         """
         schedules = FileManager.load_json_file("cache/hunter/schedules.json") or {}
-        for label in ("clear", "nobles"):
-            sched = schedules.get(f"{target_id}_pvp_{label}")
-            if sched and sched.get("status") == "pending":
+        wanted = {f"{target_id}_pvp_{label}" for label in ("clear", "nobles")}
+        for sched in schedules.values():
+            if sched.get("target_id") in wanted and sched.get("status") == "pending":
                 return False
         return True
 

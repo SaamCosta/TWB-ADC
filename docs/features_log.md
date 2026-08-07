@@ -149,16 +149,68 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   total agregado, liberação por schedule resolvido, liberação por timeout,
   idempotência do release).
 
-  **Observação relacionada, não corrigida agora (fora do escopo deste fix):**
-  em `PvpConquestManager._step_simulate()`, o dict `escort_units` (tropas de
-  escolta dos nobres) é calculado a partir das tropas da **aldeia de clear**
-  (`clear_village.units.troops`), mas depois aplicado igual para o ataque de
+- 2026-08-07 — escolta dos nobres calculada com as tropas da aldeia errada,
+  mais dois bugs achados ao validar essa correção. Em
+  `PvpConquestManager._step_simulate()`, o dict `escort_units` (tropas de
+  escolta dos nobres) era calculado a partir das tropas da **aldeia de
+  clear** (`clear_village.units.troops`), mas aplicado igual para o ataque de
   **cada** aldeia de nobre (`troops = dict(escort_units)`), mesmo que essa
-  aldeia tenha um mix de tropas diferente (ou nem tenha as mesmas unidades).
-  Isso pode fazer o `Hunter` falhar ao disparar a escolta de um nobre por
-  falta daquela unidade específica na aldeia — vale revisar depois,
-  calculando a escolta a partir das tropas de cada aldeia de nobre
-  individualmente.
+  aldeia tivesse um mix de tropas completamente diferente (ou nem tivesse as
+  mesmas unidades). Isso fazia o `Hunter` falhar ao disparar a escolta de um
+  nobre específico por falta daquela unidade na aldeia dele. Corrigido
+  movendo o cálculo de `escort_units` pra dentro do loop
+  `for nvid in noble_villages`, usando `nv.units.troops` (tropas da própria
+  aldeia do nobre) em vez das do clear.
+
+  **Bug adicional achado ao escrever o teste desta correção:** `attacker_units`
+  (tropas do ataque de clear, montadas logo acima de `escort_units` a partir
+  de `clear_village.units.troops`) não excluía `"spy"`. Como
+  `Simulator.attack_sum()` indexa toda unidade pelo dict `attack_pool`, que
+  não tem entrada para `"spy"`, isso derrubava `_step_simulate()` com
+  `KeyError: 'spy'` sempre que a aldeia de clear tivesse qualquer espião
+  parado em casa — ou seja, praticamente sempre, já que `TroopManager`
+  sempre reporta a contagem completa de tropas na aldeia. Esse crash nunca
+  tinha aparecido em campo porque, até o bugfix do `extra["when"]` (acima),
+  nenhum alvo de PvP conquest jamais saía de `pending_scout` pra chegar
+  nesse código. Corrigido excluindo `"spy"` e `"snob"` de `attacker_units`
+  (mesmo critério já usado em `escort_units`).
+
+  **Segundo bug adicional, no próprio fix de reserva de tropas do commit
+  anterior:** `PvpConquestManager._hunter_schedules_resolved()` procurava o
+  schedule por chave exata (`schedules.get(f"{target_id}_pvp_{label}")`),
+  mas a chave real gravada por `HunterReader.add_schedule()`
+  (`webmanager/utils.py`) é `"{target_id}_{arrival_str}"` — o valor passado
+  como `target_id` só fica salvo dentro do campo `"target_id"` de cada
+  schedule, não como chave do dict. Isso fazia a busca nunca encontrar nada,
+  o que (por design — schedule ausente conta como "já resolvido") liberava a
+  reserva de tropas do PvP conquest **no ciclo seguinte ao agendamento**,
+  antes mesmo do `Hunter` disparar os ataques — derrubando na prática a
+  proteção que aquele fix inteiro deveria oferecer. Corrigido buscando pelo
+  campo `"target_id"` de cada schedule em vez da chave do dict. Achado e
+  corrigido só ao escrever um teste com o formato de chave realista — o
+  teste anterior (do commit da reserva de tropas) usava um formato de chave
+  simplificado/errado e por isso não pegou esse problema.
+
+  **Incidente durante os testes (sem impacto real, mas registrado por
+  transparência):** o teste isolado do fix de reserva de tropas do commit
+  anterior (`_maybe_release_reserve`) usou o `target_id` real "38409" (o
+  único alvo de PvP conquest configurado neste ambiente) pra ficar mais
+  realista, e esse método persiste em `cache/pvp_conquest/{target_id}.json`
+  de verdade — o teste fez backup/restore de `cache/hunter/schedules.json`,
+  mas esqueceu de fazer o mesmo pra esse arquivo, deixando
+  `cache/pvp_conquest/38409.json` com dados sintéticos do teste (inclusive
+  `"noble_villages": []`, que nunca acontece de verdade nesse ponto do
+  fluxo). Note que `cache/` é git-ignored, então isso nunca chegou a um
+  commit — só existia localmente. Percebido ao revisar o arquivo real
+  durante os testes deste fix (o conteúdo não batia com nenhum log real nem
+  com a ausência de `cache/hunter/schedules.json`), confirmado como
+  artefato de teste (sem processo do bot rodando, sem log de
+  `PvpConquest`, sem schedule real no Hunter) e restaurado manualmente pro
+  último estado real conhecido (`pending_scout`, sem aldeia de clear
+  definida). Lição: testes que chamam métodos que persistem em cache real
+  devem sempre usar IDs fictícios quando possível, ou fazer backup/restore
+  de **todo** arquivo que o método sob teste possa tocar, não só do mais
+  óbvio.
 
 ## Ambiente de referência
 
