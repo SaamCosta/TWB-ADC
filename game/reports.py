@@ -9,6 +9,21 @@ from datetime import datetime
 from core.extractors import Extractor
 from core.filemanager import FileManager
 
+# Bugfix (2026-08-07): o jogo passou a renderizar a data do relatorio
+# localizada em pt-BR ("ago. 07, 2026  05:14:58<span class=\"small grey\">"),
+# em vez do formato antigo "07.08.26 05:14:58<span class=\"small grey\">"
+# que o regex original esperava. Isso fazia extra["when"] nunca ser
+# preenchido (confirmado: 0 de ~190 relatorios em cache/reports tinham o
+# campo), quebrando silenciosamente PvpConquestManager._find_scout_report
+# (alvo ficava travado para sempre em "pending_scout"), a estimativa de
+# lealdade real via relatorio (game/attack.py::_get_real_loyalty) e o
+# "drenar recursos" do farm (game/reports.py::has_resources_left). Ver
+# docs/backlog.md para o registro completo do diagnostico.
+PT_MONTH_ABBR = {
+    "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+}
+
 
 class ReportManager:
     """
@@ -154,9 +169,33 @@ class ReportManager:
         extra = {}
         losses = {}
 
-        attacked = re.search(r'(\d{2}\.\d{2}\.\d{2} \d{2}\:\d{2}\:\d{2})<span class=\"small grey\">', report)
+        # Formato atual (pt-BR): "ago. 07, 2026  05:14:58<span class=\"small grey\">"
+        attacked = re.search(
+            r'([A-Za-zç]{3})\.\s+(\d{1,2}),\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})<span class=\"small grey\">',
+            report,
+        )
         if attacked:
-            extra["when"] = int(datetime.strptime(attacked.group(1), "%d.%m.%y %H:%M:%S").timestamp())
+            mon_abbr, day, year, hh, mm, ss = attacked.groups()
+            month = PT_MONTH_ABBR.get(mon_abbr.lower())
+            if month:
+                extra["when"] = int(datetime(
+                    int(year), month, int(day), int(hh), int(mm), int(ss)
+                ).timestamp())
+            else:
+                self.logger.warning(
+                    "Report %s: unrecognized month abbreviation '%s' in battle date",
+                    report_id, mon_abbr,
+                )
+        else:
+            # Formato antigo (fallback, caso o jogo volte a este formato num
+            # skin/idioma diferente): "07.08.26 05:14:58<span class=...">
+            attacked_legacy = re.search(
+                r'(\d{2}\.\d{2}\.\d{2} \d{2}\:\d{2}\:\d{2})<span class=\"small grey\">', report
+            )
+            if attacked_legacy:
+                extra["when"] = int(
+                    datetime.strptime(attacked_legacy.group(1), "%d.%m.%y %H:%M:%S").timestamp()
+                )
 
         attacker = re.search(r'(?s)(<table id="attack_info_att".+?</table>)', report)
         if attacker:

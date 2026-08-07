@@ -82,10 +82,39 @@ Nota: `clear_ratio: 0.8` = 80% das tropas disponíveis na aldeia ofensiva usadas
 no clear; aumentar para `0.9` em alvos difíceis. `arrival_buffer_seconds: 2` é
 o mínimo seguro — em mundos com lag de servidor alto, considerar 3-5s.
 
+**Achado em campo (2026-08-07):** a razão real de "aguardando validação" nunca
+progredir era o bug de `extra["when"]` descrito abaixo em "Bug fixes
+acumulados" — `PvpConquestManager._find_scout_report()` nunca conseguia achar
+o relatório de scout mais recente (mesmo já existindo relatórios válidos em
+cache), então o alvo ficava travado para sempre em `pending_scout`. Corrigido
+em `game/reports.py`; a partir do próximo scout processado pelo bot depois do
+fix, o campo `when` passa a ser preenchido e o fluxo deve progredir
+normalmente para `pending_sim` → `scheduled`. Relatórios já em cache (gerados
+antes do fix) não são reprocessados retroativamente — o bot reenvia um scout
+novo automaticamente quando não acha nenhum relatório utilizável.
+
 ### Bug fixes acumulados
 - v8 — aldeias perdidas permaneciam na UI (`twb.py::get_overview`)
 - v9 — `%d` aplicado em `village_id` string (`game/village.py`)
 - v9 — primeira aldeia sem donor para herança (`game/village.py`)
+- 2026-08-07 — `extra["when"]` (timestamp do relatório) nunca era preenchido:
+  o jogo passou a renderizar a data da batalha localizada em pt-BR
+  (`"ago. 07, 2026  05:14:58<span class="small grey">"`) em vez do formato
+  antigo `"07.08.26 05:14:58<span class="small grey">"` que o regex de
+  `game/reports.py::attack_report()` esperava. Confirmado por varredura: 0 de
+  ~190 relatórios em `cache/reports/*.json` tinham o campo. Isso quebrava
+  silenciosamente três coisas, sem nenhum erro/exceção visível: (1) a
+  conquista PvP semi-manual (Feature 13, acima) — alvo travado para sempre em
+  `pending_scout`; (2) a lealdade real extraída de relatório de noble
+  (`game/attack.py::_get_real_loyalty`) — sempre caía no fallback matemático,
+  nunca usava o valor real; (3) a otimização de "drenar" farms com recursos
+  parados (`game/reports.py::has_resources_left`, usada por
+  `AttackManager`) — nunca disparava. Corrigido com um novo regex (mais um
+  mapa de abreviação de mês pt-BR → número) e fallback para o formato antigo,
+  caso o jogo volte a usá-lo em outro idioma/skin. Validado com um fetch ao
+  vivo de duas páginas de relatório reais (scout e attack) direto do br143 e
+  um teste de integração rodando `ReportManager.attack_report()` de verdade
+  contra esse HTML.
 
 ## Ambiente de referência
 
