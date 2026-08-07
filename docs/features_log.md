@@ -212,6 +212,53 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   de **todo** arquivo que o método sob teste possa tocar, não só do mais
   óbvio.
 
+- 2026-08-07 — `PvpConquestManager` rodava tarde demais e devagar demais.
+  Até este fix, `twb.py` chamava `PvpConquestManager.run()` uma única vez
+  por volta completa do loop, **depois** do farm de todas as aldeias já ter
+  sido enviado naquela volta e **depois** do `time.sleep()` entre ciclos —
+  ou seja, num bot recém-iniciado, o primeiro cycle inteiro (processamento
+  de aldeias + farm + sleep de minutos) passava sem o PvP Conquest sequer
+  ser avaliado uma vez. Feedback do usuário: a lógica de dominância do jogo
+  é o oposto disso — uma vez que a conquista está em andamento, ela deve ter
+  prioridade sobre o farm rotineiro, exatamente como a conquista bárbara
+  (`ConquestManager`, Feature 8) já faz (`Village.run_conquest()`, chamado
+  antes de `run_farming()` dentro do próprio `Village.run()`). Corrigido em
+  duas partes:
+  1. **Reordenação** (`game/village.py`, `twb.py`): criado
+     `Village.run_pvp_conquest()`, no mesmo lugar de `run_conquest()`, logo
+     antes de `run_farming()` — ou seja, dentro do `Village.run()` de cada
+     aldeia, não mais como uma chamada solta no fim do loop do `twb.py`.
+     Isso garante que roda em **toda** volta, inclusive a primeira depois do
+     bot iniciar (nesse ponto do `run()`, `self.units`/`self.area` já foram
+     carregados por chamadas anteriores no mesmo método) e sempre antes do
+     farm daquela mesma aldeia. `twb.py` agora monta
+     `managed_villages_dict` (aldeias gerenciadas) **antes** do loop de
+     processamento de aldeias e atribui em `village.pvp_conquest_villages`
+     de cada uma, espelhando o padrão já usado para `defense_states` /
+     `hunter.villages` — `PvpConquestManager` continua escolhendo aldeia de
+     clear/nobres considerando o império inteiro, não só a aldeia que
+     disparou a chamada. O bloco antigo no fim do loop (pós-sleep) foi
+     removido.
+  2. **Encadeamento de passos** (`game/pvp_conquest.py::run()`): antes,
+     cada alvo avançava no máximo um passo (`pending_scout` →
+     `pending_sim`, por exemplo) por chamada, mesmo que o passo seguinte já
+     estivesse pronto para rodar na mesma chamada (ex: relatório de scout
+     já disponível em cache no instante em que `_step_scout` roda). Agora
+     `run()` encadeia um alvo por quantos passos estiverem prontos dentro
+     da mesma chamada (`MAX_STEPS_PER_CALL = 4`, cobre
+     `pending_scout → pending_sim → scheduled → check_complete` com folga),
+     parando assim que um passo não muda o status (esperando algo externo,
+     como o relatório chegar) ou cai num status terminal
+     (`complete`/`failed`).
+  Testado isoladamente com um `PvpConquestManager` real e os três `_step_*`
+  mockados (verificado: encadeia os três passos numa chamada só; para
+  quando um passo não avança; ignora status terminal sem erro; o guard
+  `MAX_STEPS_PER_CALL` corta um loop patológico simulado). Sintaxe e import
+  de `game/village.py`, `twb.py` e `game/pvp_conquest.py` verificados após
+  a mudança. **Ainda não validado em campo** — precisa reiniciar o processo
+  do bot pra carregar o código novo (processos já rodando continuam com a
+  ordem antiga em memória até serem reiniciados).
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

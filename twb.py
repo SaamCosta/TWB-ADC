@@ -82,7 +82,6 @@ from core.filemanager import FileManager
 from core.request import WebWrapper
 from game.village import Village
 from game.hunter import Hunter
-from game.pvp_conquest import PvpConquestManager
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
 from manager import VillageManager
@@ -499,6 +498,23 @@ class TWB:
                     village_numbers[_v.village_id] = _village_number
                     _village_number += 1
 
+                # Feature 13 bugfix (2026-08-07): give every village a
+                # reference to the full managed-village dict *before* the
+                # farm loop below runs, so Village.run_pvp_conquest() (called
+                # from inside village.run(), right before run_farming()) can
+                # pick clear/noble villages from the whole empire on every
+                # single cycle -- including the first one after startup.
+                # This used to be built only at the tail of this loop, after
+                # farm had already been sent and after the inter-cycle sleep;
+                # see docs/features_log.md for the full writeup.
+                managed_villages_dict = {
+                    v.village_id: v
+                    for v in self.villages
+                    if v.village_id in self.found_villages
+                }
+                for _v in self.villages:
+                    _v.pvp_conquest_villages = managed_villages_dict
+
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
                     random.shuffle(processing_order)
@@ -637,19 +653,11 @@ class TWB:
                 if self.hunter:
                     self.hunter.run(config)
 
-                # Feature 13: PvP Conquest — processa alvos semi-manuais
-                if config.get("pvp_conquest", {}).get("enabled", False):
-                    managed_villages_dict = {
-                        v.village_id: v
-                        for v in self.villages
-                        if v.village_id in self.found_villages
-                    }
-                    pvp = PvpConquestManager(
-                        wrapper=self.wrapper,
-                        villages=managed_villages_dict,
-                        config=config,
-                    )
-                    pvp.run()
+                # Feature 13: PvP Conquest now runs from inside
+                # Village.run_pvp_conquest() (game/village.py), right before
+                # each village's farm, instead of once here at the tail end
+                # of the cycle -- see the comment on managed_villages_dict
+                # above the farm loop for why.
 
     def start(self):
         """

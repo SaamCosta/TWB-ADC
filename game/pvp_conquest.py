@@ -85,6 +85,11 @@ class PvpConquestManager:
     # Entry point
     # ------------------------------------------------------------------
 
+    # Real transitions are pending_scout -> pending_sim -> scheduled, plus
+    # the completion check once scheduled. 4 gives headroom without risking
+    # a runaway loop if a future step is added carelessly.
+    MAX_STEPS_PER_CALL = 4
+
     def run(self):
         cfg = self.config.get("pvp_conquest", {})
         if not cfg.get("enabled", False):
@@ -95,14 +100,35 @@ class PvpConquestManager:
             return
 
         for target_id, data in targets.items():
-            status = data.get("status", "pending_scout")
             try:
-                if status == "pending_scout":
-                    self._step_scout(target_id, data)
-                elif status == "pending_sim":
-                    self._step_simulate(target_id, data)
-                elif status == "scheduled":
-                    self._step_check_complete(target_id, data)
+                # Bugfix (2026-08-07): this used to do at most one step per
+                # target per call (e.g. pending_scout -> pending_sim), so a
+                # target that became ready to advance further *within this
+                # same call* -- e.g. a scout report was already sitting in
+                # cache the moment _step_scout ran, and _step_simulate could
+                # have run immediately after -- had to wait an entire extra
+                # bot cycle before anything happened. Conquest is supposed
+                # to preempt routine play once it's underway, not crawl one
+                # state per cycle, so now each target is chained through as
+                # many ready steps as fit in one call. Stops as soon as a
+                # step makes no progress (still genuinely waiting on
+                # something external, like a report that hasn't arrived) or
+                # lands on a status this loop doesn't recognise (terminal:
+                # "complete"/"failed").
+                for _ in range(self.MAX_STEPS_PER_CALL):
+                    status = data.get("status", "pending_scout")
+                    if status == "pending_scout":
+                        self._step_scout(target_id, data)
+                    elif status == "pending_sim":
+                        self._step_simulate(target_id, data)
+                    elif status == "scheduled":
+                        self._step_check_complete(target_id, data)
+                        break
+                    else:
+                        break
+
+                    if data.get("status", status) == status:
+                        break  # no progress this step -- wait for next call
             except Exception as e:
                 logger.error("PvpConquest: error processing target %s: %s", target_id, e)
 

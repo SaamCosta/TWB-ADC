@@ -10,6 +10,7 @@ from core.filemanager import FileManager
 from core.templates import TemplateManager
 from core.twstats import TwStats
 from game.attack import AttackManager, ConquestManager
+from game.pvp_conquest import PvpConquestManager
 from game.resource_sharing import ResourceSharingManager
 from game.buildingmanager import BuildingManager
 from game.defence_manager import DefenceManager
@@ -51,6 +52,14 @@ class Village:
     # Safe as a class default: always fully reassigned (self.points = X), never
     # mutated in-place, so it doesn't share state across Village instances.
     points = 0
+
+    # Feature 13 bugfix (2026-08-07): {village_id: Village} of every managed
+    # village, set once per cycle by twb.py before the per-village loop runs
+    # (mirrors defense_states / hunter.villages). Needed because
+    # PvpConquestManager picks clear/noble villages from the whole empire,
+    # not just "self" -- see run_pvp_conquest(). Safe as a class default:
+    # always fully reassigned, never mutated in-place.
+    pvp_conquest_villages = None
 
     twp = TwStats()
 
@@ -638,6 +647,44 @@ class Village:
         )
         conquest.run()
 
+    def run_pvp_conquest(self):
+        """
+        Feature 13: Runs the semi-manual PvP conquest state machine (scout ->
+        simulate -> schedule via Hunter -> check-complete) for every pending
+        target in cache/pvp_conquest/.
+
+        Bugfix (2026-08-07): this used to be a separate call from twb.py,
+        made once per full bot cycle *after* every village's farm had
+        already been sent and *after* the inter-cycle sleep -- meaning it
+        never got priority over farm and, on a freshly started bot, could
+        take a second full cycle (several minutes) before running at all.
+        That's backwards for this game: once you're actively nobling,
+        conquest is supposed to take priority over routine farming, the same
+        way barbarian ConquestManager (run_conquest(), right above this
+        call in run()) already does. Moved here, in the exact same slot,
+        right before run_farming(), so it: (a) runs on every single
+        village.run() call, including the very first one after startup,
+        since this village's troop/map data is already loaded earlier in
+        this same run() by the time we get here; (b) always gets evaluated
+        before this village's farm attacks are sent.
+
+        Uses pvp_conquest_villages (the full managed-village dict, set once
+        per cycle by twb.py before the village loop) rather than just this
+        village, since PvpConquestManager picks clear/noble villages from
+        the whole empire. Falls back to {self.village_id: self} if that
+        wasn't set (e.g. Village.run() invoked outside the normal twb.py
+        loop), so this village alone can still be used for scouting/attack.
+        """
+        if not self.config.get("pvp_conquest", {}).get("enabled", False):
+            return
+        villages = self.pvp_conquest_villages or {self.village_id: self}
+        pvp = PvpConquestManager(
+            wrapper=self.wrapper,
+            villages=villages,
+            config=self.config,
+        )
+        pvp.run()
+
     def ensure_map_loaded(self):
         """
         Ensures self.area (Map) is initialised and populated before conquest
@@ -803,6 +850,7 @@ class Village:
 
         self.ensure_map_loaded()
         self.run_conquest()
+        self.run_pvp_conquest()
         self.run_farming()
 
         self.do_gather()
