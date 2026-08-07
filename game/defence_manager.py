@@ -210,7 +210,8 @@ class DefenceManager:
                 continue
             if not attack_state:
                 self.logger.info(
-                    "Evacuating troops from village %s: %s", vid, str(to_hide)
+                    "Evacuating troops from village %s to safe haven %s: %s",
+                    self.village_id, vid, str(to_hide)
                 )
                 self.support(vid, troops=to_hide)
                 return True
