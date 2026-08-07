@@ -233,10 +233,17 @@ class PvpConquestManager:
         # for the same reason escort_units does: any noble sitting idle in
         # the clear village shouldn't be thrown into the clear wave by
         # accident -- it's needed for the noble train itself.
+        #
+        # Bugfix (2026-08-07): "knight" (Paladino) excluded too, per user:
+        # the Paladin should never leave the village automatically -- only
+        # in specific, deliberately chosen clearing situations, which this
+        # automatic troop-selection has no way to judge. Leave it out of
+        # every auto-built attack here; sending it is a manual decision,
+        # not something PvpConquestManager should do on its own.
         attacker_units = {
             unit: int(int(qty) * clear_ratio)
             for unit, qty in clear_village.units.troops.items()
-            if int(qty) > 0 and unit not in ("spy", "snob")
+            if int(qty) > 0 and unit not in ("spy", "snob", "knight")
         }
 
         # Run simulator
@@ -380,10 +387,12 @@ class PvpConquestManager:
             nv = self.villages.get(nvid)
             if not nv or not nv.units:
                 continue
+            # "knight" (Paladino) excluded -- see attacker_units above, same
+            # rule applies to escort: never sent automatically.
             escort_units = {
                 unit: max(1, int(int(qty) * escort_ratio) // noble_count)
                 for unit, qty in nv.units.troops.items()
-                if int(qty) > 0 and unit not in ("spy", "snob")
+                if int(qty) > 0 and unit not in ("spy", "snob", "knight")
             }
             troops = dict(escort_units)
             # Always exactly 1 -- never stack multiple nobles into the same

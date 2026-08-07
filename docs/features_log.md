@@ -290,6 +290,27 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   específico com o plano novo antes do Hunter disparar (arrival 10:30, ainda
   sem `send_time` calculado no momento deste registro).
 
+- 2026-08-07 — Paladino (`"knight"`) vazava pro clear e pra escolta de
+  nobre do PvP Conquest. `attacker_units` (clear) e `escort_units` (escolta)
+  só excluíam `"spy"`/`"snob"` das tropas da aldeia — qualquer Paladino
+  parado em casa entrava automaticamente. Com o fix do trem de nobres
+  (acima, commit `d2875f0`) isso ficou pior: o piso `max(1, ...)` da
+  escolta força pelo menos 1 unidade de cada tipo por ataque, e como o
+  Paladino é sempre 1 por aldeia, 4 ataques separados da mesma aldeia
+  pediam `knight: 1` **cada um** — 4 no total contra 1 disponível de
+  verdade, o que faria pelo menos 3 desses 4 ataques falharem quando o
+  Hunter disparasse. Correção pedida pelo usuário: o Paladino nunca deve
+  sair da aldeia automaticamente, só em situações específicas de limpeza
+  escolhidas manualmente — o bot não tem como julgar isso sozinho, então a
+  resposta certa é simplesmente nunca incluí-lo, não tentar acertar a conta
+  de quantos "cabem". Corrigido excluindo `"knight"` junto com
+  `"spy"`/`"snob"` nos dois pontos (`attacker_units` e `escort_units`).
+  Verificado isoladamente (replicando as duas comprehensions com o troop
+  dict real: `knight` não aparece em nenhum dos dois dicts resultantes).
+  Alvo `38409` resetado de novo (`status: "scheduled"` → `"pending_sim"`,
+  `noble_villages` removido) pra recalcular sem o Paladino assim que o bot
+  reiniciar com o código novo — mesma mecânica do reset anterior.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`
