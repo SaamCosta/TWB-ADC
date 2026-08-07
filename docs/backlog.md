@@ -630,10 +630,108 @@ separado. Confirmar antes de desenhar a automação, pra não duplicar lógica.
 detalhado (usuário tem mais contexto de jogo aqui) antes de virar plano de
 implementação — ainda não é uma tarefa pronta para começar.
 
+## Feature 26 — Envio de ataques múltiplos em lote (train[N][unit])
+
+Descoberto em 2026-08-07 investigando por que o trem de 4 nobres do PvP
+Conquest (Feature 13), embora todos enviados com sucesso, chegou **espalhado
+ao longo de ~2min19s** em vez de simultâneo: o `Hunter` (`game/hunter.py`)
+manda cada ataque agendado sequencialmente — GET da página, POST de
+confirmação, POST de envio, e só então passa para o próximo — cada ciclo
+levando 40-80s de ida e volta HTTP. Como os 4 nobres tinham o mesmo
+`send_time` calculado (mesma composição de tropa, mesma duração de viagem),
+o primeiro saiu na hora certa (`09:41:15`) mas o quarto só às `09:43:34`,
+porque cada envio bloqueia o próximo até terminar.
+
+**O jogo tem um mecanismo nativo pra isso.** Investigado ao vivo com a sessão
+real do bot (JS `game.cb1e4b.js`, objeto `Place.confirmScreen`): o botão
+"Adicionar ataque adicional" (`#troop_confirm_train`,
+`addAdditionalAttack()`) adiciona linhas de tropa nomeadas
+`train[1][unit]`, `train[2][unit]`, etc. **dentro do mesmo
+`#command-data-form`** que já tem os campos do ataque principal
+(`spear`, `sword`, `axe`...). Como tudo vive no mesmo formulário, o envio
+final é um único POST contendo o ataque principal **e** todos os
+`train[N][...]` juntos — não é N cliques escondidos, é um envio em lote de
+verdade. Isso resolveria o espalhamento de chegada de qualquer trem com mais
+de 1 ataque simultâneo (clear + nobres, ou múltiplos nobres).
+
+**Por que não foi implementado ainda:** o formato exato do POST final (tokens
+ocultos tipo `ch=`, se cada linha `train[N]` aceita coordenada própria ou
+usa sempre a mesma `x`/`y` do form, etc.) não pôde ser confirmado com
+segurança só lendo o JS minificado — só o `#command-data-form` "atacar por
+mapa" (`comandopelomapa.txt`) e os dois botões "Adicionar ataque adicional"
+(`novoataquentmapa.txt`, `novoataquentpraça-place.txt`) foram inspecionados
+pelo usuário, sem captura de rede do envio final de verdade. Implementar às
+cegas arrisca desperdiçar tropa real ou mandar ataque pro lugar errado.
+
+**Proposta:** antes de implementar, fazer um teste controlado (ex: 2 ataques
+pequenos e descartáveis contra um alvo seguro) capturando a requisição de
+rede real do envio final, pra confirmar o formato exato dos campos —
+só então adaptar `Hunter._send_attack()` (`game/hunter.py`) e
+`AttackManager.attack()` (`game/attack.py`) para aceitar múltiplos ataques
+por chamada e montar o POST em lote em vez de N chamadas sequenciais.
+
+**Prioridade:** depois da Feature 25. Ganho real só aparece quando há mais
+de 1 ataque simultâneo agendado pro mesmo `arrival_time` (hoje, só o trem de
+nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
+
 ---
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
+- **PvP Conquest (Feature 13) não detecta trem de nobres que falhou** —
+  `_step_check_complete()` (`game/pvp_conquest.py`) só transiciona
+  `status: "scheduled"` → `"complete"` quando a aldeia-alvo muda de dono.
+  Se os nobres chegarem e a conquista **não** acontecer (lealdade não
+  zerou, nobres foram destruídos por falta do clear, etc.), o alvo fica
+  parado em `"scheduled"` pra sempre — nenhum código verifica se o
+  `arrival_time` já passou sem sucesso, nem reseta pra `pending_scout`
+  pra tentar de novo, nem marca como `"failed"`. Só o teste de reserva de
+  tropas (`_maybe_release_reserve`) tem um fallback por tempo
+  (`arrival_time + 3600s`) — a reserva é liberada mesmo sem sucesso, mas o
+  `status` do alvo em si nunca reflete a falha nem tenta de novo sozinho.
+  Descoberto ao vivo em 2026-08-07 quando o clear do alvo 38409 falhou por
+  tropa insuficiente (ver `docs/features_log.md`) — os nobres seguiram
+  viagem mesmo assim (usuário já tinha limpado manualmente), mas se não
+  tivesse, o alvo teria ficado `"scheduled"` indefinidamente sem qualquer
+  sinal de que precisa de intervenção manual.
+- **`ConquestManager` (conquista bárbara, Feature 8) não respeita
+  `TroopManager.total_conquest_reserve()`** — `_build_escort()`
+  (`game/attack.py`) calcula `available` direto de
+  `self.troopmanager.troops`, sem subtrair nenhuma reserva de outro dono
+  (ex: `"pvp:{target_id}"` do PvP Conquest). A reserva aditiva por dono
+  (implementada em 2026-08-06/07, ver `docs/features_log.md`) protege
+  contra o farm (`AttackManager._get_farmable_troops()`) e o gather
+  (`TroopManager.gather()`) roubarem tropa reservada, mas **não** protege
+  contra a própria conquista bárbara fazer isso — ela só gerencia sua
+  própria chave `"barbarian_conquest"` (grava/limpa), nunca lê o total
+  agregado de outros donos antes de decidir quanto escoltar. Hoje é
+  inofensivo porque `conquest.enabled: false` no ambiente atual, mas é uma
+  lacuna real: se a conquista bárbara for ligada enquanto um alvo de PvP
+  Conquest tem tropa reservada, ela pode gastar exatamente a tropa que o
+  PvP Conquest está esperando pra disparar depois — o mesmo tipo de bug
+  que causou a falha do clear em 38409, só que entre sistemas diferentes
+  em vez de dentro do próprio PvP Conquest.
+- **Sobrecomprometimento de tropa entre clear e escolta de nobre — só
+  corrigido para 1 alvo por vez.** O fix de 2026-08-07 em
+  `_step_simulate()` (`game/pvp_conquest.py`) subtrai `attacker_units` do
+  total bruto da aldeia de clear antes de calcular a escolta, garantindo
+  que as duas reivindicações de **um mesmo alvo** nunca somem mais que
+  100% da tropa disponível. Não cobre o caso de uma mesma aldeia estar
+  comprometida com tropas de **múltiplos alvos de PvP Conquest agendados
+  ao mesmo tempo** — cada `_step_simulate()` roda isolado, sem visibilidade
+  do que outros alvos já reservaram naquela aldeia via
+  `total_conquest_reserve()`. Só um alvo estava ativo no ambiente real
+  nesta sessão, então o caso nunca foi exercitado.
+- **Piso `max(1, ...)` na escolta de nobre ainda pode sobrecomprometer
+  unidades muito escassas.** O bug do Paladino (`knight`) foi resolvido
+  excluindo-o completamente da escolta/clear (nunca deveria sair
+  automaticamente mesmo). Mas a mesma fórmula (`max(1, int(qty*ratio) //
+  noble_count)`) se aplica a qualquer outra unidade — se `ram` ou
+  `catapult`, por exemplo, tiverem uma contagem baixa (menor que
+  `noble_count`), o piso de "pelo menos 1 por ataque" ainda pode pedir mais
+  do que existe no total. Baixa prioridade — essas unidades normalmente não
+  ficam tão escassas quanto o Paladino (que é sempre só 1 por aldeia), mas
+  é o mesmo padrão de bug, não totalmente eliminado.
 - **Bugs do sistema de bandeiras** (`DefenceManager`) — corrigidos no código
   em 2026-08-02 (troca constante de bandeira e loop de upgrade), aguardando
   validação em campo. Bot ainda só reconhece tipos de bandeira 1 e 4 dos 8
@@ -641,9 +739,21 @@ implementação — ainda não é uma tarefa pronta para começar.
   dos 8 tipos, ainda não implementado (`FLAG_TYPES`).
 - Feature 12 (evacuação preventiva regional) — implementada, aguardando
   validação em campo.
-- Feature 13 (PvP conquest) — implementada, aguardando validação em campo
-  (requer nobles disponíveis no mundo atual). Ver Feature 18 acima para o
-  refinamento de moral/night bonus no simulador usado por essa feature.
+- Feature 13 (PvP conquest) — **validada em campo em 2026-08-07**: alvo real
+  (38409) percorreu o fluxo completo pela primeira vez — scout → simulação →
+  agendamento → Hunter disparando de verdade (4 nobres enviados com sucesso,
+  clear falhou por bug de sobrecomprometimento de tropa, já corrigido). Essa
+  validação também revelou e corrigiu vários bugs que nunca tinham sido
+  exercitados contra um bot rodando de verdade — ver `docs/features_log.md`
+  para o registro completo (ordem de execução antes do farm, encadeamento de
+  passos por ciclo, múltiplos nobres por aldeia, exclusão do Paladino,
+  bug crítico de `target_id` que impedia qualquer disparo real do Hunter, e
+  o sobrecomprometimento de tropa clear+escolta). Lacunas que sobraram dessa
+  validação estão listadas acima (detecção de trem falhado, conquista
+  bárbara não respeitando reserva, sobrecomprometimento entre múltiplos
+  alvos simultâneos). Ver Feature 18 acima para o refinamento de moral/night
+  bonus no simulador usado por essa feature (ainda não validado
+  separadamente).
 - Comparação de mecânicas reais do jogo vs. cobertura do bot — ver
   `docs/game_comparison.md` (pesquisa feita em 2026-08-02) para o raciocínio
   completo por trás das Features 18-22 acima, incluindo itens avaliados e
