@@ -303,8 +303,33 @@ class DefenceManager:
         if not get_flag_data:
             self.logger.warning("Error reading flag data")
             return
+        # Bugfix (2026-08-07): _flag_state_confirmed used to be set True only
+        # inside `if get_current_flag:` below, i.e. only when the regex for a
+        # *currently equipped* flag matched. A village that has never had any
+        # flag equipped (e.g. a freshly conquered one) legitimately never
+        # matches that pattern, so confirmation never fired and the
+        # webmanager /flags panel showed "Estado ainda não lido" forever,
+        # even though this method had already successfully fetched and
+        # parsed the real flags page every time it ran (confirmed live:
+        # "Managing flags" logged with no warning, yet flag_state_confirmed
+        # stayed false in cache/managed/*.json). Reaching this point means
+        # get_flag_data already matched -- that alone is a successful read of
+        # the real server state, independent of whether a flag happens to be
+        # equipped right now, so confirmation belongs here instead.
+        self._flag_state_confirmed = True
+        # Bugfix (2026-08-07): hardcoded .png extension -- the game now
+        # serves flag images as .webp (confirmed live on br143, e.g.
+        # ".../graphic/flags/big/1_7.webp"), so this never matched at all
+        # for a flag that was never assigned by the bot itself in this
+        # runtime (self.current_flag also gets set directly, bypassing this
+        # regex entirely, right after a successful flag_set() call -- which
+        # is why an already-managed village with a bot-assigned flag looked
+        # fine while a freshly conquered one, with a flag inherited from the
+        # previous owner and never assigned by the bot, always showed "no
+        # flag equipped" in the webmanager /flags panel even though it
+        # genuinely had one). \w+ matches any extension, present or future.
         get_current_flag = re.search(
-            r'(?s)<div id="current_flag".+?/(\d+)_(\d+)\.png.+?<p>(.+?)</p>.+?</div>',
+            r'(?s)<div id="current_flag".+?/(\d+)_(\d+)\.\w+.+?<p>(.+?)</p>.+?</div>',
             result.text,
         )
         if get_current_flag:
@@ -320,7 +345,6 @@ class DefenceManager:
                     self.logger.info(
                         "Current village flag: %s", get_current_flag.group(3).strip()
                     )
-            self._flag_state_confirmed = True
         upgraded = 0
         raw_flags = json.loads(get_flag_data.group(1))
         self.flags = {}

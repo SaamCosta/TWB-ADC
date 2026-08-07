@@ -402,6 +402,180 @@ novo automaticamente quando não acha nenhum relatório utilizável.
   relatório do ataque manual no jogo), então a ausência do clear automático
   não deveria comprometer os 4 nobres já a caminho (chegada `10:30:00`).
 
+### Bugfix (2026-08-07) — primeira conquista PvP real, validação de ponta a ponta ✅
+
+Após os fixes anteriores (ordenação, multi-nobre, Paladino, target_id/label,
+over-commitment — ver entradas acima), o alvo `38409` foi conquistado de
+verdade pela primeira vez neste projeto. A validação em campo revelou mais
+quatro bugs, todos em código que nunca tinha sido exercitado contra uma
+conquista real (só contra simulações/ataques que falharam antes de chegar
+até aqui):
+
+**1. `self.villages` nunca sincronizava com aldeias novas (`twb.py`)**
+`self.villages` (lista de objetos `Village` processados a cada ciclo) era
+montada **uma única vez**, antes do `while self.should_run:`, a partir do
+`config["villages"]` que existia no momento em que o processo iniciou.
+`get_overview()` → `add_village()` (com `bot.add_new_villages: true`) grava
+aldeias novas (achadas ou conquistadas) direto em `config.json` a cada
+ciclo, mas nunca criava um `Village` nem dava `self.villages.append(...)`.
+Resultado: uma aldeia recém-conquistada ficava só "no papel" — nunca
+entrava em `processing_order`, então nunca era gerenciada (sem construção,
+sem tropa, sem farm) até reiniciar o processo manualmente. Corrigido
+sincronizando `self.villages` com `config["villages"]` a cada ciclo, logo
+após `get_overview()`: qualquer `vid` novo ganha um `Village` na hora,
+igual ao loop de startup.
+
+**2. `village_template.inherit_on_first_run` divergente do exemplo**
+`config.json` local tinha `false` (deveria ser `true`, como já era em
+`config.example.json`), então toda aldeia nova nascia com `profile: null`
+em vez de rodar `apply_nearest_village_inheritance()` (Feature 6/7) e virar
+`offensive`/`defensive` pela proporção configurada. Corrigido no
+`village_template` (futuras aldeias) e pontualmente na entrada já existente
+de `38409` (que ainda não tinha rodado `Village.run()` por causa do bug 1).
+Resultado real: `38409` virou `profile: "defensive"` — bateu com a proporção
+`empire.offensive_ratio: 1 / defensive_ratio: 3`.
+
+**3. Detecção de posse sempre falhava silenciosamente (`game/pvp_conquest.py`,
+`game/attack.py`)**
+`PvpConquestManager._step_check_complete()` e `ConquestManager._target_is_mine()`
+liam `self.wrapper.player_id` / `self.wrapper.game_state` para descobrir o
+próprio player_id — atributos que **nunca existiram** em `WebWrapper` (só
+existem em objetos por-aldeia como `Village.game_data`,
+`BuildingManager.game_state`). O `hasattr()` sempre dava `False`, o fallback
+sempre levantava `AttributeError`, capturado por um `except` que só fazia
+`return`/`return False` **sem logar nada**. Consequência: mesmo com `38409`
+100% conquistada (confirmado via `cache/villages/38409.json` com
+`owner` batendo com a aldeia própria `41123`), o status em
+`cache/pvp_conquest/38409.json` ficava travado em `"scheduled"` pra sempre,
+e o painel `/pvp_conquest` do webmanager nunca refletia a conquista.
+Corrigido lendo o `owner` de uma aldeia já sabidamente própria em
+`cache/villages/{id}.json` em vez de depender do wrapper — em
+`PvpConquestManager`, novo helper `_own_player_id()` varre `self.villages`;
+em `ConquestManager` (que só conhece a própria `self.village_id`), lê
+diretamente `cache/villages/{self.village_id}.json`. `conquest.enabled` é
+`false` neste projeto, então o bug em `attack.py` ainda não tinha se
+manifestado, mas é o mesmo padrão morto — corrigido junto.
+Testado isoladamente contra o cache real (`38409`): `_own_player_id()`
+retorna `5955651`, batendo com o owner real do alvo.
+
+**4. Confirmação de leitura de bandeira presa a um regex específico
+(`game/defence_manager.py::manage_flags()`)**
+`self._flag_state_confirmed = True` só era setado dentro de
+`if get_current_flag:` (regex que exige uma bandeira **equipada** com
+imagem `/(\d+)_(\d+)\.png`). Uma aldeia sem nenhuma bandeira equipada
+(comum logo após conquista) nunca casa esse regex, então a confirmação
+nunca acontecia — mesmo com a página `screen=flags` lida e parseada com
+sucesso todo ciclo (log mostra `Managing flags` sem warning). O painel
+`/flags` do webmanager mostrava "Estado ainda não lido" permanentemente
+pras duas aldeias geridas. Corrigido movendo a confirmação pra logo depois
+que `get_flag_data` (o parse geral da página) tem sucesso, independente de
+haver ou não uma bandeira equipada no momento.
+
+**5. Timeline de conquistas do `/empire` só lia o sistema errado
+(`webmanager/utils.py`, `webmanager/server.py`, `webmanager/templates/empire.html`)**
+`EmpireReader.conquest_timeline()` só agregava `ConquestReader.load()`
+(conquista bárbara, Feature 8) — que fica sempre vazio neste projeto porque
+`conquest.enabled: false`. O sistema realmente ativo é o PvP Conquest
+(Feature 13), e uma conquista real e confirmada (`38409`) nunca aparecia
+ali; o texto de "vazio" ainda apontava pro `/conquest` (sistema não usado).
+Adicionado `EmpireReader.pvp_conquest_timeline_entries()`, que normaliza a
+saída de `PvpConquestReader.load()` pro mesmo formato de
+`ConquestReader.load()` (rótulos prefixados com `"PvP:"`); `conquest_timeline()`
+agora mescla as duas fontes por timestamp. `PvpConquestReader.load()` passou
+a expor `scheduled_at`/`completed_at` (antes só usados internamente) pra
+servir de timestamp de ordenação. Empty-state do template atualizado pra
+citar `/pvp_conquest` também.
+
+**6. Tooltip do mapa de calor do `/empire` desalinhado com os marcadores
+(`webmanager/templates/empire.html`)**
+O canvas fixa seu sistema de coordenadas interno (`W`/`H`, usado por
+`toPx()`) uma única vez no carregamento da página, medindo
+`parent.clientWidth` naquele instante. O CSS (`width:100%`) deixa o
+elemento renderizado esticar/encolher com qualquer mudança de layout depois
+disso (resize, zoom, sidebar) — só que o handler de `mousemove` comparava a
+posição do mouse (via `getBoundingClientRect()`, tamanho *renderizado*)
+direto contra `toPx()` (espaço *interno*, fixo), sem reconciliar os dois.
+Resultado visual: passar o mouse perto de um alvo, mas não exatamente em
+cima, ainda disparava o tooltip de outro ponto. Corrigido escalando
+`mx`/`my` pela razão `canvas.width / rect.width` (e o equivalente em Y)
+antes de comparar contra `toPx()` — padrão usual de hit-test em canvas,
+robusto a qualquer mudança de layout depois do desenho inicial.
+
+**Consequência prática:** nenhuma das seis correções mexe em envio de tropa
+ou lógica de ataque em si — são detecção de posse, sincronização de estado
+em memória, um valor de config e leitura/exibição no webmanager. Todos os
+arquivos tocados compilam limpo (`python -m py_compile`); a correção do
+item 3 foi testada isoladamente contra o cache real do alvo `38409`.
+
+### Bugfix (2026-08-07, continuação) — mais 3 achados na validação em campo ✅
+
+Depois do restart com os seis fixes acima, o usuário seguiu observando o bot
+com as duas aldeias (`41123`, `38409`) e o painel `/conquest` (conquista
+bárbara, ligada nesta sessão pelo usuário) ao vivo, e mais três problemas
+reais apareceram:
+
+**7. Detecção de bandeira equipada sempre falhava (`.png` vs `.webp`)**
+Mesmo depois do fix #4 (confirmação de leitura), a `38409` continuava
+mostrando "Nenhuma bandeira equipada" — só que ela **tinha** uma bandeira
+equipada de verdade (usuário confirmou: atribuída manualmente por ele no
+jogo, não pelo bot). Buscando a página `screen=flags` ao vivo (sessão do
+bot via `requests`), confirmado: a imagem da bandeira é servida como
+`.../graphic/flags/big/1_7.webp`, mas o regex de detecção
+(`get_current_flag` em `manage_flags()`) procurava especificamente `.png` —
+nunca dava match. A `41123` só parecia certa "por acidente": o bot mesmo
+tinha atribuído a bandeira dela nesse ciclo, e `flag_set()` grava
+`self.current_flag` direto em memória, sem depender desse regex. Qualquer
+aldeia com bandeira **não** atribuída pelo bot (herdada, atribuída
+manualmente, ou sobrevivendo de antes de qualquer fix) ficaria com o mesmo
+problema. Corrigido trocando `\.png` por `\.\w+` no regex (aceita qualquer
+extensão, presente ou futura). Testado contra o HTML real de `38409`
+(fetch direto via sessão do bot): regex antigo não casava, o novo casa e
+extrai `flag_type=1, level=7` corretamente.
+
+**8. Fórmula de pontuação do `priority: "fill_gaps"` dominada por pontos,
+ignorando distância na prática (`game/attack.py::ConquestManager._score_target()`)**
+Usuário perguntou por que a conquista bárbara escolheu um alvo a 11.2 tiles
+de distância e cancelou o noble train manualmente. Causa: os pesos
+60%/30%/10% (comentados no código) eram aplicados direto sobre valores
+brutos — distância varia 0–20 (`max_radius`), pontos varia 0–1100
+(`max_points`). O termo de pontos (`pts * 0.1`, até 110) dominava
+completamente os termos de distância (até ~18 combinados), fazendo a
+seleção na prática ignorar proximidade e escolher sempre a bárbara com mais
+pontos dentro do raio. Confirmado rodando a pontuação real pra todos os
+candidatos: uma aldeia a **1.4 tiles** (`44683`, 364 pts) perdeu pra uma a
+**11.2 tiles** (`39158`, 1002 pts, a escolhida/cancelada) por larga margem.
+Corrigido normalizando distância (`dist / max_radius`) e pontos
+(`pts / max_pts`) pra escalas comparáveis 0–1 antes de aplicar os pesos —
+agora os 60/30/10% do comentário valem de verdade. Testado com os dados
+reais do ambiente: `44683` (1.4 tiles) passa a vencer com folga
+(score 0.052 vs 0.42 da `39158`), e a ordem geral passa a seguir
+proximidade primeiro, pontos como desempate.
+
+**9. `/conquest` não tinha como limpar um alvo já em andamento/completo**
+Consequência prática do achado 8: o cache `cache/conquest/39158.json`
+(status `train_sent`, 4/4 nobles) ficou órfão depois do usuário cancelar o
+noble train manualmente no jogo — `ConquestReader.cancel_manual()` (usado
+pelo botão "Cancelar" existente) bloqueia de propósito esse caso
+(`status not in ("manual", "invalid")` levanta `ValueError`), porque
+normalmente apagar o cache de uma conquista em andamento só esconderia o
+acompanhamento de nobles genuinamente em rota. Mas não havia nenhuma opção
+pra o caso oposto: usuário já tratou a situação fora do bot e só quer
+limpar o registro órfão. Adicionado `ConquestReader.force_clear()` (remove
+o cache incondicionalmente, qualquer status), rota nova `action=force_clear`
+em `/conquest` (`webmanager/server.py`), e botão "Limpar" em
+`conquest.html` pra qualquer status que não seja `manual`/`invalid` (esses
+continuam usando "Cancelar", que já tinha a validação certa). Alvo `39158`
+limpo manualmente nesta sessão como consequência direta.
+
+**Consequência prática:** achado 7 é leitura/parsing, sem risco de tropa.
+Achado 8 muda qual alvo bárbaro `ConquestManager` escolhe automaticamente —
+revisado com cautela extra por mexer em `game/attack.py` (ver convenção do
+projeto), mas o escopo é só seleção de alvo, não envio/quantidade de tropa.
+Achado 9 é feature nova de webmanager (limpeza de cache), sem nenhuma ação
+de jogo. Todos os arquivos tocados compilam limpo; achados 7 e 8 testados
+contra dados reais do ambiente (HTML ao vivo da `38409` e pontuação de
+todos os candidatos bárbaros em cache).
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

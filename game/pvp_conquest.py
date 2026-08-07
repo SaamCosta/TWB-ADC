@@ -479,20 +479,41 @@ class PvpConquestManager:
         if not village_data:
             return
 
-        player_id = None
-        if self.wrapper and hasattr(self.wrapper, "player_id"):
-            player_id = str(self.wrapper.player_id)
+        player_id = self._own_player_id()
         if not player_id:
-            try:
-                player_id = str(self.wrapper.game_state["player"]["id"])
-            except (AttributeError, KeyError, TypeError):
-                return
+            return
 
         if str(village_data.get("owner", "0")) == player_id:
             data["status"] = "complete"
             data["completed_at"] = int(time.time())
             PvpConquestCache.set(target_id, data)
             logger.info("PvpConquest: target %s confirmed conquered!", target_id)
+
+    def _own_player_id(self):
+        """
+        Bugfix (2026-08-07): this used to read self.wrapper.player_id /
+        self.wrapper.game_state, but WebWrapper never actually sets either
+        attribute -- those only exist on per-village objects (Village.game_data,
+        BuildingManager.game_state, Reports.game_state). hasattr() on the first
+        one was always False, and the game_state fallback always raised
+        AttributeError, which the old code caught and silently `return`ed on --
+        meaning _step_check_complete() could NEVER detect a real conquest,
+        even a fully confirmed one (validated live against target 38409, which
+        showed status stuck on "scheduled" forever despite cache/villages/
+        38409.json already showing our own ownership).
+
+        Fixed by reading the owner id straight off any of our own managed
+        villages' cache/villages/{id}.json -- those are already known-owned
+        (they're keys of self.villages) and don't need any wrapper plumbing
+        at all. Mirrors the equivalent fix in
+        ConquestManager._target_is_mine() (game/attack.py).
+        """
+        for vid in self.villages:
+            own_data = FileManager.load_json_file(f"cache/villages/{vid}.json")
+            owner = str(own_data.get("owner", "0")) if own_data else "0"
+            if owner != "0":
+                return owner
+        return None
 
     # ------------------------------------------------------------------
     # Internal helpers

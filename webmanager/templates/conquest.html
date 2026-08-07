@@ -211,7 +211,11 @@
               <button type="submit" class="btn btn-sm btn-outline-danger">Cancelar</button>
             </form>
             {% else %}
-            <span class="text-muted">—</span>
+            <form method="post" onsubmit="return confirm('Limpar o cache do alvo {{ t.target_name }}? Use apenas se você cancelou o noble train manualmente no jogo -- isso só apaga o acompanhamento do bot, não desfaz nada em jogo. O alvo volta a ficar disponível para seleção automática.');" class="d-inline">
+              <input type="hidden" name="action" value="force_clear">
+              <input type="hidden" name="target_id" value="{{ t.target_id }}">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Limpar</button>
+            </form>
             {% endif %}
           </td>
         </tr>

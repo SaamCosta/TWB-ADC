@@ -739,21 +739,32 @@ nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
   dos 8 tipos, ainda não implementado (`FLAG_TYPES`).
 - Feature 12 (evacuação preventiva regional) — implementada, aguardando
   validação em campo.
-- Feature 13 (PvP conquest) — **validada em campo em 2026-08-07**: alvo real
-  (38409) percorreu o fluxo completo pela primeira vez — scout → simulação →
-  agendamento → Hunter disparando de verdade (4 nobres enviados com sucesso,
-  clear falhou por bug de sobrecomprometimento de tropa, já corrigido). Essa
-  validação também revelou e corrigiu vários bugs que nunca tinham sido
-  exercitados contra um bot rodando de verdade — ver `docs/features_log.md`
-  para o registro completo (ordem de execução antes do farm, encadeamento de
-  passos por ciclo, múltiplos nobres por aldeia, exclusão do Paladino,
-  bug crítico de `target_id` que impedia qualquer disparo real do Hunter, e
-  o sobrecomprometimento de tropa clear+escolta). Lacunas que sobraram dessa
-  validação estão listadas acima (detecção de trem falhado, conquista
-  bárbara não respeitando reserva, sobrecomprometimento entre múltiplos
-  alvos simultâneos). Ver Feature 18 acima para o refinamento de moral/night
-  bonus no simulador usado por essa feature (ainda não validado
-  separadamente).
+- Feature 13 (PvP conquest) — **validada em campo em 2026-08-07, conquista
+  confirmada de ponta a ponta**: alvo real (38409) percorreu o fluxo
+  completo — scout → simulação → agendamento → Hunter disparando de
+  verdade (4 nobres enviados com sucesso, clear falhou por bug de
+  sobrecomprometimento de tropa, já corrigido) → **posse confirmada**
+  (`cache/villages/38409.json` com `owner` batendo com a aldeia própria),
+  village passou a ser gerenciada normalmente (construção, farm, herança de
+  config/profile). Essa validação revelou e corrigiu, no total, dez bugs
+  que nunca tinham sido exercitados contra um bot rodando de verdade e uma
+  conquista real — ver `docs/features_log.md` para o registro completo:
+  ordem de execução antes do farm, encadeamento de passos por ciclo,
+  múltiplos nobres por aldeia, exclusão do Paladino, bug crítico de
+  `target_id` que impedia qualquer disparo real do Hunter, o
+  sobrecomprometimento de tropa clear+escolta, `self.villages` nunca
+  sincronizando aldeias novas em `twb.py`, `inherit_on_first_run`
+  divergente do exemplo, detecção de posse sempre falhando silenciosamente
+  em `PvpConquestManager._step_check_complete()`/`ConquestManager._target_is_mine()`
+  (atributos inexistentes em `WebWrapper`), confirmação de leitura de
+  bandeira presa a um regex específico, timeline do `/empire` só lendo o
+  sistema de conquista errado (bárbara, desativado, em vez de PvP), e
+  tooltip do mapa de calor do `/empire` desalinhado por mismatch de escala
+  do canvas. Lacunas que sobraram dessa validação estão listadas acima
+  (detecção de trem falhado, conquista bárbara não respeitando reserva,
+  sobrecomprometimento entre múltiplos alvos simultâneos). Ver Feature 18
+  acima para o refinamento de moral/night bonus no simulador usado por essa
+  feature (ainda não validado separadamente).
 - Comparação de mecânicas reais do jogo vs. cobertura do bot — ver
   `docs/game_comparison.md` (pesquisa feita em 2026-08-02) para o raciocínio
   completo por trás das Features 18-22 acima, incluindo itens avaliados e

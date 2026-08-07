@@ -281,6 +281,14 @@ def get_conquest():
             elif action == 'manual_cancel':
                 ConquestReader.cancel_manual(request.form.get('target_id', ''))
                 return redirect(url_for('get_conquest'))
+            elif action == 'force_clear':
+                # Feature (2026-08-07): limpa o cache de um alvo em qualquer
+                # status (train_sent/extra_pending/complete incluídos) -- para
+                # quando o usuário cancelou o noble train manualmente no jogo
+                # e o cache/conquest/{id}.json ficaria "reservado" para
+                # sempre sem essa opção. Ver ConquestReader.force_clear().
+                ConquestReader.force_clear(request.form.get('target_id', ''))
+                return redirect(url_for('get_conquest'))
         except ValueError as e:
             error = str(e)
     targets = ConquestReader.load()
@@ -489,6 +497,10 @@ def get_empire():
     }
 
     conquest_targets = ConquestReader.load()
+    # Bugfix (2026-08-07): merge in PvP Conquest (Feature 13, the system
+    # actually enabled/used) alongside barbarian conquest (Feature 8, usually
+    # disabled) -- see EmpireReader.conquest_timeline() docstring.
+    pvp_targets = PvpConquestReader.load()
 
     return render_template(
         'empire.html',
@@ -497,7 +509,7 @@ def get_empire():
         troop_totals=EmpireReader.troop_totals(managed),
         resources=EmpireReader.resources_by_village(managed),
         heatmap=EmpireReader.farm_heatmap(data["attacks"], data["villages"], managed),
-        timeline=EmpireReader.conquest_timeline(conquest_targets),
+        timeline=EmpireReader.conquest_timeline(conquest_targets, pvp_targets, data["villages"]),
     )
 
 

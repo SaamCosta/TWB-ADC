@@ -620,10 +620,31 @@ class ConquestManager:
         Scoring for fill_gaps priority (default):
         Combines distance from attacker and centrality to empire.
         Lower = more desirable.
+
+        Bugfix (2026-08-07): the 60/30/10 weights below used to apply
+        directly to raw values -- distance in tiles (0..max_radius, so 0..20
+        by default) and points (0..max_points, so 0..1100 by default).
+        Those two ranges differ by ~2 orders of magnitude, so the "10%
+        points" term (pts * 0.1, up to 110) completely swamped the "60%
+        centrality" + "30% distance" terms (up to ~18 combined) -- in
+        practice this always picked the highest-points barbarian in range,
+        basically ignoring distance/gap-filling entirely (confirmed live:
+        picked a target 11.2 tiles away over one 1.4 tiles away purely
+        because it had ~3x the points). Fixed by normalizing distance and
+        points to comparable 0..1 scales (relative to max_radius/max_points)
+        before applying the weights, so the stated 60/30/10 split actually
+        holds regardless of the configured radius/points range.
         """
         priority = cfg.get("priority", "fill_gaps")
         pts = village.get("points", 1)
         loc = village["location"]
+
+        max_radius = max(1, min(cfg.get("max_radius", 20), self.MAX_RADIUS))
+        max_pts = max(1, cfg.get("max_points", 3000))
+        # Higher points = more desirable, so this is subtracted below;
+        # capped at 1.0 in case a village exceeds max_points somehow.
+        pts_factor = min(1.0, pts / max_pts)
+        dist_norm = min(1.0, dist / max_radius)
 
         if priority == "fill_gaps" and my_locations:
             # Average distance from ALL managed villages → lower means more central
@@ -631,11 +652,12 @@ class ConquestManager:
                 ((loc[0] - lx) ** 2 + (loc[1] - ly) ** 2) ** 0.5
                 for lx, ly in my_locations
             ) / len(my_locations)
+            avg_dist_norm = min(1.0, avg_dist_to_empire / max_radius)
             # Blend: centrality 60%, attacker distance 30%, inverse points 10%
-            score = (avg_dist_to_empire * 0.6) + (dist * 0.3) - (pts * 0.1)
+            score = (avg_dist_norm * 0.6) + (dist_norm * 0.3) - (pts_factor * 0.1)
         else:
             # Simple: closer and higher points wins
-            score = dist - (pts * 0.1)
+            score = dist_norm - (pts_factor * 0.1)
 
         return score
 
@@ -911,17 +933,28 @@ class ConquestManager:
         Proof-of-conquest: checks if target_id now appears in cache/villages/
         with owner matching our player_id.
         Returns True if confirmed ours, False otherwise.
+
+        Bugfix (2026-08-07): used to read self.wrapper.player_id /
+        self.wrapper.game_state, but WebWrapper never actually sets either --
+        those attributes only exist on per-village objects (Village.game_data,
+        BuildingManager.game_state), never on the shared session wrapper. The
+        hasattr() check was always False and the game_state fallback always
+        raised AttributeError, so this always returned False, silently. Fixed
+        by reading the owner id from cache/villages/{self.village_id}.json --
+        self.village_id is always one of our own managed villages, so its
+        cached "owner" field IS our player_id, no wrapper plumbing needed.
+        Mirrors the equivalent fix in
+        PvpConquestManager._own_player_id() (game/pvp_conquest.py).
         """
         data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
         if not data:
             return False
-        player_id = str(self.wrapper.player_id) if hasattr(self.wrapper, "player_id") else None
-        if not player_id:
-            # Fallback: check game_state on wrapper if available
-            try:
-                player_id = str(self.wrapper.game_state["player"]["id"])
-            except (AttributeError, KeyError, TypeError):
-                return False
+        own_data = FileManager.load_json_file(f"cache/villages/{self.village_id}.json")
+        if not own_data:
+            return False
+        player_id = str(own_data.get("owner", "0"))
+        if player_id == "0":
+            return False
         owner = str(data.get("owner", "0"))
         return owner == player_id and owner != "0"
 

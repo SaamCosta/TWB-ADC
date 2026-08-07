@@ -149,7 +149,7 @@
                   <small class="text-muted text-nowrap">{{ t.last_hit_fmt if t.last_hit_ts else t.queued_at_fmt }}</small>
                 </div>
                 {% if t.status not in ('manual', 'invalid') %}
-                <small class="d-block mt-1">Nobles: {{ t.hits_done }}/{{ t.hits_needed }} · Lealdade: {{ t.loyalty_now }}%</small>
+                <small class="d-block mt-1">Nobles: {{ t.hits_done }}/{{ t.hits_needed }}{% if t.loyalty_now != '—' %} · Lealdade: {{ t.loyalty_now }}%{% endif %}</small>
                 {% endif %}
                 {% if t.reserved_by and t.reserved_by != '—' %}
                 <small class="d-block text-muted">Reservada por
@@ -163,6 +163,7 @@
           {% else %}
           <small class="text-muted">
             Nenhum evento de conquista registrado ainda — ver <a href="/conquest">/conquest</a>
+            (bárbara) ou <a href="/pvp_conquest">/pvp_conquest</a> (PvP)
             para configurar/acompanhar alvos.
           </small>
           {% endif %}
@@ -244,9 +245,22 @@
   draw();
 
   canvas.addEventListener('mousemove', function (e) {
+    // Bugfix (2026-08-07): canvas.width/height (the internal bitmap coordinate
+    // space toPx() draws into) were being compared directly against
+    // getBoundingClientRect() (the CSS-rendered size), assuming they're
+    // always identical. They aren't: the CSS `width:100%` on the canvas lets
+    // the browser stretch/shrink the rendered element on any layout change
+    // (window resize, zoom, sidebar toggle...) after this script already
+    // fixed W/H at page load, so mouse position and marker position drift
+    // apart -- the tooltip would trigger for a dot far from the cursor.
+    // Standard fix: scale clientX/Y by the ratio of internal-to-rendered
+    // size before comparing to toPx() coordinates, same as any canvas
+    // hit-testing code has to do.
     var rect = canvas.getBoundingClientRect();
-    var mx = e.clientX - rect.left;
-    var my = e.clientY - rect.top;
+    var scaleX = canvas.width / rect.width;
+    var scaleY = canvas.height / rect.height;
+    var mx = (e.clientX - rect.left) * scaleX;
+    var my = (e.clientY - rect.top) * scaleY;
     var hit = null;
     var hitDist = 8;
     all.forEach(function (p) {

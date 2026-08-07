@@ -485,6 +485,31 @@ class TWB:
                     config = self.merge_configs(config, new_cf)
                     FileManager.save_json_file(config, "config.json")
                     print("Deployed new configuration file")
+
+                # Bugfix (2026-08-07): self.villages used to be built exactly
+                # once, right before this while loop starts (see the
+                # `for vid in config["villages"]` block above `while
+                # self.should_run:`). But get_overview() -> add_village()
+                # (bot.add_new_villages=true) writes newly-conquered/newly-
+                # found villages straight to config.json on every single
+                # cycle, including mid-run ones like a village that just got
+                # conquered by PvpConquestManager/ConquestManager. Without
+                # this sync, a freshly-added village_id sits in config.json
+                # forever but never gets a Village object appended to
+                # self.villages, so `processing_order = list(self.villages)`
+                # below never contains it and it's never actually managed
+                # (no building, no troops, no farm) until the bot process is
+                # manually restarted. Mirrors the exact Village(...) +
+                # copy.deepcopy(v) construction used in the startup loop.
+                existing_vids = {v.village_id for v in self.villages}
+                for vid in config["villages"]:
+                    if vid not in existing_vids:
+                        new_village = Village(wrapper=self.wrapper, village_id=vid)
+                        self.villages.append(copy.deepcopy(new_village))
+                        logging.info(
+                            "Village %s added to config mid-run, now included in processing", vid
+                        )
+
                 # Feature 23: numbering used only for auto_set_village_names templating
                 # is computed once from the original config order, independent of the
                 # order villages are actually processed in below. This lets processing

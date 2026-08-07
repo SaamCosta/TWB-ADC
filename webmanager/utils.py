@@ -724,6 +724,26 @@ class ConquestReader:
             )
         os.remove(path)
 
+    @staticmethod
+    def force_clear(target_id):
+        """
+        Feature (2026-08-07): apaga cache/conquest/{id}.json independente do
+        status -- diferente de cancel_manual() (que só cobre "manual"/
+        "invalid" de propósito, pra não perder o rastreio de nobles
+        realmente em rota). Este método existe pro caso oposto: o usuário
+        cancelou o noble train manualmente *no jogo* (fora do bot), então o
+        cache já está desatualizado e a validação de cancel_manual bloquearia
+        exatamente a limpeza que faz sentido aqui. Sem essa opção, o alvo
+        ficava "reservado" pra sempre em ConquestCache.all_reserved()
+        (game/attack.py::ConquestManager.find_target()), nunca mais
+        reavaliado automaticamente. Não tenta desfazer nada no jogo -- só
+        remove o registro de acompanhamento do bot.
+        """
+        target_id = (target_id or "").strip()
+        path = os.path.join(ConquestReader._conquest_dir(), "%s.json" % target_id)
+        if os.path.exists(path):
+            os.remove(path)
+
 
 class HunterReader:
     """
@@ -1086,21 +1106,87 @@ class EmpireReader:
 
         return {"points": points, "own": own, "max_count": max_count}
 
+    PVP_STATUS_LABEL_PREFIX = {
+        "pending_scout": "PvP: Aguardando Scout",
+        "pending_sim":   "PvP: Aguardando Simulação",
+        "scheduled":     "PvP: Agendado",
+        "complete":      "PvP: Conquistado",
+        "failed":        "PvP: Falhou",
+    }
+
     @staticmethod
-    def conquest_timeline(conquest_targets, limit=30):
+    def pvp_conquest_timeline_entries(pvp_targets, villages):
         """
-        Reordena a lista já processada por ConquestReader.load() em ordem
-        cronológica (evento mais recente primeiro) para exibir como linha
-        do tempo — usa last_hit_ts (progresso real do noble train) quando
-        disponível, senão queued_at (alvo manual ainda não reivindicado,
-        Feature 15). Entradas sem nenhum timestamp (não deveria acontecer,
-        mas por segurança) ficam de fora da timeline.
+        Bugfix (2026-08-07): the /empire timeline widget only ever read
+        ConquestReader.load() (cache/conquest -- barbarian conquest,
+        Feature 8), which stays empty forever on this project's config
+        (conquest.enabled=false). PvP Conquest (Feature 13) is the system
+        actually used, and it had a real, confirmed conquest (target 38409,
+        validated live) that never showed up here -- the widget's empty-state
+        even pointed at "/conquest", the wrong/unused page. This normalizes
+        PvpConquestReader.load() output into the same shape ConquestReader
+        entries use, so conquest_timeline() below can merge both.
+
+        villages: dict {village_id: cache/villages/{id}.json content} (same
+        shape sync() already loads for farm_heatmap) -- used for target
+        name/points/coords, since PvpConquestReader doesn't carry those.
+        """
+        out = []
+        for t in (pvp_targets or []):
+            vdata = (villages or {}).get(t["target_id"]) or {}
+            location = vdata.get("location")
+            location_str = ("%d|%d" % tuple(location)) if location else "—"
+
+            # Best single representative timestamp for sort/display order:
+            # prefer the most advanced milestone actually reached so far.
+            event_ts = t.get("completed_at") or t.get("scheduled_at") or 0
+            event_fmt = "—"
+            if event_ts:
+                try:
+                    event_fmt = datetime.datetime.fromtimestamp(event_ts).strftime("%d/%m %H:%M")
+                except (OSError, OverflowError, ValueError):
+                    pass
+
+            noble_count = len(t.get("noble_villages") or [])
+            status = t["status"]
+
+            out.append({
+                "target_id":      t["target_id"],
+                "target_name":    t.get("target_name") or vdata.get("name") or ("Aldeia %s" % t["target_id"]),
+                "target_points":  vdata.get("points", "?"),
+                "location_str":   location_str,
+                "reserved_by":    t.get("clear_village_id") or "—",
+                "status":         status,
+                "status_label":   EmpireReader.PVP_STATUS_LABEL_PREFIX.get(status, "PvP: %s" % status),
+                "status_color":   t.get("status_color", "secondary"),
+                "hits_done":      noble_count if status == "complete" else 0,
+                "hits_needed":    noble_count or "?",
+                "loyalty_now":    "—",
+                "last_hit_ts":    event_ts,
+                "last_hit_fmt":   event_fmt,
+                "queued_at":      None,
+                "queued_at_fmt":  None,
+            })
+        return out
+
+    @staticmethod
+    def conquest_timeline(conquest_targets, pvp_targets=None, villages=None, limit=30):
+        """
+        Reordena a lista já processada por ConquestReader.load() (bárbaro,
+        Feature 8) e, agora, também PvpConquestReader.load() normalizado via
+        pvp_conquest_timeline_entries() (PvP, Feature 13 -- o sistema
+        realmente usado neste projeto), em ordem cronológica (evento mais
+        recente primeiro) — usa last_hit_ts (progresso real do noble train)
+        quando disponível, senão queued_at (alvo manual bárbaro ainda não
+        reivindicado, Feature 15). Entradas sem nenhum timestamp (não deveria
+        acontecer, mas por segurança) ficam de fora da timeline.
         """
         def event_ts(t):
             return t.get("last_hit_ts") or t.get("queued_at") or 0
 
+        merged = list(conquest_targets or []) + EmpireReader.pvp_conquest_timeline_entries(pvp_targets, villages)
         ordered = sorted(
-            (t for t in (conquest_targets or []) if event_ts(t) > 0),
+            (t for t in merged if event_ts(t) > 0),
             key=event_ts, reverse=True,
         )
         return ordered[:limit]
@@ -1204,6 +1290,12 @@ class PvpConquestReader:
                 "fail_reason_label":   PvpConquestReader.FAIL_REASON_LABELS.get(
                                            data.get("fail_reason", ""), data.get("fail_reason", "")
                                        ),
+                # Passthrough for EmpireReader.pvp_conquest_timeline_entries()
+                # (Feature 17 /empire timeline) -- these aren't otherwise
+                # shown on the /pvp_conquest page itself, only used to pick a
+                # single representative event timestamp for the timeline.
+                "scheduled_at":        data.get("scheduled_at"),
+                "completed_at":        data.get("completed_at"),
             })
 
         order = {"pending_scout": 0, "pending_sim": 1, "scheduled": 2, "failed": 3, "complete": 4}
