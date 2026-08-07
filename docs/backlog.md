@@ -674,6 +674,103 @@ por chamada e montar o POST em lote em vez de N chamadas sequenciais.
 de 1 ataque simultâneo agendado pro mesmo `arrival_time` (hoje, só o trem de
 nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
 
+## Feature 27 — `ConquestManager` (bárbara) respeitar reserva cruzada de tropas
+
+**Status: plano escrito, pronto pra implementar — não escopado ainda em
+código.** Recomendado como próxima tarefa em 2026-08-07 (ver conversa/sessão
+do mesmo dia) por ser a pendência mais urgente das já mapeadas: bem
+escopada (uma função, dois arquivos) e, diferente das Features 24-26, não
+precisa de mais desenho/decisão de jogo antes de começar.
+
+**Problema:** `ConquestManager._build_escort()` (`game/attack.py`, função
+em torno da linha 862) monta a escolta lendo `self.troopmanager.troops.items()`
+**bruto**, sem descontar `TroopManager.total_conquest_reserve()` — diferente
+de `AttackManager._get_farmable_troops()` (mesmo arquivo, linhas ~71-87),
+que já faz isso corretamente pro farm. Isso significa que a conquista
+bárbara pode comprometer tropa que o PvP Conquest já reservou (chave
+`"pvp:{target_id}"`, ver `game/pvp_conquest.py::_reserve_troops()`) —
+mesma categoria de bug do incidente real do clear em `38409`
+(`docs/features_log.md`, 2026-08-07), só que entre dois sistemas
+diferentes reivindicando a mesma tropa em vez de dentro de um só.
+
+**Por que é urgente agora:** até esta sessão isso era teórico, porque
+`conquest.enabled: false`. O usuário ligou a conquista bárbara enquanto o
+PvP Conquest também está ativo nas mesmas 2 aldeias geridas — os dois
+sistemas competem pela mesma tropa de verdade a partir de agora.
+
+**⚠️ Armadilha de auto-bloqueio a evitar:** `total_conquest_reserve()`
+soma **todas** as chaves de `conquest_reserve`, incluindo a própria
+`"barbarian_conquest"` que este mesmo manager usa (setada em `run()`,
+linha ~550, quando a escolta ainda está insuficiente, pra impedir
+farm/gather de gastar essa tropa enquanto ela se acumula ciclo a ciclo).
+Se `_build_escort()` simplesmente subtrair `total_conquest_reserve()` sem
+excluir a própria reserva, ele se auto-bloqueia: reserva setada → próximo
+ciclo, tropa disponível já sai reduzida por essa mesma reserva → escolta
+parece insuficiente de novo → reserva nunca é liberada, mesmo quando a
+tropa real já seria suficiente. **A própria chave `"barbarian_conquest"`
+precisa ser excluída do cálculo.**
+
+**Plano de implementação:**
+
+1. `game/troopmanager.py::TroopManager.total_conquest_reserve()` (linha
+   ~102) — adicionar parâmetro opcional `exclude_owner=None`, mudança
+   aditiva/compatível (chamadas existentes sem argumento continuam iguais):
+   ```python
+   def total_conquest_reserve(self, exclude_owner=None):
+       total = {}
+       for owner_key, reservation in self.conquest_reserve.items():
+           if owner_key == exclude_owner:
+               continue
+           for unit, qty in reservation.items():
+               total[unit] = total.get(unit, 0) + int(qty)
+       return total
+   ```
+
+2. `game/attack.py::ConquestManager._build_escort()` (bloco `available = {...}`,
+   linhas ~879-883) — descontar a reserva de **outros** donos:
+   ```python
+   reserve = self.troopmanager.total_conquest_reserve(
+       exclude_owner="barbarian_conquest"
+   ) if hasattr(self.troopmanager, "total_conquest_reserve") else {}
+   available = {
+       unit: max(0, int(qty) - reserve.get(unit, 0))
+       for unit, qty in self.troopmanager.troops.items()
+       if unit not in self.EXCLUDED_UNITS and int(qty) > 0
+   }
+   ```
+
+3. **Bônus, achado ao mapear este plano (mesma função, escopo mínimo pra
+   incluir junto):** `EXCLUDED_UNITS = {"spy"}` (linha ~490) não exclui
+   `"knight"` — a conquista bárbara pode incluir o Paladino na escolta,
+   violando a mesma regra já aplicada ao PvP Conquest em 2026-08-07 ("o
+   Paladino nunca deve sair da aldeia sozinho", ver `docs/features_log.md`).
+   Trocar para `EXCLUDED_UNITS = {"spy", "knight"}`.
+
+**Teste antes de considerar pronto** (isolado, sem rede — mesmo padrão dos
+`_test_*.py` temporários já usados nesta sessão, criar e deletar depois):
+- (a) `conquest_reserve` com uma chave `"pvp:X"` populada + tropas no
+  village → confirmar que `_build_escort()` desconta corretamente dessa
+  chave.
+- (b) `conquest_reserve` com a própria `"barbarian_conquest"` já setada
+  (simulando um ciclo anterior com escolta insuficiente) → confirmar que
+  ela **não** é descontada de si mesma (a fórmula não pode travar).
+- (c) confirmar que `knight` nunca aparece em `per_attack` mesmo com
+  `knight` disponível no village.
+
+**Arquivos tocados:** `game/troopmanager.py`, `game/attack.py`. Nenhuma
+mudança de config necessária (`build.version` não precisa bump).
+
+**Risco:** mexe em `ConquestManager`/tropas reais — CLAUDE.md pede revisão
+extra cautelosa nesses módulos. Escopo é pequeno e isolado (uma função),
+mas testar isolado (item acima) antes de rodar contra o jogo de verdade, e
+reiniciar o bot pra pegar o código novo (mesma mecânica de sempre — processo
+já rodando mantém o código antigo em memória).
+
+**Segunda opção, se preferir não fazer esta agora:** "PvP Conquest não
+detecta trem de nobres que falhou" (bullet acima, já detalhado) — também
+bem escopada, mas menos urgente porque não tem risco de "roubar" tropa de
+outro sistema, só falta de retry/sinalização de erro.
+
 ---
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
@@ -695,22 +792,12 @@ nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
   tivesse, o alvo teria ficado `"scheduled"` indefinidamente sem qualquer
   sinal de que precisa de intervenção manual.
 - **`ConquestManager` (conquista bárbara, Feature 8) não respeita
-  `TroopManager.total_conquest_reserve()`** — `_build_escort()`
-  (`game/attack.py`) calcula `available` direto de
-  `self.troopmanager.troops`, sem subtrair nenhuma reserva de outro dono
-  (ex: `"pvp:{target_id}"` do PvP Conquest). A reserva aditiva por dono
-  (implementada em 2026-08-06/07, ver `docs/features_log.md`) protege
-  contra o farm (`AttackManager._get_farmable_troops()`) e o gather
-  (`TroopManager.gather()`) roubarem tropa reservada, mas **não** protege
-  contra a própria conquista bárbara fazer isso — ela só gerencia sua
-  própria chave `"barbarian_conquest"` (grava/limpa), nunca lê o total
-  agregado de outros donos antes de decidir quanto escoltar. Hoje é
-  inofensivo porque `conquest.enabled: false` no ambiente atual, mas é uma
-  lacuna real: se a conquista bárbara for ligada enquanto um alvo de PvP
-  Conquest tem tropa reservada, ela pode gastar exatamente a tropa que o
-  PvP Conquest está esperando pra disparar depois — o mesmo tipo de bug
-  que causou a falha do clear em 38409, só que entre sistemas diferentes
-  em vez de dentro do próprio PvP Conquest.
+  `TroopManager.total_conquest_reserve()`** — plano de implementação
+  completo escrito em **Feature 27**, logo abaixo. **Prioridade atual: a
+  próxima coisa pronta pra implementar** (2026-08-07) — deixou de ser
+  teórica porque o usuário ligou `conquest.enabled: true` nesta sessão
+  enquanto o PvP Conquest também está ativo nas mesmas aldeias, então os
+  dois sistemas competem pela mesma tropa de verdade agora.
 - **Sobrecomprometimento de tropa entre clear e escolta de nobre — só
   corrigido para 1 alvo por vez.** O fix de 2026-08-07 em
   `_step_simulate()` (`game/pvp_conquest.py`) subtrai `attacker_units` do
