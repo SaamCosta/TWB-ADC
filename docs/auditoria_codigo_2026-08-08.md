@@ -980,17 +980,20 @@ cache/pvp_conquest: 1 arquivo    (38409 — "complete")
 Critério: impacto × esforço. Os quatro primeiros são todos correções de
 poucas linhas com alto retorno.
 
-### Lote 1 — estado compartilhado (risco de ban / dados cruzados)
-1. **P0-1** `self.villages = []` em `TWB.__init__` — 1 linha.
-2. **P0-2** `self.actual = {}` / `self.requested = {}` em
+> **Progresso (2026-08-08):** Lotes 1 e 2 implementados e pushados. Os demais
+> lotes seguem abertos. Ver as notas de implementação no fim deste documento.
+
+### Lote 1 — estado compartilhado (risco de ban / dados cruzados) ✅
+1. ✅ **P0-1** `self.villages = []` em `TWB.__init__` — 1 linha.
+2. ✅ **P0-2** `self.actual = {}` / `self.requested = {}` em
    `ResourceManager.__init__` — 2 linhas.
    ⚠️ Vai ativar a Feature 9 de verdade; revisar P2-27 junto.
-3. **P1-15** `self.villages = {}` / `self.map_pos = {}` em `Map.__init__`.
-4. **`DefenceManager.supported`** (Bug 3 de `bugs_flags.md`) — mesma classe de
+3. ✅ **P1-15** `self.villages = {}` / `self.map_pos = {}` em `Map.__init__`.
+4. ✅ **`DefenceManager.supported`** (Bug 3 de `bugs_flags.md`) — mesma classe de
    problema, aproveitar o lote.
 
-### Lote 2 — integridade de dados
-5. **P0-4** parar de `os.remove` no webmanager + escrita atômica no
+### Lote 2 — integridade de dados ✅
+5. ✅ **P0-4** parar de `os.remove` no webmanager + escrita atômica no
    `FileManager`.
 
 ### Lote 3 — features ressuscitadas (one-liners)
@@ -1043,6 +1046,61 @@ campo ou de uma sessão logada:
   `send_resources` ([`resources.py:576`](../game/resources.py)) nunca foram
   validados contra uma resposta real, e como o retorno é ignorado (P1-16),
   não há como saber se algum envio já funcionou.
+
+---
+
+---
+
+# Notas de implementação (2026-08-08)
+
+Registrado aqui o que só apareceu ao corrigir, não ao diagnosticar.
+
+## Lote 1 — nada além do previsto
+
+As quatro correções saíram como descrito. Aproveitando o mesmo lote, também
+foram movidos para `__init__` os demais mutáveis de classe do
+`DefenceManager` (`attacks`, `flags`, `current_flag`, `my_other_villages`) —
+mesma categoria, custo zero. Validado com teste de isolamento temporário
+(duas instâncias por classe, mutando uma e conferindo a outra).
+
+**Consequência assumida:** o fix do P0-2 faz `required_resources` refletir
+necessidade real por aldeia pela primeira vez, o que ativaria a Feature 9.
+Como P2-27 (prioridade por `last_run`) e P1-16 (`send_resources` sempre
+`True`) continuam abertos, `resource_sharing.enabled` foi posto em `false`
+no `config.json` local. **Religar só depois de corrigir os dois.**
+
+## Lote 2 — a escrita atômica não é de graça no Windows
+
+O diagnóstico propunha `os.replace(tmp, path)`. Implementado às cegas, isso
+teria introduzido um **crash novo**: no Windows `os.replace` levanta
+`PermissionError` (WinError 5) enquanto qualquer processo tiver o destino
+aberto, porque o `open()` do Python não usa `FILE_SHARE_DELETE`. Como o
+webmanager relê o cache inteiro a cada request, a colisão acontece de fato —
+reproduzida em teste na primeira tentativa.
+
+Três ajustes foram necessários além do plano original:
+
+1. **Retry com backoff** no `os.replace` (o handle do leitor é efêmero:
+   `open` → `json.load` → `close`).
+2. **Fallback para escrita in-place** se a contenção persistir, com log de
+   `WARNING`. Trocar uma corrida de leitura por um crash do bot seria pior
+   que o bug original. No caminho degradado o truncamento volta a ser
+   possível — coberto pela Frente 1, que agora pula em vez de apagar.
+3. **`open()` movido para dentro do `try`** em `cache_grab`, com ramo
+   `OSError` próprio. Sem isso o `PermissionError` transitório derrubaria a
+   request inteira do webmanager — a correção teria trocado um modo de falha
+   por outro.
+
+**Trade-off registrado:** antes, um leitor concorrente via JSON truncado;
+agora vê ocasionalmente um `open()` negado. Os leitores do webmanager que
+varrem diretório por request já envolvem o `open()` em `try/except`, então
+absorvem isso. Quatro pontos não guardados (`ConquestReader._resolve_identifier`,
+`add_manual_target`, `cancel_manual`, `PvpConquestReader.set_clear_village`)
+são ações de formulário do usuário, não caminho quente.
+
+**Não coberto:** `twb.py:303` grava `config.json` com `json.dump` direto, sem
+passar pelo `FileManager` — logo, ainda não é atômico. Corrupção de config é
+mais grave que a de cache; candidato natural ao próximo lote.
 
 ---
 
