@@ -486,8 +486,19 @@ class ConquestManager:
     """
     TRAIN_SIZE = 4
     MAX_RADIUS = 100
-    # Units never sent as escort
-    EXCLUDED_UNITS = {"spy"}
+    # Units never used as escort filler.
+    # knight (Paladino): there is only ever one per village and it must never
+    # leave on its own -- same rule already enforced for the PvP conquest in
+    # 2026-08-07 (see docs/features_log.md). Without it here, the barbarian
+    # train could ship the Paladino out as escort filler.
+    # snob: it is the train's payload, not escort -- _send_train sets
+    # troops["snob"] = 1 explicitly per attack, overwriting whatever the
+    # escort calculation produced. Leaving snob in the escort pool only
+    # inflated total_per_attack against min_escort_total, so a train could be
+    # judged "escorted enough" on the back of nobles that were never actually
+    # sent as escort. Noble availability is gated separately, by
+    # _available_nobles().
+    EXCLUDED_UNITS = {"spy", "knight", "snob"}
 
     def __init__(self, wrapper, village_id, troopmanager, map_obj, config, repman=None):
         self.wrapper = wrapper
@@ -517,8 +528,9 @@ class ConquestManager:
         if not cfg.get("enabled", False):
             return False
 
-        # Need exactly TRAIN_SIZE nobles available
-        available_nobles = int(self.troopmanager.troops.get("snob", 0))
+        # Need exactly TRAIN_SIZE nobles available, not counting nobles another
+        # conquest system already has scheduled (Feature 27)
+        available_nobles = self._available_nobles()
         if available_nobles < self.TRAIN_SIZE:
             self.logger.info(
                 "Conquest: %d/%d nobles available, waiting for full train",
@@ -818,6 +830,60 @@ class ConquestManager:
 
         return hits_sent > 0
 
+    def _available_troops(self):
+        """
+        Feature 27: troops in this village genuinely free for the barbarian
+        conquest -- total, minus EXCLUDED_UNITS, minus every reservation owned
+        by *another* system (today: the PvP conquest's "pvp:{target_id}" keys,
+        set by PvpConquestManager._reserve_troops).
+
+        Before this, _build_escort/_calculate_needed_escort read
+        troopmanager.troops raw, so the barbarian train could commit troops the
+        PvP conquest had already earmarked for a scheduled clear or noble
+        escort -- the same double-booking class of bug as the 38409 incident
+        (docs/features_log.md, 2026-08-07), but across two systems instead of
+        within one.
+
+        Our own "barbarian_conquest" key is deliberately NOT subtracted. run()
+        sets it while the escort is still too small, precisely to stop
+        farm/gather from spending the troops being accumulated. Subtracting it
+        here would make this manager block itself: reserve set -> next cycle
+        sees less available -> escort still looks insufficient -> reserve never
+        released, even once the real troop count would suffice.
+        """
+        reserve = self.troopmanager.total_conquest_reserve(
+            exclude_owner="barbarian_conquest"
+        ) if hasattr(self.troopmanager, "total_conquest_reserve") else {}
+
+        available = {}
+        for unit, qty in self.troopmanager.troops.items():
+            if unit in self.EXCLUDED_UNITS:
+                continue
+            free = int(qty) - reserve.get(unit, 0)
+            if free > 0:
+                available[unit] = free
+        return available
+
+    def _available_nobles(self):
+        """
+        Feature 27: nobles in this village not already committed to another
+        conquest system. PvpConquestManager reserves one snob per scheduled
+        noble attack (game/pvp_conquest.py, troops["snob"] = 1 -> reserved
+        under "pvp:{target_id}"), and those nobles may sit at home for hours
+        while Hunter waits to synchronise arrival times.
+
+        Reading troops["snob"] raw counted them as available, so the barbarian
+        conquest could decide it had a full train and fire, consuming nobles a
+        scheduled PvP train was relying on. Nobles are the most expensive unit
+        in the game, which makes this the costliest instance of the
+        double-booking bug this feature exists to fix.
+        """
+        reserve = self.troopmanager.total_conquest_reserve(
+            exclude_owner="barbarian_conquest"
+        ) if hasattr(self.troopmanager, "total_conquest_reserve") else {}
+        total = int(self.troopmanager.troops.get("snob", 0))
+        return max(0, total - reserve.get("snob", 0))
+
     def _calculate_needed_escort(self, cfg):
         """
         Feature 8: Calculates how many troops need to be kept home (reserved)
@@ -841,32 +907,34 @@ class ConquestManager:
         # → available ≥ (min_total × TRAIN_SIZE) / ratio
         needed_total = math.ceil((min_total * self.TRAIN_SIZE) / ratio) if ratio > 0 else 0
 
-        available_units = [
-            unit for unit, qty in self.troopmanager.troops.items()
-            if unit not in self.EXCLUDED_UNITS and int(qty) > 0
-        ]
+        # Net of other systems' reservations (Feature 27): reserving troops the
+        # PvP conquest already claimed would make the two reservations sum to
+        # more than the village actually has, starving farm/gather of troops
+        # that only exist on paper.
+        available = self._available_troops()
 
-        if not available_units:
+        if not available:
             return {}
 
         # Distribute the needed total evenly across available unit types
-        per_unit = math.ceil(needed_total / len(available_units))
+        per_unit = math.ceil(needed_total / len(available))
         reserve = {}
-        for unit in available_units:
-            current = int(self.troopmanager.troops.get(unit, 0))
-            # Only reserve up to what's actually present (no phantom reserve)
-            reserve[unit] = min(per_unit, current)
+        for unit, free in available.items():
+            # Only reserve up to what's actually free (no phantom reserve)
+            reserve[unit] = min(per_unit, free)
 
         return reserve
 
     def _build_escort(self, cfg):
         """
-        Calculates per-attack escort by dividing available troops (excl. spy)
-        across TRAIN_SIZE attacks using escort_ratio.
+        Calculates per-attack escort by dividing available troops across
+        TRAIN_SIZE attacks using escort_ratio.
         Returns dict of {unit: qty_per_attack} or None if below minimum.
 
         Accepts any combat troop type (spear, sword, archer, axe, light, heavy, ram).
-        Only spy is excluded. Works for both offensive and defensive village profiles.
+        spy, knight and snob are excluded (see EXCLUDED_UNITS), as are troops
+        reserved by another conquest system (see _available_troops).
+        Works for both offensive and defensive village profiles.
 
         Minimum escort is validated two ways:
         - min_escort: per-unit minimums (optional, e.g. {"heavy": 20})
@@ -876,11 +944,10 @@ class ConquestManager:
         min_escort = cfg.get("min_escort", {})
         min_escort_total = cfg.get("min_escort_total", 50)
 
-        available = {
-            unit: int(qty)
-            for unit, qty in self.troopmanager.troops.items()
-            if unit not in self.EXCLUDED_UNITS and int(qty) > 0
-        }
+        # Feature 27: net of troops another system already reserved, so the
+        # barbarian train never commits troops a scheduled PvP clear/escort is
+        # counting on.
+        available = self._available_troops()
 
         # Total troops to commit across all 4 attacks
         committed = {
@@ -1050,7 +1117,7 @@ class ConquestManager:
             target_id, current_loyalty
         )
 
-        available_nobles = int(self.troopmanager.troops.get("snob", 0))
+        available_nobles = self._available_nobles()
         if available_nobles < 1:
             self.logger.info("Conquest: no noble available for extra hit, waiting")
             return False

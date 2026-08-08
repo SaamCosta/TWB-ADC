@@ -99,16 +99,24 @@ class TroopManager:
                 wrapper=self.wrapper, village_id=self.village_id
             )
 
-    def total_conquest_reserve(self):
+    def total_conquest_reserve(self, exclude_owner=None):
         """
         Sums conquest_reserve across every owner_key into a single
         {unit: qty} dict. This is what farm/gather should actually subtract
         -- multiple independent reservations (e.g. a barbarian noble train
         AND a PvP conquest escort from the same village at the same time)
         must stack, not overwrite each other.
+
+        exclude_owner skips one owner_key. It exists so a reserving system can
+        ask "how much is spoken for by everyone *else*" without counting its
+        own reservation -- otherwise it blocks itself (see
+        ConquestManager._available_troops). Callers that just want to know what
+        is off-limits (farm, gather) pass nothing and get the full total.
         """
         total = {}
-        for reservation in self.conquest_reserve.values():
+        for owner_key, reservation in self.conquest_reserve.items():
+            if exclude_owner is not None and owner_key == exclude_owner:
+                continue
             for unit, qty in reservation.items():
                 total[unit] = total.get(unit, 0) + int(qty)
         return total
