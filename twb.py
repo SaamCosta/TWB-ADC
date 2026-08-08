@@ -723,12 +723,34 @@ def main():
         try:
             t.start()
         except Exception as e:
-            t.wrapper.reporter.report(0, "TWB_EXCEPTION", str(e))
+            # A causa raiz é impressa ANTES de qualquer tentativa de reportar:
+            # se o próprio handler falhar, o traceback original não se perde.
             print("I crashed :(   %s" % str(e))
-            Notification.send("TWB crashed: %s" % str(e))
             traceback.print_exc()
 
-    Notification.send("TWB has crashed 3 times, exiting")
+            # t.wrapper só existe depois de config() e internet_online(), então
+            # qualquer falha antes disso (config.json corrompido, sem rede,
+            # erro em manual_config) deixava t.wrapper=None e o report abaixo
+            # levantava AttributeError DENTRO do except -- derrubando o loop
+            # de 3 tentativas e mascarando a exceção real.
+            # Ver P0-3 em docs/auditoria_codigo_2026-08-08.md
+            try:
+                if t.wrapper is not None and getattr(t.wrapper, "reporter", None):
+                    t.wrapper.reporter.report(0, "TWB_EXCEPTION", str(e))
+            except Exception as report_error:
+                print("Could not report the crash: %s" % str(report_error))
+
+            # Notification.send faz I/O de rede (telegram) e pode levantar por
+            # conta própria -- não pode impedir a próxima tentativa.
+            try:
+                Notification.send("TWB crashed: %s" % str(e))
+            except Exception as notify_error:
+                print("Could not send the crash notification: %s" % str(notify_error))
+
+    try:
+        Notification.send("TWB has crashed 3 times, exiting")
+    except Exception as notify_error:
+        print("Could not send the final crash notification: %s" % str(notify_error))
 
 
 def self_config_test():
