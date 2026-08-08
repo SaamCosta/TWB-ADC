@@ -15,10 +15,7 @@ class Map:
     """
     wrapper = None
     village_id = None
-    map_data = []
-    villages = {}
     my_location = None
-    map_pos = {}
     last_fetch = 0
     fetch_delay = 8
 
@@ -28,6 +25,13 @@ class Map:
         """
         self.wrapper = wrapper
         self.village_id = village_id
+        # Por instância, não por classe: cada Village cria seu próprio Map,
+        # mas como atributos de classe todos escreviam no mesmo dict global,
+        # acumulando o mapa de todas as regiões já visitadas por qualquer
+        # aldeia. Ver P1-15 em docs/auditoria_codigo_2026-08-08.md
+        self.map_data = []
+        self.villages = {}
+        self.map_pos = {}
 
     def get_map(self):
         """

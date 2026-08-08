@@ -117,12 +117,19 @@ class TWB:
     Also verifies, merges and updates the config file automatically
     """
     res = None
-    villages = []
     wrapper = None
     should_run = True
     runs = 0
-    found_villages = []
     hunter = None
+
+    def __init__(self):
+        # Precisam ser criados por instância, não como atributo de classe:
+        # main() instancia TWB até 3 vezes (retry após crash) e a lista de
+        # classe sobreviveria entre as tentativas, fazendo cada aldeia real
+        # ser processada em dobro por ciclo. Ver P0-1 em
+        # docs/auditoria_codigo_2026-08-08.md
+        self.villages = []
+        self.found_villages = []
 
     @staticmethod
     def internet_online():

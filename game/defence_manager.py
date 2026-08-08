@@ -30,18 +30,13 @@ class DefenceManager:
 
     under_attack = False
     auto_evacuate = False
-    attacks = []
 
-    # list of village_id, attack_state
-    my_other_villages = {}
     allow_support_send = True
     allow_support_recv = True
 
     defensive_units = ["spear", "sword", "archer", "marcher", "spy"]
 
     hide_units = ["snob", "axe"]
-
-    flags = {}
 
     runs = 0
     logger = None
@@ -60,9 +55,6 @@ class DefenceManager:
     incoming_attacker = None
     incoming_command_id = None
 
-    # flag_index, flag_level
-    current_flag = []
-
     _can_change_flag = False
     # True once manage_flags() has confirmed the real flag state from the
     # server at least once. Distinguishes "no flag equipped" (current_flag
@@ -76,8 +68,6 @@ class DefenceManager:
 
     _sf_logged = False
 
-    supported = []
-
     def __init__(self, village_id=None, wrapper=None):
         self.village_id = village_id
         self.wrapper = wrapper
@@ -85,6 +75,18 @@ class DefenceManager:
         # {(flag_type, level): attempt_count} - limita tentativas de upgrade
         # por sessão para evitar loop infinito (ver docs/bugs_flags.md Bug 2)
         self._upgrade_attempts = {}
+        # Todos por instância, não por classe: existe um DefenceManager por
+        # aldeia. `supported` era o Bug 3 de docs/bugs_flags.md -- suporte
+        # enviado por uma aldeia marcava o alvo como "já suportado" para
+        # todas as outras. Os demais são a mesma classe de problema,
+        # corrigidos junto. Ver Lote 1 em docs/auditoria_codigo_2026-08-08.md
+        self.supported = []
+        self.attacks = []
+        self.flags = {}
+        # flag_index, flag_level
+        self.current_flag = []
+        # list of village_id, attack_state
+        self.my_other_villages = {}
 
     def support_other(self, requesting_village):
 

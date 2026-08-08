@@ -92,10 +92,6 @@ class ResourceManager:
     """
     Class to calculate, store and reserve resources for actions
     """
-    actual = {}
-
-    requested = {}
-
     storage = 0
     ratio = 2.5
     max_trade_amount = 4000
@@ -116,6 +112,13 @@ class ResourceManager:
         """
         self.wrapper = wrapper
         self.village_id = village_id
+        # Por instância, não por classe: existe um ResourceManager por aldeia
+        # e, como atributos de classe, os quatro compartilhavam o mesmo dict.
+        # `requested` é gravado em required_resources (cache/managed/*.json) e
+        # lido pelo ResourceSharingManager, que decidia com dados cruzados.
+        # Ver P0-2 em docs/auditoria_codigo_2026-08-08.md
+        self.actual = {}
+        self.requested = {}
 
     def update(self, game_state):
         """
