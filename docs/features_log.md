@@ -24,9 +24,31 @@ Modos: `empire_ratio` (padrão), `nearest_village`, `global_template`.
 "empire": { "offensive_ratio": 3, "defensive_ratio": 3 },
 "profile_templates": {
     "offensive": { "building": "purple_predator_into_off", "units": "offensive" },
-    "defensive": { "building": "purple_predator_into_def", "units": "defensive_1" }
+    "defensive": { "building": "purple_predator_into_def", "units": "defensive_1",
+                   "support_others": true }
 }
 ```
+
+**Revisão 2026-08-08 — `profile_templates` passou a ser aplicado sempre.**
+Antes, os overrides só entravam quando *não* havia doador com o perfil
+necessário (`used_profile_template`). Como o filtro de doador acha um assim que
+existe uma aldeia de cada perfil, na prática o template quase nunca era
+consultado: a aldeia nova herdava o config do doador verbatim, e uma chave nova
+no template só chegaria às futuras se fosse propagada à mão em cada doador.
+
+Agora `profile_templates[perfil]` é a fonte da verdade para o que *define* o
+perfil; as demais chaves continuam vindo do doador. Foi o que permitiu
+`support_others: true` no perfil defensivo: aldeia conquistada e classificada
+como defensiva já nasce enviando suporte, mesmo com o doador em `false`.
+
+⚠️ As aldeias defensivas **já existentes** seguem com `support_others: false`
+de propósito — o envio de suporte real nunca aconteceu neste projeto (ver P1-6
+no Lote 3 da auditoria) e a estreia fica numa aldeia nova só, sob observação.
+
+Não cobre o caminho "nenhum doador disponível" (`candidates` vazio,
+[`village.py`](../game/village.py) — primeira aldeia gerenciada), que usa
+`village_template` e ignora `profile_templates`. Inalcançável com aldeias já
+em cache; deixado como está.
 
 ### Feature 8 — Seleção automática de alvos de conquista bárbara ✅
 **Arquivos:** `game/attack.py` (`ConquestManager`), `game/village.py`,

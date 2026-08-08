@@ -1111,20 +1111,24 @@ class Village:
         if needed_profile:
             donor_config["profile"] = needed_profile
 
-        # Feature 7: when no profile-matching donor existed, override building and units
-        # from profile_templates to guarantee the correct template regardless of donor
-        if used_profile_template and needed_profile:
+        # Feature 7: profile_templates[perfil] é a fonte da verdade para tudo que
+        # *define* o perfil -- aplicado sempre, não só quando faltou doador com o
+        # perfil certo. Antes, com doador disponível (o caso comum assim que
+        # existe uma aldeia de cada perfil), o template nunca era consultado e a
+        # aldeia nova herdava o config do doador verbatim; uma chave nova no
+        # template só chegava às aldeias futuras se alguém a propagasse à mão em
+        # cada doador. As chaves fora do template continuam vindo do doador.
+        if needed_profile:
             profile_tpl = config.get("profile_templates", {}).get(needed_profile, {})
             if profile_tpl:
                 for key, value in profile_tpl.items():
                     donor_config[key] = value
                 self.logger.info(
-                    "Village %s: applied profile_templates[%s] overrides (building=%s, units=%s)",
+                    "Village %s: applied profile_templates[%s] overrides (%s)",
                     self.village_id, needed_profile,
-                    profile_tpl.get("building", "n/a"),
-                    profile_tpl.get("units", "n/a")
+                    ", ".join(f"{k}={v}" for k, v in profile_tpl.items())
                 )
-            else:
+            elif used_profile_template:
                 self.logger.warning(
                     "Village %s: profile_templates[%s] not found in config, "
                     "donor templates kept as-is.",

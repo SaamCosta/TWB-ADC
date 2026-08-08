@@ -68,7 +68,8 @@
     },
     "defensive": {
       "building": "purple_predator_into_def",
-      "units": "defensive_1"
+      "units": "defensive_1",
+      "support_others": true
     }
   },
   "village_template": {
