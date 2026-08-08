@@ -20,13 +20,27 @@ class DataReader:
             if not existing.endswith(".json"):
                 continue
             t_path = os.path.join(os.path.dirname(__file__), "..", "cache", cache_location, existing)
-            with open(t_path, 'r') as f:
-                try:
+            try:
+                with open(t_path, 'r') as f:
                     output[existing.replace('.json', '')] = json.load(f)
-                except Exception as e:
-                    print("Cache read error for %s: %s. Removing broken entry" % (t_path, str(e)))
-                    f.close()
-                    os.remove(t_path)
+            except OSError as e:
+                # O open() precisa estar DENTRO do try: no Windows o arquivo
+                # fica brevemente inacessível enquanto o bot faz o os.replace()
+                # da escrita atômica, e um PermissionError aqui derrubaria a
+                # request inteira do webmanager. É transitório e o dado não
+                # está corrompido -- pula e pega no próximo request.
+                print("Cache locked/unavailable for %s: %s. Skipping entry" % (t_path, str(e)))
+                continue
+            except Exception as e:
+                # JSON inválido: NÃO apagar. Este é um processo LEITOR e o
+                # arquivo pertence ao bot. sync() roda a cada request, então
+                # isso é quase sempre uma leitura que caiu no meio de uma
+                # escrita -- não corrupção real. Apagar custava o histórico de
+                # farm (cache/attacks -> last_attack, fazendo o bot re-atacar
+                # fora do cooldown) ou o estado da aldeia (cache/managed).
+                # Ver P0-4 em docs/auditoria_codigo_2026-08-08.md
+                print("Cache read error for %s: %s. Skipping entry (file left untouched)" % (t_path, str(e)))
+                continue
         return output
 
     @staticmethod
