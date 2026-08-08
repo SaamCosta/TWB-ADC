@@ -63,6 +63,23 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 ## Bugs conhecidos / débito técnico
 
+**Auditoria completa em `docs/auditoria_codigo_2026-08-08.md`** — leitura integral
+dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com nível
+de confiança e correção sugerida. O Lote 1 (estado mutável compartilhado entre
+instâncias) já foi corrigido; o restante segue aberto e está priorizado no fim
+do documento.
+
+- ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
+  Quase toda classe aqui declara seus campos no corpo da classe, não em
+  `__init__`. Para `int`/`str`/`bool`/`None` é inofensivo (a atribuição cria
+  um atributo de instância), mas para `list`/`dict` mutados in-place
+  (`.append()`, `[k] = v`) o objeto é **compartilhado por todas as instâncias**.
+  Como existe uma instância de quase todo manager por aldeia, isso vira
+  vazamento de estado entre aldeias. Corrigidos no Lote 1: `TWB.villages`,
+  `ResourceManager.actual`/`requested`, `Map.villages`/`map_pos`/`map_data`,
+  `DefenceManager.supported`/`attacks`/`flags`/`current_flag`. **Ainda abertos:**
+  `BuildingManager.waits` (P2-23) e `AttackManager.ignored` (P3). Ao criar
+  classe nova ou campo novo, declarar mutáveis em `__init__`.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
@@ -75,12 +92,18 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 - Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
   constante de bandeira, loop de upgrade), aguardando validação em campo — ver
   `docs/bugs_flags.md` para o diagnóstico original e o estado atual.
-- `game/defence_manager.py::DefenceManager.supported` — atributo de classe
-  mutável (`[]`) nunca reatribuído em `__init__`, só mutado in-place via
-  `.append()`. Como uma instância de `DefenceManager` existe por aldeia, todas
-  as aldeias compartilham a mesma lista — suporte enviado por uma aldeia marca
-  o alvo como "já suportado" para as outras também. Não corrigido ainda, ver
-  Bug 3 em `docs/bugs_flags.md`.
+- `game/defence_manager.py::DefenceManager.supported` (Bug 3 de
+  `docs/bugs_flags.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
+  Nota: o suporte entre aldeias continua inerte por outro motivo — a condição
+  do laço em `DefenceManager.update()` está invertida (`if vil != self.village_id:
+  continue`, sendo que `my_other_villages` já exclui a própria aldeia), então
+  `support_other()` nunca é chamado. Ver P1-6 na auditoria.
+- **Feature 9 (resource sharing) desligada no `config.json` local** desde
+  2026-08-08. O fix do P0-2 fez `required_resources` refletir necessidade real
+  por aldeia pela primeira vez, o que a ativaria de verdade — mas a escolha de
+  destino ordena por `last_run`, que é reescrito a cada ciclo para toda aldeia
+  (P2-27), e `send_resources()` sempre retorna `True` sem inspecionar a
+  resposta (P1-16). Religar só depois de corrigir os dois.
 
 ## Backlog de features pendentes
 
