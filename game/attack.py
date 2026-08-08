@@ -316,7 +316,11 @@ class AttackManager:
                     )
                     return False
                 if status == 0:
-                    if cache_entry["last_attack"] + self.farm_low_prio_wait * 2 > int(time.time()):
+                    # Relatório velho = último contato há MAIS de
+                    # farm_low_prio_wait*2. Estava invertido: re-espiava alvo
+                    # recém-espiado e descartava para sempre o que precisava
+                    # ser reavaliado (P1-10).
+                    if int(time.time()) - cache_entry["last_attack"] > self.farm_low_prio_wait * 2:
                         self.logger.info(f"{vid}: Old scout report found ({cache_entry['last_attack']}), re-scouting")
                         self.scout(vid)
                         return False

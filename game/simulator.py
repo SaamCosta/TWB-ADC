@@ -375,15 +375,13 @@ class Simulator:
                     c = math.sqrt(a) * a
                     for unit in defenderUnits:
                         defenderUnits[unit] -= defenderUnitsCopy[unit] * c * ratio
-                    for i in self.attack_units[attackType]:
-                        unit = self.attack_units[attackType][i]
+                    for unit in self.attack_units[attackType]:
                         attackerUnits[unit] = 0
                 else:
                     c = math.sqrt(1 / a) / a
                     for unit in defenderUnits:
                         defenderUnits[unit] -= ratio * defenderUnitsCopy[unit]
-                    for i in self.attack_units[attackType]:
-                        unit = i
+                    for unit in self.attack_units[attackType]:
                         attackerUnits[unit] -= c * attackerUnits[unit]
 
         for unit in self.pool:

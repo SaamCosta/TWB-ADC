@@ -94,10 +94,12 @@ do documento.
   `docs/bugs_flags.md` para o diagnóstico original e o estado atual.
 - `game/defence_manager.py::DefenceManager.supported` (Bug 3 de
   `docs/bugs_flags.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
-  Nota: o suporte entre aldeias continua inerte por outro motivo — a condição
-  do laço em `DefenceManager.update()` está invertida (`if vil != self.village_id:
-  continue`, sendo que `my_other_villages` já exclui a própria aldeia), então
-  `support_other()` nunca é chamado. Ver P1-6 na auditoria.
+  A condição invertida do laço em `DefenceManager.update()`, que impedia
+  `support_other()` de ser chamado, foi corrigida no Lote 3 (P1-6) — junto com
+  a leitura de `support_others_max_villages` do config. O suporte deixou de ser
+  código morto, mas **`support_others` segue `false` em campo**: nenhum envio
+  real jamais aconteceu e o payload `"support": "Ondersteunen"` nunca foi
+  validado em pt-BR. Ligar em uma aldeia só, observando.
 - **Feature 9 (resource sharing) desligada no `config.json` local** desde
   2026-08-08. O fix do P0-2 fez `required_resources` refletir necessidade real
   por aldeia pela primeira vez, o que a ativaria de verdade — mas a escolha de

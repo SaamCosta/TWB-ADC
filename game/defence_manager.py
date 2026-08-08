@@ -142,13 +142,17 @@ class DefenceManager:
                 self.under_attack = False
                 return False
             self.under_attack = False
-            index = 0
 
+            # my_other_villages já exclui a própria aldeia (village.py::
+            # setup_defence_manager), mas o twb.py sobrescreve o dict no fim
+            # do ciclo com um que a inclui -- daí a guarda continuar valendo.
             for vil in self.my_other_villages:
-                if vil != self.village_id:
+                if vil == self.village_id:
                     continue
                 if len(self.supported) >= self.support_max_villages:
-                    self.logger.debug("Already supported 2 villages, ignoring")
+                    self.logger.debug(
+                        "Already supported %d villages, ignoring", self.support_max_villages
+                    )
                     break
                 if (
                         not self.under_attack
@@ -157,12 +161,9 @@ class DefenceManager:
                 ):
                     if vil in self.supported:
                         continue
-                    if index >= 2:
-                        continue
                     if self.support_other(vil):
                         self.supported.append(vil)
                     ok = False
-                index += 1
         if ok:
             self.logger.info("Area OK for village %s, nice and quiet", self.village_id)
             # All is well

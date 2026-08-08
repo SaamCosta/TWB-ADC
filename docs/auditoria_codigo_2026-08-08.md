@@ -980,8 +980,9 @@ cache/pvp_conquest: 1 arquivo    (38409 — "complete")
 Critério: impacto × esforço. Os quatro primeiros são todos correções de
 poucas linhas com alto retorno.
 
-> **Progresso (2026-08-08):** Lotes 1 e 2 implementados e pushados. Os demais
-> lotes seguem abertos. Ver as notas de implementação no fim deste documento.
+> **Progresso (2026-08-08):** Lotes 1, 2 e 3 implementados e pushados (mais o
+> P0-3, antecipado do Lote 4). Os demais lotes seguem abertos. Ver as notas de
+> implementação no fim deste documento.
 
 ### Lote 1 — estado compartilhado (risco de ban / dados cruzados) ✅
 1. ✅ **P0-1** `self.villages = []` em `TWB.__init__` — 1 linha.
@@ -996,11 +997,12 @@ poucas linhas com alto retorno.
 5. ✅ **P0-4** parar de `os.remove` no webmanager + escrita atômica no
    `FileManager`.
 
-### Lote 3 — features ressuscitadas (one-liners)
-6. **P0-5** `unit = i` no simulador.
-7. **P1-6** inverter a condição do suporte entre aldeias.
-8. **P1-7** `self.` no `forced_peace_today`.
-9. **P1-10** inverter a comparação do relatório de scout antigo.
+### Lote 3 — features ressuscitadas (one-liners) ✅
+6. ✅ **P0-5** `unit = i` no simulador.
+7. ✅ **P1-6** inverter a condição do suporte entre aldeias.
+   ⚠️ Deixa de ser código morto, mas `support_others` segue `false` no config.
+8. ✅ **P1-7** `self.` no `forced_peace_today`.
+9. ✅ **P1-10** inverter a comparação do relatório de scout antigo.
 
 ### Lote 4 — crashes de caminho quente
 10. **P1-11** guarda de `None` no `recruit()`.
@@ -1101,6 +1103,57 @@ são ações de formulário do usuário, não caminho quente.
 **Não coberto:** `twb.py:303` grava `config.json` com `json.dump` direto, sem
 passar pelo `FileManager` — logo, ainda não é atômico. Corrupção de config é
 mais grave que a de cache; candidato natural ao próximo lote.
+
+## Lote 3 — cada "one-liner" trouxe um vizinho
+
+Os quatro itens saíram como diagnosticados, mas três exigiram uma correção
+adjacente que só aparece quando a feature volta a executar.
+
+**P0-5 (simulador)** — resolvido com `for unit in self.attack_units[attackType]`
+nos dois ramos, em vez de só corrigir o `a < 1`. Validado chamando
+`simulate()` com atacante deliberadamente mais fraco (10 axes contra
+500 spear + 500 sword, muralha 20): antes `TypeError`, agora retorna o
+atacante zerado e o defensor praticamente intacto — o resultado que o
+`PvpConquestManager` precisava para marcar o alvo como `failed` em vez de
+deixá-lo eternamente em `pending_sim`.
+
+**P1-6 (suporte)** — além de inverter a condição, foram removidos o
+`index >= 2` hardcoded e o contador `index` (o `len(self.supported) >=
+support_max_villages` já cobria o mesmo teto, com o valor certo), e
+`support_others_max_villages` passou a ser lido do config em
+`setup_defence_manager()` — a chave existia no `config.example.json` e no
+helpfile desde sempre sem nada consumindo. A guarda `if vil ==
+self.village_id: continue` foi mantida (não é redundante): `twb.py` atribui
+ao fim do ciclo um `my_other_villages` que *inclui* a própria aldeia.
+Validado com o laço isolado sobre um dict de 4 aldeias incluindo a própria —
+suporta duas, pula a si mesma, para no teto.
+
+⚠️ **A feature continua desligada em campo** (`support_others: false` nas 4
+aldeias). O código deixou de ser morto, mas o primeiro envio real ainda é
+inédito — junto vem o `"support": "Ondersteunen"` nunca validado em pt-BR
+(ver Notas para investigação futura). Ligar numa aldeia só, observando.
+
+**P1-7 (paz forçada)** — o `self.` faltante era metade do problema. Com ele
+corrigido, dois defeitos vizinhos passariam a ser alcançáveis:
+
+1. O laço não filtrava por *futuro*, só por *hoje*. Uma janela de paz que já
+   terminou daria `forced_peace_time` no passado, e como o teste em
+   `attack.py:409` é `now + duration > forced_peace_time`, **todo** ataque
+   seria bloqueado pelo resto do dia. Agora só entram janelas com
+   `start_dt > now`, e dentre elas vence a **mais cedo** (é um teto de
+   chegada — a mais próxima é a restritiva; o diagnóstico sugeria `break`,
+   que pegaria a primeira da lista, não a mais próxima).
+2. `self.attack` só é construído uma vez (`if not self.attack`) e sobrevive
+   entre ciclos, mas `forced_peace_time` só era *atribuído*, nunca limpo —
+   o teto de ontem seguiria barrando ataques hoje. Adicionado o ramo `else`
+   que zera.
+
+Validado com as quatro combinações (duas janelas futuras hoje, janela
+passada, dentro da janela, config vazio).
+
+**P1-10 (scout antigo)** — reescrito como `now - last_attack >
+farm_low_prio_wait * 2` em vez de trocar o operador, para a condição ficar
+legível na mesma direção da mensagem de log.
 
 ---
 

@@ -189,6 +189,9 @@ class Village:
         self.def_man.support_factor = self.get_village_config(
             self.village_id, "support_others_factor", default=0.25
         )
+        self.def_man.support_max_villages = self.get_village_config(
+            self.village_id, parameter="support_others_max_villages", default=2
+        )
 
         self.def_man.allow_support_send = self.get_village_config(
             self.village_id, parameter="support_others", default=False
@@ -472,9 +475,17 @@ class Village:
             start_dt = datetime.strptime(time_pairs["start"], "%d.%m.%y %H:%M:%S")
             end_dt = datetime.strptime(time_pairs["end"], "%d.%m.%y %H:%M:%S")
             now = datetime.now()
-            if start_dt.date() == datetime.today().date():
-                forced_peace_today = True
-                forced_peace_today_start = start_dt
+            # Só interessa a janela que ainda vai começar hoje, e dentre elas a
+            # mais próxima: forced_peace_today_start vira o teto de chegada em
+            # AttackManager.forced_peace_time. Um start já passado daria um teto
+            # no passado, bloqueando todo ataque pelo resto do dia.
+            if start_dt.date() == datetime.today().date() and start_dt > now:
+                if (
+                    not self.forced_peace_today
+                    or start_dt < self.forced_peace_today_start
+                ):
+                    self.forced_peace_today = True
+                    self.forced_peace_today_start = start_dt
             if start_dt < now < end_dt:
                 self.logger.debug("Currently in a forced peace time! No attacks will be send.")
                 self.forced_peace = True
@@ -728,6 +739,11 @@ class Village:
                 if self.forced_peace_today:
                     self.logger.info("Forced peace time coming up today!")
                     self.attack.forced_peace_time = self.forced_peace_today_start
+                else:
+                    # O AttackManager sobrevive entre ciclos (só é criado uma
+                    # vez), então o teto precisa ser limpo explicitamente --
+                    # senão o de ontem continuaria barrando ataques hoje.
+                    self.attack.forced_peace_time = None
                 self.set_farm_options()
 
                 if (
