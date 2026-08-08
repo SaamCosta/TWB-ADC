@@ -1,6 +1,12 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27` (✅ todas)
+
+Pendentes: **25** (inventário/boosts) e **26** (envio em lote `train[N][unit]`)
+— ambas precisam de levantamento em campo antes de virar tarefa. Fora do
+backlog de features, a fila atual é a **auditoria de código**
+(`docs/auditoria_codigo_2026-08-08.md`): Lotes 1 e 2 e o P0-3 já feitos,
+Lotes 3–5 abertos.
 
 ## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
 
@@ -674,13 +680,12 @@ por chamada e montar o POST em lote em vez de N chamadas sequenciais.
 de 1 ataque simultâneo agendado pro mesmo `arrival_time` (hoje, só o trem de
 nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
 
-## Feature 27 — `ConquestManager` (bárbara) respeitar reserva cruzada de tropas
+## Feature 27 — `ConquestManager` (bárbara) respeitar reserva cruzada de tropas ✅ Implementado (2026-08-08)
 
-**Status: plano escrito, pronto pra implementar — não escopado ainda em
-código.** Recomendado como próxima tarefa em 2026-08-07 (ver conversa/sessão
-do mesmo dia) por ser a pendência mais urgente das já mapeadas: bem
-escopada (uma função, dois arquivos) e, diferente das Features 24-26, não
-precisa de mais desenho/decisão de jogo antes de começar.
+**Status:** implementado conforme o plano abaixo, mais dois achados que o
+plano não previa (detalhados no fim desta seção). Nenhuma mudança de config,
+`build.version` não precisou bump. Validado com teste isolado (33 checks,
+sem rede) — **pendente de validação em campo**.
 
 **Problema:** `ConquestManager._build_escort()` (`game/attack.py`, função
 em torno da linha 862) monta a escolta lendo `self.troopmanager.troops.items()`
@@ -766,6 +771,33 @@ mas testar isolado (item acima) antes de rodar contra o jogo de verdade, e
 reiniciar o bot pra pegar o código novo (mesma mecânica de sempre — processo
 já rodando mantém o código antigo em memória).
 
+### O que saiu além do plano
+
+A lógica de reserva foi extraída para um helper (`_available_troops()`) em
+vez de ficar inline em `_build_escort()`, porque **`_calculate_needed_escort()`
+tinha exatamente o mesmo defeito** — lia `troops` bruto para decidir quanto
+reservar. Sem corrigir os dois, a soma das reservas podia exceder a tropa
+real da aldeia, deixando farm/gather sem tropa que só existe no papel.
+
+Dois achados a mais, da mesma família de double-booking:
+
+1. **Nobres não eram cobertos.** `PvpConquestManager` reserva `snob: 1` por
+   ataque agendado (`game/pvp_conquest.py:430`), e esses nobres ficam parados
+   em casa por horas enquanto o `Hunter` sincroniza a chegada. Tanto `run()`
+   quanto `_handle_existing()` liam `troops["snob"]` cru, então a conquista
+   bárbara podia se achar com train completo e disparar, gastando nobres de um
+   train PvP já agendado. Novo `_available_nobles()`. **É a instância mais cara
+   do bug** — nobre é a unidade mais custosa do jogo, e o plano original do
+   backlog não a cobria.
+2. **`snob` entrava no cálculo da escolta.** `_send_train()` faz
+   `troops["snob"] = 1` por ataque (`game/attack.py`), sobrescrevendo o que a
+   escolta tivesse calculado. Ou seja: nobres inflavam `total_per_attack` na
+   checagem de `min_escort_total`, mas nunca eram enviados como escolta — um
+   train podia ser julgado "escoltado o suficiente" às custas de tropa que não
+   ia junto. `snob` entrou em `EXCLUDED_UNITS` junto com `knight`. Isso torna
+   a checagem mais conservadora (direção segura: no máximo deixa de enviar um
+   train que antes enviaria com escolta real menor que o configurado).
+
 **Segunda opção, se preferir não fazer esta agora:** "PvP Conquest não
 detecta trem de nobres que falhou" (bullet acima, já detalhado) — também
 bem escopada, mas menos urgente porque não tem risco de "roubar" tropa de
@@ -791,13 +823,10 @@ outro sistema, só falta de retry/sinalização de erro.
   viagem mesmo assim (usuário já tinha limpado manualmente), mas se não
   tivesse, o alvo teria ficado `"scheduled"` indefinidamente sem qualquer
   sinal de que precisa de intervenção manual.
-- **`ConquestManager` (conquista bárbara, Feature 8) não respeita
-  `TroopManager.total_conquest_reserve()`** — plano de implementação
-  completo escrito em **Feature 27**, logo abaixo. **Prioridade atual: a
-  próxima coisa pronta pra implementar** (2026-08-07) — deixou de ser
-  teórica porque o usuário ligou `conquest.enabled: true` nesta sessão
-  enquanto o PvP Conquest também está ativo nas mesmas aldeias, então os
-  dois sistemas competem pela mesma tropa de verdade agora.
+- ~~**`ConquestManager` (conquista bárbara, Feature 8) não respeita
+  `TroopManager.total_conquest_reserve()`**~~ — ✅ resolvido pela **Feature 27**
+  em 2026-08-08, incluindo o caso dos nobres, que o plano original não cobria.
+  Aguardando validação em campo.
 - **Sobrecomprometimento de tropa entre clear e escolta de nobre — só
   corrigido para 1 alvo por vez.** O fix de 2026-08-07 em
   `_step_simulate()` (`game/pvp_conquest.py`) subtrai `attacker_units` do
