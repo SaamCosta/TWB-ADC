@@ -65,9 +65,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 **Auditoria completa em `docs/auditoria_codigo_2026-08-08.md`** — leitura integral
 dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com nível
-de confiança e correção sugerida. O Lote 1 (estado mutável compartilhado entre
-instâncias) já foi corrigido; o restante segue aberto e está priorizado no fim
-do documento.
+de confiança e correção sugerida. **Lotes 1 a 4 corrigidos** (estado compartilhado,
+integridade de dados, features ressuscitadas, crashes de caminho quente); só o
+**Lote 5** segue aberto — `farm_score` inerte (P1-8), regex de mercado em holandês
+num servidor pt-BR (P1-14), `DEBUG=True` no webmanager (P1-18) e os P2 restantes.
+Seções já corrigidas levam um banner ✅ no topo; a ordem priorizada e as notas de
+implementação de cada lote estão no fim do documento.
 
 - ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
   Quase toda classe aqui declara seus campos no corpo da classe, não em
@@ -80,6 +83,20 @@ do documento.
   `DefenceManager.supported`/`attacks`/`flags`/`current_flag`. **Ainda abertos:**
   `BuildingManager.waits` (P2-23) e `AttackManager.ignored` (P3). Ao criar
   classe nova ou campo novo, declarar mutáveis em `__init__`.
+- ⚠️ **Segundo padrão recorrente: `None` não guardado vindo de rede/parse.**
+  `WebWrapper.get_url()` retorna `None` em **qualquer** exceção
+  (`core/request.py`), e por tabela `get_action`/`get_api_action` também.
+  Vários `Extractor.*` (`game_state`, `recruit_data`, …) têm `return None`
+  implícito quando o regex não casa — o que acontece numa resposta 200 que não
+  é a tela esperada: sessão expirada virando login, página de bot protection,
+  ou markup novo do jogo. O consumidor típico faz `res.text`, `x in res` ou
+  `res["chave"]` direto e derruba o processo. O Lote 4 corrigiu cinco desses
+  só no caminho de recrutamento, dos quais **quatro não estavam no diagnóstico
+  original** — ao mexer num caminho que faz requisição, assumir que há mais.
+  Ainda abertos: `buildingmanager` (P2-24) e `reports` (P2-25).
+  Corolário achado no mesmo lote: `ResourceManager.logger` era criado só no fim
+  de um `update()` bem-sucedido, então a própria guarda nova crashava. Ao logar
+  num caminho de erro, conferir se o logger já existe naquele ponto.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

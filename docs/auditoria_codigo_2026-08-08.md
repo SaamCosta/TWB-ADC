@@ -70,6 +70,8 @@ Crash do processo, ação duplicada dentro do jogo, ou perda de dados.
 
 ## P0-1 — `TWB.villages` é atributo de classe: após qualquer crash, cada aldeia é processada em dobro
 
+> ✅ **CORRIGIDO** no Lote 1 (`78910f5`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
+
 **Confiança:** 🟢 Confirmado por AST.
 
 **Local:** [`twb.py:120`](../twb.py), [`twb.py:448`](../twb.py), [`twb.py:507`](../twb.py), [`twb.py:714`](../twb.py)
@@ -127,6 +129,8 @@ logs de "Starting run for village X" duplicados por ciclo após um crash.
 ---
 
 ## P0-2 — `ResourceManager.actual` e `requested` são compartilhados por TODAS as aldeias
+
+> ✅ **CORRIGIDO** no Lote 1 (`78910f5`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟢 Confirmado por AST (únicos mutáveis da classe, nenhum
 reatribuído via `self.X =` em nenhum ponto do arquivo).
@@ -201,6 +205,8 @@ antes ou junto.
 
 ## P0-3 — O handler de crash do `main()` pode ele mesmo crashar
 
+> ✅ **CORRIGIDO** no avulso (`ebac9d4`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
+
 **Confiança:** 🟡 Alta.
 
 **Local:** [`twb.py:716-722`](../twb.py)
@@ -227,6 +233,8 @@ envolver o próprio handler em try/except.
 ---
 
 ## P0-4 — O webmanager **apaga** arquivos de cache do bot ao ler um JSON parcial
+
+> ✅ **CORRIGIDO** no Lote 2 (`36f4f8e`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟢 Confirmado por leitura direta; a janela de corrida é real
 porque a escrita não é atômica.
@@ -274,6 +282,8 @@ regional (Feature 12) e herança de config (Feature 6).
 ---
 
 ## P0-5 — `Simulator.simulate()` crasha exatamente quando o ataque falharia
+
+> ✅ **CORRIGIDO** no Lote 3 (`8c3b79b`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟢 Confirmado por leitura; o tipo é inequívoco.
 
@@ -326,6 +336,8 @@ permanentemente, para todo o processo).
 ---
 
 ## P1-6 — Suporte entre aldeias é código morto: a condição está invertida
+
+> ✅ **CORRIGIDO** no Lote 3 (`8c3b79b`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento. O suporte deixou de ser código morto, mas segue `false` em campo.
 
 **Confiança:** 🟢 Confirmado (cruzamento entre dois arquivos).
 
@@ -386,6 +398,8 @@ assim que o laço voltar a executar.
 ---
 
 ## P1-7 — `forced_peace_today` nunca vira `True` (variáveis locais em vez de `self.`)
+
+> ✅ **CORRIGIDO** no Lote 3 (`8c3b79b`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟢 Confirmado.
 
@@ -501,6 +515,8 @@ trens completos funcionaram e as aldeias hoje são nossas. O caminho quebrado
 
 ## P1-10 — `can_attack()`: condição de "relatório de scout antigo" invertida
 
+> ✅ **CORRIGIDO** no Lote 3 (`8c3b79b`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
+
 **Confiança:** 🟡 Alta (a mensagem de log contradiz a condição).
 
 **Local:** [`game/attack.py:318-327`](../game/attack.py)
@@ -531,6 +547,8 @@ muito tempo nunca são reconsiderados.
 
 ## P1-11 — `recruit()` crasha quando a requisição de recrutamento falha
 
+> ✅ **CORRIGIDO** no Lote 4 (`ac67cc5`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento. Eram **três** crashes na mesma função, mais dois achados fora do diagnóstico.
+
 **Confiança:** 🟡 Alta.
 
 **Local:** [`game/troopmanager.py:669-700`](../game/troopmanager.py)
@@ -560,6 +578,8 @@ pontual.
 
 ## P1-12 — `can_recruit()` muta o dicionário durante a iteração
 
+> ✅ **CORRIGIDO** no Lote 4 (`ac67cc5`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
+
 **Confiança:** 🟡 Alta.
 
 **Local:** [`game/resources.py:254-263`](../game/resources.py)
@@ -587,6 +607,8 @@ projeto.
 ---
 
 ## P1-13 — `SnobManager.attempt_recruit` crasha quando o regex não casa
+
+> ✅ **CORRIGIDO** no Lote 4 (`ac67cc5`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟡 Alta.
 
@@ -630,7 +652,7 @@ explícito quando `can_recruit is None`.
 | [`resources.py:430`](../game/resources.py) e [`491`](../game/resources.py) | `re.compile(r"Aankomend:\s...")` | **Quebrado.** Em pt-BR o texto é "Chegando:". A detecção de recursos a caminho nunca casa. |
 | [`resources.py:381`](../game/resources.py) | `"delete": "Verwijderen"` | ⚪ A verificar — pode funcionar se o servidor só checa presença da chave. |
 | [`attack.py:396`](../game/attack.py) | `"attack": "Aanvallen"` | ⚪ Funciona hoje (ataques saem), presença da chave basta. |
-| [`defence_manager.py:405`](../game/defence_manager.py) | `"support": "Ondersteunen"` | ⚪ Idem, mas não validado (suporte está morto — ver P1-6). |
+| [`defence_manager.py:405`](../game/defence_manager.py) | `"support": "Ondersteunen"` | ⚪ Idem, ainda não validado. O caminho deixou de ser morto no Lote 3 (P1-6), mas `support_others` segue `false` em campo, então nenhum envio real aconteceu até agora. |
 | [`hunter.py:336`](../game/hunter.py) | `"attack": "Aanvallen"` | ⚪ Idem. |
 
 **Impacto do item confirmado:** `manage_market()` e `check_other_offers()`
@@ -645,6 +667,8 @@ tornar o termo configurável.
 ---
 
 ## P1-15 — `Map.villages`/`map_pos` compartilhados + `get_map()` sem guarda de `None`
+
+> ✅ **CORRIGIDO** no Lote 1 (`78910f5`). O diagnóstico abaixo descreve o código *antes* da correção; ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟢 Confirmado por AST.
 
@@ -832,7 +856,7 @@ desligar é um paliativo.
 
 | ID | Problema | Local | Detalhe |
 |----|----------|-------|---------|
-| **P2-20** | Sync de `defense_states` itera **todas** as aldeias, incluindo as puladas | [`twb.py:600-603`](../twb.py) | Aldeia com `managed: false`, ou ausente de `found_villages`, nunca chega a `update_pre_run()` → `def_man` continua `None` → `AttributeError: 'NoneType' object has no attribute 'my_other_villages'`. Além disso `defense_states` é declarado fora do `while` e **nunca é limpo** entre ciclos, acumulando entradas de aldeias perdidas. |
+| **P2-20** ✅ | ✅ **Corrigido no Lote 4** (`ac67cc5`) — sync de `defense_states` iterava **todas** as aldeias, incluindo as puladas | [`twb.py:600-603`](../twb.py) | Aldeia com `managed: false`, ou ausente de `found_villages`, nunca chega a `update_pre_run()` → `def_man` continua `None` → `AttributeError: 'NoneType' object has no attribute 'my_other_villages'`. Além disso `defense_states` é declarado fora do `while` e **nunca é limpo** entre ciclos, acumulando entradas de aldeias perdidas — o que também mantinha o `attention_lag` da Feature 23 permanentemente desligado. |
 | **P2-21** | `.get("public", {}).get(...)` sem `or {}` | [`server.py:315`](../webmanager/server.py), [`413`](../webmanager/server.py), [`446`](../webmanager/server.py), [`utils.py:988`](../webmanager/utils.py) | `set_cache_vars` grava `"public": None` quando `self.area` é `None` ou a aldeia ainda não está em `cache/villages/` ([`village.py:1162`](../game/village.py)). `.get(k, {})` devolve `None` (a chave existe) → `AttributeError` nas rotas `/hunter`, `/reports`, `/pvp_conquest`, `/zones`. Outros 3 pontos do mesmo arquivo já usam `or {}` — inconsistência. **Latente:** hoje as 4 aldeias têm `public` como dict; dispara em aldeia recém-conquistada. |
 | **P2-22** | `_calculate_needed_escort` pode reservar o exército inteiro e **parar o farm indefinidamente** | [`attack.py:821-860`](../game/attack.py) | `needed_total = ceil((50 × 4) / 0.5) = 400`, dividido igualmente entre **todos** os tipos presentes, limitado ao que existe (`min(per_unit, current)`). Com 5 tipos → tenta reservar 80 de cada, mas o `min()` faz reservar 100% de qualquer tipo que tenha menos que isso. `AttackManager._get_farmable_troops()` subtrai a reserva → farm e gather param enquanto o escort não fecha, o que pode ser indefinido. |
 | **P2-23** | `BuildingManager.waits` é lista de classe até o primeiro ciclo com fila vazia | [`buildingmanager.py:23`](../game/buildingmanager.py), [`101`](../game/buildingmanager.py) | `self.waits = []` só executa dentro de `if existing_queue == 0`. Antes disso, `put_wait()` faz `.append()` na lista **de classe** → a fila de construção de uma aldeia bloqueia `is_queued()` de outra. |
@@ -864,7 +888,7 @@ descrevendo comportamento que **não existe no código**:
 
 | Chave | Onde é documentada | Situação |
 |---|---|---|
-| `village.support_others_max_villages` | `config.example.json:97`, `helpfile.py:107` | O código usa `DefenceManager.support_max_villages` ([`linha 50`](../game/defence_manager.py)), que **nunca** é setado a partir do config. E o valor está duplicado hardcoded como `index >= 2` na [`linha 158`](../game/defence_manager.py). |
+| ~~`village.support_others_max_villages`~~ ✅ | `config.example.json:97`, `helpfile.py:107` | ✅ **Resolvido no Lote 3** (`8c3b79b`): passou a ser lido em `setup_defence_manager()` para `DefenceManager.support_max_villages`, e o `index >= 2` duplicado foi removido. |
 | `village.scout_first` | `config.example.json:82`, `helpfile.py:96` | Nenhuma leitura em lugar nenhum. |
 | `farms.find_player_owned` | `config.example.json:122`, `helpfile.py:45` | Nenhuma leitura. |
 | `conquest.target` | `config.example.json:102`, `helpfile.py:67` | Nenhuma leitura (o único modo é bárbaro, hardcoded). |
@@ -1029,8 +1053,12 @@ campo ou de uma sessão logada:
 
 - ⚪ **`"delete": "Verwijderen"`** (remover ofertas do mercado) e
   `"support": "Ondersteunen"` — funcionam em pt-BR? O padrão sugere que o
-  servidor só verifica presença da chave, mas nunca foi validado. O suporte
-  está morto (P1-6), então nunca houve chance de testar.
+  servidor só verifica presença da chave, mas nunca foi validado. O caminho do
+  suporte deixou de ser código morto no Lote 3 (P1-6) e o perfil defensivo
+  passou a nascer com `support_others: true` (`adca64b`), mas as aldeias
+  defensivas atuais seguem em `false` — a validação em campo acontece quando a
+  primeira aldeia nova conquistada como defensiva enviar suporte de verdade.
+  Acompanhar o log `[Support] ... duration` para confirmar.
 - ⚪ **`DefenceManager.manage_flags`** — o laço
   `for amount in raw_flags[flag_type][level]` ([`linha 354`](../game/defence_manager.py))
   assume que o valor é iterável. Se a API mudar para `int`, isso vira
