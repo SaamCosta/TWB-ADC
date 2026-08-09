@@ -207,17 +207,36 @@ class DefenceManager:
         if not to_hide or len(self.my_other_villages) == 0:
             # nothing to evacuate or nowhere to send
             return False
-        for vid in self.my_other_villages:
-            attack_state = self.my_other_villages[vid]
-            if vid == self.village_id:
-                continue
-            if not attack_state:
-                self.logger.info(
-                    "Evacuating troops from village %s to safe haven %s: %s",
-                    self.village_id, vid, str(to_hide)
+        # P2-39: antes pegava a PRIMEIRA aldeia nao atacada do dict, e como
+        # my_other_villages vem de os.listdir a ordem e a do sistema de
+        # arquivos -- tropas frageis podiam viajar para o outro lado do mapa.
+        # Agora ordena por distancia real quando o mapa esta disponivel, e cai
+        # para a ordem anterior quando nao esta.
+        candidates = [
+            vid for vid in self.my_other_villages
+            if vid != self.village_id and not self.my_other_villages[vid]
+        ]
+        if not candidates:
+            return False
+
+        if self.map and getattr(self.map, "my_location", None):
+            with_pos = [vid for vid in candidates if self.map.map_pos.get(vid)]
+            if with_pos:
+                candidates = sorted(
+                    with_pos, key=lambda vid: self.map.get_dist(self.map.map_pos[vid])
                 )
-                self.support(vid, troops=to_hide)
-                return True
+
+        # Uma tentativa so, com o destino mais proximo. Nao vale a pena iterar
+        # os demais candidatos: support() pode ter disparado o envio e ainda
+        # devolver falso (get_api_action retorna None se a resposta nao for
+        # parseavel), e a retentativa mandaria as mesmas tropas para uma
+        # segunda aldeia. O proximo ciclo tenta de novo.
+        vid = candidates[0]
+        self.logger.info(
+            "Evacuating troops from village %s to safe haven %s: %s",
+            self.village_id, vid, str(to_hide)
+        )
+        return bool(self.support(vid, troops=to_hide))
 
     def flag_logic(self, set_flag):
         if not self.manage_flags_enabled:
@@ -387,6 +406,12 @@ class DefenceManager:
             return self.manage_flags()
 
     def support(self, vid, troops=None):
+        # P2-38: a validacao da posicao vinha depois do GET da praca, entao a
+        # requisicao (com o sleep de delay_factor) era desperdicada quando o
+        # destino nao estava no mapa.
+        if not self.map or vid not in self.map.map_pos:
+            return False
+
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
         pre_support = self.wrapper.get_url(url)
         if pre_support is None:
@@ -400,9 +425,6 @@ class DefenceManager:
             pre_data.update(troops)
         else:
             pre_data.update(self.units.troops)
-
-        if not self.map or vid not in self.map.map_pos:
-            return False
 
         x, y = self.map.map_pos[vid]
         post_data = {"x": x, "y": y, "target_type": "coord", "support": "Ondersteunen"}

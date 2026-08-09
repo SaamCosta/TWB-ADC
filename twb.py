@@ -361,6 +361,20 @@ class TWB:
         return changed, config
 
     @staticmethod
+    def _hour_in_window(hour, start, end):
+        """
+        P2-28: `hour in range(start, end)` dava range vazio quando a janela
+        cruza a meia-noite ("22-6") -- o bot ficava permanentemente inativo,
+        sem nenhum aviso. Mesmo tratamento que
+        WorldConfig.is_night_bonus_active ja fazia corretamente.
+        """
+        if start == end:
+            return True
+        if start < end:
+            return start <= hour < end
+        return hour >= start or hour < end
+
+    @staticmethod
     def is_active_hours(config):
         """
         Checks if the bot is within active hours
@@ -368,7 +382,7 @@ class TWB:
         """
         active_h = [int(hour) for hour in config["bot"]["active_hours"].split("-")]
         get_h = time.localtime().tm_hour
-        return get_h in range(active_h[0], active_h[1])
+        return TWB._hour_in_window(get_h, active_h[0], active_h[1])
 
     @staticmethod
     def is_village_active_hours(village_id, config):
@@ -386,7 +400,7 @@ class TWB:
         try:
             active_h = [int(h) for h in village_hours.split("-")]
             get_h = time.localtime().tm_hour
-            return get_h in range(active_h[0], active_h[1])
+            return TWB._hour_in_window(get_h, active_h[0], active_h[1])
         except (ValueError, AttributeError):
             logging.warning(
                 "Village %s has invalid active_hours format '%s', falling back to global",
@@ -677,7 +691,12 @@ class TWB:
                         # Wake up in time to enter the send window
                         time_to_window = nearest - time.time() - self.hunter.window
                         if time_to_window < sleep:
-                            sleep = max(0, time_to_window)
+                            # P2-36: era max(0, ...). Com um send_time ja
+                            # passado o sleep zerava e o bot emendava ciclos
+                            # completos sem pausa nenhuma, martelando o
+                            # servidor. Piso de 60s: ainda entra na janela,
+                            # sem virar loop apertado.
+                            sleep = max(60, time_to_window)
                             logging.info(
                                 "Hunter: shortened sleep to %.0fs to catch upcoming send_time",
                                 sleep

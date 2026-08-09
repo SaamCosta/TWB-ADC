@@ -472,8 +472,16 @@ class Village:
         self.forced_peace_today = False
         self.forced_peace_today_start = None
         for time_pairs in forced_peace_times:
-            start_dt = datetime.strptime(time_pairs["start"], "%d.%m.%y %H:%M:%S")
-            end_dt = datetime.strptime(time_pairs["end"], "%d.%m.%y %H:%M:%S")
+            try:
+                start_dt = datetime.strptime(time_pairs["start"], "%d.%m.%y %H:%M:%S")
+                end_dt = datetime.strptime(time_pairs["end"], "%d.%m.%y %H:%M:%S")
+            except (KeyError, TypeError, ValueError):
+                # Entrada mal formatada no config nao pode derrubar o ciclo:
+                # o formato esperado e "dd.mm.aa HH:MM:SS".
+                self.logger.warning(
+                    "forced_peace_times: entrada invalida ignorada (%s)", time_pairs
+                )
+                continue
             now = datetime.now()
             # Só interessa a janela que ainda vai começar hoje, e dentre elas a
             # mais próxima: forced_peace_today_start vira o teto de chegada em
@@ -710,6 +718,37 @@ class Village:
             self.area = Map(wrapper=self.wrapper, village_id=self.village_id)
         self.area.get_map()
 
+    def ensure_attack_manager(self):
+        """
+        P1-17: o AttackManager so nascia dentro de run_farming(), e apenas se
+        farm estivesse ligado, sem paz forcada e com o mapa ja populado. Mas
+        Hunter._send_attack() e PvpConquestManager._step_scout() dependem dele
+        -- o segundo sem guarda, entao virava AttributeError engolido pelo
+        except generico e logado como "error processing target". Enviar um
+        ataque agendado nao deve depender da config de farm.
+
+        Chamado logo apos ensure_map_loaded(), que garante self.area != None.
+        """
+        if not self.attack:
+            self.attack = AttackManager(
+                wrapper=self.wrapper,
+                village_id=self.village_id,
+                troopmanager=self.units,
+                map=self.area,
+            )
+            self.attack.repman = self.rep_man
+
+        # O estado de paz forcada era aplicado so dentro de run_farming(), que
+        # nem sempre roda. Como agora o manager existe sempre, o Hunter e o
+        # PvP tambem passam por aqui -- precisa ser atualizado todo ciclo.
+        # O AttackManager sobrevive entre ciclos, entao os dois campos sao
+        # sempre reescritos, nunca so setados.
+        self.attack.in_forced_peace = self.forced_peace
+        self.attack.forced_peace_time = (
+            self.forced_peace_today_start if self.forced_peace_today else None
+        )
+        return self.attack
+
     def run_farming(self):
         """
         Runs the farming logic
@@ -727,23 +766,11 @@ class Village:
                         len(self.area.villages),
                         ":".join([str(x) for x in self.area.my_location])
                 )
-                if not self.attack:
-                    self.attack = AttackManager(
-                        wrapper=self.wrapper,
-                        village_id=self.village_id,
-                        troopmanager=self.units,
-                        map=self.area,
-                    )
-                    self.attack.repman = self.rep_man
-
+                # ensure_attack_manager() ja rodou neste ciclo (Village.run) e
+                # ja escreveu forced_peace_time/in_forced_peace.
+                self.ensure_attack_manager()
                 if self.forced_peace_today:
                     self.logger.info("Forced peace time coming up today!")
-                    self.attack.forced_peace_time = self.forced_peace_today_start
-                else:
-                    # O AttackManager sobrevive entre ciclos (só é criado uma
-                    # vez), então o teto precisa ser limpo explicitamente --
-                    # senão o de ontem continuaria barrando ataques hoje.
-                    self.attack.forced_peace_time = None
                 self.set_farm_options()
 
                 if (
@@ -868,7 +895,17 @@ class Village:
         self.manage_local_resources()
         self.run_resource_sharing()
 
+        # check_forced_peace() estava definido mas nunca era chamado de lugar
+        # nenhum (achado alem do diagnostico do P1-7, que so corrigiu o `self.`
+        # dentro do metodo): self.forced_peace ficava no default False da
+        # classe para sempre, entao farms.forced_peace_times era inerte e o bot
+        # atacaria durante a janela de paz. Precisa rodar antes de
+        # ensure_attack_manager(), que le os tres campos.
+        self.check_forced_peace()
         self.ensure_map_loaded()
+        # P1-17: precisa vir antes de run_pvp_conquest()/Hunter, que consomem
+        # self.attack independentemente da config de farm.
+        self.ensure_attack_manager()
         self.run_conquest()
         self.run_pvp_conquest()
         self.run_farming()

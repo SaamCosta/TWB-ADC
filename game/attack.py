@@ -37,6 +37,9 @@ class AttackManager:
     scout_farm_amount = 5
 
     forced_peace_time = None
+    # True enquanto a janela de paz forcada esta ativa agora (distinto de
+    # forced_peace_time, que e o teto de *chegada* da proxima janela).
+    in_forced_peace = False
 
     # blocks villages which cannot be attacked at the moment (too low points, beginners protection etc..)
     _unknown_ignored = []
@@ -276,8 +279,14 @@ class AttackManager:
             )
             return False
         troops = {"spy": self.scout_farm_amount}
+        # P2-37: nao retornava nada em caso de sucesso, entao o guard do
+        # chamador (`if self.scout(vid): return False`) nunca era verdadeiro --
+        # o bot mandava o espiao E o farm no mesmo ciclo, contra o proprio
+        # objetivo de "espiar antes de atacar".
         if self.attack(vid, troops=troops):
             self.attacked(vid, scout=True, safe=False)
+            return True
+        return False
 
     def can_attack(self, vid, clear=False):
         """
@@ -379,6 +388,20 @@ class AttackManager:
         """
         Send a TW attack
         """
+        # P1-17: o AttackManager passou a ser criado sempre (village.py::
+        # ensure_attack_manager), inclusive durante paz forcada. Antes o
+        # bloqueio vinha de o objeto simplesmente nao existir; agora precisa
+        # ser explicito, senao Hunter/PvP atacariam dentro da janela de paz.
+        if self.in_forced_peace:
+            self.logger.info("[Attack] %s -> %s: forced peace active, not sending", self.village_id, vid)
+            return "forced_peace"
+
+        # P2-38: validar a posicao antes do GET da praca -- a requisicao
+        # (com o sleep de delay_factor) era desperdicada quando o alvo nao
+        # estava no mapa.
+        if vid not in self.map.map_pos:
+            return False
+
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
         pre_attack = self.wrapper.get_url(url)
         if pre_attack is None:
@@ -392,9 +415,6 @@ class AttackManager:
             pre_data.update(troops)
         else:
             pre_data.update(self.troopmanager.troops)
-
-        if vid not in self.map.map_pos:
-            return False
 
         x, y = self.map.map_pos[vid]
         post_data = {"x": x, "y": y, "target_type": "coord", "attack": "Aanvallen"}
@@ -532,6 +552,18 @@ class ConquestManager:
         if not cfg.get("enabled", False):
             return False
 
+        # P1-9: a conquista em andamento e checada ANTES do guard de trem
+        # completo. _handle_existing() trata o estado extra_pending, que
+        # precisa de 1 noble, nao de TRAIN_SIZE. Com a ordem antiga, logo apos
+        # disparar um trem a aldeia ficava com 0 nobles e todo run() saia no
+        # primeiro return False -- a regen de lealdade, a leitura de lealdade
+        # real e o envio do noble extra so voltavam a ser avaliados quando a
+        # aldeia acumulasse 4 nobles novos, o que pode levar dias. Nesse meio
+        # tempo a lealdade do alvo regenerava e o progresso se perdia.
+        existing = self._get_my_conquest()
+        if existing:
+            return self._handle_existing(existing, cfg)
+
         # Need exactly TRAIN_SIZE nobles available, not counting nobles another
         # conquest system already has scheduled (Feature 27)
         available_nobles = self._available_nobles()
@@ -545,11 +577,6 @@ class ConquestManager:
             # reservations (e.g. a PvP conquest escort) must not be wiped.
             self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
             return False
-
-        # Check if this village already has a pending conquest
-        existing = self._get_my_conquest()
-        if existing:
-            return self._handle_existing(existing, cfg)
 
         # Find and reserve a new target
         target_id = self.find_target(cfg)

@@ -413,6 +413,38 @@ class ResourceManager:
                     "Removing offer %s from market because it existed too long" % offer
                 )
 
+    # P1-14: o regex original ancorava no literal "Aankomend:" (holandes). O
+    # servidor ativo e pt-BR ("Chegando:"), entao ele nunca casava e
+    # resource_incoming ficava sempre {} -- o bot criava oferta duplicada para
+    # recurso que ja estava a caminho, gastando mercadores a toa.
+    # A alternacao cobre os idiomas conhecidos; a estrutura depois do rotulo
+    # ("icon header <recurso>") e a mesma em todos. Se nenhum casar o
+    # comportamento e identico ao de hoje ({}), so que agora logado.
+    INCOMING_LABELS = "Chegando|Aankomend|Incoming|Ankommend|Entrante|Llegando|Arrivo|Przybywa"
+    INCOMING_RE = re.compile(
+        r"(?:" + INCOMING_LABELS + r"):\s.+?\"icon header (wood|stone|iron)\".+?</span>(.+?) ",
+        re.M | re.S,
+    )
+
+    def _parse_incoming_resources(self, html):
+        """
+        Le o bloco "recursos a caminho" da tela de mercado.
+        Retorna {} quando nao ha nada a caminho ou quando o bloco nao casa.
+        """
+        incoming = self.INCOMING_RE.findall(html)
+        if not incoming:
+            self.logger.debug(
+                "Market: nenhum bloco de recursos a caminho reconhecido "
+                "(pode ser que nao haja nenhum, ou que o rotulo do idioma "
+                "esteja fora de INCOMING_LABELS)"
+            )
+            return {}
+        resource, amount = incoming[0]
+        digits = "".join(s for s in amount if s.isdigit())
+        if not digits:
+            return {}
+        return {resource.strip(): int(digits)}
+
     def readable_ts(self, seconds):
         """
         Human readable timestamp
@@ -453,17 +485,10 @@ class ResourceManager:
                 if res is None:
                     self.logger.warning("Market: request timed out, skipping this cycle")
                     return
-                p = re.compile(
-                    r"Aankomend:\s.+\"icon header (.+?)\".+?<\/span>(.+) ", re.M
-                )
-                incoming = p.findall(res.text)
-                resource_incoming = {}
-                if incoming:
-                    resource_incoming[incoming[0][0].strip()] = int(
-                        "".join([s for s in incoming[0][1] if s.isdigit()])
-                    )
+                resource_incoming = self._parse_incoming_resources(res.text)
+                if resource_incoming:
                     self.logger.info(
-                        f"There are resources incoming! %s", resource_incoming
+                        "There are resources incoming! %s", resource_incoming
                     )
 
                 item, how_many = need
@@ -515,13 +540,7 @@ class ResourceManager:
             r"(?:<!-- insert the offer -->\n+)\s+<tr>(.*?)<\/tr>", re.S | re.M
         )
         cur_off_tds = p.findall(res.text)
-        p = re.compile(r"Aankomend:\s.+\"icon header (.+?)\".+?<\/span>(.+) ", re.M)
-        incoming = p.findall(res.text)
-        resource_incoming = {}
-        if incoming:
-            resource_incoming[incoming[0][0].strip()] = int(
-                "".join([s for s in incoming[0][1] if s.isdigit()])
-            )
+        resource_incoming = self._parse_incoming_resources(res.text)
 
         if item in resource_incoming:
             how_many = how_many - resource_incoming[item]
