@@ -25,16 +25,26 @@ def check_update():
         "..",
         "config.json"
     )
-    if os.path.exists(get_local_config_version):
-        with open(get_local_config_version, "r", encoding="utf-8") as running_cf:
-            parsed = json.load(fp=running_cf)
-            if not parsed["bot"].get("check_update", False):
-                return
-    with open(get_local_config_template_version, "r", encoding="utf-8") as local_cf:
-        parsed = json.load(fp=local_cf)
-        get_remote_version = requests.get(
-            "https://raw.githubusercontent.com/SaamCosta/TWB-ADC/master/config.example.json"
-        ).json()
+    try:
+        if os.path.exists(get_local_config_version):
+            with open(get_local_config_version, "r", encoding="utf-8") as running_cf:
+                parsed = json.load(fp=running_cf)
+                if not parsed.get("bot", {}).get("check_update", False):
+                    return
+        with open(get_local_config_template_version, "r", encoding="utf-8") as local_cf:
+            parsed = json.load(fp=local_cf)
+
+        response = requests.get(
+            "https://raw.githubusercontent.com/SaamCosta/TWB-ADC/master/config.example.json",
+            timeout=10,
+        )
+        if response.status_code != 200:
+            logging.info(
+                "Update check skipped: github returned HTTP %d", response.status_code
+            )
+            return
+        get_remote_version = response.json()
+
         if parsed["build"]["version"] != get_remote_version["build"]["version"]:
             logging.warning(
                 "There is a new version of the bot available. \n"
@@ -44,3 +54,6 @@ def check_update():
             time.sleep(5)
         else:
             logging.info("The bot is up-to-date")
+    except Exception as e:
+        # Uma falha na checagem de versao nunca pode impedir o bot de iniciar
+        logging.info("Update check skipped: %s", e)

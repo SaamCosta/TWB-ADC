@@ -45,6 +45,18 @@ class BuildingManager:
         """
         self.wrapper = wrapper
         self.village_id = village_id
+        # P2-23: os mutaveis precisam nascer por instancia. `waits` so era
+        # reatribuido dentro de `if existing_queue == 0` em start_update(),
+        # entao ate o primeiro ciclo com fila vazia o `.append()` de put_wait()
+        # escrevia na lista *de classe* -- a fila de uma aldeia bloqueava o
+        # is_queued() de outra. Os demais sao reatribuidos por ciclo, mas
+        # declarar aqui evita a mesma armadilha se algum caminho falhar antes.
+        self.queue = []
+        self.waits = []
+        self.waits_building = []
+        self.levels = {}
+        self.costs = {}
+        self.game_state = {}
 
     def create_update_links(self, extracted_buildings):
         """

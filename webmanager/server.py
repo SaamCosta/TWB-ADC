@@ -14,7 +14,34 @@ except ImportError:
 
 bm = BotManager()
 app = Flask(__name__)
-app.config["DEBUG"] = True
+# P1-18: DEBUG=True liga o debugger interativo do Werkzeug, que expoe um
+# console Python remoto em qualquer excecao -- execucao de codigo arbitrario
+# para quem alcancar a porta.
+app.config["DEBUG"] = False
+
+
+@app.before_request
+def reject_cross_origin_writes():
+    """
+    Protecao CSRF: toda rota que escreve usa POST (ver abaixo), e um POST
+    vindo de outra origem e recusado. O navegador envia `Origin` em todo POST
+    cross-origin e nao permite que a pagina atacante o falsifique, entao
+    comparar com o `Host` basta -- sem precisar de token por formulario.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    origin = request.headers.get("Origin")
+    if origin is None:
+        # Sem Origin: ou e um cliente nao-navegador (curl), ou um navegador
+        # antigo. Cai para o Referer quando ele existe.
+        referer = request.headers.get("Referer")
+        if referer is None:
+            return None
+        origin = referer
+    from urllib.parse import urlparse
+    if urlparse(origin).netloc != request.host:
+        return jsonify({"error": "cross-origin request rejected"}), 403
+    return None
 
 
 def pre_process_bool(key, value, village_id=None):
@@ -131,13 +158,13 @@ def sync():
 def get_vars():
     return jsonify(sync())
 
-@app.route('/bot/start')
+@app.route('/bot/start', methods=['POST'])
 def start_bot():
     bm.start()
     import time; time.sleep(0.5)
     return jsonify({"running": bm.is_running(), "pid": bm.pid})
 
-@app.route('/bot/stop')
+@app.route('/bot/stop', methods=['POST'])
 def stop_bot():
     bm.stop()
     return jsonify({"running": bm.is_running()})
@@ -240,7 +267,7 @@ def get_home():
 def get_js():
     return send_from_directory(os.path.join(os.path.dirname(__file__), "public"), "js.v2.js")
 
-@app.route('/app/config/set', methods=['GET'])
+@app.route('/app/config/set', methods=['POST'])
 def config_set():
     vid = request.args.get("village_id", None)
     if not vid:
@@ -312,7 +339,7 @@ def get_hunter():
     schedules = HunterReader.load()
     managed = sync()["bot"]
     # {village_id: name_or_empty} para o dropdown
-    villages = {vid: managed[vid].get("public", {}).get("name", "") for vid in managed}
+    villages = {vid: (managed[vid].get("public") or {}).get("name", "") for vid in managed}
     village_options_json = json.dumps(villages)
     return render_template(
         "hunter.html",
@@ -363,7 +390,7 @@ def hunter_delete():
         HunterReader.delete_schedule(sched_key)
     return redirect(url_for("get_hunter"))
 
-@app.route('/hunter/toggle', methods=['GET'])
+@app.route('/hunter/toggle', methods=['POST'])
 def hunter_toggle():
     enabled = request.args.get("enabled", "0") == "1"
     result = HunterReader.set_enabled(enabled)
@@ -410,7 +437,7 @@ def get_reports():
     type_filter = request.args.get("type", "").strip() or None
     entries, stats = ReportReader.load(dest_filter=dest_filter, type_filter=type_filter)
     managed = sync()["bot"]
-    village_options = {vid: managed[vid].get("public", {}).get("name", "") for vid in managed}
+    village_options = {vid: (managed[vid].get("public") or {}).get("name", "") for vid in managed}
     return render_template(
         'reports.html',
         entries=entries,
@@ -443,7 +470,7 @@ def get_pvp_conquest():
     pvp_cfg = config.get("pvp_conquest", {})
     targets = PvpConquestReader.load()
     managed = sync()["bot"]
-    managed_villages = {vid: managed[vid].get("public", {}).get("name", "") for vid in managed}
+    managed_villages = {vid: (managed[vid].get("public") or {}).get("name", "") for vid in managed}
     return render_template(
         "pvp_conquest.html",
         enabled=enabled,
@@ -513,7 +540,10 @@ def get_empire():
     )
 
 
-if len(sys.argv) > 1:
-    app.run(host="localhost", port=sys.argv[1])
-else:
-    app.run()
+if __name__ == "__main__":
+    # P1-18(c): sem esta guarda, qualquer `import webmanager.server` subia um
+    # servidor HTTP como efeito colateral.
+    if len(sys.argv) > 1:
+        app.run(host="localhost", port=sys.argv[1])
+    else:
+        app.run()

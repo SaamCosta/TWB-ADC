@@ -275,7 +275,7 @@
 function togglePvp() {
   var btn = $('#btn-toggle-pvp');
   var isEnabled = btn.hasClass('btn-success');
-  $.getJSON('/app/config/set?parameter=pvp_conquest.enabled&value=' + (!isEnabled), function() {
+  $.post('/app/config/set?parameter=pvp_conquest.enabled&value=' + (!isEnabled), function() {
     if (!isEnabled) {
       btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
     } else {

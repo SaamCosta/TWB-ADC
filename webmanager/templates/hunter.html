@@ -268,7 +268,7 @@ function removeRow(idx) {
 function toggleHunter() {
   var btn = $('#btn-toggle-hunter');
   var isEnabled = btn.hasClass('btn-success');
-  $.getJSON('/hunter/toggle?enabled=' + (!isEnabled ? '1' : '0'), function(data) {
+  $.post('/hunter/toggle?enabled=' + (!isEnabled ? '1' : '0'), function(data) {
     if (data.enabled) {
       btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
       $('.alert-warning').hide();

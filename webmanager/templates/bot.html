@@ -157,15 +157,15 @@
 <script>
 function set_session_data() {
   var val = $('#session_data').val();
-  $.getJSON('/app/config/set?parameter=session&value=' + encodeURIComponent(val), function(){
+  $.post('/app/config/set?parameter=session&value=' + encodeURIComponent(val), function(){
     alert('Sessão atualizada.');
-  });
+  }, 'json');
 }
 
 function bot_action(action) {
   var msg = $('#bot-action-msg');
   msg.text(action === 'start' ? 'Iniciando...' : 'Parando...');
-  $.getJSON('/bot/' + action, function(data) {
+  $.post('/bot/' + action, function(data) {
     var running = (data === true) || (data && data.running);
     var badge = $('#status-badge');
     if (running) {

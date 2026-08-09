@@ -352,7 +352,6 @@ class Simulator:
 
             attackFood = self.attack_sum_food(attackerUnits)
             attackFoodSum = self.get_sum(attackFood)
-            print(attackFood, attackFoodSum)
             defenderUnitsCopy = dict()
 
             for unit in defenderUnits:

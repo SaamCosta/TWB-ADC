@@ -65,7 +65,7 @@
 var set_values = {};
 
 function set_config(parameter, value) {
-  $.getJSON("/app/config/set?parameter=" + encodeURIComponent(parameter) + "&value=" + encodeURIComponent(value));
+  $.post("/app/config/set?parameter=" + encodeURIComponent(parameter) + "&value=" + encodeURIComponent(value));
 }
 
 function set_toggle_value(target, value) {

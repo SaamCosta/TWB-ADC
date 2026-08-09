@@ -273,7 +273,7 @@ var currentRadius = {{ radius }};
 // ── Controls ─────────────────────────────────────────────────────────────────
 function saveRadius() {
   var val = document.getElementById('radius-slider').value;
-  $.getJSON('/app/config/set?parameter=zones.radius&value=' + val, function() {
+  $.post('/app/config/set?parameter=zones.radius&value=' + val, function() {
     currentRadius = parseInt(val);
     var badge = document.querySelector('.badge.bg-info');
     if (badge) badge.textContent = 'Radius atual: ' + val + ' campos';
@@ -289,7 +289,7 @@ function saveRadius() {
 function toggleZones() {
   var btn = $('#btn-toggle-zones');
   var isEnabled = btn.hasClass('btn-success');
-  $.getJSON('/app/config/set?parameter=zones.enabled&value=' + (!isEnabled), function() {
+  $.post('/app/config/set?parameter=zones.enabled&value=' + (!isEnabled), function() {
     if (!isEnabled) {
       btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
     } else {

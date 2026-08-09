@@ -27,7 +27,7 @@
 <script>
     var set_values = {};
 	function set_config(parameter, value) {
-		$.getJSON("/app/config/set?village_id={{current_select}}&parameter="+encodeURIComponent(parameter)+"&value="+encodeURIComponent(value), function(data){
+		$.post("/app/config/set?village_id={{current_select}}&parameter="+encodeURIComponent(parameter)+"&value="+encodeURIComponent(value), function(data){
 			console.log("Set values", parameter, value);
 		});
 	}

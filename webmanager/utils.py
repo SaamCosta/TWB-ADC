@@ -342,18 +342,54 @@ class BotManager:
     pid = None
     _proc = None
     OUTPUT_LOG = os.path.join(os.path.dirname(__file__), "..", "cache", "logs", "bot_output.log")
+    # P2-32: o pid vivia so em memoria, entao reiniciar o webmanager perdia a
+    # referencia -> is_running() retornava False -> /bot/start subia um SEGUNDO
+    # twb.py na mesma conta (risco de ban). Persistir em disco.
+    PID_FILE = os.path.join(os.path.dirname(__file__), "..", "cache", "bot.pid")
+
+    def _read_pid_file(self):
+        try:
+            with open(self.PID_FILE, "r", encoding="utf-8") as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _write_pid_file(self, pid):
+        try:
+            os.makedirs(os.path.dirname(self.PID_FILE), exist_ok=True)
+            if pid is None:
+                if os.path.exists(self.PID_FILE):
+                    os.remove(self.PID_FILE)
+            else:
+                with open(self.PID_FILE, "w", encoding="utf-8") as f:
+                    f.write(str(pid))
+        except OSError:
+            pass
+
+    @staticmethod
+    def _is_twb_process(pid):
+        """
+        Confirma que o pid ainda e um twb.py nosso, e nao um pid reciclado
+        pelo SO apontando para um processo qualquer.
+        """
+        try:
+            proc = psutil.Process(pid)
+            if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
+                return False
+            return any("twb.py" in str(arg) for arg in (proc.cmdline() or []))
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
 
     def is_running(self):
-        if not self.pid:
+        pid = self.pid or self._read_pid_file()
+        if not pid:
             return False
-        try:
-            proc = psutil.Process(self.pid)
-            if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
-                return True
-        except psutil.NoSuchProcess:
-            pass
+        if self._is_twb_process(pid):
+            self.pid = pid
+            return True
         self.pid = None
         self._proc = None
+        self._write_pid_file(None)
         return False
 
     def start(self):
@@ -375,6 +411,7 @@ class BotManager:
             cmd = ["python3", "twb.py"]
         self._proc = subprocess.Popen(cmd, **kwargs)
         self.pid = self._proc.pid
+        self._write_pid_file(self.pid)
         print("Bot started (PID %d)" % self.pid)
 
     def stop(self):
@@ -392,6 +429,7 @@ class BotManager:
         finally:
             self.pid = None
             self._proc = None
+            self._write_pid_file(None)
 
     @staticmethod
     def read_output_log(lines=200):
@@ -999,7 +1037,10 @@ class ZoneReader:
             villages = []
             for vid in village_ids:
                 vdata = managed_cache.get(vid, {})
-                pub = vdata.get("public", {})
+                # P2-21: set_cache_vars grava "public": None quando a aldeia
+                # ainda nao tem dados publicos -- a chave existe, entao o
+                # default do .get() nao entra. Precisa do `or {}`.
+                pub = vdata.get("public", {}) or {}
                 entry = {
                     "id": vid,
                     "name": pub.get("name", "Aldeia %s" % vid),
