@@ -38,12 +38,15 @@ class ReportManager:
     def __init__(self, wrapper=None, village_id=None):
         self.wrapper = wrapper
         self.village_id = village_id
+        # Mutavel por instancia (ver CLAUDE.md): read() reatribui, mas
+        # last_reports[...] = res tambem e escrito direto em dois pontos.
+        self.last_reports = {}
 
     def has_resources_left(self, vid):
         possible_reports = []
         for repid in self.last_reports:
             entry = self.last_reports[repid]
-            if vid == entry["dest"] and entry["extra"].get("when", None):
+            if vid == entry.get("dest") and (entry.get("extra") or {}).get("when", None):
                 possible_reports.append(entry)
         if len(possible_reports) == 0:
             return False, {}
@@ -58,35 +61,44 @@ class ReportManager:
         return False, {}
 
     def safe_to_engage(self, vid):
+        # P2-25: attack_report() so popula units_sent/defence_units quando a
+        # tabela correspondente existe no HTML e o regex casa. Relatorio
+        # parcial (ou gravado por versao antiga do bot) nao pode derrubar o
+        # farm inteiro com KeyError -- ausente significa "sem informacao".
         for repid in self.last_reports:
             entry = self.last_reports[repid]
-            if vid == entry["dest"]:
-                if entry["type"] == "attack" and entry["losses"] == {}:
+            if vid == entry.get("dest"):
+                extra = entry.get("extra") or {}
+                losses = entry.get("losses") or {}
+                if entry.get("type") == "attack" and losses == {}:
                     return 1
                 if (
-                        entry["type"] == "scout"
-                        and entry["losses"] == {}
+                        entry.get("type") == "scout"
+                        and losses == {}
                         and (
-                        entry["extra"]["defence_units"] == {}
-                        or entry["extra"]["defence_units"]
-                        == entry["extra"]["defence_losses"]
+                        extra.get("defence_units", {}) == {}
+                        or extra.get("defence_units")
+                        == extra.get("defence_losses")
                 )
                 ):
                     return 1
 
-                if entry["losses"] != {}:
-                    print(f'Units sent: {entry["extra"]["units_sent"]}')
-                    print(f'Units lost: {entry["losses"]}')
+                units_sent = extra.get("units_sent") or {}
+                if losses != {} and self.logger:
+                    self.logger.debug(
+                        "safe_to_engage %s: units sent %s, units lost %s",
+                        vid, units_sent, losses
+                    )
 
-                for sent_type in entry["extra"]["units_sent"]:
-                    amount = entry["extra"]["units_sent"][sent_type]
-                    if sent_type in entry["losses"]:
-                        if amount == entry["losses"][sent_type]:
+                for sent_type in units_sent:
+                    amount = units_sent[sent_type]
+                    if sent_type in losses:
+                        if amount == losses[sent_type]:
                             return 0
-                        elif entry["losses"][sent_type] <= 1:
+                        elif losses[sent_type] <= 1:
                             return 1
 
-                if entry["losses"] != {}:
+                if losses != {}:
                     return 0
         return -1
 

@@ -81,7 +81,19 @@ class BuildingManager:
             if self.logger:
                 self.logger.warning("Builder: request timed out, skipping this cycle")
             return False
-        self.game_state = Extractor.game_state(main_data)
+        game_state = Extractor.game_state(main_data)
+        # Extractor.game_state() retorna None quando o regex nao casa -- resposta
+        # 200 que nao e a tela esperada (sessao expirada virando login, bot
+        # protection, markup novo). Nao pode virar `None["village"]`.
+        # Atencao: o logger so nasce logo abaixo, entao a guarda precisa
+        # sobreviver a self.logger ainda ser None.
+        if not game_state or "village" not in game_state:
+            if self.logger:
+                self.logger.warning(
+                    "Builder: resposta da tela principal nao reconhecida, pulando ciclo"
+                )
+            return False
+        self.game_state = game_state
         vname = self.game_state["village"]["name"]
 
         if not self.logger:
@@ -207,12 +219,15 @@ class BuildingManager:
                 or build_item["wood"] > self.resman.storage
                 or build_item["stone"] > self.resman.storage
         ):
-            build_data = "storage:%d" % (int(self.levels["storage"]) + 1)
+            # P2-24: get_level() em vez de self.levels[...] -- um mundo sem o
+            # predio (ou um game_state parcial) fazia KeyError aqui.
+            storage_level = self.get_level("storage")
+            build_data = "storage:%d" % (storage_level + 1)
             if (
                     len(self.queue)
                     and "storage"
                     not in [x.split(":")[0] for x in self.queue[0: self.max_lookahead]]
-                    and int(self.levels["storage"]) != 30
+                    and storage_level != 30
             ):
                 self.queue.insert(0, build_data)
                 self.logger.info(
@@ -280,12 +295,13 @@ class BuildingManager:
             return False
 
         if self.resman and self.resman.in_need_of("pop"):
-            build_data = "farm:%d" % (int(self.levels["farm"]) + 1)
+            farm_level = self.get_level("farm")
+            build_data = "farm:%d" % (farm_level + 1)
             if (
                     len(self.queue)
                     and "farm"
                     not in [x.split(":")[0] for x in self.queue[0: self.max_lookahead]]
-                    and int(self.levels["farm"]) != 30
+                    and farm_level != 30
             ):
                 self.queue.insert(0, build_data)
                 self.logger.info("Adding farm in front of queue because low on pop")
@@ -295,7 +311,11 @@ class BuildingManager:
             entry = self.queue[index]
             entry, min_lvl = entry.split(":")
             min_lvl = int(min_lvl)
-            if min_lvl <= self.levels[entry]:
+            # P2-24: get_level() devolve 0 para predio que nao existe neste
+            # mundo (ex: watchtower/church num template generico). Assim a
+            # entrada nao e removida por engano e cai no `not in self.costs`
+            # logo abaixo, que e o caminho correto para "indisponivel".
+            if min_lvl <= self.get_level(entry):
                 self.queue.pop(index)
                 return self.get_next_building_action(index)
             if entry not in self.costs:
@@ -310,12 +330,13 @@ class BuildingManager:
                 return self.get_next_building_action(index)
             if check["can_build"] and self.has_enough(check) and "build_link" in check:
                 queue = self.put_wait(check["build_time"])
+                current_level = self.get_level(entry)
                 self.logger.info(
                     "Building %s %d -> %d (finishes: %s)"
                     % (
                         entry,
-                        self.levels[entry],
-                        self.levels[entry] + 1,
+                        current_level,
+                        current_level + 1,
                         self.readable_ts(queue),
                     )
                 )
@@ -325,12 +346,12 @@ class BuildingManager:
                     "Building %s %d -> %d (finishes: %s)"
                     % (
                         entry,
-                        self.levels[entry],
-                        self.levels[entry] + 1,
+                        current_level,
+                        current_level + 1,
                         self.readable_ts(queue),
                     ),
                 )
-                self.levels[entry] += 1
+                self.levels[entry] = current_level + 1
                 response = self.wrapper.get_url(check["build_link"].replace("amp;", ""))
                 if response is None:
                     self.logger.warning("Builder: build request timed out for %s, skipping", entry)
@@ -344,10 +365,15 @@ class BuildingManager:
                         self.queue.pop(0)
                         index -= 1
                     # Building was completed, queueing another
-                self.game_state = Extractor.game_state(response)
-                self.costs = Extractor.building_data(response)
-                # Trigger function again because game state is changed
-                self.costs = self.create_update_links(self.costs)
+                # Mesma guarda de start_update(): se a resposta pos-build nao
+                # for reconhecida, manter o game_state anterior em vez de
+                # zerar para None -- has_enough() le game_state["village"].
+                new_state = Extractor.game_state(response)
+                if new_state and "village" in new_state:
+                    self.game_state = new_state
+                    self.costs = Extractor.building_data(response)
+                    # Trigger function again because game state is changed
+                    self.costs = self.create_update_links(self.costs)
                 if self.resman and "building" in self.resman.requested:
                     # Build something, remove request
                     self.resman.requested["building"] = {}

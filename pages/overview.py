@@ -1,4 +1,5 @@
 import dataclasses
+import logging
 import re
 from typing import Dict, Optional, Tuple
 
@@ -94,7 +95,10 @@ class Storage:
         """
         resource_values = resources.replace(".", "").split(" ")
         if len(resource_values) != 3:
-            print("Invalid resources string format")
+            # P2-31: antes isso so imprimia e seguia, e o resource_values[0]
+            # abaixo levantava IndexError -- que nao e ValueError, entao
+            # escapava do try e derrubava a corrida inteira.
+            raise ValueError("Invalid resources string format")
         try:
             self.wood = int(resource_values[0])
             self.stone = int(resource_values[1])
@@ -254,20 +258,33 @@ class OverviewPage:
                     idx_offset = 1 if len(cells[0].contents) == 0 else 0  # Compatibility with premium account
                     if idx_offset == 1:
                         self.is_premium = True
-                    village_id = cells[idx_offset].contents[1].attrs["data-id"]
+                    # P2-31: uma linha em formato inesperado nao pode derrubar
+                    # a leitura das demais aldeias -- get_overview() no twb.py
+                    # so captura RuntimeError, entao qualquer IndexError/
+                    # TypeError/KeyError daqui matava o bot.
+                    try:
+                        village_id = cells[idx_offset].contents[1].attrs["data-id"]
 
-                    name, coordinates, continent = self._extract_name_cords_continent(
-                        cells[idx_offset].text.strip()
-                    )
-                    points = cells[1 + idx_offset].text.strip()
-                    resources = cells[2 + idx_offset].text.strip()
-                    storage_capacity = cells[3 + idx_offset].text.strip()
+                        extracted = self._extract_name_cords_continent(
+                            cells[idx_offset].text.strip()
+                        )
+                        if extracted is None:
+                            continue
+                        name, coordinates, continent = extracted
+                        points = cells[1 + idx_offset].text.strip()
+                        resources = cells[2 + idx_offset].text.strip()
+                        storage_capacity = cells[3 + idx_offset].text.strip()
 
-                    storage = Storage(resources, storage_capacity)
-                    farm = Farm(cells[4 + idx_offset].text.strip())
-                    village = Village(
-                        village_id, name, coordinates, continent, points, storage, farm
-                    )
+                        storage = Storage(resources, storage_capacity)
+                        farm = Farm(cells[4 + idx_offset].text.strip())
+                        village = Village(
+                            village_id, name, coordinates, continent, points, storage, farm
+                        )
+                    except (IndexError, KeyError, TypeError, ValueError) as e:
+                        logging.warning(
+                            "Overview: skipping unparseable village row (%s)", e
+                        )
+                        continue
                     self.villages_data[village_id] = village
 
     def parse_header_info(self) -> None:
@@ -280,13 +297,19 @@ class OverviewPage:
         self.world_settings.quests = "Quests.setQuestData" in text
 
     @staticmethod
-    def _extract_name_cords_continent(cell_value: str) -> Tuple[str, Point, str]:
-        """Extract name, coordinates and continent from cell value."""
+    def _extract_name_cords_continent(cell_value: str) -> Optional[Tuple[str, Point, str]]:
+        """
+        Extract name, coordinates and continent from cell value.
+
+        Returns None when the cell doesn't match -- o chamador precisa pular a
+        linha. Antes o `return None` implicito virava
+        `name, coordinates, continent = None` -> TypeError (P2-31).
+        """
         match = re.match(r"(.+)\s\((\d+)\|(\d+)\)\s(.+)", cell_value)
         if match:
             name = match.group(1)
             coordinates = Point(int(match.group(2)), int(match.group(3)))
             continent = match.group(4)
             return name, coordinates, continent
-        else:
-            print("Invalid village string format. Skipping village...")
+        logging.warning("Invalid village string format (%r). Skipping village...", cell_value)
+        return None

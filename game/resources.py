@@ -168,6 +168,11 @@ class ResourceManager:
                 self.logger.warning("Premium trade: request timed out, skipping")
                 return
             data = Extractor.premium_data(res.text)
+            # P2-30: a checagem `if not data` existia, mas 15 linhas depois de
+            # data["stock"] -- o TypeError vinha antes.
+            if not data:
+                self.logger.warning("Error reading premium data!")
+                return
 
             premium_exchange = PremiumExchange(
                 wrapper=self.wrapper,
@@ -184,8 +189,6 @@ class ResourceManager:
             self.logger.debug("Cost per point: %s", cost_per_point)
             self.logger.info("Current %s price: ", self.actual[gpl])
 
-            if not data:
-                self.logger.warning("Error reading premium data!")
             price_fetch = ["wood", "stone", "iron"]
             prices = {}
 

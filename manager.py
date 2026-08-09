@@ -31,17 +31,26 @@ class VillageManager:
             total_loss_count = 0
             total_sent_count = 0
             for rep in reports:
-                if reports[rep]["dest"] == farm and reports[rep]["type"] == "attack":
-                    for unit in reports[rep]["extra"]["units_sent"]:
-                        total_sent_count += reports[rep]["extra"]["units_sent"][unit]
-                    for unit in reports[rep]["extra"]["units_losses"]:
-                        total_loss_count += reports[rep]["extra"]["units_losses"][unit]
+                report = reports[rep]
+                if report.get("dest") == farm and report.get("type") == "attack":
+                    # P2-26: units_losses so e gravado quando o relatorio tem
+                    # as duas tabelas de unidades (game/reports.py). O try/
+                    # except abaixo cobria so o bloco de loot, entao um
+                    # relatorio parcial derrubava o farm_manager inteiro --
+                    # que roda direto no loop principal do twb.py.
+                    extra = report.get("extra") or {}
+                    units_sent = extra.get("units_sent") or {}
+                    units_losses = extra.get("units_losses") or {}
+                    for unit in units_sent:
+                        total_sent_count += units_sent[unit]
+                    for unit in units_losses:
+                        total_loss_count += units_losses[unit]
                     try:
-                        res = reports[rep]["extra"]["loot"]
+                        res = extra["loot"]
                         for r in res:
                             loot[r] = loot[r] + int(res[r])
                             t[r] = t[r] + int(res[r])
-                        num_attack.append(reports[rep])
+                        num_attack.append(report)
                     except:
                         pass
             percentage_lost = 0
@@ -50,7 +59,7 @@ class VillageManager:
                 percentage_lost = total_loss_count / total_sent_count * 100
 
             perf = ""
-            if data["high_profile"]:
+            if data.get("high_profile"):
                 perf = "High Profile "
             if "low_profile" in data and data["low_profile"]:
                 perf = "Low Profile "
@@ -101,7 +110,7 @@ class VillageManager:
                         data["high_profile"] = True
                         AttackCache.set_cache(farm, data)
 
-            if percentage_lost > 20 and not data["low_profile"]:
+            if percentage_lost > 20 and not data.get("low_profile"):
                 logger.warning(f"Dangerous {percentage_lost} percentage lost units! Extending farm time")
                 data["low_profile"] = True
                 data["high_profile"] = False
