@@ -65,12 +65,21 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 **Auditoria completa em `docs/auditoria_codigo_2026-08-08.md`** — leitura integral
 dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com nível
-de confiança e correção sugerida. **Lotes 1 a 4 corrigidos** (estado compartilhado,
-integridade de dados, features ressuscitadas, crashes de caminho quente); só o
-**Lote 5** segue aberto — `farm_score` inerte (P1-8), regex de mercado em holandês
-num servidor pt-BR (P1-14), `DEBUG=True` no webmanager (P1-18) e os P2 restantes.
+de confiança e correção sugerida. **Lotes 1 a 5 corrigidos** (estado compartilhado,
+integridade de dados, features ressuscitadas, crashes de caminho quente, e no
+Lote 5: segurança do webmanager, `farm_score`, mercado em pt-BR, paz forçada).
 Seções já corrigidas levam um banner ✅ no topo; a ordem priorizada e as notas de
 implementação de cada lote estão no fim do documento.
+
+**Restam três itens abertos**, todos adiados de propósito:
+- **P2-22** — `_calculate_needed_escort()` pode reservar 100% de um tipo de tropa
+  e travar farm/gather por tempo indefinido.
+- **P2-29** — piso de moral em `estimate_moral()`. O diagnóstico diz que o piso
+  real do TW é 30%, o código usa `100 - loss_max` = 70, e o docstring afirma que
+  `loss_max` veio confirmado ao vivo. Não existe `cache/world_config*` no repo
+  para conferir o `<mood>` real do br143 — **conseguir uma amostra do servidor
+  antes de mexer.** Hoje é inerte (`pvp_conquest.dynamic_moral_night_bonus: false`).
+- **P2-35** — `PvpConquestManager` instanciado 1× por aldeia por ciclo (4× o I/O).
 
 - ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
   Quase toda classe aqui declara seus campos no corpo da classe, não em
@@ -80,9 +89,11 @@ implementação de cada lote estão no fim do documento.
   Como existe uma instância de quase todo manager por aldeia, isso vira
   vazamento de estado entre aldeias. Corrigidos no Lote 1: `TWB.villages`,
   `ResourceManager.actual`/`requested`, `Map.villages`/`map_pos`/`map_data`,
-  `DefenceManager.supported`/`attacks`/`flags`/`current_flag`. **Ainda abertos:**
-  `BuildingManager.waits` (P2-23) e `AttackManager.ignored` (P3). Ao criar
-  classe nova ou campo novo, declarar mutáveis em `__init__`.
+  `DefenceManager.supported`/`attacks`/`flags`/`current_flag`. No Lote 5:
+  `BuildingManager.waits`/`queue`/… (P2-23), `AttackManager.ignored`/
+  `_unknown_ignored` (P3) e `ReportManager.last_reports`. **Nenhum aberto que
+  eu conheça** — mas ao criar classe nova ou campo novo, declarar mutáveis em
+  `__init__`.
 - ⚠️ **Segundo padrão recorrente: `None` não guardado vindo de rede/parse.**
   `WebWrapper.get_url()` retorna `None` em **qualquer** exceção
   (`core/request.py`), e por tabela `get_action`/`get_api_action` também.
@@ -93,10 +104,21 @@ implementação de cada lote estão no fim do documento.
   `res["chave"]` direto e derruba o processo. O Lote 4 corrigiu cinco desses
   só no caminho de recrutamento, dos quais **quatro não estavam no diagnóstico
   original** — ao mexer num caminho que faz requisição, assumir que há mais.
-  Ainda abertos: `buildingmanager` (P2-24) e `reports` (P2-25).
-  Corolário achado no mesmo lote: `ResourceManager.logger` era criado só no fim
+  `buildingmanager` (P2-24), `reports` (P2-25), `manager.py` (P2-26),
+  `resources` (P2-30) e `overview` (P2-31) foram fechados no Lote 5.
+  Corolário achado no Lote 4: `ResourceManager.logger` era criado só no fim
   de um `update()` bem-sucedido, então a própria guarda nova crashava. Ao logar
-  num caminho de erro, conferir se o logger já existe naquele ponto.
+  num caminho de erro, conferir se o logger já existe naquele ponto — o mesmo
+  vale para `BuildingManager.start_update()`, corrigido no Lote 5.
+- ⚠️ **Terceiro padrão, achado no Lote 5: função definida mas nunca chamada.**
+  `Village.check_forced_peace()` estava correto e órfão — `farms.forced_peace_times`
+  era config inerte e o bot atacaria durante a paz forçada. O Lote 3 já tinha
+  "corrigido" um bug *dentro* dele sem notar. **Ao corrigir o corpo de uma
+  função, conferir os chamadores no mesmo passo** (`grep` pelo nome; se a única
+  ocorrência for a `def`, é código morto). Corolário: ao ressuscitar um caminho
+  morto, reler os consumidores assumindo que nunca foram exercitados — foi assim
+  que apareceu o bug do `score or default` no P1-8, e a necessidade de tornar
+  explícito o bloqueio de paz forçada no P1-17.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
@@ -118,11 +140,13 @@ implementação de cada lote estão no fim do documento.
   real jamais aconteceu e o payload `"support": "Ondersteunen"` nunca foi
   validado em pt-BR. Ligar em uma aldeia só, observando.
 - **Feature 9 (resource sharing) desligada no `config.json` local** desde
-  2026-08-08. O fix do P0-2 fez `required_resources` refletir necessidade real
-  por aldeia pela primeira vez, o que a ativaria de verdade — mas a escolha de
-  destino ordena por `last_run`, que é reescrito a cada ciclo para toda aldeia
-  (P2-27), e `send_resources()` sempre retorna `True` sem inspecionar a
-  resposta (P1-16). Religar só depois de corrigir os dois.
+  2026-08-08. Os dois bloqueios registrados caíram no Lote 5: a escolha de
+  destino não ordena mais por `last_run` (P2-27, agora usa pontos) e
+  `send_resources()` inspeciona a resposta em vez de retornar `True` sempre
+  (P1-16). **Pronta para religar, mas ainda não religada** — ligar em uma
+  aldeia só, acompanhando o log `send_resources: enviado ...` e conferindo no
+  jogo que a transferência realmente saiu. O payload nunca foi validado em
+  campo em nenhum idioma.
 
 ## Backlog de features pendentes
 

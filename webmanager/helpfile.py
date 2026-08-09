@@ -17,6 +17,7 @@ help_file = {
     'bot.village_name_number_length': 'The number length — lower values will be prefixed with zeroes',
     'bot.auto_set_village_names': 'Automatically set village names based on the template',
     'bot.user_agent': 'Set this to the browser agent your session is using (mismatch may cause ban)',
+    'bot.max_cached_reports': 'Maximum number of files kept in cache/reports — the oldest are pruned once the limit is exceeded. Keeps the per-cycle farm/report cross-check bounded. 0 disables pruning',
     'bot.humanize_village_order': 'Shuffle the village processing order every cycle instead of always following the same sequence (Feature 23)',
     'bot.jitter_min': 'Lower bound (seconds) of the random jitter added to every cycle delay (Feature 23)',
     'bot.jitter_max': 'Upper bound (seconds) of the random jitter added to every cycle delay (Feature 23)',

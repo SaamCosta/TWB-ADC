@@ -159,16 +159,31 @@ class VillageManager:
         if verbose:
             logger.info("Total loot: %s" % t)
 
-        if clean_reports:
-            list_of_files = sorted(["./cache/reports/" + f for f in os.listdir("./cache/reports/")],
-                                   key=os.path.getctime)
+        # P2-33: a poda existia mas twb.py nunca passava clean_reports, entao
+        # cache/reports crescia sem limite -- e farm_manager cruza cada farm
+        # com cada relatorio a cada ciclo, entao o custo por ciclo cresce
+        # junto. Agora vem de bot.max_cached_reports (default 1000, acima do
+        # volume atual: so entra em acao quando o diretorio realmente
+        # dispara). 0/None desliga.
+        if clean_reports and os.path.exists("./cache/reports/"):
+            list_of_files = sorted(
+                ["./cache/reports/" + f for f in os.listdir("./cache/reports/")],
+                key=os.path.getctime
+            )
 
-            logger.info(f"Found {len(list_of_files)} files")
-
+            removed = 0
             while len(list_of_files) > clean_reports:
                 oldest_file = list_of_files.pop(0)
-                logger.info(f"Delete old report ({oldest_file})")
-                os.remove(os.path.abspath(oldest_file))
+                try:
+                    os.remove(os.path.abspath(oldest_file))
+                    removed += 1
+                except OSError as e:
+                    logger.warning("Could not delete old report %s: %s", oldest_file, e)
+            if removed:
+                logger.info(
+                    "Pruned %d old reports (limit %d, %d remaining)",
+                    removed, clean_reports, len(list_of_files)
+                )
 
 
 if __name__ == "__main__":

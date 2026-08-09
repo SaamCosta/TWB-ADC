@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "2.8",
+    "version": "2.9",
     "author": "stefan2200"
   },
   "server": {
@@ -30,6 +30,7 @@
     "auto_set_village_names": false,
     "user_agent": null,
     "check_update": true,
+    "max_cached_reports": 1000,
     "humanize_village_order": false,
     "jitter_min": 20,
     "jitter_max": 120,

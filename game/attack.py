@@ -57,6 +57,17 @@ class AttackManager:
         self.village_id = village_id
         self.troopmanager = troopmanager
         self.map = map
+        # P3: mutaveis por instancia (ver CLAUDE.md). `ignored` e
+        # `_unknown_ignored` sao mutados in-place (.append/.remove) e nunca
+        # reatribuidos, entao como atributos de classe eram compartilhados
+        # por todas as aldeias -- um alvo fora do farm_radius de uma aldeia
+        # ficava ignorado para todas, mesmo estando perto de outra.
+        # `targets` e `extra_farm` sao reatribuidos, mas declarar aqui evita
+        # a mesma armadilha se algum caminho falhar antes da atribuicao.
+        self.ignored = []
+        self._unknown_ignored = []
+        self.targets = {}
+        self.extra_farm = []
 
     def enough_in_village(self, units):
         """

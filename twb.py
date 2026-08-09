@@ -705,7 +705,12 @@ class TWB:
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
 
-                VillageManager.farm_manager(verbose=True)
+                VillageManager.farm_manager(
+                    verbose=True,
+                    # P2-33: a poda de cache/reports existia mas nunca era
+                    # acionada -- este parametro nunca era passado.
+                    clean_reports=config["bot"].get("max_cached_reports", 1000),
+                )
                 print(
                     "Dead for %.2f minutes (next run at: %s)"
                     % (sleep / 60, dt_next.time())

@@ -432,6 +432,10 @@ par de datas do dia vence.
 
 ## P1-8 — `farm_score` nunca é calculado: a ordenação por eficiência da Feature 5 é inerte
 
+> ✅ **CORRIGIDO** no Lote 5 (`d9d36e2`). Implementar a escrita revelou um
+> segundo bug no lado da leitura (`score or default` tratava score 0 como
+> "sem histórico") — ver as notas de implementação no fim do documento.
+
 **Confiança:** 🟢 Confirmado por `grep` exaustivo em todo o repositório.
 
 **Ocorrências de `farm_score` no projeto inteiro:**
@@ -468,6 +472,9 @@ semântica de ordenação: hoje o código assume "score maior = melhor"
 ---
 
 ## P1-9 — O caminho de "noble extra" da conquista bárbara é inalcançável
+
+> ✅ **CORRIGIDO** no Lote 5 (`42b2ef9`), exatamente como sugerido: o
+> `_get_my_conquest()` foi movido para antes do guard de 4 nobles.
 
 **Confiança:** 🟡 Alta.
 
@@ -643,6 +650,10 @@ explícito quando `can_recruit is None`.
 
 ## P1-14 — Strings e regex em holandês rodando num servidor pt-BR
 
+> ✅ **CORRIGIDO** no Lote 5 (`42b2ef9`) para o item confirmado (o regex de
+> "recursos a caminho"). Os itens ⚪ da tabela abaixo (`"delete"`, `"attack"`,
+> `"support"`) seguem sem validação em campo.
+
 **Confiança:** 🟢 Confirmado (o servidor ativo é `br143.tribalwars.com.br`).
 
 **Locais:**
@@ -708,6 +719,8 @@ exceção fosse tratada o mapa ficaria bloqueado por 8 horas.
 
 ## P1-16 — `send_resources()` sempre retorna `True`
 
+> ✅ **CORRIGIDO** no Lote 5 (`d9d36e2`).
+
 **Confiança:** 🟢 Confirmado.
 
 **Local:** [`game/resources.py:586-596`](../game/resources.py)
@@ -740,6 +753,10 @@ usado em `attack()` e `support()`.
 ---
 
 ## P1-17 — Hunter e PvP Conquest dependem de `village.attack`, que só é criado dentro do farm
+
+> ✅ **CORRIGIDO** no Lote 5 (`42b2ef9`) via `Village.ensure_attack_manager()`.
+> Exigiu tornar explícito o bloqueio de paz forçada, que antes vinha de o
+> objeto não existir — ver as notas de implementação no fim do documento.
 
 **Confiança:** 🟢 Confirmado.
 
@@ -777,6 +794,10 @@ de o farm estar ligado.
 ---
 
 ## P1-18 — Webmanager: Flask com `DEBUG=True` e alteração de config via GET sem CSRF
+
+> ✅ **CORRIGIDO** no Lote 5 (`e13979d`): `DEBUG=False`, rotas de escrita em
+> POST, guarda de mesma origem em `before_request` (cobre também os formulários
+> já existentes) e `app.run()` sob `if __name__ == "__main__"`.
 
 **Confiança:** 🟢 Confirmado.
 
@@ -817,6 +838,9 @@ envolver o `app.run()` no guard de `__main__`.
 
 ## P1-19 — `check_update()` roda fora do try/except: falha de rede impede o bot de iniciar
 
+> ✅ **CORRIGIDO** no Lote 5 (`e13979d`): try/except, `timeout=10` e checagem
+> de status code.
+
 **Confiança:** 🟢 Confirmado.
 
 **Local:** [`twb.py:709-724`](../twb.py) × [`core/updater.py:33-46`](../core/updater.py)
@@ -853,6 +877,11 @@ desligar é um paliativo.
 ---
 
 # P2 — Robustez / correção lógica
+
+> **Estado (2026-08-09):** dos 20 itens, **17 corrigidos** — P2-20 no Lote 4,
+> os demais no Lote 5 (`e13979d`, `ff1c035`, `42b2ef9`, `d9d36e2`). Seguem
+> abertos **P2-22**, **P2-29** e **P2-35**; o porquê de cada um está nas notas
+> de implementação do Lote 5, no fim do documento.
 
 | ID | Problema | Local | Detalhe |
 |----|----------|-------|---------|
@@ -1036,13 +1065,21 @@ poucas linhas com alto retorno.
 13. ✅ **P0-3** guarda no handler de crash do `main()` (feito antes, commit `ebac9d4`).
 14. ✅ **P2-20** guarda no sync de `defense_states` + reset por ciclo.
 
-### Lote 5 — o resto
-15. **P1-19** try/except no `check_update`.
-16. **P1-18** `DEBUG=False` no webmanager.
-17. **P1-8** implementar `farm_score` de fato.
-18. **P1-9** reordenar o guard da conquista.
-19. **P1-14** regex de mercado agnóstico de idioma.
-20. **P1-16 / P1-17** e demais itens P2.
+### Lote 5 — o resto ✅ (parcial: 20 itens fechados, 3 abertos)
+15. ✅ **P1-19** try/except no `check_update` (+ `timeout`, status code).
+16. ✅ **P1-18** `DEBUG=False`, rotas de escrita em POST, guarda de origem, `__main__`.
+17. ✅ **P1-8** `farm_score` implementado — rendeu um bug extra no lado da leitura.
+18. ✅ **P1-9** guard da conquista reordenado.
+19. ✅ **P1-14** parse de recursos a caminho agnóstico de idioma.
+20. ✅ **P1-16** `send_resources()` inspeciona a resposta.
+21. ✅ **P1-17** `ensure_attack_manager()` — exigiu tornar explícito o bloqueio de paz forçada.
+22. ✅ **P2-21, P2-23, P2-24, P2-25, P2-26, P2-27, P2-28, P2-30, P2-31,
+    P2-32, P2-33, P2-34, P2-36, P2-37, P2-38, P2-39** e o **P3** de
+    `AttackManager.ignored`.
+23. ✅ Fora do diagnóstico: `check_forced_peace()` nunca era chamado.
+
+**Ainda abertos:** P2-22 (escort pode travar o farm), P2-29 (piso de moral —
+precisa do `<mood>` real do servidor), P2-35 (PvP instanciado por aldeia).
 
 ---
 
@@ -1233,6 +1270,71 @@ que estava dentro do laço (uma linha por aldeia) saiu para fora.
 (`recruit_data`, `game_state`, `attack_form`, …) têm mais consumidores sem
 guarda espalhados — `buildingmanager` e `reports` em particular. É o mesmo
 padrão, mas fora do escopo do lote.
+
+## Lote 5 — dois achados fora do diagnóstico, um deles maior que o item original
+
+Dividido em quatro commits (`e13979d`, `ff1c035`, `42b2ef9`, `d9d36e2`).
+
+**Achado 1 — `Village.check_forced_peace()` nunca era chamado.** O P1-7 do
+Lote 3 corrigiu o `self.` faltando *dentro* do método, mas ninguém tinha
+verificado se o método era chamado: `grep` no repositório inteiro devolve
+uma única ocorrência, a própria `def`. Consequência: `self.forced_peace`
+ficava no default `False` da classe para sempre, e portanto
+`farms.forced_peace_times` era config inerte — o bot atacaria normalmente
+dentro da janela de paz forçada. Agora é chamado em `Village.run()`, antes de
+`ensure_attack_manager()`, com `try/except` no `strptime` para uma entrada mal
+formatada não derrubar o ciclo. **Lição:** corrigir o corpo de uma função não
+prova que ela executa; conferir os chamadores no mesmo passo.
+
+**Achado 2 — o P1-8 escondia um segundo bug do lado da leitura.** Ao passar a
+gravar `farm_score`, o `score = ....get("farm_score") or default_score` de
+`get_targets()` viraria um bug ativo: um farm com score **0** (não rende
+nada) é falsy, cairia no `default_score = 9999` e iria para o **topo** da
+fila de farm — exatamente o alvo que menos interessa. Era inofensivo enquanto
+nada gravava o campo. Trocado por checagem explícita de `None`. Simulado com
+5 alvos: a ordem passa de "distância pura" para
+`nunca_atacado → rico → médio → pobre → sem_saque`. **Lição:** ao ativar um
+caminho que estava morto, reler os consumidores assumindo que eles nunca
+foram exercitados.
+
+**Consequência do P1-17.** Extrair a criação do `AttackManager` para
+`ensure_attack_manager()` removeu um bloqueio que era *implícito*: durante paz
+forçada o objeto simplesmente não existia, e o Hunter falhava por isso. Com o
+objeto passando a existir sempre, Hunter e PvP poderiam atacar dentro da
+janela de paz. Foi preciso adicionar `AttackManager.in_forced_peace`, checado
+no topo de `attack()`, e reescrever os dois campos de paz a cada ciclo.
+Padrão a vigiar: **quando um guard vinha de "o objeto não existe", criar o
+objeto sempre exige tornar o guard explícito.**
+
+**Escolha conservadora em `evacuate()` (P2-39).** A ordenação por distância
+real entrou, mas a primeira versão iterava os candidatos e tentava o próximo
+quando `support()` devolvia falso. Descartado: `support()` termina em
+`get_api_action()`, que devolve `None` quando a resposta não é parseável — o
+envio pode ter acontecido. Retentar mandaria as mesmas tropas para uma
+segunda aldeia. Mantida uma tentativa por ciclo, só que agora para o destino
+mais próximo.
+
+**P2-33 com default acima do volume atual.** A poda de `cache/reports` existia
+mas `clean_reports` nunca era passado. Ligada via `bot.max_cached_reports`
+(novo, default `1000`) — acima dos ~286 arquivos de hoje, então não apaga nada
+agora e só entra em ação quando o diretório realmente dispara. `config.example.json`
+foi para `2.9`; o `config.json` local segue em `2.8`, então o próprio bot faz o
+merge (com `config.bak`) e ganha a chave no próximo start.
+
+**Não corrigido de propósito — P2-29 (piso de moral).** O diagnóstico afirma
+que o piso real do TW é 30% e o código usa `floor = 100 - loss_max` = 70. Mas
+o docstring de `estimate_moral` afirma que `mood.loss_max` foi confirmado ao
+vivo, e as duas afirmações não podem ser verificadas offline: não há
+`cache/world_config*` neste repositório para inspecionar o `<mood>` real do
+br143. Trocar 70 por 30 seria trocar um palpite por outro num campo que hoje
+é **inerte** (`pvp_conquest.dynamic_moral_night_bonus: false`). Precisa de uma
+amostra do bloco `<mood>` do servidor antes de mexer.
+
+**Também aberto:** P2-22 (`_calculate_needed_escort` pode reservar 100% de um
+tipo de tropa e travar o farm indefinidamente) e P2-35 (`PvpConquestManager`
+instanciado 1× por aldeia por ciclo). Os dois são mudanças de comportamento em
+tropas/escalonamento, não guardas — merecem lote próprio com validação em
+campo.
 
 ---
 
