@@ -595,6 +595,16 @@ class TroopManager:
         Recruit x amount of x from a certain building
         """
         data = self.wrapper.get_action(action=building, village_id=self.village_id)
+        # Mesmo modo de falha do P1-11, mas na PRIMEIRA requisição da função:
+        # get_action -> get_url devolve None em qualquer exceção de rede, e
+        # Extractor.active_recruit_queue faz res.text direto -> AttributeError.
+        # Este é o crash mais provável dos dois; a auditoria só viu o de baixo.
+        if data is None:
+            self.logger.warning(
+                "Village %s: %s screen request failed, skipping recruitment this cycle",
+                self.village_id, building
+            )
+            return False
 
         existing = Extractor.active_recruit_queue(data)
         if existing:
@@ -612,6 +622,18 @@ class TroopManager:
             return self.recruit(unit_type, amount, wait_for, building)
 
         self.recruit_data = Extractor.recruit_data(data)
+        # Extractor.recruit_data tem `return None` implícito quando o regex de
+        # unit_managers.units não casa -- resposta 200 que não é a tela de
+        # recrutamento (sessão expirada -> login, página de bot protection) ou
+        # markup novo. Sem a guarda, a linha `unit_type not in self.recruit_data`
+        # logo abaixo dava "argument of type 'NoneType' is not iterable".
+        if not self.recruit_data:
+            self.logger.warning(
+                "Village %s: could not read unit data from the %s screen "
+                "(session expired or markup changed?), skipping recruitment",
+                self.village_id, building
+            )
+            return False
         self.game_data = Extractor.game_state(data)
         self.logger.info("Attempting recruitment of %d %s" % (amount, unit_type))
 
@@ -680,7 +702,11 @@ class TroopManager:
             params={"screen": building, "mode": "train"},
             data={"units[%s]" % unit_type: str(amount)},
         )
-        if "game_data" in result:
+        # get_api_action devolve None quando a resposta não é 200 ou o post
+        # falhou (core/request.py). Sem a guarda, um timeout no meio de um
+        # recrutamento -- que roda para toda aldeia todo ciclo -- derrubava o
+        # processo com "argument of type 'NoneType' is not iterable" (P1-11).
+        if result and "game_data" in result:
             self.resman.update(result["game_data"])
             self.wait_for[self.village_id][building] = int(time.time()) + (
                     amount * int(resources["build_time"])

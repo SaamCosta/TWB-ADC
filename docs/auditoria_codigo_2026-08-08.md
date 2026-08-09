@@ -980,9 +980,9 @@ cache/pvp_conquest: 1 arquivo    (38409 — "complete")
 Critério: impacto × esforço. Os quatro primeiros são todos correções de
 poucas linhas com alto retorno.
 
-> **Progresso (2026-08-08):** Lotes 1, 2 e 3 implementados e pushados (mais o
-> P0-3, antecipado do Lote 4). Os demais lotes seguem abertos. Ver as notas de
-> implementação no fim deste documento.
+> **Progresso (2026-08-08):** Lotes 1 a 4 implementados e pushados. Só o Lote 5
+> segue aberto. Ver as notas de implementação no fim deste documento — o Lote 4
+> rendeu quatro crashes além dos diagnosticados.
 
 ### Lote 1 — estado compartilhado (risco de ban / dados cruzados) ✅
 1. ✅ **P0-1** `self.villages = []` em `TWB.__init__` — 1 linha.
@@ -1004,12 +1004,13 @@ poucas linhas com alto retorno.
 8. ✅ **P1-7** `self.` no `forced_peace_today`.
 9. ✅ **P1-10** inverter a comparação do relatório de scout antigo.
 
-### Lote 4 — crashes de caminho quente
-10. **P1-11** guarda de `None` no `recruit()`.
-11. **P1-12** `list()` na iteração do `can_recruit()`.
-12. **P1-13** guardas no `SnobManager`.
-13. **P0-3** guarda no handler de crash do `main()`.
-14. **P2-20** guarda no sync de `defense_states`.
+### Lote 4 — crashes de caminho quente ✅
+10. ✅ **P1-11** guarda de `None` no `recruit()`.
+    Eram **três** crashes na mesma função, não um — ver notas.
+11. ✅ **P1-12** `list()` na iteração do `can_recruit()`.
+12. ✅ **P1-13** guardas no `SnobManager`.
+13. ✅ **P0-3** guarda no handler de crash do `main()` (feito antes, commit `ebac9d4`).
+14. ✅ **P2-20** guarda no sync de `defense_states` + reset por ciclo.
 
 ### Lote 5 — o resto
 15. **P1-19** try/except no `check_update`.
@@ -1154,6 +1155,56 @@ passada, dentro da janela, config vazio).
 **P1-10 (scout antigo)** — reescrito como `now - last_attack >
 farm_low_prio_wait * 2` em vez de trocar o operador, para a condição ficar
 legível na mesma direção da mensagem de log.
+
+## Lote 4 — o P1-11 era a ponta de uma família de cinco
+
+O diagnóstico apontava **um** `None` não guardado em `recruit()`. Escrevendo o
+teste que reproduzia o crash, apareceram mais quatro do mesmo tipo — todos
+"resposta que não é a tela esperada", todos no caminho que roda para toda
+aldeia todo ciclo. Cada um só ficou visível depois de corrigir o anterior:
+
+| # | Onde | Gatilho | Diagnosticado? |
+|---|---|---|---|
+| 1 | `troopmanager.recruit()` — `get_action` inicial | timeout de rede | ❌ |
+| 2 | `troopmanager.recruit()` — `Extractor.recruit_data` devolve `None` | 200 que não é a tela de recrutamento (sessão expirada, bot protection, markup novo) | ❌ |
+| 3 | `troopmanager.recruit()` — `get_api_action` | timeout de rede | ✅ P1-11 |
+| 4 | `ResourceManager.update(game_state=None)` | idem #2, vindo de 4 chamadores | ❌ |
+| 5 | `ResourceManager.logger` é `None` até o primeiro `update()` bem-sucedido | qualquer `self.logger.*` antes disso | ❌ |
+
+O #1 é o mais provável dos três de `recruit()`: é a primeira requisição da
+função, e a auditoria só tinha visto a última.
+
+O #4 foi guardado **no destino** (`ResourceManager.update`) em vez de nos
+quatro chamadores (`buildingmanager`, `snobber`, `village` ×2), que passam
+`Extractor.game_state(...)` cru. Degrada mantendo os valores anteriores: um
+resource desatualizado por um ciclo é melhor que derrubar o processo.
+
+O #5 foi descoberto pelo próprio fix do #4 — o `logger.warning` da guarda nova
+crashava, porque `logger` é atributo de classe `None` e só era criado na
+**última linha** de um `update()` bem-sucedido. Ou seja, `can_recruit()` e
+`do_premium_stuff()` já eram `AttributeError` se chamados antes do primeiro
+update. Movido para o `__init__`; `update()` continua re-vinculando com o nome
+real da aldeia quando o conhece.
+
+**P1-13 (snob)** — além das duas guardas previstas, a decisão não-óbvia foi o
+valor de `is_incomplete` quando o markup da academia não casa. Ele é lido em
+[`village.py`](../game/village.py) e, com `prioritize_snob` ligado, **barra
+todo o recrutamento da aldeia**. Deixá-lo `True` num parse que falhou travaria
+a aldeia inteira por um erro de leitura; fica `False` de propósito — não
+nobilitar é melhor que não recrutar nada.
+
+**P2-20** — a guarda `if not village.def_man: continue` era metade. A outra é
+que `defense_states` era declarado **fora** do `while` e nunca limpo: entradas
+de aldeias já perdidas seguiam sendo anunciadas como "sob ataque" para sempre.
+Isso também mantinha o `attention_lag` da Feature 23 permanentemente desligado
+(`not any(defense_states.values())`). Agora é zerado a cada ciclo. O `print`
+que estava dentro do laço (uma linha por aldeia) saiu para fora.
+
+**Não coberto:** o levantamento de #4 olhou só os chamadores de
+`resman.update`. Os outros `Extractor.*` que devolvem `None` implícito
+(`recruit_data`, `game_state`, `attack_form`, …) têm mais consumidores sem
+guarda espalhados — `buildingmanager` e `reports` em particular. É o mesmo
+padrão, mas fora do escopo do lote.
 
 ---
 

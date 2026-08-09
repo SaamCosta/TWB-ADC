@@ -551,6 +551,12 @@ class TWB:
                 if config["bot"].get("humanize_village_order", False):
                     random.shuffle(processing_order)
 
+                # Zerado a cada ciclo: declarado fora do while, acumulava
+                # entradas de aldeias já perdidas (conquistadas de volta, ou
+                # removidas do config), que seguiam sendo anunciadas como
+                # "sob ataque" para as demais aldeias para sempre (P2-20).
+                defense_states = {}
+
                 for village in processing_order:
                     if village.village_id not in self.found_villages:
                         print(
@@ -605,8 +611,15 @@ class TWB:
                         )
 
                 if len(defense_states) and config["farms"]["farm"]:
+                    print("Syncing attack states")
                     for village in self.villages:
-                        print("Syncing attack states")
+                        # def_man só existe depois de update_pre_run(), que roda
+                        # dentro de village.run(). Aldeia que caiu num `continue`
+                        # acima (fora de found_villages ou fora do active_hours)
+                        # nunca chegou lá e continua com def_man None -- iterar
+                        # self.villages cru dava AttributeError (P2-20).
+                        if not village.def_man:
+                            continue
                         village.def_man.my_other_villages = defense_states
 
                 # Feature 11: rebuild geographic zones from managed village cache

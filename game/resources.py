@@ -112,6 +112,11 @@ class ResourceManager:
         """
         self.wrapper = wrapper
         self.village_id = village_id
+        # self.logger só era criado no fim de um update() bem-sucedido, então
+        # qualquer self.logger.* antes disso (can_recruit, do_premium_stuff, e
+        # agora a guarda de game_state em update) era AttributeError. update()
+        # continua re-vinculando com o nome real da aldeia quando o conhece.
+        self.logger = logging.getLogger(f"Resource Manager: {village_id}")
         # Por instância, não por classe: existe um ResourceManager por aldeia
         # e, como atributos de classe, os quatro compartilhavam o mesmo dict.
         # `requested` é gravado em required_resources (cache/managed/*.json) e
@@ -124,6 +129,19 @@ class ResourceManager:
         """
         Update the current resources based on the game state
         """
+        # Extractor.game_state() devolve None quando o regex não casa (resposta
+        # 200 que não é uma tela de jogo: login após sessão expirada, página de
+        # bot protection, markup novo). Os 4 chamadores passam o resultado
+        # direto, sem guarda -- buildingmanager, snobber e village (2x) --,
+        # então a guarda vale mais aqui do que replicada em cada um.
+        # Manter os valores anteriores é o degradado certo: pior que resource
+        # desatualizado por um ciclo é derrubar o processo.
+        if not game_state or "village" not in game_state:
+            self.logger.warning(
+                "Village %s: no parseable game state in this response, "
+                "keeping the previous resource values", self.village_id
+            )
+            return False
         self.actual["wood"] = game_state["village"]["wood"]
         self.actual["stone"] = game_state["village"]["stone"]
         self.actual["iron"] = game_state["village"]["iron"]
@@ -260,7 +278,10 @@ class ResourceManager:
         """
         if self.actual["pop"] == 0:
             self.logger.info("Can't recruit, no room for pops!")
-            for x in self.requested:
+            # list() obrigatório: deletar durante a iteração dava RuntimeError
+            # sempre que a população estivesse cheia com pedido de recrutamento
+            # pendente -- cenário comum em aldeia madura (P1-12).
+            for x in list(self.requested.keys()):
                 if "recruitment" in x:
                     del self.requested[x]
             return False

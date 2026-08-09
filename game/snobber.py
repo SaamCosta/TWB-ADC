@@ -68,6 +68,11 @@ class SnobManager:
         Tries to recruit a new snob
         """
         result = self.wrapper.get_action(action="snob", village_id=self.village_id)
+        if result is None:
+            self.logger.warning(
+                "Snob screen request failed (timeout / non-200), skipping this cycle"
+            )
+            return False
         if '"id":"coin"' in result.text:
             self.using_coin_system = True
         game_data = Extractor.game_state(result)
@@ -92,6 +97,20 @@ class SnobManager:
                 self.is_incomplete = True
                 self.logger.debug("Not enough resources available")
                 return False
+        if not can_recruit:
+            # Chegar aqui significa: o regex não casou E need_reserve() disse
+            # que não falta recurso -- ou seja, o markup da academia mudou (a
+            # mesma classe de quebra do gold_big.png -> .webp acima). Antes,
+            # esse caminho seguia para o .group(1) e dava AttributeError (P1-13).
+            # is_incomplete fica False de propósito: com prioritize_snob ligado
+            # ele barra TODO o recrutamento da aldeia (village.py), e travar
+            # tudo por causa de um parse que não deu é pior que não nobilitar.
+            self.logger.warning(
+                "Could not read the snob recruit count from the academy screen "
+                "(markup changed?), skipping snob recruitment this cycle"
+            )
+            self.is_incomplete = False
+            return False
         self.is_incomplete = False
         r_num = int(can_recruit.group(1))
         if r_num == 0:
