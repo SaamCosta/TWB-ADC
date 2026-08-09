@@ -244,7 +244,14 @@ class AttackManager:
                 self.logger.debug("Removed %s from farm ignore list", vid)
                 self.ignored.remove(vid)
 
-            score = farm_scores.get(vid, {}).get("farm_score") or default_score
+            # `or default_score` trataria um score 0 (farm que nao rende nada)
+            # como "sem historico" e o colocaria no topo da fila. Enquanto o
+            # farm_score nunca era gravado (P1-8) isso era inofensivo; agora
+            # que o farm_manager grava de verdade, precisa distinguir
+            # "ainda nao pontuado" (None) de "pontuado como ruim" (0).
+            score = farm_scores.get(vid, {}).get("farm_score")
+            if score is None:
+                score = default_score
             output.append([village, distance, distance / max(score, 1)])
         self.logger.info(
             "Farm targets: %d Ignored targets: %d", len(output), len(self.ignored)

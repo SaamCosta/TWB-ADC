@@ -631,15 +631,30 @@ class ResourceManager:
             f"game.php?village={self.village_id}"
             f"&screen=market&mode=send_res&action=send_res"
         )
-        try:
-            self.wrapper.post_url(post_url, data=payload)
-            self.logger.info(
-                "send_resources: enviado %s → aldeia %s", resources, target_village_id
+        # P1-16: o try/except aqui era inalcancavel -- WebWrapper.post_url() ja
+        # captura toda excecao internamente e devolve None (core/request.py).
+        # Na pratica a resposta nunca era inspecionada e a funcao retornava
+        # True sempre: o ResourceSharingManager descontava do excedente local e
+        # gravava success:true no historico da Feature 20 para transferencias
+        # que podem nunca ter acontecido. Mesmo padrao ja usado em attack() e
+        # support().
+        response = self.wrapper.post_url(post_url, data=payload)
+        if response is None:
+            self.logger.warning(
+                "send_resources: sem resposta ao enviar %s → aldeia %s",
+                resources, target_village_id
             )
-            return True
-        except Exception as e:
-            self.logger.warning("send_resources: erro ao enviar recursos: %s", e)
             return False
+        if '<div class="error_box">' in response.text:
+            self.logger.warning(
+                "send_resources: o jogo recusou o envio de %s → aldeia %s (error_box)",
+                resources, target_village_id
+            )
+            return False
+        self.logger.info(
+            "send_resources: enviado %s → aldeia %s", resources, target_village_id
+        )
+        return True
 
     def parse_res_offer(self, res_offer, id):
         """

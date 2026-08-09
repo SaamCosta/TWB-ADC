@@ -80,14 +80,44 @@ class VillageManager:
             # cache/reports e usada só para o log acima. Isso também deixava
             # a coluna "Ataques" de /farmscores sempre zerada. Persistindo
             # aqui corrige as duas telas de uma vez.
+            # P1-8: farm_score era LIDO em game/attack.py::get_targets() e nas
+            # telas do webmanager, mas nunca era ESCRITO em lugar nenhum do
+            # projeto -- o comentario "preserve score fields calculated by
+            # farm_manager" preservava um campo que ninguem calculava. Com o
+            # score sempre no default 9999, `distance / max(score, 1)` virava
+            # `distance / 9999` para todo alvo e a "ordenacao por eficiencia de
+            # saque" da Feature 5 era, na pratica, ordenacao por distancia
+            # pura. /farmscores classificava tudo como "new" para sempre.
+            #
+            # Metrica: saque medio por ataque. Maior = melhor, que e a
+            # semantica que get_targets() ja assume (score no denominador) e
+            # que /farmscores ja usa (ordena por -score, e trata None/9999
+            # como "ainda sem historico").
+            changed = False
             if data.get("attack_count") != len(num_attack):
+                # Bugfix (achado construindo a Feature 17 -- mapa de calor de
+                # farm no /empire): "attack_count" era gravado em
+                # cache/attacks/{id}.json apenas como valor herdado do cache
+                # anterior (game/attack.py::AttackManager.attacked(),
+                # "attack_count": existing.get("attack_count", 0)) e nunca era
+                # efetivamente atualizado em lugar nenhum -- ficava para
+                # sempre em 0. A contagem real só existia aqui, calculada na
+                # hora a partir de cache/reports e usada só para o log acima.
+                # Isso também deixava a coluna "Ataques" de /farmscores sempre
+                # zerada. Persistindo aqui corrige as duas telas de uma vez.
                 data["attack_count"] = len(num_attack)
-                AttackCache.set_cache(farm, data)
+                changed = True
 
             if len(num_attack):
                 total = 0
                 for k in loot:
                     total += loot[k]
+
+                new_score = int(total / len(num_attack))
+                if data.get("farm_score") != new_score:
+                    data["farm_score"] = new_score
+                    changed = True
+
                 if len(num_attack) > 3:
                     if total / len(num_attack) < 100 and (
                             "low_profile" not in data or not data["low_profile"]
@@ -98,7 +128,7 @@ class VillageManager:
                                 farm, total / len(num_attack)
                             )
                         data["low_profile"] = True
-                        AttackCache.set_cache(farm, data)
+                        changed = True
                     elif total / len(num_attack) > 500 and (
                             "high_profile" not in data or not data["high_profile"]
                     ):
@@ -108,16 +138,22 @@ class VillageManager:
                                 farm, total / len(num_attack)
                             )
                         data["high_profile"] = True
-                        AttackCache.set_cache(farm, data)
+                        changed = True
 
             if percentage_lost > 20 and not data.get("low_profile"):
                 logger.warning(f"Dangerous {percentage_lost} percentage lost units! Extending farm time")
                 data["low_profile"] = True
                 data["high_profile"] = False
-                AttackCache.set_cache(farm, data)
+                changed = True
             if percentage_lost > 50 and len(num_attack) > 10:
                 logger.critical("Farm seems too dangerous/ unprofitable to farm. Setting safe to false!")
                 data["safe"] = False
+                changed = True
+
+            # Uma escrita por farm por ciclo, em vez de ate quatro: os blocos
+            # acima mutam o mesmo dict `data`, entao cada set_cache anterior
+            # regravava o arquivo inteiro de novo.
+            if changed:
                 AttackCache.set_cache(farm, data)
 
         if verbose:

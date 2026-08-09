@@ -219,9 +219,26 @@ class ResourceSharingManager:
 
         # Ordenação por prioridade
         if priority_mode == "new_villages":
-            # Aldeias com last_run mais recente (recém-conquistadas têm last_run menor
-            # pois rodaram menos ciclos — ordena ASC para priorizá-las)
-            receivers.sort(key=lambda x: x[1].get("last_run", 0))
+            # P2-27: antes ordenava por last_run ASC, com o comentário
+            # "recém-conquistadas têm last_run menor pois rodaram menos
+            # ciclos". Mas last_run é int(time.time()) reescrito a cada ciclo
+            # para TODA aldeia (village.py::set_cache_vars), então isso
+            # ordenava por "qual rodou há mais tempo neste ciclo" -- ruído,
+            # não idade da aldeia.
+            #
+            # Pontos são o sinal real de aldeia nova disponível no mesmo
+            # cache: uma aldeia recém-conquistada tem pontuação baixa e cresce
+            # monotonicamente. Nível do edifício principal como desempate para
+            # entradas sem pontos ainda.
+            def newness(state):
+                points = state.get("points")
+                if points is None:
+                    points = (state.get("buidling_levels") or {}).get("main", 0)
+                try:
+                    return int(points)
+                except (TypeError, ValueError):
+                    return 0
+            receivers.sort(key=lambda x: newness(x[1]))
         else:
             # Modo padrão: mais necessidade total primeiro
             def total_need(state):
