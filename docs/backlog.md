@@ -816,17 +816,37 @@ outro sistema, só falta de retry/sinalização de erro.
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
-- **PvP Conquest (Feature 13) não detecta trem de nobres que falhou** —
-  `_step_check_complete()` (`game/pvp_conquest.py`) só transiciona
-  `status: "scheduled"` → `"complete"` quando a aldeia-alvo muda de dono.
-  Se os nobres chegarem e a conquista **não** acontecer (lealdade não
-  zerou, nobres foram destruídos por falta do clear, etc.), o alvo fica
-  parado em `"scheduled"` pra sempre — nenhum código verifica se o
-  `arrival_time` já passou sem sucesso, nem reseta pra `pending_scout`
-  pra tentar de novo, nem marca como `"failed"`. Só o teste de reserva de
-  tropas (`_maybe_release_reserve`) tem um fallback por tempo
-  (`arrival_time + 3600s`) — a reserva é liberada mesmo sem sucesso, mas o
-  `status` do alvo em si nunca reflete a falha nem tenta de novo sozinho.
+- ~~**PvP Conquest (Feature 13) não detecta trem de nobres que falhou**~~ —
+  ✅ **corrigido em 2026-08-11.** `_step_check_complete()` agora, quando a
+  aldeia não é nossa, delega para o novo `_maybe_mark_failed()`: passada a
+  janela de tolerância (`FAILED_GRACE_SECONDS = 7200`, deliberadamente maior
+  que o fallback de 1h de `_maybe_release_reserve` — a posse só fica visível
+  quando um scan de mapa atualiza `cache/villages/{id}.json`, o que é
+  guiado pelo ciclo do bot, não pela chegada do ataque), o alvo vira
+  `status: "failed"` com `failed_at` e um `fail_reason` que distingue
+  "checamos e não é nossa" (`train_arrived_no_conquest`) de "não deu pra
+  checar" (`train_outcome_unknown`, sem dado de mapa ou sem `player_id`
+  resolvível). A confirmação de posse continua vencendo: se a aldeia for
+  nossa, `complete` é aplicado mesmo muito depois da janela.
+  **Sem retry automático de propósito** — reagendar mandaria nobres reais de
+  novo sem saber por que o primeiro train morreu, que é exatamente o caso que
+  pede olho humano. O alvo fica terminal e visível em `/pvp_conquest`
+  (badge "Falhou" + alerta com o motivo, acima das colunas para não ficar
+  escondido embaixo de um bloco de simulação "Viável"), de onde pode ser
+  removido e readicionado. `failed_at` também entrou na timeline do
+  `/empire`. Nenhuma config nova, `build.version` não precisou bump.
+  Validado com teste isolado (20 checks, sem rede) — **pendente de validação
+  em campo**, que só acontece no próximo train que realmente falhar.
+  Diagnóstico original: `_step_check_complete()` só transicionava
+  `status: "scheduled"` → `"complete"` quando a aldeia-alvo mudava de dono.
+  Se os nobres chegassem e a conquista **não** acontecesse (lealdade não
+  zerou, nobres foram destruídos por falta do clear, etc.), o alvo ficava
+  parado em `"scheduled"` pra sempre — nenhum código verificava se o
+  `arrival_time` já tinha passado sem sucesso, nem marcava como `"failed"`.
+  Só a reserva de
+  tropas (`_maybe_release_reserve`) tinha um fallback por tempo
+  (`arrival_time + 3600s`) — a reserva era liberada mesmo sem sucesso, mas o
+  `status` do alvo em si nunca refletia a falha.
   Descoberto ao vivo em 2026-08-07 quando o clear do alvo 38409 falhou por
   tropa insuficiente (ver `docs/features_log.md`) — os nobres seguiram
   viagem mesmo assim (usuário já tinha limpado manualmente), mas se não

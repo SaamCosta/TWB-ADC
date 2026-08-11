@@ -1194,7 +1194,7 @@ class EmpireReader:
 
             # Best single representative timestamp for sort/display order:
             # prefer the most advanced milestone actually reached so far.
-            event_ts = t.get("completed_at") or t.get("scheduled_at") or 0
+            event_ts = t.get("completed_at") or t.get("failed_at") or t.get("scheduled_at") or 0
             event_fmt = "—"
             if event_ts:
                 try:
@@ -1272,6 +1272,16 @@ class PvpConquestReader:
         "no_clear_village":  "Nenhuma aldeia ofensiva disponível para limpeza.",
         "simulation_failed": "Simulação indicou ataque inviável (tropas insuficientes).",
         "no_nobles":         "Nenhuma aldeia com noble disponível.",
+        "train_arrived_no_conquest": (
+            "O train chegou mas a aldeia continua com o dono antigo — a lealdade não "
+            "zerou, ou os nobles morreram (clear insuficiente/falhou). Não haverá nova "
+            "tentativa automática: revise e, se quiser tentar de novo, remova o alvo e "
+            "adicione outra vez."
+        ),
+        "train_outcome_unknown": (
+            "O train chegou e não foi possível confirmar o dono da aldeia (sem dados de "
+            "mapa para o alvo). Confira no jogo — não haverá nova tentativa automática."
+        ),
     }
 
     @staticmethod
@@ -1351,6 +1361,7 @@ class PvpConquestReader:
                 # single representative event timestamp for the timeline.
                 "scheduled_at":        data.get("scheduled_at"),
                 "completed_at":        data.get("completed_at"),
+                "failed_at":           data.get("failed_at"),
             })
 
         order = {"pending_scout": 0, "pending_sim": 1, "scheduled": 2, "failed": 3, "complete": 4}

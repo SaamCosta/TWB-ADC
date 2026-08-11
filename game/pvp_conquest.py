@@ -6,7 +6,8 @@ Fluxo por alvo:
   pending_sim     → relatório chegou; Simulator avalia se a limpeza é viável
   scheduled       → Hunter agendou clear + noble train com chegada simultânea
   complete        → conquista concluída (loyalty ≤ 0 ou aldeia ownership confirmada)
-  failed          → clear inviável ou noble train não disparou
+  failed          → clear inviável, noble train não disparou, ou o train chegou
+                    e a posse não mudou dentro da janela de tolerância
 
 Cache: cache/pvp_conquest/{target_id}.json
 """
@@ -472,22 +473,85 @@ class PvpConquestManager:
 
         Also releases the troop reservation created by _reserve_troops()
         once it's safe to do so -- see _maybe_release_reserve().
+
+        If the target is NOT ours and the arrival window is long past, hands
+        off to _maybe_mark_failed() -- see its docstring for why "scheduled"
+        used to be a dead end.
         """
         self._maybe_release_reserve(target_id, data)
 
         village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
-        if not village_data:
-            return
-
         player_id = self._own_player_id()
-        if not player_id:
-            return
+        ownership_readable = bool(village_data and player_id)
 
-        if str(village_data.get("owner", "0")) == player_id:
+        if ownership_readable and str(village_data.get("owner", "0")) == player_id:
             data["status"] = "complete"
             data["completed_at"] = int(time.time())
             PvpConquestCache.set(target_id, data)
             logger.info("PvpConquest: target %s confirmed conquered!", target_id)
+            return
+
+        self._maybe_mark_failed(target_id, data, ownership_readable)
+
+    # Grace period after arrival_time before a still-unconquered target is
+    # declared failed. Deliberately generous (2h vs. the 1h used by
+    # _maybe_release_reserve): ownership only becomes visible here once some
+    # managed village's map scan refreshes cache/villages/{target_id}.json,
+    # which is driven by the bot cycle, not by the attack landing. Erring
+    # long costs nothing (the target just stays "scheduled" a bit longer),
+    # while erring short would flag a real, successful conquest as failed.
+    FAILED_GRACE_SECONDS = 7200
+
+    def _maybe_mark_failed(self, target_id, data, ownership_readable):
+        """
+        Marks a scheduled target as failed once its arrival window is well
+        past and the village still isn't ours.
+
+        Why this exists: _step_check_complete() only ever transitioned
+        "scheduled" -> "complete", on ownership change. If the nobles landed
+        and the conquest did NOT happen -- loyalty never reached 0, the clear
+        failed so the nobles died on the wall, the train got sniped -- the
+        target sat in "scheduled" forever. Nothing checked whether
+        arrival_time had passed without success, and nothing surfaced that
+        the target needs manual attention. Only _maybe_release_reserve() had
+        a time-based fallback, so the troops were freed while the target's
+        own status silently lied about still being in flight. Found during
+        the live validation of target 38409 (2026-08-07), where the clear
+        failed on insufficient troops.
+
+        Deliberately does NOT retry (no reset to pending_scout): re-scheduling
+        would send real nobles again without knowing why the first train
+        died, which is exactly the situation that warrants a human look. The
+        target is left terminal and visible on /pvp_conquest, where it can be
+        deleted and re-added to try again.
+
+        ownership_readable distinguishes "we checked and it isn't ours" from
+        "we couldn't check at all" (no cache/villages entry for the target,
+        or no own player id resolvable) -- both are failures as far as this
+        target's lifecycle goes, but they point at different problems, so
+        they get different fail_reasons rather than being collapsed.
+        """
+        arrival_ts = data.get("arrival_time")
+        if not arrival_ts:
+            return
+        if time.time() <= arrival_ts + self.FAILED_GRACE_SECONDS:
+            return
+
+        data["status"] = "failed"
+        data["fail_reason"] = (
+            "train_arrived_no_conquest" if ownership_readable else "train_outcome_unknown"
+        )
+        data["failed_at"] = int(time.time())
+        PvpConquestCache.set(target_id, data)
+        logger.warning(
+            "PvpConquest: target %s marked FAILED (%s) -- arrival was %s, "
+            "still not ours %.0fs later. Needs manual review; will NOT retry "
+            "on its own.",
+            target_id,
+            data["fail_reason"],
+            datetime.datetime.fromtimestamp(arrival_ts).strftime(DATETIME_FMT),
+            time.time() - arrival_ts,
+        )
 
     def _own_player_id(self):
         """

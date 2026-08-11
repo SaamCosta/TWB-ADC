@@ -104,6 +104,17 @@
       {% endfor %}
     </div>
 
+    {# fail_reason so e gravado junto com status="failed" (game/pvp_conquest.py),
+       entao um alerta unico aqui cobre todos os motivos. Fica acima das colunas
+       de proposito: um alvo que falhou depois de uma simulacao "Viavel" mostra
+       o bloco de simulacao verde a direita, e o motivo da falha nao pode ficar
+       escondido embaixo dele. #}
+    {% if t.status == 'failed' and t.fail_reason %}
+    <div class="alert alert-danger py-2 px-3 mb-3 small">
+      <strong>Falhou:</strong> {{ t.fail_reason_label }}
+    </div>
+    {% endif %}
+
     <div class="row">
 
       <!-- Coluna esquerda: configuração -->
@@ -175,13 +186,6 @@
               </span>
             </div>
           </div>
-          {% if t.fail_reason %}
-          <div class="mt-1 text-danger small">Motivo: {{ t.fail_reason_label }}</div>
-          {% endif %}
-        </div>
-        {% elif t.status == 'failed' and t.fail_reason %}
-        <div class="sim-block">
-          <span class="text-danger small">{{ t.fail_reason_label }}</span>
         </div>
         {% elif t.status in ['pending_scout','pending_sim'] %}
         <div class="text-muted small mt-1">
