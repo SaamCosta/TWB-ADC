@@ -538,7 +538,13 @@ class ResourceSharingManager:
         mercadores estão disponíveis para envio.
         """
         try:
-            url = f"game.php?village={self.current_village_id}&screen=market&mode=send_res"
+            # `mode=traders` ("Estado do comerciante") é a tela que existe para
+            # isso. A anterior, `mode=send_res`, não existe -- o jogo devolvia
+            # "Modo inválido" e por isso nenhum contador jamais foi encontrado
+            # (ver ResourceManager.send_resources). `mode=send` também serviria,
+            # mas exige um `target` na URL, e o orçamento de mercadores precisa
+            # ser conhecido *antes* de escolher os alvos do plano.
+            url = f"game.php?village={self.current_village_id}&screen=market&mode=traders"
             res = self.wrapper.get_url(url=url)
             if not res:
                 return 0
@@ -551,19 +557,19 @@ class ResourceSharingManager:
             # nunca foi exercitado contra o HTML real, e um envio dimensionado
             # para 1 mercador quando existem 20 é desperdício silencioso.
             #
-            # Confirmado quebrado em campo no br143 em 2026-08-11: o padrão
-            # `market_merchant_available_count` não existe no HTML real. O mesmo
-            # padrão é usado por ResourceManager.trade(), na forma binária
-            # `...">0`, então a checagem de mercadores do comércio normal
-            # provavelmente também nunca funcionou (achando que sempre há
-            # mercador). Salva a página uma única vez para dar a amostra que
-            # falta -- corrigir o regex às cegas seria trocar um palpite por
-            # outro.
+            # Em 2026-08-11 este regex falhou em campo -- mas a causa raiz era a
+            # URL (`mode=send_res`, inexistente), não o padrão: a página lida
+            # era um "Modo inválido" que obviamente não tinha contador nenhum.
+            # Com `mode=traders` o padrão pode estar certo; se ainda assim não
+            # casar, a amostra abaixo é o que permite corrigi-lo com o markup na
+            # mão. O mesmo padrão é usado por ResourceManager.trade() na forma
+            # binária `...">0`, ali sobre uma URL que sempre foi válida
+            # (`mode=own_offer`) -- se casar aqui, casa lá.
             logger.warning(
                 "ResourceSharing: não foi possível ler os mercadores disponíveis "
                 "em %s (markup inesperado), assumindo 1", self.current_village_id
             )
-            self._dump_once("cache/resource_sharing/market_send_res.html", res.text)
+            self._dump_once("cache/resource_sharing/market_traders.html", res.text)
             return 1
         except Exception as e:
             logger.warning("ResourceSharing: erro ao verificar mercadores: %s", e)

@@ -2,6 +2,7 @@
 Anything with resources goes here
 """
 import logging
+import os
 import re
 import time
 
@@ -597,8 +598,18 @@ class ResourceManager:
     def send_resources(self, target_village_id, resources: dict):
         """
         Feature 9: Envia recursos diretamente para outra aldeia do próprio jogador
-        via mercado interno (screen=market&mode=send_res).
+        via mercado interno (screen=market&mode=send).
         Diferente de trade(), não cria oferta pública — é uma transferência direta.
+
+        O modo correto é `send`, com o alvo na URL. Até 2026-08-11 esta função
+        usava `mode=send_res`, que **não existe**: o jogo respondia "Modo
+        inválido" num error_box tanto no GET quanto no POST. Confirmado com uma
+        amostra real do br143 -- a própria página lista os modos válidos
+        (`other_offer`, `exchange`, `own_offer`, `send`, `transports`,
+        `traders`, `all_own_offer`) e o JS declara
+        `VillageContext._urls.market = '...&screen=market&mode=send&target=__village__'`.
+        Como a tela do formulário nunca chegou a carregar uma única vez, nem o
+        contador de mercadores nem o payload jamais foram exercitados.
 
         Args:
             target_village_id: ID da aldeia destino (string ou int)
@@ -607,10 +618,21 @@ class ResourceManager:
         Returns:
             True se o envio foi submetido com sucesso, False caso contrário
         """
-        url = f"game.php?village={self.village_id}&screen=market&mode=send_res"
+        url = (
+            f"game.php?village={self.village_id}"
+            f"&screen=market&mode=send&target={target_village_id}"
+        )
         res = self.wrapper.get_url(url=url)
         if not res:
             self.logger.warning("send_resources: não foi possível carregar tela de mercado")
+            return False
+
+        if '<div class="error_box">' in res.text:
+            self.logger.warning(
+                "send_resources: o jogo recusou a tela de envio para a aldeia %s",
+                target_village_id
+            )
+            self._dump_response("cache/resource_sharing/last_send_error.html", res.text)
             return False
 
         # Verifica mercadores disponíveis
@@ -618,6 +640,13 @@ class ResourceManager:
         if match and int(match.group(1)) < 1:
             self.logger.debug("send_resources: sem mercadores disponíveis")
             return False
+
+        # Amostra da tela de envio de verdade, guardada uma única vez. Os nomes
+        # dos campos abaixo nunca foram conferidos contra o formulário real
+        # (até 2026-08-11 a URL estava errada e a tela nunca carregou), então
+        # este dump é o que permite corrigi-los com o markup na mão em vez de
+        # por tentativa e erro.
+        self._dump_response("cache/resource_sharing/market_send_form.html", res.text)
 
         payload = {
             "target_village": str(target_village_id),
@@ -629,7 +658,7 @@ class ResourceManager:
 
         post_url = (
             f"game.php?village={self.village_id}"
-            f"&screen=market&mode=send_res&action=send_res"
+            f"&screen=market&mode=send&action=send"
         )
         # P1-16: o try/except aqui era inalcancavel -- WebWrapper.post_url() ja
         # captura toda excecao internamente e devolve None (core/request.py).
@@ -653,28 +682,50 @@ class ResourceManager:
             # a mensagem. Extrai o texto e guarda a resposta inteira: e a
             # propria tela de mercado re-renderizada, entao serve de amostra do
             # formulario real e do contador de mercadores.
-            reason = "desconhecido"
-            box = re.search(r'<div class="error_box">(.*?)</div>', response.text, re.S)
-            if box:
-                reason = re.sub(r"<[^>]+>", " ", box.group(1))
-                reason = " ".join(reason.split())[:300] or "vazio"
             self.logger.warning(
                 "send_resources: o jogo recusou o envio de %s → aldeia %s: %s",
-                resources, target_village_id, reason
+                resources, target_village_id, self._error_box_text(response.text)
             )
-            try:
-                FileManager.create_directory(FileManager.get_path("cache/resource_sharing"))
-                dump = FileManager.get_path("cache/resource_sharing/last_send_error.html")
-                with open(dump, "w", encoding="utf-8") as fh:
-                    fh.write(response.text)
-                self.logger.info("send_resources: resposta salva em %s", dump)
-            except Exception as dump_error:
-                self.logger.debug("send_resources: falha ao salvar a resposta: %s", dump_error)
+            self._dump_response("cache/resource_sharing/last_send_error.html", response.text)
             return False
         self.logger.info(
             "send_resources: enviado %s → aldeia %s", resources, target_village_id
         )
         return True
+
+    @staticmethod
+    def _error_box_text(html):
+        """
+        Texto legível do primeiro `error_box` da resposta. "Houve error_box" não
+        distingue as causas plausíveis de uma recusa (campo com nome errado,
+        falta de mercador, alvo inválido, modo inexistente) -- foi exatamente a
+        mensagem "Modo inválido" que revelou, em 2026-08-11, que a URL usada
+        pela Feature 9 desde sempre não existia.
+        """
+        box = re.search(r'<div class="error_box">(.*?)</div>\s*</div>', html, re.S)
+        if not box:
+            box = re.search(r'<div class="error_box">(.*?)</div>', html, re.S)
+        if not box:
+            return "sem error_box legível"
+        text = re.sub(r"<[^>]+>", " ", box.group(1))
+        return " ".join(text.split())[:300] or "vazio"
+
+    def _dump_response(self, path, content):
+        """
+        Guarda uma resposta HTML para diagnóstico, só se o arquivo ainda não
+        existir -- o markup é sempre o mesmo, reescrever a cada ciclo não
+        acrescenta informação. Best-effort: nunca derruba o ciclo por I/O.
+        """
+        try:
+            full = FileManager.get_path(path)
+            if os.path.exists(full):
+                return
+            FileManager.create_directory(FileManager.get_path(os.path.dirname(path)))
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            self.logger.info("send_resources: amostra salva em %s", full)
+        except Exception as dump_error:
+            self.logger.debug("send_resources: falha ao salvar a amostra: %s", dump_error)
 
     def parse_res_offer(self, res_offer, id):
         """
