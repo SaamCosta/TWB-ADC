@@ -598,6 +598,76 @@ de jogo. Todos os arquivos tocados compilam limpo; achados 7 e 8 testados
 contra dados reais do ambiente (HTML ao vivo da `38409` e pontuação de
 todos os candidatos bárbaros em cache).
 
+### Sessão 2026-08-11 — fecho das lacunas da validação de campo da Feature 13 ✅
+
+Três mudanças, nenhuma validada em campo ainda. As duas últimas fecham o
+**Lote 6** da auditoria (`docs/auditoria_codigo_2026-08-08.md`), que passa a ter
+19 dos 20 P2 resolvidos — resta só o P2-29, bloqueado por falta de amostra do
+`<mood>` real do servidor.
+
+**1. Trem de nobres falhado agora é detectado** (`c45a6e8`,
+`game/pvp_conquest.py` + webmanager). Era o último item aberto da lista de
+lacunas deixadas pela validação ao vivo da `38409` (seção acima).
+`_step_check_complete()` só transicionava `"scheduled"` → `"complete"` na
+mudança de dono; se o train chegava e a conquista não acontecia, o alvo ficava
+`"scheduled"` para sempre. Como só `_maybe_release_reserve()` tinha fallback
+por tempo, a tropa era liberada **enquanto o status mentia** que o ataque
+seguia em voo. Novo `_maybe_mark_failed()`: passada a tolerância
+(`FAILED_GRACE_SECONDS = 7200`), vira `"failed"` com `failed_at` e um
+`fail_reason` que separa "checamos e não é nossa"
+(`train_arrived_no_conquest`) de "não deu para checar"
+(`train_outcome_unknown`). A tolerância é maior que o fallback de 1h da reserva
+de propósito: a posse só fica visível quando um scan de mapa atualiza
+`cache/villages/{id}.json`, guiado pelo ciclo do bot e não pela chegada do
+ataque — errar para o lado longo só adia, errar para o curto marcaria uma
+conquista real como falha. **Sem retry automático de propósito:** reagendar
+mandaria nobres reais de novo sem saber por que o primeiro train morreu, que é
+exatamente o caso que pede olho humano. O alvo fica terminal e
+removível/readicionável em `/pvp_conquest`, onde o motivo virou um alerta
+acima das colunas (antes ficaria escondido embaixo de um bloco de simulação
+verde "Viável" — a contradição é o dado mais útil ali).
+
+**2. P2-22 — reserva de escolta não trava mais farm/gather** (`74b3346`,
+`game/attack.py`). Detalhe completo nas notas do Lote 6 na auditoria. O que
+importa aqui: a correção não é "limitar o `min()`", é reconhecer que a reserva
+**se sabota**. Ela existe para a escolta acumular, mas quem financia o
+recrutamento é o farm que ela paralisa — abaixo de certo ponto tem valor
+esperado negativo. Daí dois gates novos, `conquest.escort_reserve_min_progress`
+(0.5) e `conquest.escort_reserve_max_pct` (0.8), ambos opt-out.
+`build.version` 2.9 → 3.0 só no `config.example.json`, para o bot mesclar.
+**O bug mais instrutivo foi o que a própria correção criou:** o `if needed:` do
+chamador não tinha `else`, inofensivo enquanto `{}` era raríssimo; com o gate 1
+tornando `{}` comum, uma aldeia que perde tropa e cruza de volta para baixo do
+gate ficaria com a reserva presa para sempre — o P2-22 exato por outra porta.
+Registrado em `CLAUDE.md` como corolário: alargar o *domínio de retorno* de uma
+função exige reler os consumidores, não só os chamadores.
+
+**3. P2-35 — `PvpConquestManager` único por ciclo** (`518b07b`, `twb.py`,
+`game/village.py`, `game/pvp_conquest.py`). A leitura óbvia do diagnóstico
+("4× o I/O") seria rodar a máquina de estados uma vez por ciclo — e é
+justamente o que **não** dá para fazer: a execução por aldeia é o fix de
+2026-08-07 acima, é o que dá prioridade sobre o farm daquela aldeia, e rodar só
+na primeira aldeia escolheria aldeia de limpeza com dados incompletos no
+primeiro ciclo após restart. Eliminada a **releitura**, não a execução:
+instância única por ciclo (dando aos memos onde viver) e
+`_scout_report_index()`, que indexa `cache/reports` por destino invalidando
+pelo `frozenset` de nomes de arquivo. Isso é exato, não aproximação, porque
+`ReportManager.read()` pula ids já cacheados — arquivo de relatório nunca é
+reescrito. **Sutileza preservada de propósito:** o laço antigo descartava
+relatório sem `extra.when` (`best_ts` começava em 0); relatórios anteriores ao
+fix de data pt-BR realmente não têm o campo, e aceitar um deixaria
+`_step_simulate()` comprometer tropa com base num scout de idade desconhecida.
+
+**O que ainda não foi exercitado.** Nenhuma das três rodou contra o jogo — só
+testes isolados sem rede (20, 28 e 21 checks). Item 1 só se valida no próximo
+train que realmente falhar. Itens 2 e 3 mexem em caminho de tropa real
+(`ConquestManager`) e no módulo que envia nobles, então valem a cautela extra
+da convenção do projeto. As três só entram em vigor no próximo restart do bot
+— processo em execução mantém o código antigo em memória — e o `config.json`
+ganha as duas chaves novas do item 2 automaticamente no start (backup em
+`config.bak`). Sintomas a procurar em `cache/logs/session_latest.log`:
+`marked FAILED`, `too far off to reserve` e `released stale escort reserve`.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`
