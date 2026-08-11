@@ -68,17 +68,16 @@ dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com ní
 de confiança e correção sugerida. **Lotes 1 a 6 corrigidos** (estado compartilhado,
 integridade de dados, features ressuscitadas, crashes de caminho quente, no
 Lote 5: segurança do webmanager, `farm_score`, mercado em pt-BR, paz forçada,
-e no Lote 6: a reserva de escolta que travava o farm).
+e no Lote 6: a reserva de escolta que travava o farm e o I/O do PvP conquest).
 Seções já corrigidas levam um banner ✅ no topo; a ordem priorizada e as notas de
 implementação de cada lote estão no fim do documento.
 
-**Restam dois itens abertos**, os dois adiados de propósito:
+**Resta um único item aberto**, adiado de propósito:
 - **P2-29** — piso de moral em `estimate_moral()`. O diagnóstico diz que o piso
   real do TW é 30%, o código usa `100 - loss_max` = 70, e o docstring afirma que
   `loss_max` veio confirmado ao vivo. Não existe `cache/world_config*` no repo
   para conferir o `<mood>` real do br143 — **conseguir uma amostra do servidor
   antes de mexer.** Hoje é inerte (`pvp_conquest.dynamic_moral_night_bonus: false`).
-- **P2-35** — `PvpConquestManager` instanciado 1× por aldeia por ciclo (4× o I/O).
 
 - ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
   Quase toda classe aqui declara seus campos no corpo da classe, não em
@@ -130,10 +129,17 @@ implementação de cada lote estão no fim do documento.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
   montagem/envio de ataque (`attack_form`, `map_pos`, `post_url` de confirmação).
   Candidato a extrair um helper comum.
-- Vários módulos (`Hunter`, `PvpConquestManager`, `ZoneManager`, `ConquestManager`)
-  leem/escrevem cache via varredura de diretório (`os.listdir` + `json.load` por
-  arquivo) a cada ciclo. Pode virar gargalo de I/O conforme o número de aldeias/cache
-  cresce — considerar indexação ou cache em memória por ciclo.
+- Vários módulos (`Hunter`, `ZoneManager`, `ConquestManager`, `ReportReader` do
+  webmanager) leem/escrevem cache via varredura de diretório (`os.listdir` +
+  `json.load` por arquivo) a cada ciclo. Pode virar gargalo de I/O conforme o
+  número de aldeias/cache cresce — considerar indexação ou cache em memória por
+  ciclo. **Padrão a copiar:** `PvpConquestManager._scout_report_index()` (P2-35,
+  2026-08-11) fez isso para `cache/reports` invalidando o índice pelo
+  `frozenset` de nomes de arquivo, em vez de por tempo. Isso só é exato porque
+  `ReportManager.read()` pula ids já cacheados, então um arquivo de relatório
+  nunca é reescrito — antes de reusar a técnica em outro diretório, conferir
+  que vale a mesma premissa (arquivo só nasce e morre, nunca muda de conteúdo
+  sob o mesmo nome); se não valer, o índice serviria dado velho.
 - Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
   constante de bandeira, loop de upgrade), aguardando validação em campo — ver
   `docs/bugs_flags.md` para o diagnóstico original e o estado atual.

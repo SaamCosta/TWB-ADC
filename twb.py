@@ -84,6 +84,7 @@ from game.village import Village
 from game.hunter import Hunter
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
+from game.pvp_conquest import PvpConquestManager
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -558,8 +559,28 @@ class TWB:
                     for v in self.villages
                     if v.village_id in self.found_villages
                 }
+                # P2-35: one PvpConquestManager for the whole cycle instead of
+                # one per village. The state machine still runs once per
+                # village (that priority-over-farm behaviour is deliberate --
+                # see Village.run_pvp_conquest), but sharing the instance lets
+                # its cycle-scoped memos survive across those calls, so
+                # cache/reports is indexed once per cycle rather than re-read
+                # in full for every target on every village.
+                #
+                # Built only when the feature is on: the constructor calls
+                # WorldConfig.get(), which can hit the network, and there is
+                # no reason to pay that for a bot with pvp_conquest disabled.
+                pvp_manager = None
+                if config.get("pvp_conquest", {}).get("enabled", False):
+                    pvp_manager = PvpConquestManager(
+                        wrapper=self.wrapper,
+                        villages=managed_villages_dict,
+                        config=config,
+                    )
+
                 for _v in self.villages:
                     _v.pvp_conquest_villages = managed_villages_dict
+                    _v.pvp_conquest_manager = pvp_manager
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):

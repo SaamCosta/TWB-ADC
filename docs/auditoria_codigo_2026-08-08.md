@@ -37,8 +37,8 @@ diagnóstico.
 ## Índice por prioridade
 
 > **Estado em 2026-08-09:** todos os **19 itens P0/P1 estão corrigidos**
-> (Lotes 1 a 6). Dos 20 itens P2, **18 corrigidos** e **2 abertos**: P2-29 e
-> P2-35. P2-22 foi fechado no Lote 6 (2026-08-11). A coluna "Estado" abaixo é a fonte da verdade; o porquê de
+> (Lotes 1 a 6). Dos 20 itens P2, **19 corrigidos** e **1 aberto**: P2-29.
+> P2-22 e P2-35 foram fechados no Lote 6 (2026-08-11). A coluna "Estado" abaixo é a fonte da verdade; o porquê de
 > cada pendência está nas notas de implementação do Lote 5, no fim do
 > documento.
 
@@ -63,7 +63,7 @@ diagnóstico.
 | **P1-17** | Hunter e PvP dependem de `village.attack`, criado só no farm | `game/village.py` | 🟢 | ✅ Lote 5 |
 | **P1-18** | Webmanager Flask com `DEBUG=True` + config via GET sem CSRF | `webmanager/server.py` | 🟢 | ✅ Lote 5 |
 | **P1-19** | `check_update()` fora do try → falha de rede impede o boot | `twb.py` | 🟢 | ✅ Lote 5 |
-| **P2-20..39** | Robustez / correção lógica (20 itens) | vários | — | 18 ✅ / **2 abertos** (P2-29, P2-35) |
+| **P2-20..39** | Robustez / correção lógica (20 itens) | vários | — | 19 ✅ / **1 aberto** (P2-29) |
 | **P3** | Dívida técnica, código morto, documentação | vários | — | mutáveis de classe ✅ Lote 5; resto aberto |
 
 ---
@@ -886,7 +886,7 @@ desligar é um paliativo.
 
 > **Estado (2026-08-09):** dos 20 itens, **17 corrigidos** — P2-20 no Lote 4,
 > os demais no Lote 5 (`e13979d`, `ff1c035`, `42b2ef9`, `d9d36e2`). Seguem
-> abertos **P2-29** e **P2-35** (**P2-22** fechado no Lote 6); o porquê de cada um está nas notas
+> aberto **P2-29** (**P2-22** e **P2-35** fechados no Lote 6); o porquê de cada um está nas notas
 > de implementação do Lote 5, no fim do documento.
 
 | ID | Problema | Local | Detalhe |
@@ -906,7 +906,7 @@ desligar é um paliativo.
 | **P2-32** ✅ | `BotManager.pid` não é persistido → risco de dois bots simultâneos | [`utils.py:328-364`](../webmanager/utils.py) | `pid` é atributo de classe em memória. Reiniciar o webmanager (ou o reloader do Flask em modo DEBUG, que roda **dois** processos) perde a referência → `is_running()` retorna `False` → `/bot/start` sobe um **segundo** `twb.py` em paralelo. Duas instâncias agindo na mesma conta = risco de ban. |
 | **P2-33** ✅ | `cache/reports` cresce sem limite + custo O(farms × reports) por ciclo | [`manager.py:117-126`](../manager.py), [`pvp_conquest.py:533-549`](../game/pvp_conquest.py) | `clean_reports` nunca é passado como `True` por `twb.py` → a poda existe mas nunca roda (286 relatórios hoje). `farm_manager` cruza cada farm com cada relatório a cada ciclo. `PvpConquestManager._find_scout_report` relê **todos** os JSONs de relatório do disco, por alvo, **por aldeia** (ver P2-35), por ciclo. |
 | **P2-34** ✅ | `print()` de debug dentro do laço principal do simulador | [`simulator.py:355`](../game/simulator.py) | `print(attackFood, attackFoodSum)` a cada iteração da batalha. Polui stdout e, por causa do `_TeeStream` de [`twb.py:42-62`](../twb.py), também `cache/logs/session_latest.log`. |
-| **P2-35** ⚠️ ABERTO | `PvpConquestManager` é instanciado uma vez **por aldeia**, por ciclo | [`village.py:654-690`](../game/village.py) | `run_pvp_conquest()` roda dentro de `Village.run()`, então com 4 aldeias a máquina de estados executa 4× por ciclo, cada vez varrendo `cache/pvp_conquest/` inteiro e, por alvo, `cache/reports/` inteiro. É idempotente (o status é relido do disco), mas é 4× o I/O necessário. |
+| **P2-35** ✅ | `PvpConquestManager` é instanciado uma vez **por aldeia**, por ciclo | [`village.py:654-690`](../game/village.py) | ✅ **Corrigido em 2026-08-11** — instância única por ciclo (`twb.py`) mais índice de `cache/reports` invalidado por conjunto de nomes; a execução por aldeia foi mantida de propósito (ver notas do Lote 6). Diagnóstico original: `run_pvp_conquest()` roda dentro de `Village.run()`, então com 4 aldeias a máquina de estados executa 4× por ciclo, cada vez varrendo `cache/pvp_conquest/` inteiro e, por alvo, `cache/reports/` inteiro. É idempotente (o status é relido do disco), mas é 4× o I/O necessário. |
 | **P2-36** ✅ | `nearest_send_time` pode zerar o sleep entre ciclos | [`twb.py:655-664`](../twb.py) | `sleep = max(0, time_to_window)` — se o `send_time` já passou, `sleep = 0` e o bot emenda ciclos completos sem pausa, martelando o servidor. |
 | **P2-37** ✅ | `scout()` retorna `None` em caso de sucesso, quebrando o guard do chamador | [`attack.py:269-295`](../game/attack.py) | `scout()` chama `self.attacked(...)` mas não retorna nada. Em `can_attack`: `if self.scout(vid): return False` nunca é verdadeiro → o guard "atacado há mais de 12h, espiar antes" envia o scout **e** segue para enviar o farm no mesmo ciclo. |
 | **P2-38** ✅ | `attack()` faz o GET da praça antes de validar `map_pos` | [`attack.py:378-393`](../game/attack.py) | `if vid not in self.map.map_pos: return False` vem **depois** do `pre_attack = self.wrapper.get_url(url)`. Requisição HTTP (com o sleep de delay) desperdiçada. Mesmo padrão em [`defence_manager.py:387-402`](../game/defence_manager.py). |
@@ -1084,9 +1084,9 @@ poucas linhas com alto retorno.
     `AttackManager.ignored`.
 23. ✅ Fora do diagnóstico: `check_forced_peace()` nunca era chamado.
 
-**Ainda abertos:** P2-29 (piso de moral — precisa do `<mood>` real do
-servidor) e P2-35 (PvP instanciado por aldeia). P2-22 (escort travando o farm)
-foi fechado no Lote 6.
+**Ainda aberto:** só P2-29 (piso de moral — precisa do `<mood>` real do
+servidor). P2-22 (escort travando o farm) e P2-35 (PvP instanciado por aldeia)
+foram fechados no Lote 6.
 
 ---
 
@@ -1341,12 +1341,14 @@ amostra do bloco `<mood>` do servidor antes de mexer.
 de um tipo de tropa e travar o farm indefinidamente) e P2-35
 (`PvpConquestManager` instanciado 1× por aldeia por ciclo). Os dois são
 mudanças de comportamento em tropas/escalonamento, não guardas — merecem lote
-próprio com validação em campo. **P2-22 foi fechado em 2026-08-11** (abaixo);
-P2-35 segue aberto.
+próprio com validação em campo. **Os dois foram fechados no Lote 6**, em
+2026-08-11 (abaixo).
 
 ---
 
-# Lote 6 (2026-08-11) — P2-22
+# Lote 6 (2026-08-11) — P2-22 e P2-35
+
+## P2-22 — a reserva de escolta
 
 **A reserva de escolta era autossabotadora.** O diagnóstico descreve o
 mecanismo (`min(per_unit, free)` reservando 100% de qualquer tipo escasso),
@@ -1387,6 +1389,56 @@ Testado isolado (28 checks, sem rede): o cenário exato da tabela (5 tipos ×
 unidade com 1 exemplar só, opt-out pelos dois defaults, preservação da
 Feature 27 (reserva de outro sistema descontada; a própria não), `ratio: 0`,
 e o ciclo-1-reserva → ciclo-2-perdas → reserva liberada. **Pendente de
+validação em campo.**
+
+## P2-35 — uma instância de `PvpConquestManager` por ciclo
+
+**O diagnóstico junta duas coisas com custos muito diferentes.** "4× o I/O"
+sugere dividir tudo por 4 rodando a máquina de estados uma vez só por ciclo —
+e essa é justamente a parte que **não** dá para fazer. A execução por aldeia é
+o fix de 2026-08-07: é o que dá à conquista prioridade sobre o farm *daquela*
+aldeia. Rodar só na primeira aldeia significaria, no primeiro ciclo após um
+restart, escolher aldeia de limpeza com apenas uma aldeia tendo dados
+carregados (`_select_clear_village` pula quem não tem `units`) — decisão sobre
+tropa real, não performance. E as chamadas seguintes legitimamente veem
+contagens de tropa e relatórios mais frescos, conforme as aldeias anteriores
+terminam.
+
+O que dá para eliminar sem tocar em semântica é a **releitura**, não a
+execução. Duas partes:
+
+1. **Instância única por ciclo**, construída em `twb.py` junto de
+   `pvp_conquest_villages` e entregue a cada aldeia. Sozinho isso só poupa o
+   `WorldConfig.get()` por aldeia — o valor real é dar aos memos um lugar para
+   viver entre as chamadas do ciclo. Construída só com a feature ligada, para
+   não pagar uma possível ida à rede em bot com `pvp_conquest` desligado.
+2. **Índice de `cache/reports` por destino** (`_scout_report_index`). Era o
+   custo dominante: `json.load` em ~500 arquivos, refeito do zero para cada
+   alvo em `pending_sim`, em cada aldeia, em cada ciclo.
+
+**A invalidação é por conjunto de nomes de arquivo, não por tempo** — e isso é
+exato, não uma aproximação. `ReportManager.read()` faz
+`if report_id in self.last_reports: continue`, então um relatório em cache é
+escrito uma única vez e nunca reescrito: só pode aparecer como nome novo. A
+poda do P2-33 só remove nomes. Comparar o `frozenset` de nomes (em vez de
+contar) cobre até delete+add no mesmo ciclo. O `listdir` continua acontecendo
+a cada chamada, de propósito — é ele que detecta a mudança; o que se pula é o
+`json.load` por arquivo.
+
+**Sutileza preservada de propósito:** o laço antigo iniciava `best_ts = 0` e
+exigia `when > best_ts`, então relatório sem `extra.when` nunca vencia. Mantido
+explicitamente. Não é preciosismo: relatórios cacheados antes do fix de data
+pt-BR (2026-08-07) realmente não têm `when`, e aceitar um aqui deixaria
+`_step_simulate()` comprometer tropa com base num scout de idade desconhecida.
+
+Também memoizado `_own_player_id()` (só o sucesso — `None` segue retentável,
+já que significa "o mapa ainda não chegou").
+
+Testado isolado (21 checks, sem rede): equivalência com o scan antigo (mais
+recente por destino, filtro de tipo, `dest` int vs. str), descarte de `when`
+ausente, economia (4 aldeias × 3 alvos = 1 carga em vez de 12 scans), e quatro
+casos de frescor — relatório novo no meio do ciclo, poda, delete+add com a
+mesma contagem, e diretório vazio que passa a ter arquivo. **Pendente de
 validação em campo.**
 
 ---

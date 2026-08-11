@@ -61,6 +61,12 @@ class Village:
     # always fully reassigned, never mutated in-place.
     pvp_conquest_villages = None
 
+    # P2-35: the single PvpConquestManager for this cycle, built once by
+    # twb.py right after pvp_conquest_villages above. Same safety note: always
+    # reassigned, never mutated in place. None means "build a throwaway one"
+    # (see run_pvp_conquest), which keeps Village.run() usable standalone.
+    pvp_conquest_manager = None
+
     twp = TwStats()
 
     def __init__(self, village_id=None, wrapper=None):
@@ -697,15 +703,29 @@ class Village:
         the whole empire. Falls back to {self.village_id: self} if that
         wasn't set (e.g. Village.run() invoked outside the normal twb.py
         loop), so this village alone can still be used for scouting/attack.
+
+        P2-35: the manager itself is now built once per cycle by twb.py and
+        shared, instead of being constructed fresh on every village's call.
+        The state machine still *runs* once per village -- that is the
+        2026-08-07 fix documented above and must not change, since it is what
+        gives conquest priority over each village's farm, and each successive
+        call legitimately sees fresher troop counts and reports as earlier
+        villages finish. What the shared instance removes is the per-village
+        WorldConfig lookup and, more importantly, it gives the cycle-scoped
+        memos in PvpConquestManager (the cache/reports index, the own-player-id
+        lookup) somewhere to live across those calls -- see
+        PvpConquestManager._scout_report_index().
         """
         if not self.config.get("pvp_conquest", {}).get("enabled", False):
             return
-        villages = self.pvp_conquest_villages or {self.village_id: self}
-        pvp = PvpConquestManager(
-            wrapper=self.wrapper,
-            villages=villages,
-            config=self.config,
-        )
+        pvp = self.pvp_conquest_manager
+        if pvp is None:
+            villages = self.pvp_conquest_villages or {self.village_id: self}
+            pvp = PvpConquestManager(
+                wrapper=self.wrapper,
+                villages=villages,
+                config=self.config,
+            )
         pvp.run()
 
     def ensure_map_loaded(self):

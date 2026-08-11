@@ -81,6 +81,13 @@ class PvpConquestManager:
             server=config.get("server", {}).get("server"),
             endpoint=config.get("server", {}).get("endpoint"),
         )
+        # P2-35: per-instance memos. twb.py builds one manager per cycle and
+        # hands it to every village, so these are naturally cycle-scoped --
+        # see Village.run_pvp_conquest(). Declared here, not on the class,
+        # per the mutable-class-attribute rule in CLAUDE.md.
+        self._reports_index = None
+        self._reports_files = None
+        self._player_id = None
 
     # ------------------------------------------------------------------
     # Entry point
@@ -571,11 +578,20 @@ class PvpConquestManager:
         (they're keys of self.villages) and don't need any wrapper plumbing
         at all. Mirrors the equivalent fix in
         ConquestManager._target_is_mine() (game/attack.py).
+
+        P2-35: memoized per manager instance (one per cycle). Our own player
+        id cannot change mid-cycle, but this was re-reading cache/villages
+        files once per scheduled target, per village, per cycle. Only a
+        successful resolution is cached -- a None result stays retryable, since
+        it just means no managed village's map data has landed yet.
         """
+        if self._player_id:
+            return self._player_id
         for vid in self.villages:
             own_data = FileManager.load_json_file(f"cache/villages/{vid}.json")
             owner = str(own_data.get("owner", "0")) if own_data else "0"
             if owner != "0":
+                self._player_id = owner
                 return owner
         return None
 
@@ -594,23 +610,62 @@ class PvpConquestManager:
             return None
         return village_data.get("points")
 
-    def _find_scout_report(self, target_id):
-        """Returns the most recent scout report against target_id, or None."""
-        best_ts = 0
-        best = None
-        for fname in FileManager.list_directory("cache/reports", ends_with=".json"):
+    def _scout_report_index(self):
+        """
+        P2-35: {dest_id: most_recent_scout_report} over cache/reports.
+
+        This used to be a full directory scan -- json.load on every file --
+        redone from scratch for every target in pending_sim, on every village's
+        run_pvp_conquest() call. With ~500 report files observed in the field
+        and one manager per village per cycle, that was the dominant I/O cost
+        of this module.
+
+        The index is rebuilt only when the *set of filenames* changes, which
+        is a sound freshness check rather than a time-based guess:
+        ReportManager.read() skips any report_id already in last_reports
+        ("if report_id in self.last_reports: continue"), so a cached report
+        file is written exactly once and never rewritten. A new report can
+        therefore only appear as a new filename, and pruning (bot.max_cached_
+        reports, P2-33) only removes filenames -- both change the set and force
+        a rebuild. Comparing names rather than counting them also covers a
+        delete plus an add landing in the same cycle.
+
+        The listdir still happens on every call; only the per-file json.load
+        is skipped. That's deliberate -- listdir is what detects the change.
+        """
+        files = FileManager.list_directory("cache/reports", ends_with=".json")
+        signature = frozenset(files)
+        if self._reports_index is not None and self._reports_files == signature:
+            return self._reports_index
+
+        index = {}
+        for fname in files:
             rep = FileManager.load_json_file(f"cache/reports/{fname}")
-            if not rep:
-                continue
-            if str(rep.get("dest")) != str(target_id):
-                continue
-            if rep.get("type") != "scout":
+            if not rep or rep.get("type") != "scout":
                 continue
             when = rep.get("extra", {}).get("when", 0)
-            if when > best_ts:
-                best_ts = when
-                best = rep
-        return best
+            # Reports without a usable timestamp are skipped, exactly as
+            # before: the old loop seeded best_ts = 0 and required
+            # `when > best_ts`, so a report missing extra.when could never
+            # win. Keeping that is not pedantry -- reports cached before the
+            # pt-BR date fix (2026-08-07, see game/reports.py) genuinely have
+            # no `when`, and accepting one here would let _step_simulate()
+            # commit troops based on a scout of unknown age.
+            if not when:
+                continue
+            dest = str(rep.get("dest"))
+            best = index.get(dest)
+            if best is None or when > best[0]:
+                index[dest] = (when, rep)
+
+        self._reports_index = index
+        self._reports_files = signature
+        return index
+
+    def _find_scout_report(self, target_id):
+        """Returns the most recent scout report against target_id, or None."""
+        best = self._scout_report_index().get(str(target_id))
+        return best[1] if best else None
 
     def _select_clear_village(self):
         """
