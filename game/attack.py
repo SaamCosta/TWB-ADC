@@ -614,6 +614,20 @@ class ConquestManager:
                     "(farm and gather will respect this reserve)",
                     needed
                 )
+            # P2-22: an empty result used to mean "no troops at all", which
+            # essentially never happened, so a missing else was harmless.
+            # Now _calculate_needed_escort() also returns {} when its own
+            # gates decide reserving is counterproductive -- and troop counts
+            # shrink (losses in farm/defence), so a village CAN cross back
+            # under the gate after a reserve was already set. Without this
+            # pop, that stale reserve would linger forever and starve
+            # farm/gather exactly the way P2-22 describes, just by a
+            # different route.
+            elif self.troopmanager.conquest_reserve.pop("barbarian_conquest", None):
+                self.logger.info(
+                    "Conquest: released stale escort reserve — farm and gather "
+                    "are free again while troops rebuild"
+                )
             return False
 
         # Escort is sufficient: clear any previous reserve and fire the train
@@ -945,10 +959,39 @@ class ConquestManager:
           → need 50 × 4 = 200 committed → need 200 / 0.25 = 800 total at home
           → spread evenly across available unit types
 
-        Returns {unit: qty_to_reserve} or {} if no troops present at all.
+        Returns {unit: qty_to_reserve} or {} if no troops present at all, or
+        if reserving would do more harm than good (see P2-22 below).
+
+        P2-22: this used to reserve `min(per_unit, free)` per type, and the
+        min() meant any type with fewer troops than the even split got 100%
+        of it reserved. Since _get_farmable_troops() and do_gather() both
+        subtract the reserve, that stopped farm and gather outright -- with
+        no time limit, and the reserve lives in TroopManager, which persists
+        across cycles, so it stayed stuck until the escort finally closed.
+        Worse, it is self-defeating: farming is what funds the recruitment
+        that would close the escort gap, so freezing the army to reach an
+        escort target actively delays reaching it.
+
+        Two gates now bound that:
+
+        1. Only reserve once the goal is realistically in reach
+           (escort_reserve_min_progress, default 0.5 = half of needed_total
+           already home). Far from the target, the reserve buys nothing --
+           it can't conjure troops, it only stops the farm income that pays
+           for them -- so it's skipped entirely.
+        2. Never reserve more than escort_reserve_max_pct (default 0.8) of
+           any single type, so farm/gather always keep a working residual
+           instead of being starved to zero on some unit the template needs.
+
+        Together: small army -> no reserve at all (gate 1); large army ->
+        the 20% left over is big enough in absolute terms to keep farming
+        (gate 2). Both are opt-out-able via config for anyone who prefers
+        the old all-in behaviour (max_pct 1.0, min_progress 0.0).
         """
         ratio = cfg.get("escort_ratio", 0.5)
         min_total = cfg.get("min_escort_total", 50)
+        max_pct = cfg.get("escort_reserve_max_pct", 0.8)
+        min_progress = cfg.get("escort_reserve_min_progress", 0.5)
 
         # Total troops needed at home to satisfy escort after ratio+split
         # per_attack = (available × ratio) // TRAIN_SIZE ≥ min_total
@@ -965,12 +1008,25 @@ class ConquestManager:
         if not available:
             return {}
 
+        # P2-22, gate 1: is the escort target even in reach?
+        have_total = sum(available.values())
+        if needed_total > 0 and have_total < needed_total * min_progress:
+            self.logger.info(
+                "Conquest: %d/%d troops toward escort target — too far off to "
+                "reserve (below %.0f%%), leaving farm and gather free",
+                have_total, needed_total, min_progress * 100
+            )
+            return {}
+
         # Distribute the needed total evenly across available unit types
         per_unit = math.ceil(needed_total / len(available))
         reserve = {}
         for unit, free in available.items():
-            # Only reserve up to what's actually free (no phantom reserve)
-            reserve[unit] = min(per_unit, free)
+            # P2-22, gate 2: cap per type so a residual always stays farmable.
+            # Only reserve up to what's actually free (no phantom reserve).
+            qty = min(per_unit, int(free * max_pct))
+            if qty > 0:
+                reserve[unit] = qty
 
         return reserve
 

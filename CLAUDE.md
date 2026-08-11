@@ -65,15 +65,14 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 **Auditoria completa em `docs/auditoria_codigo_2026-08-08.md`** — leitura integral
 dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com nível
-de confiança e correção sugerida. **Lotes 1 a 5 corrigidos** (estado compartilhado,
-integridade de dados, features ressuscitadas, crashes de caminho quente, e no
-Lote 5: segurança do webmanager, `farm_score`, mercado em pt-BR, paz forçada).
+de confiança e correção sugerida. **Lotes 1 a 6 corrigidos** (estado compartilhado,
+integridade de dados, features ressuscitadas, crashes de caminho quente, no
+Lote 5: segurança do webmanager, `farm_score`, mercado em pt-BR, paz forçada,
+e no Lote 6: a reserva de escolta que travava o farm).
 Seções já corrigidas levam um banner ✅ no topo; a ordem priorizada e as notas de
 implementação de cada lote estão no fim do documento.
 
-**Restam três itens abertos**, todos adiados de propósito:
-- **P2-22** — `_calculate_needed_escort()` pode reservar 100% de um tipo de tropa
-  e travar farm/gather por tempo indefinido.
+**Restam dois itens abertos**, os dois adiados de propósito:
 - **P2-29** — piso de moral em `estimate_moral()`. O diagnóstico diz que o piso
   real do TW é 30%, o código usa `100 - loss_max` = 70, e o docstring afirma que
   `loss_max` veio confirmado ao vivo. Não existe `cache/world_config*` no repo
@@ -118,7 +117,14 @@ implementação de cada lote estão no fim do documento.
   ocorrência for a `def`, é código morto). Corolário: ao ressuscitar um caminho
   morto, reler os consumidores assumindo que nunca foram exercitados — foi assim
   que apareceu o bug do `score or default` no P1-8, e a necessidade de tornar
-  explícito o bloqueio de paz forçada no P1-17.
+  explícito o bloqueio de paz forçada no P1-17. **Segundo corolário, do Lote 6
+  (P2-22):** vale também quando o corpo continua chamado, mas o *domínio de
+  retorno* muda. `_calculate_needed_escort()` só devolvia `{}` num caso que
+  quase nunca ocorria, então o `if needed:` do chamador não tinha `else` e isso
+  era inofensivo; ao tornar `{}` um retorno comum, o `else` ausente virou uma
+  reserva presa para sempre — exatamente o bug que a correção existia para
+  matar. Ao alargar o conjunto de valores que uma função pode devolver, reler
+  cada consumidor perguntando "e se vier este valor agora?".
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

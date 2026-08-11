@@ -37,8 +37,8 @@ diagnóstico.
 ## Índice por prioridade
 
 > **Estado em 2026-08-09:** todos os **19 itens P0/P1 estão corrigidos**
-> (Lotes 1 a 5). Dos 20 itens P2, **17 corrigidos** e **3 abertos**: P2-22,
-> P2-29 e P2-35. A coluna "Estado" abaixo é a fonte da verdade; o porquê de
+> (Lotes 1 a 6). Dos 20 itens P2, **18 corrigidos** e **2 abertos**: P2-29 e
+> P2-35. P2-22 foi fechado no Lote 6 (2026-08-11). A coluna "Estado" abaixo é a fonte da verdade; o porquê de
 > cada pendência está nas notas de implementação do Lote 5, no fim do
 > documento.
 
@@ -63,7 +63,7 @@ diagnóstico.
 | **P1-17** | Hunter e PvP dependem de `village.attack`, criado só no farm | `game/village.py` | 🟢 | ✅ Lote 5 |
 | **P1-18** | Webmanager Flask com `DEBUG=True` + config via GET sem CSRF | `webmanager/server.py` | 🟢 | ✅ Lote 5 |
 | **P1-19** | `check_update()` fora do try → falha de rede impede o boot | `twb.py` | 🟢 | ✅ Lote 5 |
-| **P2-20..39** | Robustez / correção lógica (20 itens) | vários | — | 17 ✅ / **3 abertos** (P2-22, P2-29, P2-35) |
+| **P2-20..39** | Robustez / correção lógica (20 itens) | vários | — | 18 ✅ / **2 abertos** (P2-29, P2-35) |
 | **P3** | Dívida técnica, código morto, documentação | vários | — | mutáveis de classe ✅ Lote 5; resto aberto |
 
 ---
@@ -886,14 +886,14 @@ desligar é um paliativo.
 
 > **Estado (2026-08-09):** dos 20 itens, **17 corrigidos** — P2-20 no Lote 4,
 > os demais no Lote 5 (`e13979d`, `ff1c035`, `42b2ef9`, `d9d36e2`). Seguem
-> abertos **P2-22**, **P2-29** e **P2-35**; o porquê de cada um está nas notas
+> abertos **P2-29** e **P2-35** (**P2-22** fechado no Lote 6); o porquê de cada um está nas notas
 > de implementação do Lote 5, no fim do documento.
 
 | ID | Problema | Local | Detalhe |
 |----|----------|-------|---------|
 | **P2-20** ✅ | ✅ **Corrigido no Lote 4** (`ac67cc5`) — sync de `defense_states` iterava **todas** as aldeias, incluindo as puladas | [`twb.py:600-603`](../twb.py) | Aldeia com `managed: false`, ou ausente de `found_villages`, nunca chega a `update_pre_run()` → `def_man` continua `None` → `AttributeError: 'NoneType' object has no attribute 'my_other_villages'`. Além disso `defense_states` é declarado fora do `while` e **nunca é limpo** entre ciclos, acumulando entradas de aldeias perdidas — o que também mantinha o `attention_lag` da Feature 23 permanentemente desligado. |
 | **P2-21** ✅ | `.get("public", {}).get(...)` sem `or {}` | [`server.py:315`](../webmanager/server.py), [`413`](../webmanager/server.py), [`446`](../webmanager/server.py), [`utils.py:988`](../webmanager/utils.py) | `set_cache_vars` grava `"public": None` quando `self.area` é `None` ou a aldeia ainda não está em `cache/villages/` ([`village.py:1162`](../game/village.py)). `.get(k, {})` devolve `None` (a chave existe) → `AttributeError` nas rotas `/hunter`, `/reports`, `/pvp_conquest`, `/zones`. Outros 3 pontos do mesmo arquivo já usam `or {}` — inconsistência. **Latente:** hoje as 4 aldeias têm `public` como dict; dispara em aldeia recém-conquistada. |
-| **P2-22** ⚠️ ABERTO | `_calculate_needed_escort` pode reservar o exército inteiro e **parar o farm indefinidamente** | [`attack.py:821-860`](../game/attack.py) | `needed_total = ceil((50 × 4) / 0.5) = 400`, dividido igualmente entre **todos** os tipos presentes, limitado ao que existe (`min(per_unit, current)`). Com 5 tipos → tenta reservar 80 de cada, mas o `min()` faz reservar 100% de qualquer tipo que tenha menos que isso. `AttackManager._get_farmable_troops()` subtrai a reserva → farm e gather param enquanto o escort não fecha, o que pode ser indefinido. |
+| **P2-22** ✅ | `_calculate_needed_escort` pode reservar o exército inteiro e **parar o farm indefinidamente** | [`attack.py:821-860`](../game/attack.py) | ✅ **Corrigido em 2026-08-11** — dois gates (`escort_reserve_min_progress`, `escort_reserve_max_pct`) mais a liberação de reserva obsoleta no chamador; ver as notas de implementação no fim. Diagnóstico original: `needed_total = ceil((50 × 4) / 0.5) = 400`, dividido igualmente entre **todos** os tipos presentes, limitado ao que existe (`min(per_unit, current)`). Com 5 tipos → tenta reservar 80 de cada, mas o `min()` faz reservar 100% de qualquer tipo que tenha menos que isso. `AttackManager._get_farmable_troops()` subtrai a reserva → farm e gather param enquanto o escort não fecha, o que pode ser indefinido. |
 | **P2-23** ✅ | `BuildingManager.waits` é lista de classe até o primeiro ciclo com fila vazia | [`buildingmanager.py:23`](../game/buildingmanager.py), [`101`](../game/buildingmanager.py) | `self.waits = []` só executa dentro de `if existing_queue == 0`. Antes disso, `put_wait()` faz `.append()` na lista **de classe** → a fila de construção de uma aldeia bloqueia `is_queued()` de outra. |
 | **P2-24** ✅ | `self.levels[entry]` sem guarda → `KeyError` para prédio inexistente no mundo | [`buildingmanager.py:286`](../game/buildingmanager.py) | `if min_lvl <= self.levels[entry]` roda **antes** de `if entry not in self.costs`. Um template citando `watchtower`/`church` num mundo sem esses prédios derruba o builder. Mesmo risco em `has_enough` com `self.levels["storage"]` ([`linha 198`](../game/buildingmanager.py)) e `self.levels["farm"]` ([`linha 271`](../game/buildingmanager.py)). |
 | **P2-25** ✅ | `entry["extra"]["units_sent"]` / `["defence_units"]` sem guarda | [`reports.py:69-88`](../game/reports.py) | `attack_report()` só popula `units_sent` se a tabela do atacante existir e casar o regex. `safe_to_engage()` acessa direto → `KeyError` em relatório parcial ou gravado por versão antiga. |
@@ -1084,8 +1084,9 @@ poucas linhas com alto retorno.
     `AttackManager.ignored`.
 23. ✅ Fora do diagnóstico: `check_forced_peace()` nunca era chamado.
 
-**Ainda abertos:** P2-22 (escort pode travar o farm), P2-29 (piso de moral —
-precisa do `<mood>` real do servidor), P2-35 (PvP instanciado por aldeia).
+**Ainda abertos:** P2-29 (piso de moral — precisa do `<mood>` real do
+servidor) e P2-35 (PvP instanciado por aldeia). P2-22 (escort travando o farm)
+foi fechado no Lote 6.
 
 ---
 
@@ -1336,11 +1337,57 @@ br143. Trocar 70 por 30 seria trocar um palpite por outro num campo que hoje
 é **inerte** (`pvp_conquest.dynamic_moral_night_bonus: false`). Precisa de uma
 amostra do bloco `<mood>` do servidor antes de mexer.
 
-**Também aberto:** P2-22 (`_calculate_needed_escort` pode reservar 100% de um
-tipo de tropa e travar o farm indefinidamente) e P2-35 (`PvpConquestManager`
-instanciado 1× por aldeia por ciclo). Os dois são mudanças de comportamento em
-tropas/escalonamento, não guardas — merecem lote próprio com validação em
-campo.
+**Também aberto na época:** P2-22 (`_calculate_needed_escort` pode reservar 100%
+de um tipo de tropa e travar o farm indefinidamente) e P2-35
+(`PvpConquestManager` instanciado 1× por aldeia por ciclo). Os dois são
+mudanças de comportamento em tropas/escalonamento, não guardas — merecem lote
+próprio com validação em campo. **P2-22 foi fechado em 2026-08-11** (abaixo);
+P2-35 segue aberto.
+
+---
+
+# Lote 6 (2026-08-11) — P2-22
+
+**A reserva de escolta era autossabotadora.** O diagnóstico descreve o
+mecanismo (`min(per_unit, free)` reservando 100% de qualquer tipo escasso),
+mas o que decide a forma da correção é *por que* a reserva existe: segurar
+tropa em casa para que a escolta acumule. Isso só funciona se a tropa de fato
+acumular — e quem financia o recrutamento é justamente o farm que a reserva
+paralisa. Congelar o exército para atingir uma meta de escolta **atrasa**
+atingir a meta. Não é só um caso extremo mal tratado; abaixo de certo ponto a
+reserva tem valor esperado negativo.
+
+Daí dois gates, em vez de só limitar o `min()`:
+
+1. **`conquest.escort_reserve_min_progress`** (default `0.5`) — só reservar
+   quando já houver metade do `needed_total` em casa. Longe da meta, a reserva
+   não conjura tropa, só corta a renda; é pulada por inteiro.
+2. **`conquest.escort_reserve_max_pct`** (default `0.8`) — teto por tipo, para
+   sempre sobrar residual farmável.
+
+Os dois juntos cobrem os dois regimes: exército pequeno cai no gate 1 (reserva
+zero), exército grande passa e os 20% restantes já são grandes em termos
+absolutos. `max_pct: 1.0` + `min_progress: 0.0` restauram o comportamento
+antigo para quem preferir.
+
+**Bug que a própria correção criou, achado ao reler o chamador.** Em `run()`,
+o bloco era `if needed: ...` **sem `else`**. Era inofensivo porque
+`_calculate_needed_escort()` só devolvia `{}` quando não havia tropa nenhuma —
+caso que praticamente não acontece. Com o gate 1, `{}` passa a ser um retorno
+comum, e como a contagem de tropa **encolhe** (perdas em farm/defesa), uma
+aldeia pode cruzar de volta para baixo do gate depois de já ter reserva
+setada. Sem `else`, essa reserva ficaria presa para sempre — recriando o
+P2-22 exato por outra porta. Corrigido com um `elif ...pop(...)` que libera e
+loga. **Lição, que é a mesma do Lote 5 em outra roupagem:** mudar o *domínio
+de retorno* de uma função (aqui, tornar `{}` frequente) exige reler quem
+consome esse retorno, não só quem chama.
+
+Testado isolado (28 checks, sem rede): o cenário exato da tabela (5 tipos ×
+50 tropas), exército muito abaixo da meta, exército grande, unidade escassa,
+unidade com 1 exemplar só, opt-out pelos dois defaults, preservação da
+Feature 27 (reserva de outro sistema descontada; a própria não), `ratio: 0`,
+e o ciclo-1-reserva → ciclo-2-perdas → reserva liberada. **Pendente de
+validação em campo.**
 
 ---
 

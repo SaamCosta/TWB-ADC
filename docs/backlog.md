@@ -7,14 +7,13 @@ Pendentes: **25** (inventário/boosts) e **26** (envio em lote `train[N][unit]`)
 
 ## Fila da auditoria de código
 
-`docs/auditoria_codigo_2026-08-08.md` — **Lotes 1 a 5 concluídos**
-(2026-08-09). Todos os 19 itens P0/P1 corrigidos e 17 dos 20 P2. Restam três,
-adiados de propósito:
+`docs/auditoria_codigo_2026-08-08.md` — **Lotes 1 a 6 concluídos**
+(Lote 6 em 2026-08-11). Todos os 19 itens P0/P1 corrigidos e 18 dos 20 P2.
+Restam dois:
 
 | Item | O quê | Por que ficou de fora |
 |---|---|---|
 | **P2-29** | Piso de moral em `estimate_moral()` — código usa `100 - loss_max` = 70, o diagnóstico diz que o piso real do TW é 30 | **Bloqueado por falta de dado.** O docstring afirma que `mood.loss_max` foi confirmado ao vivo; as duas afirmações se contradizem e não há `cache/world_config*` no repo para conferir o `<mood>` real do br143. Trocar 70 por 30 seria trocar um palpite por outro. **Próximo passo:** capturar o bloco `<mood>` do endpoint público do mundo e decidir com o dado na mão. Hoje é inerte (`pvp_conquest.dynamic_moral_night_bonus: false`). |
-| **P2-22** | `_calculate_needed_escort()` pode reservar 100% de um tipo de tropa e travar farm/gather indefinidamente | Muda comportamento de tropas reais, não é guarda. Precisa de lote próprio com validação em campo. Sintoma a procurar no log: farm e gather parados com escort nunca fechando. |
 | **P2-35** | `PvpConquestManager` instanciado 1× por aldeia por ciclo (4× o I/O) | Só performance, é idempotente. Casa com a dívida geral de "varredura de diretório por ciclo" listada no CLAUDE.md — vale atacar junto com ela, não isolado. |
 
 ## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
