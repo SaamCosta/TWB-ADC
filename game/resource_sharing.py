@@ -113,7 +113,7 @@ class ResourceSharingManager:
         # contar *transferências* (sent_count += 1) como se cada envio custasse
         # um mercador; custa um mercador a cada ~1000 recursos, então um envio
         # de 4.000 de madeira consome 4 de uma vez.
-        carry_budget, merchants = self._get_carry_budget(cfg)
+        carry_budget, merchants, per_merchant = self._get_carry_budget(cfg)
         if merchants < 1:
             logger.info("ResourceSharing: sem mercadores disponíveis em %s", self.current_village_id)
             self._log_event(
@@ -122,7 +122,7 @@ class ResourceSharingManager:
             )
             return
 
-        plan = self._build_plan(village_states, giveable, overflow, cfg, carry_budget)
+        plan = self._build_plan(village_states, giveable, overflow, cfg, carry_budget, per_merchant)
         if not plan:
             logger.debug(
                 "ResourceSharing: aldeia %s tem excedente (%s) mas nenhuma "
@@ -220,7 +220,7 @@ class ResourceSharingManager:
     # Montagem do plano de envios
     # ------------------------------------------------------------------
 
-    def _build_plan(self, village_states, giveable, overflow, cfg, carry_budget):
+    def _build_plan(self, village_states, giveable, overflow, cfg, carry_budget, per_merchant):
         """
         Devolve uma lista de (target_village_id, {res: amount}, kind) já
         limitada pelo orçamento de carga, pelo espaço livre de cada receptora e
@@ -255,7 +255,9 @@ class ResourceSharingManager:
                 )
                 if to_send:
                     plan.append((vid, to_send, "need"))
-                    carry_left -= self._consume(to_send, remaining, overflow_left)
+                    carry_left -= self._merchant_cost(
+                        self._consume(to_send, remaining, overflow_left), per_merchant
+                    )
 
         # --- Etapa 2: despejar o transbordo restante no "banco" -------
         # Só o que ainda é transbordo depois da etapa 1: sobra acima do
@@ -282,9 +284,28 @@ class ResourceSharingManager:
                     )
                     if to_send:
                         plan.append((vid, to_send, "overflow"))
-                        carry_left -= self._consume(to_send, remaining, overflow_left, dumpable)
+                        carry_left -= self._merchant_cost(
+                            self._consume(to_send, remaining, overflow_left, dumpable),
+                            per_merchant
+                        )
 
         return plan
+
+    @staticmethod
+    def _merchant_cost(amount, per_merchant):
+        """
+        Carga efetivamente consumida por um envio de `amount` recursos.
+
+        Mercador não se divide entre transportes: a tela de confirmação do jogo
+        pediu **2 comerciantes para 1.080 de argila**, ou seja, o custo é
+        arredondado para cima por envio. Descontar só os 1.080 do orçamento faria
+        o plano achar que cabem mais envios do que realmente cabem -- com poucos
+        mercadores livres, o último do ciclo seria recusado.
+        """
+        if per_merchant <= 0:
+            return amount
+        merchants = -(-amount // per_merchant)  # teto da divisão
+        return merchants * per_merchant
 
     def _fit_send(self, state, pool, carry_left, min_send, fill_max_pct, cap_fn):
         """
@@ -561,7 +582,9 @@ class ResourceSharingManager:
 
     def _get_carry_budget(self, cfg):
         """
-        Devolve (carga_disponível, mercadores) para o ciclo desta aldeia.
+        Devolve (carga_disponível, mercadores, carga_por_mercador) para o ciclo
+        desta aldeia. A capacidade por mercador sai junto porque o custo de um
+        envio é arredondado para cima nela -- ver `_merchant_cost`.
 
         A carga sai do próprio jogo sempre que possível. O markup real do br143
         (confirmado em 2026-08-11) traz os três números juntos:
@@ -593,7 +616,7 @@ class ResourceSharingManager:
             url = f"game.php?village={self.current_village_id}&screen=market&mode=send"
             res = self.wrapper.get_url(url=url)
             if not res:
-                return 0, 0
+                return 0, 0, fallback_capacity
 
             data = Extractor.merchant_data(res)
             if not data:
@@ -607,7 +630,7 @@ class ResourceSharingManager:
                     "em %s (markup inesperado), assumindo 1", self.current_village_id
                 )
                 self._dump_once("cache/resource_sharing/market_send.html", res.text)
-                return fallback_capacity, 1
+                return fallback_capacity, 1, fallback_capacity
 
             available = data["available"]
             per_merchant = fallback_capacity
@@ -619,7 +642,7 @@ class ResourceSharingManager:
                 self.current_village_id, available, data["total"],
                 available * per_merchant
             )
-            return available * per_merchant, available
+            return available * per_merchant, available, per_merchant
         except Exception as e:
             logger.warning("ResourceSharing: erro ao verificar mercadores: %s", e)
-            return 0, 0
+            return 0, 0, fallback_capacity

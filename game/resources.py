@@ -655,7 +655,7 @@ class ResourceManager:
                 "send_resources: o jogo recusou a tela de envio para a aldeia %s",
                 target_village_id
             )
-            self._dump_response("cache/resource_sharing/last_send_error.html", res.text)
+            self._dump_response("cache/resource_sharing/last_send_error.html", res.text, overwrite=True)
             return False
 
         # Verifica mercadores disponíveis
@@ -722,7 +722,7 @@ class ResourceManager:
                 "send_resources: o jogo recusou o envio de %s → aldeia %s: %s",
                 resources, target_village_id, self._error_box_text(response.text)
             )
-            self._dump_response("cache/resource_sharing/last_send_error.html", response.text)
+            self._dump_response("cache/resource_sharing/last_send_error.html", response.text, overwrite=True)
             return False
 
         # Etapa 2: submeter a tela de confirmação. Nada aqui é adivinhado -- o
@@ -753,7 +753,7 @@ class ResourceManager:
                 "send_resources: o jogo recusou a confirmação de %s → aldeia %s: %s",
                 resources, target_village_id, self._error_box_text(confirmed.text)
             )
-            self._dump_response("cache/resource_sharing/last_confirm_error.html", confirmed.text)
+            self._dump_response("cache/resource_sharing/last_confirm_error.html", confirmed.text, overwrite=True)
             return False
 
         self.logger.info(
@@ -839,15 +839,22 @@ class ResourceManager:
         text = re.sub(r"<[^>]+>", " ", box.group(1))
         return " ".join(text.split())[:300] or "vazio"
 
-    def _dump_response(self, path, content):
+    def _dump_response(self, path, content, overwrite=False):
         """
-        Guarda uma resposta HTML para diagnóstico, só se o arquivo ainda não
-        existir -- o markup é sempre o mesmo, reescrever a cada ciclo não
-        acrescenta informação. Best-effort: nunca derruba o ciclo por I/O.
+        Guarda uma resposta HTML para diagnóstico. Best-effort: nunca derruba o
+        ciclo por I/O.
+
+        `overwrite=False` (amostras de markup): grava só na primeira vez, porque
+        o markup é sempre o mesmo e reescrever a cada ciclo não acrescenta nada.
+
+        `overwrite=True` (respostas de erro): sempre grava. Um arquivo chamado
+        `last_send_error.html` que na verdade guarda o *primeiro* erro é pior que
+        não ter arquivo nenhum -- levaria a diagnosticar a falha de hoje com a
+        resposta de ontem.
         """
         try:
             full = FileManager.get_path(path)
-            if os.path.exists(full):
+            if os.path.exists(full) and not overwrite:
                 return
             FileManager.create_directory(FileManager.get_path(os.path.dirname(path)))
             with open(full, "w", encoding="utf-8") as fh:
