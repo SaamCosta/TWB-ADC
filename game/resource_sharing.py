@@ -28,9 +28,9 @@ perdido de qualquer forma, então doá-lo nunca é pior que mantê-lo.
 """
 import logging
 import os
-import re
 import time
 
+from core.extractors import Extractor
 from core.filemanager import FileManager
 
 logger = logging.getLogger("ResourceSharing")
@@ -109,8 +109,11 @@ class ResourceSharingManager:
             )
             return
 
-        merchant_capacity = int(cfg.get("merchant_capacity", DEFAULT_MERCHANT_CAPACITY) or DEFAULT_MERCHANT_CAPACITY)
-        merchants = self._get_available_merchants()
+        # Orçamento de carga do ciclo inteiro. O bug da versão anterior era
+        # contar *transferências* (sent_count += 1) como se cada envio custasse
+        # um mercador; custa um mercador a cada ~1000 recursos, então um envio
+        # de 4.000 de madeira consome 4 de uma vez.
+        carry_budget, merchants = self._get_carry_budget(cfg)
         if merchants < 1:
             logger.info("ResourceSharing: sem mercadores disponíveis em %s", self.current_village_id)
             self._log_event(
@@ -118,12 +121,6 @@ class ResourceSharingManager:
                 success=False, reason="no_merchants",
             )
             return
-
-        # Orçamento de carga do ciclo inteiro. O bug da versão anterior era
-        # contar *transferências* (sent_count += 1) como se cada envio custasse
-        # um mercador; custa um mercador a cada `merchant_capacity` recursos,
-        # então um envio de 4.000 de madeira consome 4 de uma vez.
-        carry_budget = merchants * merchant_capacity
 
         plan = self._build_plan(village_states, giveable, overflow, cfg, carry_budget)
         if not plan:
@@ -532,45 +529,62 @@ class ResourceSharingManager:
         except Exception as e:
             logger.debug("ResourceSharing: falha ao salvar amostra: %s", e)
 
-    def _get_available_merchants(self):
+    def _get_carry_budget(self, cfg):
         """
-        Consulta a tela de mercado da aldeia atual para saber quantos
-        mercadores estão disponíveis para envio.
+        Devolve (carga_disponível, mercadores) para o ciclo desta aldeia.
+
+        A carga sai do próprio jogo sempre que possível. O markup real do br143
+        (confirmado em 2026-08-11) traz os três números juntos:
+
+            market_merchant_available_count  13
+            market_merchant_total_count      13
+            market_merchant_max_transport    13000
+
+        `max_transport / total` é a capacidade real por mercador, então mundos
+        com bônus de mercador funcionam sem tocar em `merchant_capacity` -- a
+        config vira só o fallback de quando a página não puder ser lida.
+
+        Nota sobre a tela: `mode=traders` ("Estado do comerciante") é usada aqui
+        porque existe e não exige um `target` na URL, e o orçamento precisa ser
+        conhecido *antes* de escolher os alvos do plano. A anterior,
+        `mode=send_res`, nunca existiu -- o jogo devolvia "Modo inválido", e era
+        essa a causa de o contador nunca ser encontrado (o regex sempre esteve
+        certo). Ver ResourceManager.send_resources.
         """
+        fallback_capacity = int(
+            cfg.get("merchant_capacity", DEFAULT_MERCHANT_CAPACITY) or DEFAULT_MERCHANT_CAPACITY
+        )
         try:
-            # `mode=traders` ("Estado do comerciante") é a tela que existe para
-            # isso. A anterior, `mode=send_res`, não existe -- o jogo devolvia
-            # "Modo inválido" e por isso nenhum contador jamais foi encontrado
-            # (ver ResourceManager.send_resources). `mode=send` também serviria,
-            # mas exige um `target` na URL, e o orçamento de mercadores precisa
-            # ser conhecido *antes* de escolher os alvos do plano.
             url = f"game.php?village={self.current_village_id}&screen=market&mode=traders"
             res = self.wrapper.get_url(url=url)
             if not res:
-                return 0
-            # O jogo exibe algo como: market_merchant_available_count">N<
-            match = re.search(r'market_merchant_available_count["\s>]+(\d+)', res.text)
-            if match:
-                return int(match.group(1))
-            # Fallback: assume 1 para não travar o sistema inteiro por causa de
-            # markup inesperado. WARNING e não DEBUG de propósito -- este regex
-            # nunca foi exercitado contra o HTML real, e um envio dimensionado
-            # para 1 mercador quando existem 20 é desperdício silencioso.
-            #
-            # Em 2026-08-11 este regex falhou em campo -- mas a causa raiz era a
-            # URL (`mode=send_res`, inexistente), não o padrão: a página lida
-            # era um "Modo inválido" que obviamente não tinha contador nenhum.
-            # Com `mode=traders` o padrão pode estar certo; se ainda assim não
-            # casar, a amostra abaixo é o que permite corrigi-lo com o markup na
-            # mão. O mesmo padrão é usado por ResourceManager.trade() na forma
-            # binária `...">0`, ali sobre uma URL que sempre foi válida
-            # (`mode=own_offer`) -- se casar aqui, casa lá.
-            logger.warning(
-                "ResourceSharing: não foi possível ler os mercadores disponíveis "
-                "em %s (markup inesperado), assumindo 1", self.current_village_id
+                return 0, 0
+
+            data = Extractor.merchant_data(res)
+            if not data:
+                # Assume 1 mercador para não travar o sistema inteiro por causa
+                # de markup inesperado. WARNING e não DEBUG de propósito: um
+                # envio dimensionado para 1 mercador quando existem 13 é
+                # desperdício silencioso, e a amostra abaixo é o que permite
+                # corrigir com o markup na mão em vez de por tentativa e erro.
+                logger.warning(
+                    "ResourceSharing: não foi possível ler os mercadores disponíveis "
+                    "em %s (markup inesperado), assumindo 1", self.current_village_id
+                )
+                self._dump_once("cache/resource_sharing/market_traders.html", res.text)
+                return fallback_capacity, 1
+
+            available = data["available"]
+            per_merchant = fallback_capacity
+            if data["total"] and data["max_transport"]:
+                per_merchant = max(1, data["max_transport"] // data["total"])
+
+            logger.debug(
+                "ResourceSharing: %s tem %s de %s mercadores livres, carga %s",
+                self.current_village_id, available, data["total"],
+                available * per_merchant
             )
-            self._dump_once("cache/resource_sharing/market_traders.html", res.text)
-            return 1
+            return available * per_merchant, available
         except Exception as e:
             logger.warning("ResourceSharing: erro ao verificar mercadores: %s", e)
-            return 0
+            return 0, 0

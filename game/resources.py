@@ -636,8 +636,8 @@ class ResourceManager:
             return False
 
         # Verifica mercadores disponíveis
-        match = re.search(r'market_merchant_available_count["\s>]+(\d+)', res.text)
-        if match and int(match.group(1)) < 1:
+        merchants = Extractor.merchant_data(res)
+        if merchants and merchants["available"] < 1:
             self.logger.debug("send_resources: sem mercadores disponíveis")
             return False
 

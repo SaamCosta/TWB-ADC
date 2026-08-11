@@ -108,6 +108,44 @@ class Extractor:
         return None
 
     @staticmethod
+    def merchant_data(res):
+        """
+        Reads the merchant counters from a market screen. Markup confirmed live
+        on br143 (2026-08-11, pt-BR):
+
+            <span id="market_merchant_available_count">13</span>
+            <span id="market_merchant_total_count">13</span>
+            <th>Quantidade máxima de transporte:
+                <span id="market_merchant_max_transport">13000</span></th>
+
+        `max_transport` is the game's own answer for how much can be carried,
+        so a world with a merchant bonus needs no extra configuration: dividing
+        it by `total` gives the real per-merchant capacity instead of trusting
+        a hardcoded 1000.
+
+        Returns None when the page has no counters at all -- which is what
+        happens on a screen that isn't the market (before 2026-08-11 the bot
+        requested a non-existent `mode=send_res` and got an "invalid mode"
+        error page, so this never matched and the failure looked like a broken
+        regex rather than a wrong URL).
+        """
+        if type(res) != str:
+            res = res.text
+
+        def _num(element_id):
+            match = re.search(fr'{element_id}["\s>]+(\d+)', res)
+            return int(match.group(1)) if match else None
+
+        available = _num("market_merchant_available_count")
+        if available is None:
+            return None
+        return {
+            "available": available,
+            "total": _num("market_merchant_total_count"),
+            "max_transport": _num("market_merchant_max_transport"),
+        }
+
+    @staticmethod
     def premium_data(res):
         """
         Detects data on the premium exchange page
