@@ -1504,6 +1504,13 @@ class ResourceSharingReader:
         "send_failed":  "Falha ao enviar (mercado recusou)",
     }
 
+    # As duas regras da reformulação de 2026-08-11 (ver game/resource_sharing.py).
+    # Entradas antigas do histórico não têm "kind" -- ficam como "—".
+    KIND_LABELS = {
+        "need":     "Necessidade",
+        "overflow": "Transbordo",
+    }
+
     RES_ICONS = {"wood": "🌲", "stone": "🪨", "iron": "⛏"}
 
     @staticmethod
@@ -1552,7 +1559,10 @@ class ResourceSharingReader:
                 except Exception:
                     pass
             reason = entry.get("reason")
+            kind = entry.get("kind")
             entries.append({
+                "kind": kind,
+                "kind_label": ResourceSharingReader.KIND_LABELS.get(kind, "—"),
                 "timestamp": ts,
                 "timestamp_fmt": ts_fmt,
                 "source_id": entry.get("source"),

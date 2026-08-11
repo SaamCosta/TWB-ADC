@@ -668,6 +668,89 @@ ganha as duas chaves novas do item 2 automaticamente no start (backup em
 `config.bak`). Sintomas a procurar em `cache/logs/session_latest.log`:
 `marked FAILED`, `too far off to reserve` e `released stale escort reserve`.
 
+## 2026-08-11 (b) — Feature 9 (resource sharing) reformulada
+
+**O diagnóstico veio de um print, não do código.** O usuário mostrou a visão
+geral das 6 aldeias e descreveu duas intenções distintas: (1) aldeias de
+armazém pequeno com recurso perto do teto deviam despejar em quem tem armazém
+gigante, e (2) as aldeias de armazém gigante, já em fase de nobre/tropa, podiam
+abastecer as aldeias travadas. Cruzando com `cache/managed/*.json`, a conclusão
+foi mais dura que a hipótese: **ligar a feature como estava não moveria nada.**
+
+Sob a regra antiga (doadora = acima de `threshold_pct` da **própria**
+capacidade, 80%), com os números reais do dia:
+
+| Aldeia | Capacidade | Piso p/ doar | Maior estoque |
+|---|---|---|---|
+| BBM 001 | 500.000 | 400.000 | 42.797 ferro |
+| BBM 002 | 406.672 | 325.338 | 157.165 ferro |
+
+As duas aldeias que o usuário queria como doadoras precisariam de ~8× mais
+recurso do que tinham. As que qualificavam eram as pequenas quase cheias
+(BBM 006 com ferro a 98,9%) — e a única receptora da conta inteira (BBM 003,
+`required_resources` com pedra) precisava de **pedra**, que a BBM 006 não tinha
+sobrando. A interseção `to_send` era vazia. Zero transferências, enquanto a
+BBM 002 estava sentada em 122.748 de pedra.
+
+**A lição do desenho:** percentual da capacidade própria é o sinal *certo* para
+"vou transbordar" e o sinal *errado* para "tenho sobra". 42.000 de ferro são 8%
+para quem tem armazém 30 e são cinco armazéns inteiros para uma aldeia
+recém-conquistada. Uma regra só não consegue exprimir as duas intenções, e foi
+por isso que a feature nasceu inerte. Agora são duas, avaliadas na mesma
+passada, com **necessidade antes de transbordo** — mandar o excedente para quem
+precisa resolve os dois problemas de uma vez, e só o resto é despejado no
+"banco". O volume de transbordo é isento do piso de reserva (`need_donor_floor`)
+porque aquele recurso seria perdido de qualquer forma.
+
+**Três bugs reais corrigidos junto**, todos invisíveis enquanto o sistema não
+rodava:
+1. **Mercador contado errado.** `sent_count += 1` por *transferência*, quando o
+   custo é 1 mercador a cada 1.000 recursos (confirmado no world config público
+   do br143: `<MerchantBonus>0</MerchantBonus>`). Um envio de 4.000 consumia 4 e
+   o código achava que tinha gasto 1. Como nada limitava o volume pela carga
+   disponível, o primeiro envio real provavelmente seria recusado pelo jogo — e
+   o `error_box` resultante seria naturalmente diagnosticado como "payload
+   `send_res` errado", que é exatamente o que não estaria acontecendo. Agora o
+   plano inteiro é montado antes de qualquer requisição, contra um orçamento de
+   `mercadores × merchant_capacity`.
+2. **Ninguém checava o espaço da receptora.** Dava para mandar madeira para uma
+   aldeia com o armazém de madeira quase cheio. Novo `receiver_fill_max_pct`
+   (90%), com margem de propósito: o recurso leva tempo de viagem e a produção
+   da receptora continua correndo nesse meio tempo.
+3. **Mercado só era checado na origem.** O jogo exige mercado nas duas pontas.
+   Junto entraram duas exclusões novas de receptora: aldeia sob ataque (recurso
+   entregue a quem vai ser saqueado é recurso entregue ao atacante) e aldeia sem
+   `storage` conhecido.
+
+**`storage` (capacidade) passou a ser persistido** em `cache/managed/*.json`
+(`village.py::set_cache_vars`). Sem ele não há como calcular espaço livre de
+uma aldeia que não é a que está rodando. Consequência operacional: **o primeiro
+ciclo após a atualização não envia nada**, porque nenhuma aldeia tem a chave
+ainda — cada uma a ganha ao rodar. Isso é o degradado certo (pular quem não dá
+para medir) e se resolve sozinho depois de um ciclo completo.
+
+Também corrigido: `_deficit()` desconta o estoque que a receptora já tem. A
+versão anterior somava os montantes crus de `required_resources` e podia mandar
+recurso que a aldeia já possuía — `ResourceManager.request()` grava o montante
+**total** da ação, não o que falta.
+
+Config: bloco `resource_sharing` reescrito (10 chaves novas, `threshold_pct`
+removido), `build.version` 3.0 → 3.1 no `config.example.json`. O merge de
+`twb.py` é baseado no config novo e só preserva chaves que existem nos dois,
+então ele adiciona as 10 e **descarta `threshold_pct` sozinho** — nada a fazer
+à mão. `webmanager/helpfile.py` e o template `/resource_sharing` atualizados
+(badges das duas regras, coluna "Regra" no histórico).
+
+**O que ainda não foi exercitado.** Nada disso rodou contra o jogo. Teste
+isolado, sem rede, com os números reais das 6 aldeias: 25 checks. Três deles
+falharam na primeira execução e **os três eram expectativa errada minha, não
+bug do código** — o mais instrutivo: presumi que o "banco" de ferro seria a
+BBM 002 (armazém 406.672) quando é a BBM 001, que tem 407.203 de espaço livre
+para ferro contra 208.839 da BBM 002. *Armazém maior não é o critério; espaço
+livre é.* Vale como lembrete de que o cache real é melhor fixture do que a
+intuição sobre ele. A feature segue **desligada** (`enabled: false`) e o payload
+`send_res` continua sem validação de campo em nenhum idioma.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

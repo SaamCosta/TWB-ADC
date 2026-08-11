@@ -346,9 +346,15 @@ recria o diretório defensivamente antes de escrever. Novo `ResourceSharingReade
 em `webmanager/utils.py` lê e formata o histórico (nomes de aldeia via
 `cache/managed/*.json`, timestamps formatados, motivo de falha traduzido) e
 agrega o total enviado por recurso. Nova rota `/resource_sharing` e template
-`resource_sharing.html` — mostra status/config atual (enabled, threshold_pct,
-priority), totais agregados e uma tabela com o histórico recente (mais
-recente primeiro). Link adicionado na nav. Nenhuma config nova.
+`resource_sharing.html` — mostra status/config atual, totais agregados e uma
+tabela com o histórico recente (mais recente primeiro). Link adicionado na
+nav. Nenhuma config nova.
+
+**Atualizado em 2026-08-11** pela reformulação da Feature 9: os badges de
+config deixaram de mostrar `threshold_pct` (chave que deixou de existir) e
+passaram a resumir as duas regras novas; o histórico ganhou a coluna "Regra"
+(`kind`: Necessidade / Transbordo), com as entradas antigas — que não têm o
+campo — caindo em "—".
 
 ## Feature 21 — Página de reports no webmanager ✅ Implementado (2026-08-02)
 
@@ -818,6 +824,26 @@ outro sistema, só falta de retry/sinalização de erro.
 ---
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
+
+- **Feature 9 (resource sharing) reformulada em 2026-08-11, ainda nunca
+  executada.** Detalhe em `docs/features_log.md`. Duas regras agora (transbordo
+  e necessidade) em vez de um `threshold_pct` só. Validada com teste isolado
+  (25 checks, sem rede) usando os números reais das 6 aldeias do br143 —
+  **sem nenhuma validação de campo**: o payload `send_res` nunca foi exercitado
+  contra o jogo em nenhum idioma, em nenhuma versão desta feature.
+  Pontos de atenção ao religar (`resource_sharing.enabled: true`, global — não
+  há gate por aldeia):
+  - o primeiro ciclo após a atualização não envia nada de propósito: a chave
+    `storage` em `cache/managed/*.json` é nova e cada aldeia só a ganha depois
+    de rodar uma vez; sem ela a aldeia é pulada como receptora, porque não dá
+    para calcular espaço livre;
+  - `ResourceSharing: não foi possível ler os mercadores disponíveis` em nível
+    WARNING significa que o regex de mercadores não casou com o HTML real e o
+    sistema está assumindo 1 mercador — é o sinal mais provável de problema, já
+    que esse regex nunca foi validado em campo;
+  - `need_donor_floor` (20.000) é o número mais dependente do estágio da conta.
+    Alto demais e as aldeias grandes não doam; baixo demais e elas doam o que
+    iam usar para nobre/tropa.
 
 - ~~**PvP Conquest (Feature 13) não detecta trem de nobres que falhou**~~ —
   ✅ **corrigido em 2026-08-11.** `_step_check_complete()` agora, quando a

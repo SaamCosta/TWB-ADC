@@ -8,7 +8,14 @@
     <span class="badge {% if enabled %}badge-success{% else %}badge-danger{% endif %} mr-2">
       {% if enabled %}Ativado{% else %}Desativado{% endif %}
     </span>
-    <span class="badge badge-secondary mr-2">Limiar: {{ sharing_cfg.get('threshold_pct', 80) }}%</span>
+    <span class="badge {% if sharing_cfg.get('overflow_enabled', True) %}badge-info{% else %}badge-secondary{% endif %} mr-2"
+          title="Resgata recurso de uma aldeia prestes a estourar o armazém">
+      Transbordo: {{ sharing_cfg.get('overflow_trigger_pct', 85) }}% → {{ sharing_cfg.get('overflow_target_pct', 60) }}%
+    </span>
+    <span class="badge {% if sharing_cfg.get('need_enabled', True) %}badge-info{% else %}badge-secondary{% endif %} mr-2"
+          title="Abastece aldeias travadas, doando só o que passa da reserva própria">
+      Necessidade: reserva {{ "{:,}".format(sharing_cfg.get('need_donor_floor', 20000)).replace(',', '.') }}
+    </span>
     <span class="badge badge-secondary">Prioridade: {{ sharing_cfg.get('priority', 'new_villages') }}</span>
   </div>
 </div>
@@ -53,6 +60,7 @@
       <thead class="thead-dark">
         <tr>
           <th>Quando</th>
+          <th>Regra</th>
           <th>Origem</th>
           <th>Destino</th>
           <th>Recursos</th>
@@ -63,6 +71,15 @@
         {% for e in entries %}
         <tr>
           <td class="small text-nowrap">{{ e.timestamp_fmt }}</td>
+          <td class="small">
+            {% if e.kind == 'overflow' %}
+              <span class="badge badge-warning">{{ e.kind_label }}</span>
+            {% elif e.kind == 'need' %}
+              <span class="badge badge-primary">{{ e.kind_label }}</span>
+            {% else %}
+              <span class="text-muted">{{ e.kind_label }}</span>
+            {% endif %}
+          </td>
           <td class="small">{{ e.source_name }}</td>
           <td class="small">{{ e.target_name }}</td>
           <td class="small">

@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.0",
+    "version": "3.1",
     "author": "stefan2200"
   },
   "server": {
@@ -116,8 +116,16 @@
   },
   "resource_sharing": {
     "enabled": false,
-    "threshold_pct": 80,
-    "priority": "new_villages"
+    "priority": "new_villages",
+    "max_sends_per_cycle": 3,
+    "min_send_amount": 500,
+    "receiver_fill_max_pct": 90,
+    "merchant_capacity": 1000,
+    "overflow_enabled": true,
+    "overflow_trigger_pct": 85,
+    "overflow_target_pct": 60,
+    "need_enabled": true,
+    "need_donor_floor": 20000
   },
   "farms": {
     "farm": true,

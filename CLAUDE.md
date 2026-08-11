@@ -152,13 +152,22 @@ implementação de cada lote estão no fim do documento.
   real jamais aconteceu e o payload `"support": "Ondersteunen"` nunca foi
   validado em pt-BR. Ligar em uma aldeia só, observando.
 - **Feature 9 (resource sharing) desligada no `config.json` local** desde
-  2026-08-08. Os dois bloqueios registrados caíram no Lote 5: a escolha de
-  destino não ordena mais por `last_run` (P2-27, agora usa pontos) e
-  `send_resources()` inspeciona a resposta em vez de retornar `True` sempre
-  (P1-16). **Pronta para religar, mas ainda não religada** — ligar em uma
-  aldeia só, acompanhando o log `send_resources: enviado ...` e conferindo no
-  jogo que a transferência realmente saiu. O payload nunca foi validado em
-  campo em nenhum idioma.
+  2026-08-08, e **reformulada em 2026-08-11** (ver `docs/features_log.md`).
+  A versão anterior tinha uma regra só — doadora era quem passasse de
+  `threshold_pct` da **própria** capacidade — e contra os dados reais da conta
+  ela não movia nada: as duas aldeias de armazém grande precisariam de 8× mais
+  recurso do que tinham para se qualificar como doadoras, e a única receptora
+  precisava de um recurso que a única outra doadora não tinha sobrando.
+  Agora são duas regras (transbordo, por percentual da própria capacidade;
+  necessidade, por sobra absoluta acima de `need_donor_floor`), necessidade
+  primeiro e o transbordo restante despejado na aldeia com mais **espaço
+  livre**. **Ainda não ligada e nunca executada uma única vez** — o payload
+  `send_res` segue sem validação de campo em nenhum idioma. Ao religar,
+  acompanhar `ResourceSharing: enviado ...` no log e conferir no jogo que a
+  transferência saiu de verdade.
+  ⚠️ **Não existe gate por aldeia** — `resource_sharing.enabled` é global e
+  vale para todas as aldeias gerenciadas de uma vez. Notas antigas que falavam
+  em "ligar em uma aldeia só" descreviam algo que o código nunca ofereceu.
 
 ## Backlog de features pendentes
 

@@ -1238,6 +1238,11 @@ class Village:
             "profile": self.config["villages"].get(self.village_id, {}).get("profile", "offensive"),
             "public": self.area.in_cache(self.village_id) if self.area else None,
             "resources": self.resman.actual,
+            # Capacidade do armazem (storage_max do game_state). Sem isso o
+            # ResourceSharingManager (Feature 9) nao tem como calcular o espaco
+            # livre de uma aldeia que nao seja a que esta rodando no momento, e
+            # enviar sem saber transborda a receptora na chegada.
+            "storage": self.resman.storage,
             "required_resources": self.resman.requested,
             "available_troops": self.units.troops,
             "buidling_levels": self.builder.levels,
