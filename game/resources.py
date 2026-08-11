@@ -6,6 +6,7 @@ import re
 import time
 
 from core.extractors import Extractor
+from core.filemanager import FileManager
 
 
 class PremiumExchange:
@@ -613,7 +614,6 @@ class ResourceManager:
             return False
 
         # Verifica mercadores disponíveis
-        import re
         match = re.search(r'market_merchant_available_count["\s>]+(\d+)', res.text)
         if match and int(match.group(1)) < 1:
             self.logger.debug("send_resources: sem mercadores disponíveis")
@@ -646,10 +646,30 @@ class ResourceManager:
             )
             return False
         if '<div class="error_box">' in response.text:
+            # Registrar so "houve error_box" nao diz por que o jogo recusou, e
+            # este payload nunca foi validado em campo em nenhum idioma -- as
+            # causas plausiveis (nome de campo errado, falta de mercador, alvo
+            # invalido, etapa de confirmacao faltando) sao indistinguiveis sem
+            # a mensagem. Extrai o texto e guarda a resposta inteira: e a
+            # propria tela de mercado re-renderizada, entao serve de amostra do
+            # formulario real e do contador de mercadores.
+            reason = "desconhecido"
+            box = re.search(r'<div class="error_box">(.*?)</div>', response.text, re.S)
+            if box:
+                reason = re.sub(r"<[^>]+>", " ", box.group(1))
+                reason = " ".join(reason.split())[:300] or "vazio"
             self.logger.warning(
-                "send_resources: o jogo recusou o envio de %s → aldeia %s (error_box)",
-                resources, target_village_id
+                "send_resources: o jogo recusou o envio de %s → aldeia %s: %s",
+                resources, target_village_id, reason
             )
+            try:
+                FileManager.create_directory(FileManager.get_path("cache/resource_sharing"))
+                dump = FileManager.get_path("cache/resource_sharing/last_send_error.html")
+                with open(dump, "w", encoding="utf-8") as fh:
+                    fh.write(response.text)
+                self.logger.info("send_resources: resposta salva em %s", dump)
+            except Exception as dump_error:
+                self.logger.debug("send_resources: falha ao salvar a resposta: %s", dump_error)
             return False
         self.logger.info(
             "send_resources: enviado %s → aldeia %s", resources, target_village_id

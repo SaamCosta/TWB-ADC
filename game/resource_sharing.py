@@ -513,6 +513,25 @@ class ResourceSharingManager:
         except Exception as e:
             logger.warning("ResourceSharing: falha ao gravar histórico: %s", e)
 
+    @staticmethod
+    def _dump_once(path, content):
+        """
+        Salva `content` em `path` só se o arquivo ainda não existir -- amostra
+        de diagnóstico, não log. Escrever a cada ciclo encheria o disco sem
+        acrescentar informação, já que o markup é sempre o mesmo.
+        Best-effort: nunca derruba o ciclo por erro de I/O.
+        """
+        try:
+            full = FileManager.get_path(path)
+            if os.path.exists(full):
+                return
+            FileManager.create_directory(FileManager.get_path(os.path.dirname(path)))
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            logger.info("ResourceSharing: amostra de markup salva em %s", full)
+        except Exception as e:
+            logger.debug("ResourceSharing: falha ao salvar amostra: %s", e)
+
     def _get_available_merchants(self):
         """
         Consulta a tela de mercado da aldeia atual para saber quantos
@@ -531,10 +550,20 @@ class ResourceSharingManager:
             # markup inesperado. WARNING e não DEBUG de propósito -- este regex
             # nunca foi exercitado contra o HTML real, e um envio dimensionado
             # para 1 mercador quando existem 20 é desperdício silencioso.
+            #
+            # Confirmado quebrado em campo no br143 em 2026-08-11: o padrão
+            # `market_merchant_available_count` não existe no HTML real. O mesmo
+            # padrão é usado por ResourceManager.trade(), na forma binária
+            # `...">0`, então a checagem de mercadores do comércio normal
+            # provavelmente também nunca funcionou (achando que sempre há
+            # mercador). Salva a página uma única vez para dar a amostra que
+            # falta -- corrigir o regex às cegas seria trocar um palpite por
+            # outro.
             logger.warning(
                 "ResourceSharing: não foi possível ler os mercadores disponíveis "
                 "em %s (markup inesperado), assumindo 1", self.current_village_id
             )
+            self._dump_once("cache/resource_sharing/market_send_res.html", res.text)
             return 1
         except Exception as e:
             logger.warning("ResourceSharing: erro ao verificar mercadores: %s", e)
