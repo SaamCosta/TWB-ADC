@@ -671,18 +671,30 @@ class ResourceManager:
         # por tentativa e erro.
         self._dump_response("cache/resource_sharing/market_send_form.html", res.text)
 
+        # O `input` visível é só a caixa que o usuário digita: o JS quebra
+        # "579|304" e preenche os hidden `x`/`y`, que são o que o servidor de
+        # fato lê. Mandar só o `input` fez o jogo responder "Não há nenhuma
+        # aldeia em (0|0)!" -- as coordenadas estavam certas, o campo é que era
+        # outro. Manda-se os três: `x`/`y` porque são os lidos, `input` porque é
+        # o que um navegador enviaria.
+        target_x, _, target_y = target_coords.partition("|")
         payload = {
             "wood": resources.get("wood", 0),
             "stone": resources.get("stone", 0),
             "iron": resources.get("iron", 0),
+            "x": target_x,
+            "y": target_y,
             "target_type": "coord",
             "input": target_coords,
             "h": self.wrapper.last_h,
         }
 
+        # `try=confirm_send` é o action real do <form name="market">. O envio é
+        # em duas etapas, como o de ataque: esta primeira valida e devolve uma
+        # tela de confirmação, que precisa ser submetida para a carga sair.
         post_url = (
             f"game.php?village={self.village_id}"
-            f"&screen=market&mode=send&action=send"
+            f"&screen=market&mode=send&try=confirm_send"
         )
         # P1-16: o try/except aqui era inalcancavel -- WebWrapper.post_url() ja
         # captura toda excecao internamente e devolve None (core/request.py).
@@ -712,10 +724,85 @@ class ResourceManager:
             )
             self._dump_response("cache/resource_sharing/last_send_error.html", response.text)
             return False
+
+        # Etapa 2: submeter a tela de confirmação. Nada aqui é adivinhado -- o
+        # formulário devolvido pelo jogo é reenviado como está, com os campos e
+        # valores que ele mesmo preencheu (inclusive um `h` fresco). É o que o
+        # navegador faz ao clicar em "Confirmar", e evita depender de nomes de
+        # campo que só existem nessa segunda tela.
+        self._dump_response("cache/resource_sharing/market_confirm.html", response.text)
+        action, fields = self._confirmation_form(response.text)
+        if not action:
+            self.logger.warning(
+                "send_resources: o jogo aceitou %s → aldeia %s mas não achei o "
+                "formulário de confirmação; a carga NÃO saiu (resposta salva em "
+                "cache/resource_sharing/market_confirm.html)",
+                resources, target_village_id
+            )
+            return False
+
+        confirmed = self.wrapper.post_url(action, data=fields)
+        if confirmed is None:
+            self.logger.warning(
+                "send_resources: sem resposta ao confirmar %s → aldeia %s",
+                resources, target_village_id
+            )
+            return False
+        if '<div class="error_box">' in confirmed.text:
+            self.logger.warning(
+                "send_resources: o jogo recusou a confirmação de %s → aldeia %s: %s",
+                resources, target_village_id, self._error_box_text(confirmed.text)
+            )
+            self._dump_response("cache/resource_sharing/last_confirm_error.html", confirmed.text)
+            return False
+
         self.logger.info(
             "send_resources: enviado %s → aldeia %s", resources, target_village_id
         )
         return True
+
+    @staticmethod
+    def _confirmation_form(html):
+        """
+        Encontra o formulário de confirmação do envio e devolve (action, campos).
+
+        Reenviar o formulário como o jogo o devolveu é mais robusto do que
+        montar um payload novo: os nomes e valores da segunda tela nunca foram
+        vistos, e qualquer token que ela traga vai junto sem precisar ser
+        identificado.
+
+        A tela de confirmação re-renderiza o formulário de envio vazio junto com
+        o de confirmação, então formulários cujos campos de recurso estejam
+        todos em branco são descartados -- o que interessa é aquele que já traz
+        as quantidades preenchidas pelo próprio jogo.
+        """
+        fallback = (None, None)
+        for match in re.finditer(r"(?s)<form[^>]*>.*?</form>", html):
+            block = match.group(0)
+            action_match = re.search(r'action="([^"]*)"', block)
+            if not action_match:
+                continue
+            action = action_match.group(1).replace("&amp;", "&")
+            if "screen=market" not in action:
+                continue
+
+            fields = {}
+            for tag in re.findall(r"<input[^>]*>", block):
+                name = re.search(r'name="([^"]*)"', tag)
+                if not name:
+                    continue
+                value = re.search(r'value="([^"]*)"', tag)
+                fields[name.group(1)] = value.group(1) if value else ""
+
+            resources_present = [fields.get(r, "") for r in ("wood", "stone", "iron") if r in fields]
+            if not resources_present:
+                continue
+            if any(v.strip() for v in resources_present):
+                return action, fields
+            # Guarda como último recurso, mas continua procurando um preenchido.
+            if fallback == (None, None):
+                fallback = (action, fields)
+        return fallback
 
     @staticmethod
     def _resolve_coords(village_id):
