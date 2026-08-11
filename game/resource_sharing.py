@@ -131,9 +131,14 @@ class ResourceSharingManager:
             return
 
         for target_id, to_send, kind in plan:
+            target_state = village_states.get(target_id) or {}
             success = current_resman.send_resources(
                 target_village_id=target_id,
                 resources=to_send,
+                # O formulário do jogo endereça por coordenada, não por id. O
+                # estado já lido aqui tem x/y, então passamos direto em vez de
+                # deixar send_resources reabrir o mesmo arquivo de cache.
+                target_coords=f"{target_state.get('x')}|{target_state.get('y')}",
             )
 
             if success:
@@ -357,6 +362,12 @@ class ResourceSharingManager:
                 continue
             if state.get("under_attack"):
                 logger.debug("ResourceSharing: %s sob ataque, não vou abastecer", vid)
+                continue
+            if not state.get("x") or not state.get("y"):
+                # O formulário de envio endereça por coordenada; sem x/y não há
+                # como montar o destino. Planejar um envio que não tem endereço
+                # só gastaria requisições para acabar em recusa.
+                logger.debug("ResourceSharing: %s sem coordenada no cache, pulando", vid)
                 continue
             receivers.append((vid, state))
         return receivers

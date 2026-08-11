@@ -595,7 +595,7 @@ class ResourceManager:
         # No useful offers found
         return False
 
-    def send_resources(self, target_village_id, resources: dict):
+    def send_resources(self, target_village_id, resources: dict, target_coords=None):
         """
         Feature 9: Envia recursos diretamente para outra aldeia do próprio jogador
         via mercado interno (screen=market&mode=send).
@@ -611,13 +611,36 @@ class ResourceManager:
         Como a tela do formulário nunca chegou a carregar uma única vez, nem o
         contador de mercadores nem o payload jamais foram exercitados.
 
+        Campos do formulário, confirmados no markup real do br143 (2026-08-11):
+
+            <input name="wood">  <input name="stone">  <input name="iron">
+            <input type="radio" name="target_type" value="coord" checked>
+                                       (ou "village_name" / "player_name")
+            <input type="text" name="input" placeholder="123|456">
+
+        O destino é **coordenada**, não id de aldeia -- o campo se chama
+        literalmente `input` e o formulário nem oferece a opção de id. O
+        `target_village` que esta função mandava antes não existe em lugar
+        nenhum do form.
+
         Args:
             target_village_id: ID da aldeia destino (string ou int)
             resources: dict com os recursos a enviar, ex: {"wood": 500, "stone": 200}
+            target_coords: "x|y" do destino. Se omitido, é resolvido a partir de
+                cache/managed/{id}.json -- sem coordenada não há envio, porque
+                mandar sem destino resolvido seria pior que não mandar.
 
         Returns:
             True se o envio foi submetido com sucesso, False caso contrário
         """
+        target_coords = target_coords or self._resolve_coords(target_village_id)
+        if not target_coords:
+            self.logger.warning(
+                "send_resources: sem coordenada conhecida para a aldeia %s, "
+                "envio cancelado", target_village_id
+            )
+            return False
+
         url = (
             f"game.php?village={self.village_id}"
             f"&screen=market&mode=send&target={target_village_id}"
@@ -649,10 +672,11 @@ class ResourceManager:
         self._dump_response("cache/resource_sharing/market_send_form.html", res.text)
 
         payload = {
-            "target_village": str(target_village_id),
             "wood": resources.get("wood", 0),
             "stone": resources.get("stone", 0),
             "iron": resources.get("iron", 0),
+            "target_type": "coord",
+            "input": target_coords,
             "h": self.wrapper.last_h,
         }
 
@@ -692,6 +716,24 @@ class ResourceManager:
             "send_resources: enviado %s → aldeia %s", resources, target_village_id
         )
         return True
+
+    @staticmethod
+    def _resolve_coords(village_id):
+        """
+        "x|y" de uma aldeia gerenciada, a partir de cache/managed/{id}.json
+        (gravado por Village.set_cache_vars a cada ciclo).
+
+        O formulário de envio só aceita coordenada, nome de aldeia ou nome de
+        jogador -- não aceita id. Como o resto do sistema raciocina inteiramente
+        em ids, a tradução acontece aqui, no único ponto que precisa dela.
+        """
+        data = FileManager.load_json_file(f"cache/managed/{village_id}.json")
+        if not data:
+            return None
+        x, y = data.get("x"), data.get("y")
+        if not x or not y:
+            return None
+        return f"{x}|{y}"
 
     @staticmethod
     def _error_box_text(html):
