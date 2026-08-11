@@ -544,18 +544,23 @@ class ResourceSharingManager:
         com bônus de mercador funcionam sem tocar em `merchant_capacity` -- a
         config vira só o fallback de quando a página não puder ser lida.
 
-        Nota sobre a tela: `mode=traders` ("Estado do comerciante") é usada aqui
-        porque existe e não exige um `target` na URL, e o orçamento precisa ser
-        conhecido *antes* de escolher os alvos do plano. A anterior,
-        `mode=send_res`, nunca existiu -- o jogo devolvia "Modo inválido", e era
-        essa a causa de o contador nunca ser encontrado (o regex sempre esteve
-        certo). Ver ResourceManager.send_resources.
+        Nota sobre a tela: os contadores vivem numa barra de status comum a
+        todos os modos do mercado (`market_status_bar`), confirmada visualmente
+        em `mode=other_offer` e em `mode=send` no br143. Usamos `mode=send`, que
+        renderiza sem exigir `&target=` na URL -- o orçamento precisa ser
+        conhecido *antes* de escolher os alvos do plano, e é a mesma tela que o
+        envio de fato usa, então uma mudança de markup quebra os dois juntos em
+        vez de deixar um silenciosamente errado.
+
+        A tela anterior, `mode=send_res`, nunca existiu: o jogo devolvia "Modo
+        inválido", e era essa a causa de o contador nunca ser encontrado -- o
+        regex sempre esteve certo. Ver ResourceManager.send_resources.
         """
         fallback_capacity = int(
             cfg.get("merchant_capacity", DEFAULT_MERCHANT_CAPACITY) or DEFAULT_MERCHANT_CAPACITY
         )
         try:
-            url = f"game.php?village={self.current_village_id}&screen=market&mode=traders"
+            url = f"game.php?village={self.current_village_id}&screen=market&mode=send"
             res = self.wrapper.get_url(url=url)
             if not res:
                 return 0, 0
@@ -571,7 +576,7 @@ class ResourceSharingManager:
                     "ResourceSharing: não foi possível ler os mercadores disponíveis "
                     "em %s (markup inesperado), assumindo 1", self.current_village_id
                 )
-                self._dump_once("cache/resource_sharing/market_traders.html", res.text)
+                self._dump_once("cache/resource_sharing/market_send.html", res.text)
                 return fallback_capacity, 1
 
             available = data["available"]
