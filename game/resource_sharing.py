@@ -372,29 +372,48 @@ class ResourceSharingManager:
             receivers.append((vid, state))
         return receivers
 
-    @staticmethod
-    def _deficit(state, res):
-        """
-        Quanto falta para a receptora destravar o que ela registrou em
-        `required_resources`, já descontando o que ela tem em mãos.
+    # Fontes de `required_resources` que gravam o que **falta** (custo já menos
+    # o estoque), e não o custo total. Conferido em campo em 2026-08-11: as três
+    # usam a mesma forma `if custo > actual: request(custo - actual)` --
+    # snobber.py:179, buildingmanager.py:243 e troopmanager.py:307. Já
+    # `recruitment_*` (troopmanager.py:744) grava o custo **total** das unidades
+    # que faltam recrutar, sem olhar estoque.
+    #
+    # Fontes desconhecidas caem no tratamento de "custo total", que desconta o
+    # estoque e portanto pede menos -- errar para menos é a direção segura num
+    # sistema que move recurso de verdade.
+    SHORTFALL_SOURCES = ("snob", "building", "research")
 
-        `ResourceManager.request()` grava o montante **total** da ação (não o
-        que falta) e `check_state()` zera a entrada quando o estoque alcança
-        esse montante -- então somar as entradas e subtrair o estoque atual é o
-        déficit real. A versão anterior somava sem descontar o estoque e podia
-        mandar recurso que a aldeia já tinha.
+    @classmethod
+    def _deficit(cls, state, res):
+        """
+        Quanto ainda falta à receptora para destravar o que ela registrou em
+        `required_resources`.
+
+        As fontes são inconsistentes entre si (ver SHORTFALL_SOURCES), então
+        somar tudo e subtrair o estoque uma vez -- como esta função fazia até
+        2026-08-11 -- descontava o estoque duas vezes das fontes que já eram
+        déficit, e mandava menos do que a aldeia precisava.
         """
         required = state.get("required_resources") or {}
-        needed = 0
-        for source_needs in required.values():
-            if isinstance(source_needs, dict):
-                amount = source_needs.get(res, 0)
-                if isinstance(amount, (int, float)) and amount > 0:
-                    needed += int(amount)
-        if needed <= 0:
+        shortfall = 0   # já é o que falta
+        gross = 0       # custo total, ainda precisa descontar o estoque
+
+        for source, source_needs in required.items():
+            if not isinstance(source_needs, dict):
+                continue
+            amount = source_needs.get(res, 0)
+            if not isinstance(amount, (int, float)) or amount <= 0:
+                continue
+            if str(source) in cls.SHORTFALL_SOURCES:
+                shortfall += int(amount)
+            else:
+                gross += int(amount)
+
+        if shortfall <= 0 and gross <= 0:
             return 0
         have = int((state.get("resources") or {}).get(res, 0) or 0)
-        return max(0, needed - have)
+        return shortfall + max(0, gross - have)
 
     @staticmethod
     def _headroom(state, res, fill_max_pct):
