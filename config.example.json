@@ -83,7 +83,6 @@
     "delay_factor": null,
     "keep_resources": {},
     "conquest_enabled": true,
-    "scout_first": false,
     "additional_farms": [],
     "prioritize_building": false,
     "prioritize_snob": false,
@@ -103,7 +102,6 @@
   },
   "conquest": {
     "enabled": false,
-    "target": "barbarian",
     "max_radius": 20,
     "priority": "fill_gaps",
     "min_points": 100,
@@ -133,7 +131,6 @@
     "farm": true,
     "min_points": 0,
     "max_points": 50,
-    "find_player_owned": false,
     "search_radius": 100,
     "default_away_time": 3600,
     "full_loot_away_time": 1800,

@@ -924,13 +924,18 @@ descrevendo comportamento que **não existe no código**:
 | Chave | Onde é documentada | Situação |
 |---|---|---|
 | ~~`village.support_others_max_villages`~~ ✅ | `config.example.json:97`, `helpfile.py:107` | ✅ **Resolvido no Lote 3** (`8c3b79b`): passou a ser lido em `setup_defence_manager()` para `DefenceManager.support_max_villages`, e o `index >= 2` duplicado foi removido. |
-| `village.scout_first` | `config.example.json:82`, `helpfile.py:96` | Nenhuma leitura em lugar nenhum. |
-| `farms.find_player_owned` | `config.example.json:122`, `helpfile.py:45` | Nenhuma leitura. |
-| `conquest.target` | `config.example.json:102`, `helpfile.py:67` | Nenhuma leitura (o único modo é bárbaro, hardcoded). |
+| ~~`village.scout_first`~~ ✅ | `config.example.json:82`, `helpfile.py:96` | ✅ **Removido em 2026-08-12.** A funcionalidade existe, mas é governada pela chave **global** `farms.force_scout_if_available` (`village.py:781`). Ligar a chave por aldeia teria sido perigoso: o global está `true` e o `scout_first` estava `false` nas seis aldeias, então "ativá-la" faria todas pararem de escutar antes de farmar — o padrão do P1-8 de novo. |
+| ~~`farms.find_player_owned`~~ ✅ | `config.example.json:122`, `helpfile.py:45` | ✅ **Removido em 2026-08-12.** |
+| ~~`conquest.target`~~ ✅ | `config.example.json:102`, `helpfile.py:67` | ✅ **Removido em 2026-08-12.** O único modo é bárbaro, hardcoded. |
 
 ## Config lido mas não declarado
 
-- **`village.conquest_enabled`** — lido em
+- **`village.conquest_enabled`** ✅ — **resolvido em 2026-08-12** (`7b9d28e`):
+  entrou em `village_template` com default `true`, idêntico ao default do
+  `.get()`, então o merge por `build.version` (3.2 → 3.3) propaga a chave para
+  as aldeias existentes sem mudar comportamento. Isso também elimina o risco do
+  `null` descrito abaixo, já que agora a chave nasce com valor explícito.
+  Diagnóstico original: lido em
   [`village.py:635`](../game/village.py), documentado em
   [`helpfile.py:109`](../webmanager/helpfile.py), mas **ausente** de
   `config.example.json` e de `village_template`. Viola a regra do próprio
