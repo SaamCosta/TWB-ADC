@@ -825,25 +825,27 @@ outro sistema, só falta de retry/sinalização de erro.
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
-- **Feature 9 (resource sharing) reformulada em 2026-08-11, ainda nunca
-  executada.** Detalhe em `docs/features_log.md`. Duas regras agora (transbordo
-  e necessidade) em vez de um `threshold_pct` só. Validada com teste isolado
-  (25 checks, sem rede) usando os números reais das 6 aldeias do br143 —
-  **sem nenhuma validação de campo**: o payload `send_res` nunca foi exercitado
-  contra o jogo em nenhum idioma, em nenhuma versão desta feature.
-  Pontos de atenção ao religar (`resource_sharing.enabled: true`, global — não
-  há gate por aldeia):
-  - o primeiro ciclo após a atualização não envia nada de propósito: a chave
-    `storage` em `cache/managed/*.json` é nova e cada aldeia só a ganha depois
-    de rodar uma vez; sem ela a aldeia é pulada como receptora, porque não dá
-    para calcular espaço livre;
-  - `ResourceSharing: não foi possível ler os mercadores disponíveis` em nível
-    WARNING significa que o regex de mercadores não casou com o HTML real e o
-    sistema está assumindo 1 mercador — é o sinal mais provável de problema, já
-    que esse regex nunca foi validado em campo;
-  - `need_donor_floor` (20.000) é o número mais dependente do estágio da conta.
-    Alto demais e as aldeias grandes não doam; baixo demais e elas doam o que
-    iam usar para nobre/tropa.
+- **Feature 9 (resource sharing) reformulada e validada em campo em
+  2026-08-11.** Detalhe em `docs/features_log.md`. Duas regras (transbordo e
+  necessidade) em vez de um `threshold_pct` só, e **quatro transferências reais
+  concluídas** — as primeiras da história da feature. O que ainda merece olho:
+  - **`village.keep_resources` é manual.** É o que protege recurso que a aldeia
+    está juntando para um nobre. Não dá para inferir isso de
+    `required_resources`, que registra o que *falta* e some justamente quando a
+    meta é atingida — ver as notas do dia no features_log. Quem estiver
+    poupando para nobre precisa declarar, ex:
+    `"keep_resources": {"stone": 30000}`.
+  - **O livro-razão de remessas (`cache/resource_sharing/pending.json`) depende
+    da duração lida da tela de confirmação.** Se `_parse_travel_seconds` parar
+    de casar, o fallback de 1h segura a reserva por tempo demais e a receptora
+    fica subabastecida — sintoma: envios que deveriam acontecer não acontecem.
+  - **`market_incoming_mismatch.html`**, se aparecer em `cache/resource_sharing/`,
+    significa que o rótulo "Chegando:" existe na tela de comércio mas o
+    `INCOMING_RE` não casa mais (P1-14). Ainda **não se sabe** se transporte
+    entre aldeias próprias aparece nesse bloco — a dúvida ficou em aberto em
+    2026-08-11 porque a evidência era compatível com as duas hipóteses.
+  - `need_donor_floor` (20.000) segue sendo o número mais dependente do estágio
+    da conta.
 
 - ~~**PvP Conquest (Feature 13) não detecta trem de nobres que falhou**~~ —
   ✅ **corrigido em 2026-08-11.** `_step_check_complete()` agora, quando a

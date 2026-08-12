@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.1",
+    "version": "3.2",
     "author": "stefan2200"
   },
   "server": {
@@ -81,6 +81,7 @@
     "managed": true,
     "active_hours": null,
     "delay_factor": null,
+    "keep_resources": {},
     "scout_first": false,
     "additional_farms": [],
     "prioritize_building": false,

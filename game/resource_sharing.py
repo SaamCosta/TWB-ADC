@@ -43,6 +43,21 @@ RESOURCES = ["wood", "stone", "iron"]
 HISTORY_PATH = "cache/resource_sharing/history.json"
 HISTORY_MAX_ENTRIES = 300
 
+# Remessas ainda em voo, compartilhadas por todas as aldeias do ciclo.
+#
+# Sem isso, cada doadora lê o mesmo `cache/managed/{alvo}.json` parado e age
+# como se fosse a única: em 2026-08-11 a BBM 001 mandou 2.870 de argila para a
+# BBM 003 às 21:09 e a BBM 002 mandou outros 3.540 às 21:13, para uma
+# necessidade real de 3.540 -- 81% a mais, antes de qualquer uma chegar. O
+# problema não é a defasagem do cache em si (recurso muda devagar), é que a
+# demanda já atendida não fica registrada em lugar nenhum até a carga pousar.
+PENDING_PATH = "cache/resource_sharing/pending.json"
+
+# Usado quando a tela de confirmação não informa a duração da viagem. Segurar
+# a reserva por tempo demais faz a receptora ser subabastecida por um tempo;
+# segurar de menos traz de volta o envio em duplicata. Erra para o lado longo.
+DEFAULT_TRAVEL_SECONDS = 3600
+
 # Cada mercador carrega 1000 recursos no total (qualquer mistura entre
 # madeira/argila/ferro). Confirmado no world config público do br143 em
 # 2026-08-11: <MerchantBonus>0</MerchantBonus>, ou seja, sem bônus de carga.
@@ -122,7 +137,10 @@ class ResourceSharingManager:
             )
             return
 
-        plan = self._build_plan(village_states, giveable, overflow, cfg, carry_budget, per_merchant)
+        in_flight = self._load_pending()
+        plan = self._build_plan(
+            village_states, giveable, overflow, cfg, carry_budget, per_merchant, in_flight
+        )
         if not plan:
             logger.debug(
                 "ResourceSharing: aldeia %s tem excedente (%s) mas nenhuma "
@@ -145,6 +163,13 @@ class ResourceSharingManager:
                 logger.info(
                     "ResourceSharing: enviado %s de %s → %s (regra: %s)",
                     to_send, self.current_village_id, target_id, kind
+                )
+                # Registrar antes de qualquer outra coisa: é isto que impede a
+                # próxima aldeia do mesmo ciclo de reatender a demanda que este
+                # envio acabou de cobrir.
+                self._record_pending(
+                    target_id, to_send,
+                    getattr(current_resman, "last_send_travel_seconds", None),
                 )
                 self._log_event(
                     source=self.current_village_id, target=target_id, resources=to_send,
@@ -181,12 +206,21 @@ class ResourceSharingManager:
 
         `resman.in_need_amount(res)` é descontado nas duas regras: é o que esta
         aldeia já reservou para a própria fila de construção/recrutamento.
+        **Mas ele não basta como proteção**, e é por isso que existe
+        `village.keep_resources`: as fontes registram o que *falta*, e quando a
+        aldeia já juntou o suficiente o registro simplesmente some. Uma aldeia
+        de 23.541 de argila guardando para um nobre de 30.000 aparecia com
+        `requested: {}` e ficava livre para doar -- a aldeia mais preparada para
+        agir era justamente a que parecia mais disponível. O registro é ainda
+        intermitente: some também nos ciclos em que o snobber vai cunhar moeda
+        em vez de conferir custo.
         """
         trigger_pct = self._pct(cfg.get("overflow_trigger_pct", 85))
         target_pct = self._pct(cfg.get("overflow_target_pct", 60))
         donor_floor = int(cfg.get("need_donor_floor", 20000))
         overflow_enabled = cfg.get("overflow_enabled", True)
         need_enabled = cfg.get("need_enabled", True)
+        keep = self._keep_resources()
 
         # Um alvo acima do gatilho não esvaziaria nada: trata como "descer até
         # o gatilho" em vez de silenciosamente não fazer nada.
@@ -205,9 +239,15 @@ class ResourceSharingManager:
             if overflow_enabled and actual >= int(storage * trigger_pct):
                 over = min(free, max(0, actual - int(storage * target_pct)))
 
+            # O piso efetivo da regra 2 é o maior entre o global e o que esta
+            # aldeia declarou guardar. Não se aplica ao transbordo: aquele
+            # volume não cabe no armazém de qualquer forma, e mantê-lo em casa
+            # não o preserva, só o desperdiça.
+            floor = max(donor_floor, int(keep.get(res, 0) or 0))
+
             surplus = 0
-            if need_enabled and free > donor_floor:
-                surplus = free - donor_floor
+            if need_enabled and free > floor:
+                surplus = free - floor
 
             total = max(over, surplus)
             if total > 0:
@@ -220,7 +260,8 @@ class ResourceSharingManager:
     # Montagem do plano de envios
     # ------------------------------------------------------------------
 
-    def _build_plan(self, village_states, giveable, overflow, cfg, carry_budget, per_merchant):
+    def _build_plan(self, village_states, giveable, overflow, cfg, carry_budget,
+                    per_merchant, in_flight=None):
         """
         Devolve uma lista de (target_village_id, {res: amount}, kind) já
         limitada pelo orçamento de carga, pelo espaço livre de cada receptora e
@@ -229,10 +270,14 @@ class ResourceSharingManager:
         Nada aqui faz requisição -- o plano inteiro é montado a partir do cache
         e só depois executado, para que o orçamento de mercadores seja
         respeitado globalmente e não por envio.
+
+        `in_flight` desconta o que outras aldeias já mandaram e ainda não
+        chegou; sem ele cada doadora reatende a mesma demanda.
         """
         min_send = int(cfg.get("min_send_amount", 500))
         fill_max_pct = self._pct(cfg.get("receiver_fill_max_pct", 90))
         max_sends = int(cfg.get("max_sends_per_cycle", 3))
+        in_flight = in_flight or {}
 
         remaining = dict(giveable)
         overflow_left = dict(overflow)
@@ -245,13 +290,17 @@ class ResourceSharingManager:
         # Vem primeiro de propósito: mandar o excedente para quem precisa
         # resolve necessidade e transbordo de uma vez só.
         if cfg.get("need_enabled", True):
-            ranked = self._rank_by_priority(receivers, cfg.get("priority", "new_villages"))
+            ranked = self._rank_by_priority(
+                receivers, cfg.get("priority", "new_villages"), in_flight
+            )
             for vid, state in ranked:
                 if len(plan) >= max_sends or carry_left < min_send:
                     break
+                pending = in_flight.get(vid, {})
                 to_send = self._fit_send(
                     state, remaining, carry_left, min_send, fill_max_pct,
-                    cap_fn=lambda res: self._deficit(state, res),
+                    cap_fn=lambda res: self._deficit(state, res, pending.get(res, 0)),
+                    in_flight_for=pending,
                 )
                 if to_send:
                     plan.append((vid, to_send, "need"))
@@ -267,7 +316,10 @@ class ResourceSharingManager:
             dumpable = {res: amt for res, amt in overflow_left.items() if amt >= min_send}
             if dumpable:
                 already_planned = {vid for vid, _, _ in plan}
-                for vid, state in self._rank_by_free_space(receivers, dumpable, fill_max_pct):
+                ranked_banks = self._rank_by_free_space(
+                    receivers, dumpable, fill_max_pct, in_flight
+                )
+                for vid, state in ranked_banks:
                     if len(plan) >= max_sends or carry_left < min_send:
                         break
                     # `_headroom` sai do cache, que não conhece o envio que a
@@ -281,6 +333,7 @@ class ResourceSharingManager:
                     to_send = self._fit_send(
                         state, dumpable, carry_left, min_send, fill_max_pct,
                         cap_fn=lambda res: dumpable.get(res, 0),
+                        in_flight_for=in_flight.get(vid, {}),
                     )
                     if to_send:
                         plan.append((vid, to_send, "overflow"))
@@ -307,13 +360,16 @@ class ResourceSharingManager:
         merchants = -(-amount // per_merchant)  # teto da divisão
         return merchants * per_merchant
 
-    def _fit_send(self, state, pool, carry_left, min_send, fill_max_pct, cap_fn):
+    def _fit_send(self, state, pool, carry_left, min_send, fill_max_pct, cap_fn,
+                  in_flight_for=None):
         """
         Monta o dict {res: amount} de um envio para uma receptora, limitado
         simultaneamente por: o que a doadora pode dar (`pool`), o teto da regra
-        em questão (`cap_fn`), o espaço livre da receptora e o que ainda cabe
-        nos mercadores do ciclo (`carry_left`).
+        em questão (`cap_fn`), o espaço livre da receptora, o que já está a
+        caminho dela (`in_flight_for`) e o que ainda cabe nos mercadores do
+        ciclo (`carry_left`).
         """
+        in_flight_for = in_flight_for or {}
         to_send = {}
         used = 0
         for res in RESOURCES:
@@ -323,7 +379,7 @@ class ResourceSharingManager:
             cap = cap_fn(res)
             if cap <= 0:
                 continue
-            headroom = self._headroom(state, res, fill_max_pct)
+            headroom = self._headroom(state, res, fill_max_pct, in_flight_for.get(res, 0))
             if headroom <= 0:
                 continue
             amount = min(available, cap, headroom, carry_left - used)
@@ -406,15 +462,18 @@ class ResourceSharingManager:
     SHORTFALL_SOURCES = ("snob", "building", "research")
 
     @classmethod
-    def _deficit(cls, state, res):
+    def _deficit(cls, state, res, in_flight=0):
         """
         Quanto ainda falta à receptora para destravar o que ela registrou em
-        `required_resources`.
+        `required_resources`, já descontando o que está a caminho dela.
 
         As fontes são inconsistentes entre si (ver SHORTFALL_SOURCES), então
         somar tudo e subtrair o estoque uma vez -- como esta função fazia até
         2026-08-11 -- descontava o estoque duas vezes das fontes que já eram
         déficit, e mandava menos do que a aldeia precisava.
+
+        `in_flight` fecha o outro furo: `required_resources` vem do último ciclo
+        da receptora e não sabe de nada que já foi despachado depois disso.
         """
         required = state.get("required_resources") or {}
         shortfall = 0   # já é o que falta
@@ -434,23 +493,28 @@ class ResourceSharingManager:
         if shortfall <= 0 and gross <= 0:
             return 0
         have = int((state.get("resources") or {}).get(res, 0) or 0)
-        return shortfall + max(0, gross - have)
+        need = shortfall + max(0, gross - have)
+        return max(0, need - int(in_flight or 0))
 
     @staticmethod
-    def _headroom(state, res, fill_max_pct):
+    def _headroom(state, res, fill_max_pct, in_flight=0):
         """
         Espaço utilizável da receptora para um recurso. `fill_max_pct` deixa uma
         margem abaixo da capacidade real porque o recurso leva tempo de viagem e
         a produção dela continua correndo nesse meio tempo -- encher até 100% no
         papel significa transbordar na chegada.
+
+        `in_flight` também ocupa espaço: o que já está a caminho vai pousar no
+        mesmo armazém, e ignorá-lo faria duas doadoras encherem a receptora
+        juntas sem que nenhuma das duas visse o problema sozinha.
         """
         storage = int(state.get("storage") or 0)
         if storage <= 0:
             return 0
         current = int((state.get("resources") or {}).get(res, 0) or 0)
-        return max(0, int(storage * fill_max_pct) - current)
+        return max(0, int(storage * fill_max_pct) - current - int(in_flight or 0))
 
-    def _rank_by_priority(self, receivers, priority_mode):
+    def _rank_by_priority(self, receivers, priority_mode, in_flight=None):
         """
         Ordena as receptoras da etapa de necessidade.
 
@@ -460,9 +524,13 @@ class ResourceSharingManager:
         (village.py::set_cache_vars) -- ordenava ruído. Pontos são o sinal real
         de aldeia nova disponível no mesmo cache.
         """
+        in_flight = in_flight or {}
         needy = [
             (vid, state) for vid, state in receivers
-            if any(self._deficit(state, res) > 0 for res in RESOURCES)
+            if any(
+                self._deficit(state, res, in_flight.get(vid, {}).get(res, 0)) > 0
+                for res in RESOURCES
+            )
         ]
         if priority_mode == "new_villages":
             def newness(entry):
@@ -477,20 +545,29 @@ class ResourceSharingManager:
             needy.sort(key=newness)
         else:
             def total_need(entry):
-                return sum(self._deficit(entry[1], res) for res in RESOURCES)
+                pending = in_flight.get(entry[0], {})
+                return sum(
+                    self._deficit(entry[1], res, pending.get(res, 0)) for res in RESOURCES
+                )
             needy.sort(key=total_need, reverse=True)
         return needy
 
-    def _rank_by_free_space(self, receivers, dumpable, fill_max_pct):
+    def _rank_by_free_space(self, receivers, dumpable, fill_max_pct, in_flight=None):
         """
         Ordena as receptoras da etapa de transbordo: quem tem mais espaço livre
         absoluto para os recursos que sobraram vem primeiro. É essa regra que
         elege a aldeia de armazém grande como "banco" -- exatamente o papel que
         o percentual da capacidade própria nunca conseguiria expressar.
         """
+        in_flight = in_flight or {}
+
         def free_space(entry):
-            state = entry[1]
-            return sum(self._headroom(state, res, fill_max_pct) for res in dumpable)
+            vid, state = entry
+            pending = in_flight.get(vid, {})
+            return sum(
+                self._headroom(state, res, fill_max_pct, pending.get(res, 0))
+                for res in dumpable
+            )
         ranked = [entry for entry in receivers if free_space(entry) > 0]
         ranked.sort(key=free_space, reverse=True)
         return ranked
@@ -498,6 +575,33 @@ class ResourceSharingManager:
     # ------------------------------------------------------------------
     # Helpers internos
     # ------------------------------------------------------------------
+
+    def _keep_resources(self):
+        """
+        `village.keep_resources` da aldeia atual: quanto de cada recurso ela
+        guarda para si antes de doar pela regra de necessidade.
+
+        Explícito e não inferido de propósito. Dá para tentar adivinhar a
+        intenção da aldeia (fila de construção, nobre em formação), mas o dado
+        que existe hoje -- `required_resources` -- registra o que *falta* e some
+        quando a meta é atingida, que é exatamente o momento em que a reserva
+        mais importa. Um número declarado é previsível e não depende de um
+        campo que aparece e some conforme o caminho que o snobber tomou no
+        ciclo.
+        """
+        village_cfg = (self.config.get("villages") or {}).get(self.current_village_id) or {}
+        keep = village_cfg.get("keep_resources")
+        if not isinstance(keep, dict):
+            return {}
+        clean = {}
+        for res, amount in keep.items():
+            if res not in RESOURCES:
+                continue
+            try:
+                clean[res] = max(0, int(amount))
+            except (TypeError, ValueError):
+                continue
+        return clean
 
     @staticmethod
     def _pct(value):
@@ -560,6 +664,82 @@ class ResourceSharingManager:
             FileManager.save_json_file(history, HISTORY_PATH)
         except Exception as e:
             logger.warning("ResourceSharing: falha ao gravar histórico: %s", e)
+
+    # ------------------------------------------------------------------
+    # Livro-razão de remessas em voo
+    # ------------------------------------------------------------------
+
+    def _load_pending(self):
+        """
+        Devolve {village_id: {recurso: quantidade}} do que já está a caminho de
+        cada aldeia, descartando o que já deveria ter chegado.
+
+        Persistido em disco e não em memória porque cada aldeia do ciclo cria a
+        sua própria instância de ResourceSharingManager (village.py) -- um
+        atributo de instância não seria visto pela aldeia seguinte, que é
+        exatamente quem precisa da informação.
+        """
+        entries = FileManager.load_json_file(PENDING_PATH)
+        if not isinstance(entries, list):
+            return {}
+
+        now = int(time.time())
+        alive = [e for e in entries if isinstance(e, dict) and e.get("arrives_at", 0) > now]
+
+        # Reescreve só quando encolheu, para não gravar a cada ciclo à toa.
+        if len(alive) != len(entries):
+            self._save_pending(alive)
+
+        in_flight = {}
+        for entry in alive:
+            target = str(entry.get("target"))
+            bucket = in_flight.setdefault(target, {})
+            for res, amount in (entry.get("resources") or {}).items():
+                try:
+                    bucket[res] = bucket.get(res, 0) + int(amount)
+                except (TypeError, ValueError):
+                    continue
+        return in_flight
+
+    def _record_pending(self, target_id, resources, travel_seconds):
+        """
+        Anota uma remessa recém-enviada até a hora prevista de chegada.
+
+        `travel_seconds` vem da tela de confirmação do próprio jogo. Quando não
+        dá para ler, DEFAULT_TRAVEL_SECONDS segura a reserva por mais tempo do
+        que o necessário -- subabastecer por um tempo é recuperável, reenviar em
+        duplicata gasta mercador e enche a receptora de recurso que ela não
+        pediu.
+        """
+        try:
+            travel = int(travel_seconds) if travel_seconds else DEFAULT_TRAVEL_SECONDS
+        except (TypeError, ValueError):
+            travel = DEFAULT_TRAVEL_SECONDS
+
+        entries = FileManager.load_json_file(PENDING_PATH)
+        if not isinstance(entries, list):
+            entries = []
+        entries.append({
+            "target": str(target_id),
+            "source": self.current_village_id,
+            "resources": {k: int(v) for k, v in resources.items()},
+            "sent_at": int(time.time()),
+            "arrives_at": int(time.time()) + travel,
+        })
+        self._save_pending(entries)
+        logger.debug(
+            "ResourceSharing: %s a caminho de %s, chega em %ss",
+            resources, target_id, travel
+        )
+
+    @staticmethod
+    def _save_pending(entries):
+        """Best-effort — nunca derruba o ciclo do bot por erro de I/O."""
+        try:
+            FileManager.create_directory(FileManager.get_path(os.path.dirname(PENDING_PATH)))
+            FileManager.save_json_file(entries, PENDING_PATH)
+        except Exception as e:
+            logger.warning("ResourceSharing: falha ao gravar remessas em voo: %s", e)
 
     @staticmethod
     def _dump_once(path, content):

@@ -751,6 +751,99 @@ livre é.* Vale como lembrete de que o cache real é melhor fixture do que a
 intuição sobre ele. A feature segue **desligada** (`enabled: false`) e o payload
 `send_res` continua sem validação de campo em nenhum idioma.
 
+## 2026-08-11 (c) — Feature 9 validada em campo, e o que a validação achou
+
+**Quatro transferências reais**, as primeiras da história da feature. Mas o
+caminho de envio inteiro estava errado, e nada disso teria aparecido sem rodar
+contra o jogo:
+
+1. **`mode=send_res` nunca existiu.** O jogo respondia `Modo inválido` num
+   error_box, tanto no GET quanto no POST. Isso tinha um efeito colateral
+   traiçoeiro: o regex do contador de mercadores nunca casava, o que parecia um
+   segundo bug independente ("markup mudou") quando era o mesmo — não havia
+   página de mercado para casar. **Uma causa raiz, duas falhas aparentes.**
+2. **O destino não é `target_village`.** O formulário endereça por coordenada,
+   e o campo visível `input` é só a caixa que o usuário digita: o JS a quebra
+   nos hidden `x`/`y`, que são os lidos pelo servidor. Mandar só o `input` deu
+   `Não há nenhuma aldeia em (0|0)!` — as coordenadas estavam certas o tempo
+   todo, o campo é que era outro.
+3. **O envio tem duas etapas.** O `action` do form é `try=confirm_send`, que
+   valida e devolve uma tela de confirmação; sem submetê-la, nada sai. Mesmo se
+   todos os campos estivessem certos na primeira tentativa, o bot teria
+   reportado sucesso e a carga não teria saído.
+
+**O que destravou o diagnóstico foi trocar `(error_box)` por `Modo inválido`.**
+Registrar só *que* houve erro custou horas mexendo no payload, que era a
+hipótese natural — e errada por uma camada. Extrair a mensagem e salvar a
+resposta resolveu os três itens acima em três ciclos. Vale como regra: num
+caminho que nunca rodou, o custo de logar o motivo é sempre menor que o de
+adivinhá-lo.
+
+### O bug que só aparece com várias aldeias
+
+Com o envio funcionando, a conta ficou visível:
+
+```
+21:09:24  BBM 001 → BBM 003   stone 2870
+21:13:43  BBM 002 → BBM 003   stone 3540      (necessidade real: 3540)
+```
+
+Dois doadores, quatro minutos, 81% a mais que o necessário. A causa não é
+defasagem de cache — recurso muda devagar. É que **a demanda já atendida não
+ficava registrada em lugar nenhum até a carga pousar**: cada doadora lia o mesmo
+`cache/managed/{alvo}.json` parado e agia como se fosse a única. Eu tinha
+impedido envio duplicado *dentro* do plano de um doador e não percebi que o
+caso interessante era entre doadores.
+
+Novo `cache/resource_sharing/pending.json`: cada envio registra alvo, recursos e
+hora prevista de chegada; `_deficit()` e `_headroom()` descontam o que está em
+voo. A duração vem da própria tela de confirmação, e o discriminador não é o
+rótulo (que muda de idioma) e sim o **conteúdo da célula**: das três células no
+formato `H:MM:SS`, a duração é a única cujo texto é *só* o horário — chegada e
+retorno vêm com "hoje às " na frente. O teste reproduz os números exatos do log
+(2.870 + 3.540) e mostra o depois: 2.870 + 670 = 3.540 cravados.
+
+### A reserva do doador ficou explícita de propósito
+
+O usuário perguntou se uma aldeia juntando pedra para um nobre doaria mesmo
+assim. Doaria. `in_need_amount()` lê `required_resources`, e esse campo:
+
+- grava o que **falta**, não o custo total (`snob`, `building`, `research`) --
+  enquanto `recruitment_*` grava o total, duas convenções no mesmo campo;
+- **some quando a aldeia já tem o suficiente** -- o `if custo > actual` nem
+  dispara, então a aldeia mais preparada para agir é a que parece mais
+  disponível;
+- é **intermitente** -- some também nos ciclos em que o snobber vai cunhar
+  moeda em vez de conferir custo.
+
+Dava para tentar inferir a intenção da aldeia, mas seria construir em cima de um
+sinal que desaparece justamente quando importa. `village.keep_resources`
+(`{"stone": 30000}`) é declarado, previsível, e eleva o piso da regra de
+necessidade só naquela aldeia. **Não se aplica ao transbordo**: aquele volume
+não cabe no armazém de qualquer forma, e segurá-lo não o preserva.
+
+Mesma investigação corrigiu `_deficit()`, que descontava o estoque duas vezes
+das fontes que já eram déficit. O caso pior não era mandar menos: uma aldeia
+com `snob: 10215` e 19.785 em caixa dava `max(0, 10215-19785) = 0` e era vista
+como não precisando de nada. O sistema nunca ajudaria ninguém a fechar um nobre.
+
+### Menores, mas reais
+
+- **Mercador não se divide.** A confirmação pediu 2 comerciantes para 1.080 de
+  argila; o orçamento descontava os 1.080 crus e achava que cabiam mais envios
+  do que cabem.
+- **`last_send_error.html` guardava o *primeiro* erro.** Herdei o "grava só se
+  não existir" da amostra de markup, onde faz sentido, para o dump de erro,
+  onde faria diagnosticar a falha de amanhã com a resposta de hoje.
+- **A mensagem de `INCOMING_LABELS` juntava duas hipóteses num DEBUG só.** Agora
+  procura o rótulo sozinho: se ele está na página, a estrutura é que mudou
+  (WARNING + amostra); se não está, provavelmente não há nada a caminho.
+  **Segue em aberto** se transporte entre aldeias próprias aparece nesse bloco —
+  a evidência de campo era compatível com as duas hipóteses e eu não quis
+  escolher uma.
+
+`build.version` 3.1 → 3.2 (`village_template.keep_resources`).
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

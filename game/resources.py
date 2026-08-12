@@ -126,6 +126,10 @@ class ResourceManager:
         # Ver P0-2 em docs/auditoria_codigo_2026-08-08.md
         self.actual = {}
         self.requested = {}
+        # Tempo de viagem da última remessa enviada (segundos), lido da tela de
+        # confirmação. None enquanto nada foi enviado ou quando não deu para
+        # ler -- ver send_resources/_parse_travel_seconds.
+        self.last_send_travel_seconds = None
 
     def update(self, game_state):
         """
@@ -435,11 +439,26 @@ class ResourceManager:
         """
         incoming = self.INCOMING_RE.findall(html)
         if not incoming:
-            self.logger.debug(
-                "Market: nenhum bloco de recursos a caminho reconhecido "
-                "(pode ser que nao haja nenhum, ou que o rotulo do idioma "
-                "esteja fora de INCOMING_LABELS)"
-            )
+            # A mensagem antiga juntava duas hipoteses muito diferentes num
+            # DEBUG so ("nao ha nada a caminho" e "nao reconheci o rotulo"), o
+            # que a tornava impossivel de agir. Procurar o rotulo sozinho
+            # separa as duas: se ele esta na pagina, o que mudou foi a
+            # estrutura depois dele, e ai vale WARNING e uma amostra.
+            if re.search(r"(?:" + self.INCOMING_LABELS + r")", html):
+                self.logger.warning(
+                    "Market: o rotulo de recursos a caminho existe na pagina mas "
+                    "a estrutura depois dele nao casou -- INCOMING_RE precisa "
+                    "ser atualizado"
+                )
+                self._dump_response(
+                    "cache/resource_sharing/market_incoming_mismatch.html", html
+                )
+            else:
+                self.logger.debug(
+                    "Market: nenhum rotulo de recursos a caminho na pagina "
+                    "(provavelmente nao ha nada a caminho; se houver, o rotulo "
+                    "deste idioma esta fora de INCOMING_LABELS)"
+                )
             return {}
         resource, amount = incoming[0]
         digits = "".join(s for s in amount if s.isdigit())
@@ -731,6 +750,10 @@ class ResourceManager:
         # navegador faz ao clicar em "Confirmar", e evita depender de nomes de
         # campo que só existem nessa segunda tela.
         self._dump_response("cache/resource_sharing/market_confirm.html", response.text)
+        # Tempo de viagem, para o chamador saber até quando esta carga está em
+        # trânsito. Lido antes de confirmar porque é a tela de confirmação que
+        # o traz; quem usa é o livro-razão do ResourceSharingManager.
+        self.last_send_travel_seconds = self._parse_travel_seconds(response.text)
         action, fields = self._confirmation_form(response.text)
         if not action:
             self.logger.warning(
@@ -760,6 +783,34 @@ class ResourceManager:
             "send_resources: enviado %s → aldeia %s", resources, target_village_id
         )
         return True
+
+    @staticmethod
+    def _parse_travel_seconds(html):
+        """
+        Tempo de viagem da remessa, em segundos, lido da tela de confirmação.
+
+        Markup real do br143 (2026-08-11):
+
+            <tr><td>Duração (ida e volta):</td><td>0:08:29</td></tr>
+            <tr><td>Chegada:</td><td>hoje às 20:49:53</td></tr>
+            <tr><td>Retorno:</td><td>hoje às 20:58:22</td></tr>
+
+        Os três valores casam com `H:MM:SS`, então o discriminador não é o
+        formato e sim o **conteúdo da célula**: a duração é a única cujo texto é
+        *só* o horário. Chegada e Retorno vêm com "hoje às " na frente. Isso
+        evita depender do rótulo, que muda com o idioma, e de ordem de linha.
+
+        Apesar do rótulo dizer "ida e volta", o valor é o trecho de ida:
+        20:41:24 (envio) + 8:29 = 20:49:53 (chegada), e o retorno vem outros
+        8:29 depois. Devolve None se não achar -- o chamador escolhe o
+        fallback.
+        """
+        for cell in re.findall(r"<td[^>]*>([^<]*)</td>", html):
+            match = re.fullmatch(r"(\d{1,2}):([0-5]\d):([0-5]\d)", cell.strip())
+            if match:
+                hours, minutes, seconds = (int(g) for g in match.groups())
+                return hours * 3600 + minutes * 60 + seconds
+        return None
 
     @staticmethod
     def _confirmation_form(html):

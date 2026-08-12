@@ -161,13 +161,19 @@ implementação de cada lote estão no fim do documento.
   Agora são duas regras (transbordo, por percentual da própria capacidade;
   necessidade, por sobra absoluta acima de `need_donor_floor`), necessidade
   primeiro e o transbordo restante despejado na aldeia com mais **espaço
-  livre**. **Ainda não ligada e nunca executada uma única vez** — o payload
-  `send_res` segue sem validação de campo em nenhum idioma. Ao religar,
-  acompanhar `ResourceSharing: enviado ...` no log e conferir no jogo que a
-  transferência saiu de verdade.
+  livre**. **Validada em campo no mesmo dia**, com quatro transferências reais
+  concluídas — as primeiras da história da feature. O caminho de envio inteiro
+  estava errado e nunca tinha sido exercitado: `mode=send_res` não existe (o
+  jogo respondia "Modo inválido"), o destino é por coordenada em campos `x`/`y`
+  e não por `target_village`, e o envio tem uma **segunda etapa** de
+  confirmação sem a qual nada sai.
   ⚠️ **Não existe gate por aldeia** — `resource_sharing.enabled` é global e
   vale para todas as aldeias gerenciadas de uma vez. Notas antigas que falavam
   em "ligar em uma aldeia só" descreviam algo que o código nunca ofereceu.
+  ⚠️ **Quem poupa para nobre precisa declarar `village.keep_resources`.** A
+  reserva automática (`required_resources`) registra o que *falta* e some
+  quando a aldeia já juntou o suficiente — ou seja, some exatamente quando
+  proteger importa.
 
 ## Backlog de features pendentes
 
