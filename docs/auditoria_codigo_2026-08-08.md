@@ -925,7 +925,7 @@ descrevendo comportamento que **não existe no código**:
 |---|---|---|
 | ~~`village.support_others_max_villages`~~ ✅ | `config.example.json:97`, `helpfile.py:107` | ✅ **Resolvido no Lote 3** (`8c3b79b`): passou a ser lido em `setup_defence_manager()` para `DefenceManager.support_max_villages`, e o `index >= 2` duplicado foi removido. |
 | ~~`village.scout_first`~~ ✅ | `config.example.json:82`, `helpfile.py:96` | ✅ **Removido em 2026-08-12.** A funcionalidade existe, mas é governada pela chave **global** `farms.force_scout_if_available` (`village.py:781`). Ligar a chave por aldeia teria sido perigoso: o global está `true` e o `scout_first` estava `false` nas seis aldeias, então "ativá-la" faria todas pararem de escutar antes de farmar — o padrão do P1-8 de novo. |
-| ~~`farms.find_player_owned`~~ ✅ | `config.example.json:122`, `helpfile.py:45` | ✅ **Removido em 2026-08-12.** |
+| ~~`farms.find_player_owned`~~ ✅ | `config.example.json:122`, `helpfile.py:45` | ✅ **Removido em 2026-08-12.** ⚠️ **Não confundir com perda de capacidade:** farmar aldeia de jogador **funciona** e continua funcionando — `AttackManager` ataca aldeia de jogador desde que ela esteja em `village.additional_farms` (`attack.py:201`; há trava extra de 23h–8h em `attack.py:238`). O que esta chave prometia era o modo **automático, sem lista** ("attack all player-owned villages"), que nunca foi implementado. Ver Feature 28 no backlog. |
 | ~~`conquest.target`~~ ✅ | `config.example.json:102`, `helpfile.py:67` | ✅ **Removido em 2026-08-12.** O único modo é bárbaro, hardcoded. |
 
 ## Config lido mas não declarado

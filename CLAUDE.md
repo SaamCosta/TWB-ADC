@@ -130,6 +130,20 @@ implementação de cada lote estão no fim do documento.
   reserva presa para sempre — exatamente o bug que a correção existia para
   matar. Ao alargar o conjunto de valores que uma função pode devolver, reler
   cada consumidor perguntando "e se vier este valor agora?".
+- ⚠️ **Quarto padrão, achado em 2026-08-12: remover config "morta" sem
+  perguntar o que ela nomeia.** Ao limpar as três chaves do P3 ("declarado mas
+  nunca lido"), verifiquei que nenhuma tinha leitura no código e removi. Para
+  `farms.find_player_owned` isso era verdade e mesmo assim insuficiente: a
+  chave dizia "atacar aldeias de jogador", e **essa capacidade existe** —
+  `AttackManager` farma aldeia de jogador desde que ela esteja em
+  `village.additional_farms` (`attack.py:201`, com trava adicional de 23h–8h em
+  `attack.py:238`). O que não existia era o modo *automático sem lista* que a
+  chave prometia. Nada quebrou porque a chave era de fato inerte, mas eu não
+  sabia disso quando removi — só tinha checado "alguém lê?", não "o que isso
+  significa e existe em outro lugar?". **Antes de remover config, mapear a
+  funcionalidade que ela nomeia e a chave que hoje a governa**, e dizer isso na
+  mensagem de commit. Grep por leitura responde se é seguro remover; não
+  responde o que o usuário perde de vista ao remover.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

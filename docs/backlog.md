@@ -2,8 +2,9 @@
 
 Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27` (✅ todas)
 
-Pendentes: **25** (inventário/boosts) e **26** (envio em lote `train[N][unit]`)
-— ambas precisam de levantamento em campo antes de virar tarefa.
+Pendentes: **25** (inventário/boosts), **26** (envio em lote `train[N][unit]`)
+— ambas precisam de levantamento em campo antes de virar tarefa — e **28**
+(farm automático de aldeias de jogador), que precisa de desenho dos filtros.
 
 ## Fila da auditoria de código
 
@@ -697,6 +698,42 @@ por chamada e montar o POST em lote em vez de N chamadas sequenciais.
 **Prioridade:** depois da Feature 25. Ganho real só aparece quando há mais
 de 1 ataque simultâneo agendado pro mesmo `arrival_time` (hoje, só o trem de
 nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
+
+## Feature 28 — Farm automático de aldeias de jogador ao alcance
+
+**Origem:** em 2026-08-12 removi `farms.find_player_owned` como config morta
+(nenhuma leitura no código). O usuário questionou se aquilo não permitia farmar
+aldeias de jogador — e a checagem mostrou que a resposta é "sim e não", o que
+vale registrar como feature em vez de deixar sumir junto com a chave.
+
+**O que existe hoje.** `AttackManager` pula toda aldeia de jogador
+(`attack.py:201`) **exceto** as listadas em `village.additional_farms`, que é
+por aldeia e por ID. O próprio log orienta: *"Ignoring village X because player
+owned, add to additional_farms to auto attack"*. Aldeia de jogador listada ainda
+tem uma trava de horário: nada é enviado entre 23h e 8h (`attack.py:238`),
+presumivelmente para não farmar durante o bônus noturno.
+
+**O que não existe.** O modo que a chave removida prometia: *"Automatically
+attack all player-owned villages (dangerous)"* — descobrir e atacar toda aldeia
+de jogador ao alcance, sem lista manual.
+
+**Escopo proposto.** Uma chave global (`farms.auto_player_farms`, default
+`false`) que, quando ligada, deixa `AttackManager` considerar aldeias de jogador
+que passem por filtros próprios — e os filtros são a parte que precisa de
+desenho, não o laço:
+- **pontuação**: reaproveitar `attack_higher_points` ou um teto próprio;
+- **tribo**: nunca atacar a própria tribo, e provavelmente nem aliados —
+  hoje `Map` já guarda `tribe` por aldeia (`map.py:140`), então o dado existe;
+- **inatividade**: farmar jogador ativo é declarar guerra; jogador inativo é
+  farm de verdade. O bot não tem sinal de atividade hoje;
+- manter a trava de 23h–8h que já existe.
+
+**Risco.** É a feature com maior potencial de consequência política do backlog:
+ligar por engano faz o bot atacar vizinhos e aliados em massa. Deve nascer
+`false`, e provavelmente com um teto de alvos por ciclo bem baixo.
+
+**Prioridade:** sem urgência — `additional_farms` já cobre o caso "quero farmar
+aquele inativo ali", que é o uso realista. Isto só faz sentido em escala.
 
 ## Feature 27 — `ConquestManager` (bárbara) respeitar reserva cruzada de tropas ✅ Implementado (2026-08-08)
 
