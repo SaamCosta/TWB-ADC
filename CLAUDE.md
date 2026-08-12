@@ -140,10 +140,15 @@ implementação de cada lote estão no fim do documento.
   `attack.py:238`). O que não existia era o modo *automático sem lista* que a
   chave prometia. Nada quebrou porque a chave era de fato inerte, mas eu não
   sabia disso quando removi — só tinha checado "alguém lê?", não "o que isso
-  significa e existe em outro lugar?". **Antes de remover config, mapear a
-  funcionalidade que ela nomeia e a chave que hoje a governa**, e dizer isso na
-  mensagem de commit. Grep por leitura responde se é seguro remover; não
-  responde o que o usuário perde de vista ao remover.
+  significa e existe em outro lugar?". Grep por leitura responde se é seguro
+  remover; não responde o que o usuário perde de vista ao remover.
+  **Formato obrigatório ao relatar remoção de config** (formulação do usuário,
+  2026-08-12): *"`X` não existe e não funciona — mas `Y` funciona e serve para
+  isso"*. Se não der para preencher o `Y`, é sinal de que a funcionalidade não
+  foi mapeada e a remoção ainda não está pronta para ser relatada. Dizer só
+  "chave morta, removida" está certo no mérito e ainda assim leva quem lê a
+  concluir que a capacidade sumiu — foi o que aconteceu aqui, e só não virou
+  problema porque o usuário desconfiou.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
