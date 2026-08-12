@@ -825,6 +825,22 @@ outro sistema, só falta de retry/sinalização de erro.
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
+- **Auditar `village_template` contra tudo que o código lê por aldeia**
+  (levantado pelo usuário em 2026-08-11, **próxima tarefa**). A regra está agora
+  nas convenções do `CLAUDE.md`: se algum lugar faz
+  `config["villages"][vid].get("x")`, então `x` tem que existir em
+  `village_template` no `config.example.json`, nem que seja com valor
+  neutro. Hoje isso não é garantido — `keep_resources` só entrou lá porque foi
+  lembrado no commit; nada verifica.
+  **Como fazer:** `grep` por `villages"\]\[` / `village_cfg.get(` /
+  `self.config["villages"]` nos módulos de `game/` e comparar o conjunto de
+  chaves lidas com as presentes em `village_template`. Cuidado com as lidas
+  indiretamente (ex: `Village` copia campos para atributos no início do ciclo).
+  Toda chave que faltar entra no template **e** no `webmanager/helpfile.py`,
+  com bump de `build.version` para o merge propagar às aldeias existentes.
+  Vale conferir também se `profile_templates.offensive/defensive` deveriam
+  declarar alguma delas — é o que sobrescreve a herança de aldeia conquistada.
+
 - **Feature 9 (resource sharing) reformulada e validada em campo em
   2026-08-11.** Detalhe em `docs/features_log.md`. Duas regras (transbordo e
   necessidade) em vez de um `threshold_pct` só, e **quatro transferências reais

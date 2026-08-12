@@ -56,6 +56,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 - Ao adicionar config nova, atualizar **`config.example.json`** e
   **`webmanager/helpfile.py`** (`help_file` + `nested_sections` se for dict aninhado)
   no mesmo commit.
+- **Toda chave lida por aldeia tem que existir em `village_template`.** Se o
+  código faz `config["villages"][vid].get("x")`, então `x` precisa aparecer em
+  `village_template` no `config.example.json`, nem que seja com o valor
+  neutro/vazio. O template é o que documenta o que é configurável por aldeia e
+  é a fonte de `add_village()` e do merge por `build.version` — uma chave fora
+  dele é invisível para quem lê a config e some nas aldeias novas.
 - Mudanças em `AttackManager` / `ConquestManager` / `DefenceManager` afetam tropas
   reais em jogo — revisar com cautela extra antes de considerar "pronto".
 - Preferir tarefas pequenas e escopadas (um manager/feature por vez) em vez de
