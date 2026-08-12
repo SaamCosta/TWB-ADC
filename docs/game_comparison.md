@@ -58,16 +58,27 @@ default `false`):**
   fórmula da comunidade (wiki), `30 + 70 × min(1, def/att)` — aproximação best-effort,
   não a fórmula real do jogo. Não modela o mecanismo de "moral sobe com o tempo para
   jogador pequeno antigo" (exigiria data de entrada do oponente no mundo, que o bot não
-  rastreia); em mundo de moral **só por tempo** (`<moral>2</moral>`) a função devolve
-  100. **Corrigido em 2026-08-12 (P2-29):** a primeira versão derivava o piso de
-  `mood.loss_max`, e `<mood>` não é a config de moral — quem manda é a tag de topo
-  `<moral>` (br143 = 1, por pontos). O piso saiu de 65% para os 30% reais; ver o Lote 7
-  em `docs/auditoria_codigo_2026-08-08.md`.
-- **Horário de servidor é aproximado.** `WorldConfig.is_night_bonus_active` usa o
-  horário local da máquina que roda o bot, assumindo que coincide com o fuso do
+  rastreia), então nos mundos que somam tempo (`<moral>` 2 e 3) o valor calculado é um
+  **piso**, não a moral exata. **Corrigido em 2026-08-12 (P2-29):** a primeira versão
+  derivava o piso de `mood.loss_max`, e `<mood>` não é a config de moral — quem manda é
+  a tag de topo `<moral>` (br143 = 1, por pontos). O piso saiu de 65% para os 30%
+  reais. Os quatro valores de `<moral>` foram mapeados contra a página `/page/settings`
+  de 39 mundos; ver o Lote 7 em `docs/auditoria_codigo_2026-08-08.md`.
+- **⚠️ No br143 o night bonus é por jogador, e o bot não sabe a janela do defensor.**
+  `night.active=2` significa bônus noturno **dinâmico**: cada jogador escolhe seu
+  período de 8 horas (confirmado na página pública do mundo). Logo
+  `start_hour`/`end_hour` do world config são só o default, e
+  `is_night_bonus_active()` devolve `None` (desconhecível) nesses mundos —
+  `PvpConquestManager` então assume o pior caso, bônus ativo. Consequência prática: com
+  a flag ligada no br143, quase nenhuma conquista PvP passa na simulação. A janela real
+  do defensor só sai do hover de aldeia no mapa, e só com conta premium — virou a
+  **Feature 29** do `docs/backlog.md`.
+- **Horário de servidor é aproximado, e é o horário errado.** `is_night_bonus_active`
+  usa o horário local da máquina que roda o bot, assumindo que coincide com o fuso do
   servidor — verdadeiro para br143 (Brasil), mas não extraído do HTML do jogo (o bot
-  não tem essa extração hoje). Documentado como limitação conhecida em
-  `core/world_config.py`.
+  não tem essa extração hoje). Pior: compara com a hora **atual**, não com a hora de
+  **chegada** do ataque, que para trem de nobre está horas à frente. Vale mesmo em
+  mundo de janela fixa. Documentado em `core/world_config.py`.
 - **Recomendação:** antes de confiar 100% na flag ligada, validar os valores de moral
   calculados contra o simulador nativo do jogo (`Praça de Reunião > Simulador`, que tem
   calculadora de moral própria) para alguns alvos reais.

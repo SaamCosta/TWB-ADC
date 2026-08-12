@@ -23,13 +23,30 @@ logger = logging.getLogger("WorldConfig")
 CACHE_TTL = 6 * 3600  # world settings never change mid-world; refresh is just a safety net
 
 # Values of the world's top-level <moral> flag (the morale *system* in use).
+# Mapped in 2026-08-12 by reading <moral> from 39 live worlds across 4 markets
+# and matching each value against that world's public /page/settings wording:
+#   0 -> "Inactive"                          (enc1, enc2, nlc1, nlc2, dec5)
+#   1 -> "Baseado em pontos"                 (br143, br137, enp17-19, dep20-21)
+#   2 -> "Points and time based"             (br132, br138-142, en153-156, nl114)
+#   3 -> "Punkte und unbegrenzte Zeit"       (de250-257, dec4)
+# There is NO "time only" value: every enabled mode includes points morale.
 MORAL_OFF = 0
 MORAL_POINTS = 1
-MORAL_TIME = 2
-MORAL_BOTH = 3
+MORAL_POINTS_TIME = 2
+MORAL_POINTS_TIME_UNLIMITED = 3
 
 # Floor of the points-based morale formula: moral = 30 + 70 * (def / att).
 MORAL_POINTS_FLOOR = 30
+
+# Values of <night><active>, mapped the same way against /page/settings:
+#   0 -> "Inactive"                                        (en153, enc1, ens1)
+#   1 -> "Ativo de 23:00 até 7:00" / "Aktiv von 23:00 bis 8:00"
+#        -> one fixed window for the whole world (br142, de250, nl109)
+#   2 -> "Ativo, os jogadores podem selecionar o período de 8 horas"
+#        -> every player picks their OWN 8h window (br143, br139, en154, nlp17)
+NIGHT_OFF = 0
+NIGHT_FIXED = 1
+NIGHT_PER_PLAYER = 2
 
 
 class WorldConfig:
@@ -68,10 +85,18 @@ class WorldConfig:
         config doesn't have night bonus configured at all (older/simpler
         worlds may omit the block entirely).
 
-        br143 reports active=2, start_hour=23, end_hour=7, def_factor=2 plus a
-        <duration>14</duration> that is not parsed -- 23->7 is 8 hours, so
-        whatever `duration` counts it isn't the window length. `active` is only
-        ever read as a boolean, so the 1-vs-2 distinction is also unmodeled.
+        `active` is the NIGHT_* mode, and it matters: on NIGHT_PER_PLAYER
+        worlds (br143) `start_hour`/`end_hour` are only the *default* window,
+        not the one this particular defender picked. See
+        `is_night_bonus_active`.
+
+        <duration> is deliberately not parsed: it reads 14 on all 39 worlds
+        sampled in 2026-08-12, including worlds with the night bonus switched
+        off entirely, so it is a global constant carrying no per-world
+        information. It is almost certainly the documented 14-day delay before
+        a player's chosen window takes effect (announced with the dynamic
+        night bonus), which is a per-player fact the world config can't tell
+        us anyway.
         """
         match = re.search(r"<night>(.*?)</night>", xml_text, re.S)
         if not match:
@@ -93,8 +118,8 @@ class WorldConfig:
     def _parse_moral(xml_text):
         """
         Extracts the top-level <moral> flag -- which morale *system* the world
-        uses: 0 = none, 1 = points based, 2 = time based (defender account
-        age), 3 = both. br143 is 1, read live from the endpoint.
+        uses. See the MORAL_* constants for the value mapping (br143 = 1,
+        points based, read live from the endpoint).
 
         Returns None when the tag is absent, so the caller can tell "world
         says no morale" (0) apart from "we don't know" (None).
@@ -166,18 +191,38 @@ class WorldConfig:
     @staticmethod
     def is_night_bonus_active(world_config, server_hour=None):
         """
-        Returns True if the world has night bonus enabled AND the current
-        hour falls inside the configured night window.
+        Tri-state:
+
+        - False -- the world has no night bonus, or the current hour is
+          outside its fixed window.
+        - True  -- inside the world's fixed window (NIGHT_FIXED).
+        - None  -- **unknowable**: the world gives every player their own 8h
+          window (NIGHT_PER_PLAYER, e.g. br143), so whether the bonus applies
+          depends on the *defender's* choice, which is not in the world config
+          at all. Callers must decide what to assume; see the note below.
+
+        ⚠️ The None case is why this isn't a plain bool. Before 2026-08-12 the
+        function answered True/False on per-player worlds by comparing the
+        clock against `start_hour`/`end_hour`, which on those worlds is merely
+        the default window -- a confident answer to a question the world
+        config cannot answer. The defender's real window IS visible in game,
+        on the map village hover, but only for premium accounts and only via
+        scraping the bot doesn't do yet.
 
         server_hour: 0-23. If not given, defaults to the bot machine's local
         hour -- this assumes the bot runs in the same timezone as the game
         server, which holds for single-country TW domains (e.g. br143 and
         Brazil) but is a known approximation, not a guarantee. The bot does
-        not currently extract true server time from the game HTML.
+        not currently extract true server time from the game HTML. Note this
+        is also "is it night *now*", not "will it be night when the attack
+        lands" -- for slow noble trains those differ by hours.
         """
         night = (world_config or {}).get("night")
         if not night or not night.get("active"):
             return False
+
+        if night.get("active") == NIGHT_PER_PLAYER:
+            return None
 
         if server_hour is None:
             server_hour = time.localtime().tm_hour
@@ -202,20 +247,20 @@ class WorldConfig:
         exact one, so this is still an approximation -- cross-check against
         the in-game simulator before betting a noble train on it.
 
-        Which system is active comes from the world's top-level <moral> flag,
-        read live from interface.php?func=get_config (br143 = 1):
+        Which system is active comes from the world's top-level <moral> flag
+        (see the MORAL_* constants for how each value was mapped):
 
         - 0 (off): morale never applies -> 100.
-        - 1 (points) / 3 (both): the formula above. On 3 the game also applies
-          time-based morale and (per the wiki) the higher of the two wins, so
-          the points value is a lower bound -- it errs toward under-estimating
-          the attack, which is the safe direction here.
-        - 2 (time only): driven by the defender's account age, which the bot
-          never sees -> 100. Mid/late-game PvP targets are old accounts, where
-          time morale sits at or near 100% anyway.
+        - 1 (points), 2 (points + time), 3 (points + unlimited time): the
+          formula above. **Every enabled mode includes the points component**,
+          so the formula always applies. On 2 and 3 the game additionally
+          raises morale with the defender's account age, and (per the wiki)
+          the higher of the two wins -- the bot doesn't track opponent join
+          dates, so the points value is a lower bound. That errs toward
+          under-estimating the attack, the safe direction here.
         - missing (failed fetch, or a cache written before <moral> was
-          parsed) or unrecognized: assumed points-based. Conservative on
-          purpose -- under-estimating morale skips a viable conquest, while
+          parsed) or unrecognized: same formula. Conservative on purpose --
+          under-estimating morale skips a viable conquest, while
           over-estimating it throws a noble train away.
 
         ⚠️ Do NOT reintroduce the <mood> block here (see `_parse_mood`): the
@@ -226,9 +271,10 @@ class WorldConfig:
         Returns an int percentage in [30, 100].
         """
         moral_mode = (world_config or {}).get("moral")
-        if moral_mode in (MORAL_OFF, MORAL_TIME):
+        if moral_mode == MORAL_OFF:
             return 100
-        if moral_mode is not None and moral_mode not in (MORAL_POINTS, MORAL_BOTH):
+        known = (MORAL_POINTS, MORAL_POINTS_TIME, MORAL_POINTS_TIME_UNLIMITED)
+        if moral_mode is not None and moral_mode not in known:
             logger.warning(
                 "Unrecognized world <moral> value %r -- using the points-based "
                 "estimate, which is the conservative option", moral_mode

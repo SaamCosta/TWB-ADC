@@ -269,6 +269,18 @@ class PvpConquestManager:
         moral = 100
         if cfg.get("dynamic_moral_night_bonus", False):
             nightbonus = WorldConfig.is_night_bonus_active(self.world_config)
+            if nightbonus is None:
+                # World gives every player their own 8h night bonus window
+                # (br143), so the world config can't say whether this
+                # defender is covered -- see WorldConfig.NIGHT_PER_PLAYER.
+                # Assume it applies: doubling the defender is the only
+                # direction that can't lose a noble train to a wrong guess.
+                nightbonus = True
+                logger.warning(
+                    "PvpConquest: world uses per-player night bonus windows -- "
+                    "assuming the bonus applies to %s (defender window unknown)",
+                    target_id
+                )
             target_points = self._target_points(target_id)
             attacker_points = getattr(clear_village, "points", 0)
             if target_points is not None and attacker_points:

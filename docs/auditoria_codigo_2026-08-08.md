@@ -1507,13 +1507,93 @@ quatro modos mais os casos de `None`/0 pontos. **Segue inerte em campo**
 `docs/game_comparison.md` item 1 continua valendo: comparar contra a
 calculadora de moral do simulador do próprio jogo antes de ligar.
 
-**Achado de brinde, não corrigido:** o `<night>` do br143 traz
+**Achado de brinde, não corrigido no primeiro commit:** o `<night>` do br143 traz
 `active=2` e `<duration>14</duration>`, nenhum dos dois modelado — a janela
 23→7 tem 8 horas, então `duration` não é o tamanho dela, e `active` só é lido
-como booleano. Registrado no docstring de `_parse_night`. Não mexi porque
-`start_hour`/`end_hour`/`def_factor` são autoconsistentes e bastam para o uso
-atual; se o night bonus do mundo se comportar diferente do previsto em campo, é
-aqui que se olha primeiro.
+como booleano. Investigado no mesmo dia, logo abaixo.
+
+## Lote 7, segunda parte (mesmo dia) — o enum de `<moral>` estava errado, e eu que errei
+
+**Fui investigar `night.active=2` e descobri um bug meu, de dez minutos antes.**
+O commit acima mapeou os valores de `<moral>` pela wiki: 0 = off, 1 = pontos,
+2 = **só tempo**, 3 = ambos — e fez o modo 2 devolver `moral=100`, sob o
+argumento de que moral por tempo depende da idade da conta do oponente, que o
+bot não vê. O mapeamento é falso.
+
+A verificação: puxei `<moral>` e `<night>` de **39 mundos ao vivo** em 4 mercados
+(br, en, de, nl) via `backend/get_servers.php` + `interface.php?func=get_config`,
+e cruzei cada valor com a redação da página pública `/page/settings` do mesmo
+mundo:
+
+| `<moral>` | página oficial | mundos |
+|---|---|---|
+| 0 | "Inactive" | enc1, enc2, nlc1, nlc2, dec5 |
+| 1 | "Baseado em pontos" | **br143**, br137, enp17-19, dep20-21, nlp17-18, ens1 |
+| 2 | "Points **and time** based" / "Baseado em pontos **e tempo**" | br132, br138-142, en153-156, nl109/114/115/116, enc5 |
+| 3 | "Punkte und **unbegrenzte** Zeit" | de250-257, dec4 |
+
+**Não existe valor "só por tempo".** Todo modo habilitado inclui a componente
+de pontos; 2 e 3 acrescentam tempo (limitado e ilimitado). Então o `return 100`
+do modo 2 era exatamente a superestimativa de moral que o P2-29 existia para
+matar, e valeria em **6 dos 8 mundos br ativos**. Não pegou o br143 (modo 1) e a
+flag está desligada, mas estava errado. Corrigido: só o modo 0 devolve 100;
+1, 2 e 3 aplicam a fórmula de pontos, que nos modos 2/3 é um piso (o jogo usa o
+maior entre pontos e tempo). Constantes renomeadas para o que os valores
+realmente são: `MORAL_POINTS`, `MORAL_POINTS_TIME`,
+`MORAL_POINTS_TIME_UNLIMITED`.
+
+**A lição é a mesma do P2-29, uma volta acima.** Lá o erro foi ler um número real
+do campo errado. Aqui foi mapear um enum pela documentação da comunidade em vez
+de contra o servidor — mesma classe de erro, cometida na própria correção dela,
+menos de uma hora depois. O que fecha a questão não é a wiki: é que o servidor
+publica os dois lados (o valor bruto no `get_config` e a redação em
+`/page/settings`), e comparar mundo por mundo transforma palpite em tabela. Isso
+custou dois `Invoke-WebRequest` por mundo.
+
+### `night.active` — mapeado do mesmo jeito
+
+| `<night><active>` | página oficial | mundos |
+|---|---|---|
+| 0 | "Inactive" | en153, en155, enc1, enc2, enc5, ens1 |
+| 1 | "Ativo de 23:00 até 7:00" / "Aktiv von 23:00 bis 8:00" — **janela fixa do mundo** | br137-138, br140-142, de250-257, nl109/115, dec4-5, dep20-21 |
+| 2 | "Ativo, os jogadores podem selecionar o período de 8 horas" — **janela por jogador** | **br143**, br132, br139, en154, en156, nl114/116, enp17-19, nlp17-18 |
+
+O br143 é `2`: **bônus noturno dinâmico, cada jogador escolhe seu período de 8
+horas.** Isso invalida a pergunta que `is_night_bonus_active()` respondia. Os
+`start_hour`/`end_hour` do world config são só a janela *default*; quem decide é
+o defensor, e esse dado não está no world config. A função respondia True/False
+comparando o relógio com a janela default — uma resposta confiante para uma
+pergunta que a fonte não responde, o mesmo vício do `<mood>`.
+
+Agora ela é tri-state: `False` (sem bônus ou fora da janela fixa), `True`
+(dentro da janela fixa), `None` (**desconhecível**, mundo de janela por
+jogador). Único consumidor, `PvpConquestManager._step_simulate`, trata `None`
+assumindo bônus **ativo** — dobrar a defesa é o único lado que não perde trem de
+nobre por chute errado — e loga o motivo. Aplicada a lição do P2-22 aqui:
+alargar o domínio de retorno obriga a reler cada consumidor, então
+`grep is_night_bonus_active` antes de mexer; o único outro acerto é um
+comentário no `twb.py`.
+
+⚠️ **O preço disso:** no br143, com `dynamic_moral_night_bonus` ligada, toda
+simulação de conquista PvP passa a assumir defesa dobrada, e praticamente
+nenhuma vai passar. Correto e caro. Sair desse impasse exige a janela real do
+defensor, que o jogo mostra no hover da aldeia no mapa — só para conta premium.
+Registrado como **Feature 29** no `docs/backlog.md`.
+
+### `<duration>14</duration>` — constante global, não é setting de mundo
+
+Vale `14` nos **39 mundos**, incluindo os 6 com bônus noturno desligado e mundos
+de janela fixa. Um campo que nunca varia não carrega informação por mundo, então
+não há o que modelar. Bate com o anúncio da feature dinâmica ("a ativação da
+janela escolhida só ocorre depois de 14 dias, para garantir justiça"), o que
+seria um fato **por jogador** — algo que o world config não teria como informar
+de todo modo. Deliberadamente não parseado, com o motivo escrito no docstring de
+`_parse_night` para ninguém repetir a investigação.
+
+**Sobra em aberto (não é regressão, é dívida antiga):** mesmo em mundo de janela
+fixa, a função compara com a hora **atual**, não com a hora de **chegada** do
+ataque — e trem de nobre é lento. Registrado no docstring e no escopo da
+Feature 29.
 
 ---
 

@@ -736,6 +736,45 @@ ligar por engano faz o bot atacar vizinhos e aliados em massa. Deve nascer
 **Prioridade:** sem urgência — `additional_farms` já cobre o caso "quero farmar
 aquele inativo ali", que é o uso realista. Isto só faz sentido em escala.
 
+## Feature 29 — Janela de bônus noturno do defensor (mundos de janela por jogador)
+
+**Origem:** investigação do `night.active=2` do br143, em 2026-08-12 (ver Lote 7
+em `docs/auditoria_codigo_2026-08-08.md`). O br143 usa a versão **dinâmica** do
+bônus noturno: cada jogador escolhe seu próprio período de 8 horas. A página
+pública do mundo confirma — *"Ativo, os jogadores podem selecionar o período de
+8 horas, +100% defesa adicional contra ataques."*
+
+**Consequência.** `start_hour`/`end_hour` do world config são só a janela
+*default*; a janela que importa é a do **defensor**, e ela não está no world
+config. `WorldConfig.is_night_bonus_active()` passou a devolver `None`
+("desconhecível") nesses mundos, e `PvpConquestManager` assume o pior caso
+(bônus ativo, defesa dobrada). Isso é correto e **caro**: com a flag
+`pvp_conquest.dynamic_moral_night_bonus` ligada no br143, toda simulação de
+conquista PvP exige o dobro de tropa, então praticamente nenhuma passa.
+
+**O dado existe no jogo.** O anúncio da feature diz que, ao passar o mouse sobre
+uma aldeia na tela de mapa, a janela de bônus noturno do jogador é exibida —
+**só para conta premium**, e só em mundos de janela variável. Ou seja: é
+scrapeável, com as duas ressalvas.
+
+**Escopo proposto.**
+- Extrair a janela do tooltip/info de aldeia no scan de mapa e persistir em
+  `cache/villages/{id}.json`, junto do que já é guardado ali.
+- `is_night_bonus_active()` ganha um parâmetro opcional de janela do defensor;
+  com ela, responde True/False de verdade em vez de `None`.
+- Sem o dado (sem premium, ou aldeia ainda não escaneada), manter o pior caso.
+- Enquanto isso, comparar contra a hora de **chegada** do ataque, não a hora
+  atual — para trem de nobre, que é lento, as duas diferem por horas. Isso vale
+  também para mundo de janela fixa (`active=1`), onde o bug existe hoje.
+
+**Pré-requisito:** confirmar se a conta tem premium (a Feature 22 já detecta
+premium para a fila de construção — reaproveitar esse sinal).
+
+**Prioridade:** média, e atrelada a querer usar `dynamic_moral_night_bonus` no
+br143. Sem isso a flag fica entre dois extremos ruins: assumir bônus sempre
+(nenhuma conquista) ou assumir nunca (a superestimativa que o P2-29 existia para
+matar).
+
 ## Feature 27 — `ConquestManager` (bárbara) respeitar reserva cruzada de tropas ✅ Implementado (2026-08-08)
 
 **Status:** implementado conforme o plano abaixo, mais dois achados que o

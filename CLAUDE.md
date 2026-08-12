@@ -161,6 +161,20 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
   (`cache/world/config_br143.json`, não `cache/world_config*` como a nota dizia).
   Antes de adiar por falta de dado, conferir se o dado é buscável agora e se o
   arquivo procurado só tem outro nome.
+  **Terceira metade, cometida na própria correção acima, menos de uma hora
+  depois:** ao mapear os valores de `<moral>` (0/1/2/3) usei a wiki da
+  comunidade e escrevi "2 = só por tempo", fazendo esse modo devolver
+  `moral=100` — a mesma superestimativa que o P2-29 existia para matar, válida
+  em 6 dos 8 mundos br ativos. O certo é que **não existe modo "só por tempo"**:
+  2 é "pontos e tempo" e 3 é "pontos e tempo ilimitado". **Enum de jogo se mapeia
+  contra o servidor, não contra a wiki** — e o servidor publica os dois lados de
+  graça: o valor bruto em `interface.php?func=get_config` e a redação
+  correspondente em `/page/settings`, por mundo. A lista de mundos sai de
+  `backend/get_servers.php` por mercado. Cruzar ~30 mundos custa dois
+  `Invoke-WebRequest` cada e transforma palpite em tabela; foi assim que
+  `night.active` (0 = off, 1 = janela fixa do mundo, 2 = janela escolhida por
+  cada jogador) e o `<duration>` constante saíram do "desconhecido". Tabelas
+  completas no Lote 7 de `docs/auditoria_codigo_2026-08-08.md`.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
