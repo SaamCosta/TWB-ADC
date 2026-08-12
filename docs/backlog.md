@@ -296,7 +296,8 @@ do servidor + world setting. Ver `docs/game_comparison.md` item 1 para detalhe.
 
 **Status:** implementado atrás de flag opt-in (`pvp_conquest.dynamic_moral_night_bonus`,
 default `false`) — novo `core/world_config.py` lê `interface.php?func=get_config`
-(endpoint público do mundo) para night bonus e moral (`mood.loss_max`), e
+(endpoint público do mundo) para night bonus e para o sistema de moral do mundo
+(tag `<moral>`; a primeira versão lia `mood.loss_max`, que não é isso — P2-29), e
 `Village.points` passou a ser persistido em `cache/managed/*.json` a cada ciclo
 para dar o dado de pontos do atacante. **Fórmula de moral é aproximação
 best-effort** (sem fórmula oficial pública) — aguardando validação de campo do

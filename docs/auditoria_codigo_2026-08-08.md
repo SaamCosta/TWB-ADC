@@ -900,7 +900,7 @@ desligar é um paliativo.
 | **P2-26** ✅ | `reports[rep]["extra"]["units_losses"]` fora do `try` | [`manager.py:35-38`](../manager.py) | `units_losses` só é gravado quando `len(sent_units) == 2` ([`reports.py:217`](../game/reports.py)). O `try/except` do `farm_manager` cobre só o bloco de loot (linha 39). `KeyError` aqui derruba `farm_manager`, que é chamado direto no loop principal do `twb.py`. Também `data["low_profile"]` sem guarda na [`linha 104`](../manager.py) (a linha 55 checa `"low_profile" in data`, a 104 não). |
 | **P2-27** ✅ | Prioridade `new_villages` do resource sharing é uma heurística sem sentido | [`resource_sharing.py:221-224`](../game/resource_sharing.py) | Comentário: *"recém-conquistadas têm last_run menor pois rodaram menos ciclos"*. Mas `last_run` é `int(time.time())` reescrito a **cada ciclo, para toda aldeia** ([`village.py:1171`](../game/village.py)). Ordenar por `last_run` ASC = "a que rodou há mais tempo neste ciclo", não "aldeia nova". Precisa de outro sinal (pontos, `first_seen`, nível do prédio principal). |
 | **P2-28** ✅ | `is_active_hours` não trata virada de meia-noite | [`twb.py:362-364`](../twb.py) | `range(active_h[0], active_h[1])` — com `"22-6"` o range é vazio → bot sempre inativo, sem aviso. Mesmo problema em `is_village_active_hours` ([`linha 382`](../twb.py)). Para contraste, `WorldConfig.is_night_bonus_active` ([`world_config.py:149-154`](../core/world_config.py)) trata corretamente. |
-| **P2-29** ⚠️ ABERTO | `estimate_moral` usa piso de 70%, o piso real do TW é 30% | [`world_config.py:175-186`](../core/world_config.py) | `floor = 100 - loss_max` = `100 - 30` = **70**. O docstring já admite ser aproximação não-oficial, mas a direção do erro é a perigosa: superestima moral → recomenda conquistas que falham. Só afeta com `pvp_conquest.dynamic_moral_night_bonus: true` (hoje `false`). |
+| **P2-29** ✅ | `estimate_moral` usa piso de 65%, o piso real do TW é 30% | [`world_config.py`](../core/world_config.py) | ✅ **Corrigido em 2026-08-12** — o piso passou a ser a constante `MORAL_POINTS_FLOOR = 30` e o sistema de moral passou a vir do `<moral>` do mundo, não do `<mood>`; ver as notas do Lote 7 no fim. Diagnóstico original: `floor = 100 - loss_max`, com o palpite de `loss_max = 30` → 70. O valor real do br143 é `loss_max = 35` → piso **65**. A direção do erro é a perigosa: superestima moral → recomenda conquistas que falham. Só afetava com `pvp_conquest.dynamic_moral_night_bonus: true` (segue `false`). |
 | **P2-30** ✅ | `do_premium_stuff` usa `data` antes de checar se é `None` | [`resources.py:149-167`](../game/resources.py) | `data = Extractor.premium_data(...)` na linha 149, `PremiumExchange(stock=data["stock"], ...)` na 151, e só na **166** vem `if not data:`. `TypeError` antes da checagem. |
 | **P2-31** ✅ | Parse do overview quebra a corrida inteira em formato inesperado | [`overview.py:282-293`](../pages/overview.py), [`95-103`](../pages/overview.py) | `_extract_name_cords_continent` retorna `None` implícito quando o regex falha → `name, coordinates, continent = None` → `TypeError: cannot unpack non-sequence NoneType`. `Storage.__init__` faz `resource_values[0]` depois de só **imprimir** o erro de formato → `IndexError` (não `ValueError`, que é o único capturado). `twb.get_overview` só captura `RuntimeError` → o bot cai. |
 | **P2-32** ✅ | `BotManager.pid` não é persistido → risco de dois bots simultâneos | [`utils.py:328-364`](../webmanager/utils.py) | `pid` é atributo de classe em memória. Reiniciar o webmanager (ou o reloader do Flask em modo DEBUG, que roda **dois** processos) perde a referência → `is_running()` retorna `False` → `/bot/start` sobe um **segundo** `twb.py` em paralelo. Duas instâncias agindo na mesma conta = risco de ban. |
@@ -1340,7 +1340,9 @@ vivo, e as duas afirmações não podem ser verificadas offline: não há
 `cache/world_config*` neste repositório para inspecionar o `<mood>` real do
 br143. Trocar 70 por 30 seria trocar um palpite por outro num campo que hoje
 é **inerte** (`pvp_conquest.dynamic_moral_night_bonus: false`). Precisa de uma
-amostra do bloco `<mood>` do servidor antes de mexer.
+amostra do bloco `<mood>` do servidor antes de mexer. **Fechado no Lote 7**,
+em 2026-08-12 (abaixo) — a amostra foi obtida e as duas afirmações estavam
+erradas.
 
 **Também aberto na época:** P2-22 (`_calculate_needed_escort` pode reservar 100%
 de um tipo de tropa e travar o farm indefinidamente) e P2-35
@@ -1445,6 +1447,73 @@ ausente, economia (4 aldeias × 3 alvos = 1 carga em vez de 12 scans), e quatro
 casos de frescor — relatório novo no meio do ciclo, poda, delete+add com a
 mesma contagem, e diretório vazio que passa a ter arquivo. **Pendente de
 validação em campo.**
+
+---
+
+# Lote 7 (2026-08-12) — P2-29, o piso de moral
+
+**O bloqueio era falso e custava um `curl`.** A nota do Lote 5 dizia que faltava
+uma amostra do servidor e que não havia `cache/world_config*` no repositório.
+Não havia mesmo — o arquivo se chama `cache/world/config_br143.json`, existia
+localmente todo esse tempo, e o endpoint que o gera é **público e sem
+autenticação** (`interface.php?func=get_config`), acessível de fora do bot. A
+"amostra do servidor" nunca dependeu de esperar por nada.
+
+Com o XML em mão, as duas afirmações em conflito estavam erradas:
+
+| | dizia | real (br143) |
+|---|---|---|
+| Diagnóstico P2-29 | `loss_max = 30` → piso 70 | `loss_max = 35` → piso **65** |
+| Docstring de `estimate_moral` | `mood.loss_max` é a config de moral, confirmada ao vivo | `<mood>` **não é** a config de moral |
+
+O bloco `<mood>` do br143 é `loss_max=35`, `loss_min=20`, `load=1`. O que
+governa moral é a tag de topo **`<moral>1</moral>`** — 0 = desligado,
+1 = por pontos, 2 = por tempo (idade da conta do defensor), 3 = os dois. O
+código lia o bloco errado, e a parte "confirmada ao vivo" do docstring era
+verdadeira sobre a *origem* do número (veio do servidor, não foi chutado) e
+falsa sobre o *significado* dele. Um número real lido do campo errado.
+
+**A correção, então, não é trocar 70 por 30** (o que o diagnóstico pedia, e que
+seria de fato palpite contra palpite). É parar de derivar o piso de um setting
+não relacionado:
+
+1. `_parse_moral()` novo, lê a tag `<moral>` de topo, e o dict cacheado ganhou a
+   chave `"moral"`. `None` (fetch falho, ou cache escrito antes desta versão) e
+   valor não reconhecido — este com `logger.warning` — caem em "por pontos", o
+   modo conservador e o que o br143 usa. Conservador aqui é o lado certo:
+   subestimar moral pula uma conquista viável, superestimar joga um trem de
+   nobres fora.
+2. `estimate_moral()` usa a fórmula da comunidade,
+   `30 + 70 × min(1, def/att)`, com o piso na constante `MORAL_POINTS_FLOOR`.
+   Modo 0 e modo 2 devolvem 100 (moral desligada; e moral por tempo depende da
+   data de entrada do oponente, que o bot não rastreia — alvo de PvP em
+   mid/late game é conta antiga, onde ela fica perto de 100% mesmo).
+   Modo 3 usa o valor por pontos, que é o **menor** dos dois e portanto
+   subestima o ataque: a direção segura.
+3. `_parse_mood()` continua parseando o bloco (agora com `load`, e defaults 0
+   em vez de um 30 que só existia para imitar o piso), documentado como
+   **referência de significado desconhecido**, com aviso explícito nos dois
+   docstrings para não religá-lo em moral.
+
+Efeito na prática, atacante de 10k pontos: defensor de 5k passa de 82% para
+**65%**; de 2k, de 72% para **44%**; de 300, de 66% para **32%**. O erro
+crescia justo onde a decisão importa — alvo pequeno, onde o simulador dizia que
+sobrava tropa.
+
+Verificado contra o XML ao vivo (`_parse_moral` → 1, `_parse_mood` →
+`{35, 20, 1}`, `_parse_night` → `{2, 23, 7, 2}`) e a fórmula conferida nos
+quatro modos mais os casos de `None`/0 pontos. **Segue inerte em campo**
+(`pvp_conquest.dynamic_moral_night_bonus: false`) — a recomendação do
+`docs/game_comparison.md` item 1 continua valendo: comparar contra a
+calculadora de moral do simulador do próprio jogo antes de ligar.
+
+**Achado de brinde, não corrigido:** o `<night>` do br143 traz
+`active=2` e `<duration>14</duration>`, nenhum dos dois modelado — a janela
+23→7 tem 8 horas, então `duration` não é o tamanho dela, e `active` só é lido
+como booleano. Registrado no docstring de `_parse_night`. Não mexi porque
+`start_hour`/`end_hour`/`def_factor` são autoconsistentes e bastam para o uso
+atual; se o night bonus do mundo se comportar diferente do previsto em campo, é
+aqui que se olha primeiro.
 
 ---
 

@@ -43,7 +43,7 @@ via `game.php?screen=info_player` ou settings do mundo). `luck` pode continuar 0
 **✅ Implementado em 2026-08-02 (Feature 18), atrás de flag opt-in.** Novo módulo
 `core/world_config.py` busca `interface.php?func=get_config` (endpoint público, sem
 autenticação, confirmado ao vivo contra br143 — retorna `<night>` com
-`active/start_hour/end_hour` e `<mood>` com `loss_max/loss_min`), com cache de 6h em
+`active/start_hour/end_hour/def_factor` e a tag de topo `<moral>`), com cache de 6h em
 `cache/world/config_{server}.json`. `game/pvp_conquest.py::_step_simulate` agora
 calcula `nightbonus` real (horário local da máquina do bot vs. janela do mundo — ver
 ressalva de timezone abaixo) e uma estimativa de `moral` a partir dos pontos reais do
@@ -54,11 +54,15 @@ pelo scan de mapa).
 **Ressalvas importantes (por que ficou atrás de flag, `pvp_conquest.dynamic_moral_night_bonus`,
 default `false`):**
 - **Fórmula de moral não é oficialmente documentada.** O suporte da Innogames confirma
-  que não existe fórmula pública exata. `core/world_config.py::estimate_moral` usa uma
-  interpolação linear simples parametrizada pelo `mood.loss_max` real do mundo (não um
-  valor chutado) — mas é uma aproximação best-effort, não a fórmula real do jogo. Não
-  modela o mecanismo de "moral sobe com o tempo para jogador pequeno antigo" (exigiria
-  data de entrada do oponente no mundo, que o bot não rastreia).
+  que não existe fórmula pública exata. `core/world_config.py::estimate_moral` usa a
+  fórmula da comunidade (wiki), `30 + 70 × min(1, def/att)` — aproximação best-effort,
+  não a fórmula real do jogo. Não modela o mecanismo de "moral sobe com o tempo para
+  jogador pequeno antigo" (exigiria data de entrada do oponente no mundo, que o bot não
+  rastreia); em mundo de moral **só por tempo** (`<moral>2</moral>`) a função devolve
+  100. **Corrigido em 2026-08-12 (P2-29):** a primeira versão derivava o piso de
+  `mood.loss_max`, e `<mood>` não é a config de moral — quem manda é a tag de topo
+  `<moral>` (br143 = 1, por pontos). O piso saiu de 65% para os 30% reais; ver o Lote 7
+  em `docs/auditoria_codigo_2026-08-08.md`.
 - **Horário de servidor é aproximado.** `WorldConfig.is_night_bonus_active` usa o
   horário local da máquina que roda o bot, assumindo que coincide com o fuso do
   servidor — verdadeiro para br143 (Brasil), mas não extraído do HTML do jogo (o bot

@@ -71,19 +71,15 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 **Auditoria completa em `docs/auditoria_codigo_2026-08-08.md`** — leitura integral
 dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com nível
-de confiança e correção sugerida. **Lotes 1 a 6 corrigidos** (estado compartilhado,
+de confiança e correção sugerida. **Lotes 1 a 7 corrigidos** (estado compartilhado,
 integridade de dados, features ressuscitadas, crashes de caminho quente, no
 Lote 5: segurança do webmanager, `farm_score`, mercado em pt-BR, paz forçada,
-e no Lote 6: a reserva de escolta que travava o farm e o I/O do PvP conquest).
-Seções já corrigidas levam um banner ✅ no topo; a ordem priorizada e as notas de
-implementação de cada lote estão no fim do documento.
+no Lote 6: a reserva de escolta que travava o farm e o I/O do PvP conquest, e no
+Lote 7: o piso de moral). Seções já corrigidas levam um banner ✅ no topo; a ordem
+priorizada e as notas de implementação de cada lote estão no fim do documento.
 
-**Resta um único item aberto**, adiado de propósito:
-- **P2-29** — piso de moral em `estimate_moral()`. O diagnóstico diz que o piso
-  real do TW é 30%, o código usa `100 - loss_max` = 70, e o docstring afirma que
-  `loss_max` veio confirmado ao vivo. Não existe `cache/world_config*` no repo
-  para conferir o `<mood>` real do br143 — **conseguir uma amostra do servidor
-  antes de mexer.** Hoje é inerte (`pvp_conquest.dynamic_moral_night_bonus: false`).
+**Nenhum item da auditoria segue aberto.** O último (P2-29) foi fechado em
+2026-08-12 — ver o Lote 7 e o quinto padrão abaixo.
 
 - ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
   Quase toda classe aqui declara seus campos no corpo da classe, não em
@@ -149,6 +145,22 @@ implementação de cada lote estão no fim do documento.
   "chave morta, removida" está certo no mérito e ainda assim leva quem lê a
   concluir que a capacidade sumiu — foi o que aconteceu aqui, e só não virou
   problema porque o usuário desconfiou.
+- ⚠️ **Quinto padrão, achado em 2026-08-12 (P2-29): valor real lido do campo
+  errado, e "bloqueado por falta de dado" que ninguém tentou destravar.** O
+  `estimate_moral()` derivava o piso de moral de `mood.loss_max`, e o docstring
+  se defendia dizendo que o número veio "confirmado ao vivo" do servidor — o que
+  era verdade sobre a *origem* e falso sobre o *significado*: `<mood>` não é a
+  config de moral do TW; quem manda é a tag de topo `<moral>` (0/1/2/3). Um
+  número real, lido do servidor, do campo errado — **é mais convincente que um
+  palpite e por isso passa mais fácil.** Ao escrever "confirmado ao vivo", dizer
+  *qual tag*, não só que veio do servidor.
+  Segunda metade da lição: o item ficou aberto por duas semanas com a nota
+  "precisa de uma amostra do servidor antes de mexer", e a amostra custava um
+  `Invoke-WebRequest` — `interface.php?func=get_config` é **público e sem
+  autenticação**, e o cache local já existia com outro nome
+  (`cache/world/config_br143.json`, não `cache/world_config*` como a nota dizia).
+  Antes de adiar por falta de dado, conferir se o dado é buscável agora e se o
+  arquivo procurado só tem outro nome.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
