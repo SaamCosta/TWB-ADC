@@ -325,7 +325,18 @@ class TWB:
             print(f"Village entry {village_id} could not be added to the config file!")
             return
 
-        original["villages"][village_id] = template if template else original["village_template"]
+        # deepcopy obrigatorio: sem ele a aldeia nova e *o mesmo objeto* que
+        # village_template, e nao uma copia dele. Qualquer escrita posterior na
+        # aldeia editaria o molde junto -- e ha uma logo em seguida:
+        # Village.apply_nearest_village_inheritance() faz
+        # config["villages"][vid]["inherit_on_first_run"] = False e grava o
+        # config inteiro. O template ficaria com inherit_on_first_run=false em
+        # disco, e toda aldeia futura nasceria sem herdar config da vizinha,
+        # matando as Features 6 e 7 em silencio. Mesmo padrao de estado mutavel
+        # compartilhado ja documentado no CLAUDE.md.
+        original["villages"][village_id] = copy.deepcopy(
+            template if template else original["village_template"]
+        )
 
         FileManager.save_json_file(original, "config.json")
         print("Deployed new configuration file")
