@@ -143,7 +143,119 @@ Ordem sã: construir a torre em campo primeiro (ou pelo menos decidir construir)
 depois capturar o HTML real da tela de chegadas com marcas, depois escrever o
 parser contra esse HTML.
 
-## 6. Espaçamento entre torres — de onde vem o `min_spacing: 16`
+## 6. A aldeia de torre da conta — BBM 002 (`38409`, 578\|305)
+
+Escolhida em 2026-08-13. Não por geometria: **no nível 20 as sete aldeias
+cobrem todas as outras** (maior distância do império = 9,06 contra raio 15), então
+a geometria não discrimina. Foi escolhida por ser a defensiva mais desenvolvida
+(2.032 pts). A BBM 001 seria mais rápida (30 dias contra 48) mas é o núcleo
+ofensivo; a mais central (BBM 006, 5,83) é a mais lenta (54 dias).
+
+### Configuração-alvo
+
+| Edifício | Nível | Pop | Motivo |
+|---|---:|---:|---|
+| Torre de vigia | 20 | 11.607 | razão de ser |
+| Ferreiro | 20 | 395 | requisito da academia + pesquisa |
+| Estábulo | 20 | 158 | recrutamento de cav. pesada no tempo mínimo |
+| Mina de ferro | 30 | 949 | produção máxima |
+| Poço de argila | 30 | 447 | produção máxima |
+| Bosque | 30 | 326 | produção máxima |
+| Edifício principal | 20 | 99 | mínimo da academia |
+| Muralha | 20 | 99 | inegociável |
+| Mercado | 10 | 82 | mínimo da academia |
+| Academia | 1 | 80 | cunhar moeda |
+| Quartel | 5 | 13 | mínimo do estábulo |
+| Estátua | 1 | 10 | custo fixo |
+| Fazenda / Armazém / Praça | 30/30/1 | 0 | — |
+| Oficina / Esconderijo | 0 | 0 | sem aríete/catapulta; inútil no late game |
+
+**14.265 pop de edifícios** = 59,4% da fazenda 30. Sobram 9.735 → **1.622
+cavalarias pesadas** (6 pop, 11 min/campo, def 200/80/180).
+
+Números reais, porém, dependem de duas coisas fora do bot:
+
+| Cenário | Pop livre | Cav. pesadas |
+|---|---:|---:|
+| Tropa velha mantida, sem demolir | 8.361 | 1.394 |
+| Dispensando as 989 pop de tropa velha | 9.350 | 1.558 |
+| Dispensando + demolindo mercado 21→10, quartel 6→5, esconderijo 3→0 | 9.735 | 1.622 |
+
+### `templates/builder/watchtower_support.txt`
+
+139 entradas, 0 mortas. Decisões de ordenação, todas derivadas de simulação:
+
+1. **Ferro 2 níveis à frente de madeira e argila** — cav. pesada custa
+   200/150/**600**.
+2. **Cav. pesada liberada no dia 3** (`stable:10` + `smith:15` — confirmado na
+   fonte oficial; **não** é estábulo 20).
+3. **Economia antes da torre.** O pior upgrade de mina (ferro 29→30) se paga em
+   239 h; a torre sozinha consome 337 h de produção máxima só para acumular.
+   Toda mina se paga dentro do projeto, então minas primeiro domina.
+4. **Torre 1–10 após `farm:22`, torre 11–20 no fim.** Pôr tudo no fim termina
+   2,3 dias antes mas entrega a torre 9,5 dias depois; escolhido o segundo.
+   Efeito colateral bom: o bloco 1–10 fica antes de `farm:30`, então o
+   auto-insert de fazenda ainda funciona como rede de segurança.
+
+Cronograma para a BBM 002: cav. pesada dia 3 · torre nv 10 dia 23 · minas 30
+dia 27 · fazenda 30 dia 34 · **torre nv 20 dia 48**.
+
+### `templates/troops/watchtower_support.txt`
+
+Quatro tiers, só cavalaria pesada. Gates em `smith`/`watchtower`, **não em
+`barracks`** — o quartel fica travado em 5, e o `defensive_1`, indexado por
+quartel, nunca chegaria ao tier que tem `heavy`.
+
+| Gate | Alvo | Ativa em |
+|---|---:|---|
+| `stable: 1` | — (`build: {}`) | hoje; existe só para `current_unit_entry` nunca ser `None` |
+| `smith: 15` | 150 | dia 3 |
+| `watchtower: 10` | 500 | dia 23 |
+| `watchtower: 20` | 1350 | dia 48 |
+
+150 e 500 são **o limite exato** onde deixam de ser gratuitos (175 e 750 já
+elevam a pressão de população). 1350 fica abaixo do teto de propósito: um alvo
+inatingível faria `reserve_resources` registrar pedido todo ciclo e a aldeia
+viraria ímã permanente de `resource_sharing`.
+
+⚠️ **As 989 pop de tropa velha são o gargalo dominante, não os alvos.** Com
+elas dispensadas, recrutar 150 cav. pesadas custa exatamente o mesmo que
+recrutar zero (12 pontos de pressão, todos estruturais); mantendo-as, os mesmos
+150 quadruplicam a pressão para 44 — e cada ponto é o auto-insert puxando
+fazenda para a frente, desfazendo a otimização "minas antes de tudo".
+
+Simulação confirma: **a torre nunca fica bloqueada por falta de população em
+fazenda 30** em nenhuma configuração testada. Folga final: 261 pop.
+
+### Armadilhas do motor encontradas no caminho
+
+- **Template de construção não aceita comentário.** `get_template()` faz
+  `.strip().split()` e depois `entry.split(":")` desempacota em dois — token
+  sem `:` derruba o builder com `ValueError`.
+- **Todo tier de tropa precisa da chave `farm`.** `village.py:648` faz
+  `current_unit_entry["farm"]` sem guarda. `"farm": []` é seguro: `attack()`
+  itera a lista vazia e não envia nada.
+- **O primeiro tier precisa de um gate já satisfeito**, senão
+  `current_unit_entry` fica `None` e `attack.template` nunca é atribuído.
+- **O bot não sabe demolir.** A única ocorrência de `destroy` no projeto é
+  `destroy=0` na URL de construção instantânea. As demolições do alvo são
+  manuais — o mundo permite (`<destroy>1</destroy>`), o bot é que não faz.
+
+### Pendências
+
+1. **Cunhagem de moeda depende de `snobs > 0`** (ver Feature 24 em
+   `docs/features_log.md`). A BBM 002 está com `snobs: 4` = 400 pop de nobres,
+   que **não cabem** no orçamento acima. Só morde quando a academia ficar
+   pronta, por volta do dia 25.
+2. **`units_in_total` conta tropa fora dando suporte?** O extractor remove
+   linhas com `village_anchor` (`extractors.py:237`) e o comentário é ambíguo.
+   Numa aldeia que vive com cavalaria emprestada, isso decide se o alvo de 1350
+   é "no total" ou "em casa" — e no segundo caso o teto de população estoura.
+   Só verificável com o HTML real de `place&mode=units` com suporte em trânsito.
+3. `watchtower.enabled` segue `false`: a Feature 24 não vai designar torres
+   novas até ser ligada.
+
+## 7. Espaçamento entre torres — de onde vem o `min_spacing: 16`
 
 Levantado em 2026-08-13 para a Feature 24 (alocação territorial de aldeias de
 torre). A pergunta: qual a distância mínima entre duas torres para que a
@@ -207,7 +319,7 @@ move — por isso o valor é configurável e o padrão fica no lado seguro.
 Custo: ~4 torres num império de 67 aldeias = 46.428 pop e 19,4M de recursos,
 6% das aldeias convertidas em olhos.
 
-## 7. O que não foi verificado
+## 8. O que não foi verificado
 
 - **Tempo de construção real.** O servidor dá `build_time=13200s`,
   `build_time_factor=1.2` e `buildtime_formula=2`. Isso rende 3,7h no nível 1 e

@@ -874,7 +874,7 @@ destruindo o custo-benefício, já que cada torre custa 11.607 pop e 4,85M.
 era o inverso do que a conta joga.
 
 **`min_spacing: 16`** vem de simulação contra o mapa real do br143 — ver a
-seção 6 de `docs/watchtower.md`. Resumo: o ótimo hexagonal (`R√3 = 25,98`)
+seção 7 de `docs/watchtower.md`. Resumo: o ótimo hexagonal (`R√3 = 25,98`)
 maximiza área e **zera o aviso** no ponto pior, que é o produto real da torre.
 16 é o maior espaçamento que ainda cobre tudo; 17 é um precipício (o décimo
 percentil do aviso cai de 92 para 4 minutos).
