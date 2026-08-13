@@ -130,15 +130,26 @@ class WorldConfig:
     @staticmethod
     def _parse_mood(xml_text):
         """
-        Extracts the <mood>...</mood> block, recorded for reference only.
+        Extracts the <mood>...</mood> block.
 
         ⚠️ Despite the name, this is *not* the morale configuration -- the
         morale system is the top-level <moral> flag (see `_parse_moral`).
-        br143 reports <mood><loss_max>35</loss_max><loss_min>20</loss_min>
-        <load>1</load></mood> and the meaning of those fields is unconfirmed;
-        nothing reads them. `estimate_moral` used to build its floor out of
-        `loss_max` (`100 - 35` = 65%) and that was simply the wrong setting.
-        Don't wire this back into morale without confirming what it is.
+        `estimate_moral` used to build its floor out of `loss_max`
+        (`100 - 35` = 65%) and that was simply the wrong setting. Never wire
+        this back into morale.
+
+        What it IS was confirmed on 2026-08-13 against /page/settings, which
+        spells the same numbers out in the player's language: br143 shows
+        "Redução de lealdade por ataque do nobre: 20-35" and reports
+        <mood><loss_min>20</loss_min><loss_max>35</loss_max></mood>. So
+        loss_min/loss_max are the **loyalty drop range per noble hit** -- each
+        noble removes a uniform random amount in [loss_min, loss_max].
+
+        Live confirmation from six noble reports the same day: drops of 22,
+        21, 25, 21, 25 and 33, all inside 20-35.
+
+        Read by ConquestManager via `loyalty_drop_range()` below. The old note
+        here said "nothing reads them"; that is no longer true.
         """
         match = re.search(r"<mood>(.*?)</mood>", xml_text, re.S)
         if not match:
@@ -166,7 +177,23 @@ class WorldConfig:
         live fetch fails, so a transient network hiccup never blocks the
         caller -- it just means the bot uses last-known (or neutral)
         world settings for that cycle.
+
+        server/endpoint ausentes devolvem o mesmo placeholder em vez de
+        estourar. `_fetch` faz `endpoint.split("/game.php")` e `_cache_path`
+        interpola o server no nome do arquivo, entao um None ali virava
+        AttributeError no *construtor* de quem chama (ConquestManager,
+        PvpConquestManager) -- derrubando a aldeia inteira por causa de uma
+        chave de config faltando, num caminho que existe justamente para
+        degradar em silencio.
         """
+        if not server or not endpoint:
+            logger.warning(
+                "WorldConfig: server/endpoint ausentes na config "
+                "(server=%r, endpoint=%r) -- seguindo sem dados do mundo",
+                server, endpoint
+            )
+            return {"night": None, "moral": None, "mood": None, "_fetched_at": 0}
+
         cache_path = cls._cache_path(server)
         if not force_refresh:
             cached = FileManager.load_json_file(cache_path)
@@ -187,6 +214,31 @@ class WorldConfig:
         FileManager.create_directory(FileManager.get_path("cache/world"))
         FileManager.save_json_file(result, cache_path)
         return result
+
+    @staticmethod
+    def loyalty_drop_range(world_config, fallback=25):
+        """
+        Faixa (min, max) de queda de lealdade por nobre, do <mood> do mundo.
+
+        Cada nobre remove um valor sorteado uniformemente nesse intervalo --
+        no br143, 20 a 35. Um trem de 4 nobres portanto remove de 80 a 140, e
+        NAO os 100 garantidos que um valor fixo de 25 sugere: em ~1 de cada 8
+        trens a soma fica abaixo de 100 e a aldeia nao cai. Foi o que
+        aconteceu em 2026-08-12 com a Barbara #40314 (as quatro quedas somaram
+        89, deixando a lealdade em 11), e o bot, que assumia 25 fixo, deu a
+        conquista como certa e seguiu adiante.
+
+        `fallback` e usado para os dois extremos quando o mundo nao publicou o
+        bloco (rede fora no primeiro ciclo, mundo sem a tag). Devolver
+        (fallback, fallback) reproduz exatamente o comportamento antigo, que e
+        a degradacao certa: sem dado, nao inventamos incerteza.
+        """
+        mood = (world_config or {}).get("mood") or {}
+        lo = mood.get("loss_min")
+        hi = mood.get("loss_max")
+        if not lo or not hi or lo > hi:
+            return (fallback, fallback)
+        return (lo, hi)
 
     @staticmethod
     def is_night_bonus_active(world_config, server_hour=None):

@@ -11,6 +11,7 @@ from datetime import datetime
 from datetime import timedelta
 
 from core.filemanager import FileManager
+from core.world_config import WorldConfig
 
 
 class AttackManager:
@@ -625,6 +626,17 @@ class ConquestManager:
             troopmanager=troopmanager,
             map=map_obj,
         )
+        # Faixa real de queda de lealdade por nobre, do <mood> do mundo.
+        # WorldConfig.get() serve do cache em disco e so vai a rede a cada
+        # CACHE_TTL, entao chamar por instancia/ciclo e barato.
+        server_cfg = (config or {}).get("server", {})
+        self._drop_min, self._drop_max = WorldConfig.loyalty_drop_range(
+            WorldConfig.get(
+                server=server_cfg.get("server"),
+                endpoint=server_cfg.get("endpoint"),
+            ),
+            fallback=(config or {}).get("conquest", {}).get("loyalty_drop_per_noble", 25),
+        )
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -961,7 +973,6 @@ class ConquestManager:
             f"Noble train → {target_id} | escort: {escort_per_attack}"
         )
 
-        loyalty_drop = cfg.get("loyalty_drop_per_noble", 25)
         hits_sent = 0
         arrivals = []
 
@@ -1000,7 +1011,19 @@ class ConquestManager:
         # pontos/coordenada genéricos, independente do progresso real.
         target_meta = self._get_village_meta(target_id)
 
-        loyalty_after = max(0, 100 - (hits_sent * loyalty_drop))
+        # PIOR CASO, de proposito: cada nobre remove um sorteio uniforme em
+        # [_drop_min, _drop_max] (20-35 no br143), entao 4 nobres removem de 80
+        # a 140. Usar a media (25 fixo) fazia a conta prever exatamente 100 e
+        # tratar a conquista como certa; em ~1 de cada 8 trens ela nao e. Foi
+        # esse o trem de 2026-08-12: as quatro quedas somaram 89 e a aldeia
+        # ficou em 11, enquanto o bot registrava 0.
+        #
+        # Com o piso da faixa, a estimativa passa a ser um limite SUPERIOR da
+        # lealdade restante -- "no minimo isto sobrou". Errar para cima aqui
+        # e seguro: no maximo o bot manda um nobre a mais, e desde a trava de
+        # nobre em voo ele nunca empilha em cima do que ja esta no ar. Errar
+        # para baixo era o que abandonava alvo vivo dando conquista por feita.
+        loyalty_after = max(0, 100 - (hits_sent * self._drop_min))
         # last_hit_timestamp passa a ser o *pouso* do ultimo nobre, nao o
         # envio. O campo sempre foi lido como "quando a lealdade comecou a
         # regenerar" -- por attack.py::_handle_existing e por
@@ -1021,17 +1044,31 @@ class ConquestManager:
             "target_name": target_meta.get("name") or ("Bárbara #%s" % target_id),
             "target_points": target_meta.get("points"),
             "target_location": target_meta.get("location"),
+            # Parametros usados nesta conta, gravados para o dashboard refazer
+            # a mesma estimativa. ConquestReader._estimate_loyalty le as duas
+            # chaves do proprio registro; como _send_train nunca as gravava, a
+            # tela caia nos defaults dela (25 e 1.5) e podia divergir do bot
+            # em silencio -- inclusive ignorando mudanca de config do usuario.
+            "loyalty_drop_per_noble": self._drop_min,
+            "loyalty_drop_range": [self._drop_min, self._drop_max],
+            "loyalty_regen_per_hour": cfg.get("loyalty_regen_per_hour", 1),
         })
 
         if loyalty_after > 0:
-            self.logger.warning(
-                "Conquest: train incomplete or loyalty not zeroed — "
-                "estimated loyalty remaining: %.1f. Extra noble(s) may be needed.",
-                loyalty_after
+            # Com o piso da faixa isto e o caso NORMAL, nao uma anomalia: 4
+            # nobres a 20 de piso deixam 20 de lealdade no papel. Significa
+            # "nao da para afirmar que caiu", que e a verdade -- quem decide
+            # e o relatorio, quando pousar.
+            self.logger.info(
+                "Conquest: trem de %d nobre(s) enviado a %s. No pior caso "
+                "(%d por nobre) sobra lealdade %.0f; no melhor (%d) a aldeia "
+                "cai. O relatorio dira qual foi.",
+                hits_sent, target_id, self._drop_min, loyalty_after, self._drop_max
             )
         else:
             self.logger.info(
-                "Conquest: full train sent to %s, loyalty should be at 0", target_id
+                "Conquest: trem completo enviado a %s — mesmo no pior caso "
+                "(%d por nobre) a lealdade zera", target_id, self._drop_min
             )
 
         return hits_sent > 0
@@ -1336,7 +1373,10 @@ class ConquestManager:
         """
         target_id = conquest_data["target_id"]
         regen = cfg.get("loyalty_regen_per_hour", 1)
-        loyalty_drop = cfg.get("loyalty_drop_per_noble", 25)
+        # Piso da faixa, mesma razao do _send_train: a estimativa vira um
+        # limite superior da lealdade que sobrou, em vez de um numero que se
+        # acredita exato.
+        loyalty_drop = self._drop_min
 
         # --- Priority 1: ownership check (prova dos 9) ---
         # Precisa continuar sendo o primeiro, *antes* da trava de nobre em
@@ -1522,6 +1562,11 @@ class ConquestManager:
                 # que garante que todos os anteriores já pousaram.
                 "noble_arrivals": [arrival],
                 "last_hit_timestamp": arrival or int(time.time()),
+                # Mesmos parametros do _send_train, para o dashboard refazer a
+                # conta identica em vez de cair nos defaults dele.
+                "loyalty_drop_per_noble": self._drop_min,
+                "loyalty_drop_range": [self._drop_min, self._drop_max],
+                "loyalty_regen_per_hour": regen,
                 # Nunca "complete" aqui. O nobre acabou de sair e leva horas
                 # para pousar; marcar a conquista como resolvida no envio foi
                 # o que pintou a aldeia de verde no dashboard às 20:19:37 de

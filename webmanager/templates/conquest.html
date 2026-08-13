@@ -226,11 +226,18 @@
                   {{ t.loyalty_now }}
                 </small>
                 {% if t.loyalty_source == 'report' %}
-                  <span title="Lealdade confirmada por relatorio" style="cursor:default;font-size:0.9rem;">&#128202;</span>
+                  <span title="Lealdade confirmada por relatório de nobre" style="cursor:default;font-size:0.9rem;">&#128202;</span>
                 {% elif t.loyalty_source == 'ownership' %}
                   <span title="Aldeia confirmada como sua" style="cursor:default;font-size:0.9rem;">&#127984;</span>
+                {% elif t.loyalty_best is not none %}
+                  {# Cada nobre remove um sorteio dentro da faixa do mundo, então
+                     um número único aqui sugeriria precisão que a mecânica não
+                     tem. O valor exibido é o pior caso. #}
+                  <small class="text-muted text-nowrap">a {{ t.loyalty_best }}</small>
+                  <span style="cursor:default;opacity:0.6;font-size:0.9rem;"
+                        title="Estimativa, sem relatório de nobre. Cada nobre remove entre {{ t.loyalty_drop_range[0] }} e {{ t.loyalty_drop_range[1] }} de lealdade (sorteio), então o real está entre {{ t.loyalty_now }} e {{ t.loyalty_best }}. O número em destaque é o pior caso.">&#8776;</span>
                 {% else %}
-                  <span title="Lealdade estimada (sem relatorio de noble)" style="cursor:default;opacity:0.5;font-size:0.9rem;">&#8776;</span>
+                  <span title="Lealdade estimada (sem relatório de nobre)" style="cursor:default;opacity:0.5;font-size:0.9rem;">&#8776;</span>
                 {% endif %}
               </div>
               {% if t.loyalty_now <= 10 %}

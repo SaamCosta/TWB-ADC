@@ -77,7 +77,7 @@ help_file = {
     'conquest.min_points': 'Minimum points a target village must have to be considered',
     'conquest.max_points': 'Maximum points a target village can have to be considered',
     'conquest.loyalty_regen_per_hour': 'Loyalty regeneration per hour. Per-world value published at /page/settings ("Aumento de lealdade por hora") — read it there, do not guess. br143 = 1',
-    'conquest.loyalty_drop_per_noble': 'Loyalty reduction per noble hit. Per-world RANGE, published at /page/settings ("Redução de lealdade por ataque do nobre") and as <mood> loss_min/loss_max in interface.php?func=get_config. br143 = 20-35, so this single number is only the average — a 4-noble train removes 80 to 140, not a guaranteed 100',
+    'conquest.loyalty_drop_per_noble': 'FALLBACK ONLY — the bot reads the real range from the world itself (<mood> loss_min/loss_max in interface.php?func=get_config, same numbers /page/settings shows as "Redução de lealdade por ataque do nobre"; br143 = 20-35) and plans against the worst case. This key is only used when the world did not publish the block. Note the drop is a RANGE, not a value: a 4-noble train removes 80 to 140, not a guaranteed 100',
     'conquest.escort_ratio': 'Fraction of available troops to send as noble train escort (e.g. 0.5 = 50%)',
     'conquest.min_escort': 'Minimum escort units per unit type (optional override)',
     'conquest.min_escort_total': 'Minimum combined escort troops per noble attack, regardless of unit type (default: 50)',

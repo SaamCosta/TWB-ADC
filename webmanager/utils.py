@@ -549,16 +549,20 @@ class ConquestReader:
     }
 
     @staticmethod
-    def _estimate_loyalty(data):
+    def _estimate_loyalty(data, drop_override=None):
         """
         Calcula lealdade estimada atual.
         loyalty_after_nobles = loyalty_start - (hits_done * loyalty_drop_per_noble)
         loyalty_current = loyalty_after_nobles + hours_since_last_hit * loyalty_regen_per_hour
         Clampado em [0, 100].
+
+        `drop_override` permite refazer a conta com o outro extremo da faixa
+        de queda do mundo (20-35 no br143), para a tela mostrar o intervalo em
+        vez de um numero unico com precisao que ele nao tem.
         """
         loyalty_start       = data.get("loyalty_start", 100)
         hits_done           = data.get("hits_done", 0)
-        drop_per_noble      = data.get("loyalty_drop_per_noble", 25)
+        drop_per_noble      = drop_override or data.get("loyalty_drop_per_noble", 25)
         regen_per_hour      = data.get("loyalty_regen_per_hour", 1)
         last_hit_ts         = data.get("last_hit_timestamp", None)
 
@@ -612,14 +616,31 @@ class ConquestReader:
                 continue
             target_id = fname.replace(".json", "")
             try:
-                with open(os.path.join(conquest_dir, fname), "r") as f:
+                # utf-8-sig e nao o encoding do locale: queue_manual() abaixo
+                # grava com ensure_ascii=False, entao "Bárbara #NNNN" vai ao
+                # disco com o acento em bytes reais. Lido em cp1252 (padrao no
+                # Windows pt-BR) viraria "BÃ¡rbara". Mesmo motivo do
+                # FileManager.load_json_file.
+                with open(os.path.join(conquest_dir, fname), "r", encoding="utf-8-sig") as f:
                     data = json.load(f)
             except Exception:
                 continue
 
             loyalty_source = data.get('loyalty_source', 'estimate')
+            # loyalty_now usa o piso da faixa de queda (o bot grava
+            # loyalty_drop_per_noble = drop_min), entao e o cenario PESSIMISTA:
+            # "no minimo isto de lealdade sobrou". O outro extremo vira
+            # loyalty_best, e a tela mostra os dois quando a fonte e
+            # estimativa -- um numero unico sugeriria uma precisao que a
+            # mecanica nao tem, ja que cada nobre sorteia a queda.
             loyalty_now   = ConquestReader._estimate_loyalty(data)
             loyalty_color = ConquestReader._loyalty_color(loyalty_now)
+            drop_range    = data.get("loyalty_drop_range") or []
+            loyalty_best  = None
+            if len(drop_range) == 2 and drop_range[0] != drop_range[1]:
+                loyalty_best = ConquestReader._estimate_loyalty(
+                    data, drop_override=drop_range[1]
+                )
 
             last_hit_ts  = data.get("last_hit_timestamp", None)
             last_hit_fmt = "—"
@@ -650,6 +671,8 @@ class ConquestReader:
                 "hits_needed":    hits_needed,
                 "hits_pct":       hits_pct,
                 "loyalty_now":    loyalty_now,
+                "loyalty_best":   loyalty_best,
+                "loyalty_drop_range": drop_range or None,
                 "loyalty_color":  loyalty_color,
                 "loyalty_source": loyalty_source,
                 "last_hit_fmt":   last_hit_fmt,
