@@ -44,10 +44,24 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 ## Convenções
 
-- Sem test suite automatizado no projeto. Revisar diffs manualmente com cuidado —
-  não assumir que dá para rodar `pytest` e confiar cegamente no resultado.
-  Ao introduzir lógica pura e isolável (ex: `Simulator`, `Extractor`, `ZoneManager`),
-  considerar escrever testes unitários pontuais.
+- **Existe `tests/`** desde 2026-08-13 (antes não existia; se alguma nota falar
+  em "sem test suite", está velha). São testes pontuais de lógica pura, sem
+  rede e sem estado de jogo. Rodar:
+  `foreach ($t in (Get-ChildItem tests/test_*.py)) { python $t.FullName }`
+  — cada arquivo roda sozinho, sem depender de `pytest` instalado.
+  Cobertura atual: conquista bárbara (nobre em voo, lealdade do relatório,
+  alvo perdido, semântica de status, faixa de queda), encoding do
+  `FileManager` e alocação de torre de vigia. **A maior parte do bot continua
+  sem cobertura** — em especial tudo que faz requisição — então revisar diffs
+  manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
+  teste pontual.
+- **Fixture de markup do jogo se copia do servidor, não se inventa.** Os
+  testes de `Extractor` usam recortes verbatim de HTML real; a versão anterior
+  de `loyalty_from_report()` falhava justamente por ter sido escrita contra um
+  markup suposto. Para buscar: cookies em `cache/session.json`, user-agent em
+  `config.json` → `bot`, e um `requests.session()` acessa
+  `game.php?village=NNN&screen=report&mode=all&view=<id>` sem atrapalhar o bot
+  rodando.
 - **Nunca commitar `config.json`** (contém credenciais/sessão) — só `config.example.json`.
 - **Sempre bumpar a versão do build** (`config.example.json` e `config.json`,
   campo `build.version`) ao adicionar novo bloco de configuração estrutural,
@@ -80,6 +94,22 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
 
 **Nenhum item da auditoria segue aberto.** O último (P2-29) foi fechado em
 2026-08-12 — ver o Lote 7 e o quinto padrão abaixo.
+
+⚠️ **Aberto, fora da auditoria: rastreio de conquista sumiu sem explicação.**
+Em 2026-08-12 às 19:46 o `ConquestManager._get_my_conquest()` devolveu `None`
+para a Bárbara #40314 com o arquivo `cache/conquest/40314.json` em
+`status: "train_sent"` e mtime de 11:56 — nada tinha reescrito o arquivo no
+intervalo. Como `existing` veio falsy, o `run()` seguiu para `find_target()`,
+que reelegeu **o mesmo alvo** como se fosse novo e disparou um segundo trem
+inteiro de 4 nobres. A assinatura no log é o `_build_escort()` aparecendo
+**duas vezes** seguido de `sending noble train` (o caminho de alvo novo chama
+`_build_escort` no `run()` e de novo no `_send_train`; o caminho de conquista
+existente chama uma vez só). Não reproduzi e não sei a causa — nenhum outro
+caminho no código escreve nesse arquivo sem logar, não houve restart do
+processo e o webmanager não estava rodando. A trava de nobre em voo
+(`4c4229b`) impede o estrago por não depender de `status`, mas isso é
+robustez, não diagnóstico: **se um trem duplicado reaparecer, é aqui que se
+puxa o fio.**
 
 - ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
   Quase toda classe aqui declara seus campos no corpo da classe, não em
@@ -192,6 +222,34 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
   tag XML para ele. Regra prática: **"não achei" só vale como conclusão depois
   de dizer onde procurou** — e para número de mundo isso significa citar as
   duas fontes, não uma.
+- ⚠️ **Sexto padrão, achado em 2026-08-13: decidir sobre um estado do mundo
+  que mudou desde a última vez que se olhou.** Este bot age num mundo remoto
+  com latência de **horas** — um trem de nobres voa ~4h. Entre decidir e o
+  efeito acontecer, o mundo anda. Os três bugs que custaram 527 tropas e uma
+  moeda na Bárbara #40314 são o mesmo erro em três roupas:
+  1. O bot mandou nobre sem saber que **já havia nobre dele no ar** para o
+     mesmo alvo. Não existia o conceito de "em voo" no modelo.
+  2. Marcou a conquista como resolvida **no instante do envio**, 3h41 antes do
+     impacto — e `last_hit_timestamp` contava regeneração a partir da saída do
+     trem, não da chegada.
+  3. Nunca reconferia se a bárbara ainda era bárbara. `find_target()` e
+     `_get_manual_target()` revalidavam o dono; a conquista **já em andamento**
+     não — então o bot seguiria nobrando a aldeia de um jogador que se
+     adiantou.
+  Regra prática ao mexer em qualquer coisa com efeito diferido: **separar
+  "quando eu mandei" de "quando isso acontece", e reconferir a premissa no
+  momento de agir, não no momento de decidir.** Corolário de desenho, que é o
+  que faz a trava atual segurar: a guarda foi construída sobre **tempo de
+  chegada**, não sobre o campo `status` — porque era justamente o `status` que
+  estava errado (dizia `"complete"` com quatro nobres voando). Ao proteger
+  contra um estado inconsistente, não se apoie no campo que pode estar
+  inconsistente.
+  Corolário do corolário: `Extractor.attack_duration()` devolve **0**, não
+  `None`, quando o regex não casa. Somar 0 à hora de envio faz o nobre nascer
+  "já pousado" — o valor de falha se disfarça de resposta válida. É o segundo
+  padrão desta lista com outra máscara: ao consumir um parser, conferir *qual*
+  valor ele devolve quando falha, e se esse valor é distinguível de um
+  resultado legítimo.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
