@@ -274,23 +274,57 @@ class Extractor:
     @staticmethod
     def loyalty_from_report(res):
         """
-        Extrai lealdade após ataque de noble (snob) do HTML do relatório.
-        Tenta span dedicado primeiro, depois linha de tabela PT-BR.
-        Retorna float ou None.
+        Extrai a lealdade *depois* do ataque de nobre (snob) do HTML do
+        relatorio. Retorna float ou None.
+
+        Markup real do br143, confirmado ao vivo em 2026-08-13 buscando cinco
+        relatorios de nobre com a sessao do bot. O rotulo esta num <th> e a
+        celula tem texto antes do numero:
+
+            <tr><th>Lealdade:</th>
+            <td colspan="2">Descida <b>32</b> para <b>11</b></td></tr>
+
+        A versao anterior exigia o numero colado no <td>
+        (`<t[dh][^>]*>(\\d+)`), entao a palavra "Descida" fazia o casamento
+        falhar sempre: nenhum relatorio em cache tinha `loyalty_after` e o
+        ConquestManager caia na estimativa em 100% dos casos. Foi assim que o
+        bot achou que a lealdade era 0 quando o servidor dizia 11, no
+        incidente da Barbara #40314 (2026-08-12).
+
+        Duas armadilhas que as amostras revelaram:
+
+        - A lealdade fica NEGATIVA. Os relatorios de conquista trazem
+          "Descida <b>18</b> para <b>-7</b>" e "<b>25</b> para <b>-8</b>". Um
+          \\d+ sem sinal capturaria "7" -- lealdade positiva num relatorio que
+          significa exatamente o contrario.
+        - Sao DOIS numeros na mesma celula, o antes e o depois. Interessa o
+          segundo.
+
+        Por isso a celula e localizada pelo rotulo e o numero extraido e o
+        ultimo dela: sobrevive a redacao ("Descida X para Y", "Decreased from
+        X to Y") sem depender do idioma da frase.
         """
         if type(res) != str:
             res = res.text
-        # Primário: span dedicado
-        match = re.search(r'id=["\']loyalty_new_value["\'][^>]*>(\d+(?:\.\d+)?)<', res)
+
+        # Span dedicado, mantido como primeira tentativa: existe em alguns
+        # temas/mundos e e inequivoco quando esta presente.
+        match = re.search(r'id=["\']loyalty_new_value["\'][^>]*>\s*(-?\d+(?:\.\d+)?)', res)
         if match:
             return float(match.group(1))
-        # Fallback: linha de tabela PT-BR ("Lealdade") ou EN ("Loyalty")
-        match = re.search(
-            r'(?:Lealdade|Loyalty)[^<]*</t[dh]>\s*<t[dh][^>]*>(\d+(?:\.\d+)?)<',
-            res, re.IGNORECASE
+
+        # Linha da tabela do relatorio. So o rotulo pt-BR foi confirmado
+        # contra o servidor; os outros sao alternativas inofensivas -- se
+        # estiverem errados simplesmente nao casam, que e o comportamento de
+        # hoje.
+        row = re.search(
+            r'(?:Lealdade|Loyalty|Loyaliteit)\s*:?\s*</t[dh]>\s*<t[dh][^>]*>(.*?)</t[dh]>',
+            res, re.IGNORECASE | re.DOTALL
         )
-        if match:
-            return float(match.group(1))
+        if row:
+            numbers = re.findall(r'-?\d+', row.group(1))
+            if numbers:
+                return float(numbers[-1])
         return None
 
     @staticmethod

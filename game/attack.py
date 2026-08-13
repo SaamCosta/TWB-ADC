@@ -1346,6 +1346,25 @@ class ConquestManager:
         real_loyalty = self._get_real_loyalty(target_id)
         last_hit = conquest_data.get("last_hit_timestamp", 0)
 
+        if real_loyalty is not None and real_loyalty <= 0:
+            # Lealdade <= 0 no relatorio significa que a aldeia MUDOU DE DONO
+            # naquele ataque -- os relatorios reais trazem "Descida 18 para -7"
+            # e "25 para -8". Aplicar regeneracao em cima disso e sem sentido:
+            # a lealdade de uma aldeia recem-conquistada reinicia (25 no br143,
+            # medido no relatorio das 00:00:59 de 2026-08-13) e pertence ao
+            # novo dono; o numero negativo nao e um saldo que sobe com o tempo.
+            # Sem esta saida, -7 mais algumas horas de regen viraria um valor
+            # positivo e o bot mandaria nobre numa aldeia ja conquistada --
+            # que, se a conquista foi nossa e o cache de aldeias estiver
+            # atrasado, e exatamente a autoconquista de novo.
+            self.logger.info(
+                "Conquest: target %s — relatorio mostra lealdade %.0f (<= 0): a "
+                "aldeia mudou de dono neste ataque, encerrando o alvo",
+                target_id, real_loyalty
+            )
+            ConquestCache.set(target_id, {**conquest_data, "status": "complete"})
+            return False
+
         if real_loyalty is not None:
             # Apply regen since that report's timestamp
             hours_since_report = (time.time() - last_hit) / 3600
