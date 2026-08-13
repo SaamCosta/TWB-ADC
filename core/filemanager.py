@@ -50,11 +50,16 @@ class FileManager:
         return files
 
     @staticmethod
-    def __open_file(path, mode="r"):
-        """Opens a file in the specified mode. Private do NOT use outside filemanager."""
+    def __open_file(path, mode="r", encoding=None):
+        """Opens a file in the specified mode. Private do NOT use outside filemanager.
+
+        encoding=None mantem o comportamento historico (open() usa o encoding
+        do locale, que no Windows pt-BR e cp1252). Os caminhos de JSON passam
+        encoding explicito -- ver load_json_file/save_json_file.
+        """
         full_path = os.path.join(FileManager.get_root(), path)
         try:
-            return open(full_path, mode)
+            return open(full_path, mode, encoding=encoding)
         except:
             raise FileNotFoundException
 
@@ -90,16 +95,50 @@ class FileManager:
 
     @staticmethod
     def load_json_file(path, **kwargs):
-        """Loads a JSON file and returns the data. Returns None if the file does not exist."""
+        """Loads a JSON file and returns the data. Returns None if the file does not exist.
+
+        Le como utf-8-sig por dois motivos concretos, ambos ja observados:
+
+        1. BOM. O Bloco de Notas do Windows grava UTF-8 *com* BOM por padrao,
+           e o `Set-Content -Encoding utf8` do PowerShell 5.1 tambem. Um
+           config.json salvo assim quebrava o bot com
+           "Expecting value: line 1 column 1 (char 0)" -- uma mensagem que nao
+           menciona encoding nem o arquivo culpado (aconteceu em 2026-08-13).
+           utf-8-sig descarta o BOM se houver e le identico se nao houver.
+
+        2. Acentos. O webmanager grava JSON com ensure_ascii=False e
+           encoding="utf-8" explicito (webmanager/utils.py, alvo de conquista
+           manual gravado como "Bárbara #NNNN"). A leitura aqui nao declarava
+           encoding, entao caia no locale -- cp1252 no Windows pt-BR --, o que
+           transformava "á" em "Ã¡" silenciosamente, ou levantava
+           UnicodeDecodeError nos bytes indefinidos em cp1252.
+
+        JSON e UTF-8 por especificacao (RFC 8259), entao declarar isso aqui e
+        so parar de depender do locale da maquina.
+        """
         full_path = os.path.join(FileManager.get_root(), path)
 
         if not FileManager.path_exists(full_path):
             return None
 
-        with FileManager.__open_file(full_path) as file:
+        with FileManager.__open_file(full_path, encoding="utf-8-sig") as file:
             try:
                 return json.load(file, **kwargs)
-            except json.decoder.JSONDecodeError:
+            except json.decoder.JSONDecodeError as exc:
+                # O path no log porque InvalidJSONException nao carrega
+                # contexto: a stack trace do crash de 2026-08-13 nao dizia
+                # *qual* arquivo estava corrompido.
+                logging.error("JSON invalido em %s: %s", full_path, exc)
+                raise InvalidJSONException
+            except UnicodeDecodeError as exc:
+                logging.error(
+                    "%s nao esta em UTF-8 (%s). Reescreva o arquivo como UTF-8 "
+                    "-- no PowerShell 5.1 use "
+                    "[System.IO.File]::WriteAllText(path, texto, "
+                    "(New-Object System.Text.UTF8Encoding($false))), porque "
+                    "Set-Content -Encoding utf8 adiciona BOM.",
+                    full_path, exc
+                )
                 raise InvalidJSONException
 
     @staticmethod
@@ -123,7 +162,13 @@ class FileManager:
         tmp_path = "%s.%d.tmp" % (full_path, os.getpid())
 
         try:
-            with FileManager.__open_file(tmp_path, mode="w") as file:
+            # UTF-8 explicito para fechar o par com load_json_file. Hoje o
+            # json.dump escapa nao-ASCII (ensure_ascii=True por padrao), entao
+            # a saida e ASCII puro e o encoding do locale nao muda um byte --
+            # mas basta um caller passar ensure_ascii=False, como o webmanager
+            # ja faz nos arquivos dele, para a gravacao virar cp1252 numa
+            # maquina Windows pt-BR e o arquivo deixar de ser JSON valido.
+            with FileManager.__open_file(tmp_path, mode="w", encoding="utf-8") as file:
                 json.dump(data, file, indent=2, sort_keys=False, **kwargs)
 
             # No Windows, os.replace levanta PermissionError (WinError 5)
