@@ -1005,11 +1005,26 @@ quer coisas diferentes em momentos diferentes da própria vida. A aldeia de torr
 |---|---|---|
 | Construção (4,85M de recursos, meses) | acumulando recurso para a obra | 1 produção |
 | Gargalo de população | fazenda não acompanha a torre | 6 população |
+| Repondo tropa perdida em suporte | estábulo refazendo cavalaria pesada | **2 recrutamento** |
 | Madura | excedente virando moeda (`mint_coins`) | 7 custo de cunhagem |
 
-A de recrutamento (2) é a que **não** casa com a torre — vale para a aldeia
-ofensiva montando trem de nobre, não para quem não recruta. Vale registrar como
-parte da mesma feature, mas sob outro gatilho.
+⚠️ **A linha do recrutamento veio de uma correção do usuário (2026-08-13), e
+vale registrar o erro.** Eu tinha escrito aqui que a bandeira 2 *não* casa com a
+torre, "porque ela não recruta". Falso, e falso de um jeito conferível em dez
+segundos: `templates/troops/watchtower_support.txt` pede **150 → 500 → 1350 de
+cavalaria pesada**, e `profile_templates.watchtower` tem `support_others: true`
+— é uma aldeia de suporte, e tropa de suporte morre. A pergunta do usuário foi
+exatamente essa: *"e se eu perder as cavalarias pesadas dando suporte, essa
+bandeira não serviria para recuperar mais rápido?"*. Serviria. O que eu fiz foi
+ler "não recruta **nobre**" (a decisão de `mint_coins`, tomada minutos antes) e
+generalizar para "não recruta" — **o mesmo movimento do quarto padrão do
+`CLAUDE.md`**: concluir sobre uma capacidade sem perguntar o que a aldeia de
+fato faz.
+
+Isso muda a forma da feature, não só uma linha da tabela: o gatilho de
+recrutamento **não é uma fase do ciclo de vida** (construção → madura), é um
+**evento** — perdeu tropa, está repondo. Ou seja, a política precisa de dois
+tipos de gatilho, não de uma linha do tempo.
 
 **O que precisa ser desenhado (não está resolvido):**
 - **Qual sinal marca a fase.** Candidatos que já existem: fila de construção

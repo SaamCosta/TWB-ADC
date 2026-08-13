@@ -82,10 +82,13 @@ class FakeResman:
         self.requests.append((source, resource, amount))
 
 
-def _manager(actual=None, building_needs=None, screen=SNOB_SCREEN):
+def _manager(actual=None, building_needs=None, screen=SNOB_SCREEN,
+             wanted=None, total_troops=None):
     man = SnobManager(wrapper=FakeWrapper(screen=screen), village_id="38409")
     man.resman = FakeResman(actual=actual, building_needs=building_needs)
-    man.troop_manager = types.SimpleNamespace(total_troops={})
+    man.troop_manager = types.SimpleNamespace(
+        wanted=wanted or {}, total_troops=total_troops or {}
+    )
     man.building_level = 1
     man.wanted = 0
     man.mint_only = True
@@ -158,6 +161,41 @@ def test_nao_cunha_enquanto_a_fila_de_construcao_tem_fome():
     man = _manager(building_needs={"wood": 5000})
     assert man.run() is False
     assert man.wrapper.gets == [], "nem deveria abrir a tela da academia"
+
+
+def test_nao_cunha_com_a_tropa_abaixo_do_template():
+    """
+    A aldeia de torre e' tambem aldeia de suporte: `watchtower_support.txt`
+    pede 150 -> 500 -> 1350 de cavalaria pesada. Recurso que falta para o
+    estabulo nao pode virar moeda.
+    """
+    man = _manager(
+        wanted={"stable": {"heavy": 500}}, total_troops={"heavy": 300}
+    )
+    assert man.run() is False
+    assert not _mintou(man)
+
+
+def test_perda_de_tropa_em_suporte_fecha_a_cunhagem():
+    """
+    `total_troops` vem da coluna "total" da tela de unidades, que conta a tropa
+    fora dando suporte -- entao perder cavalaria apoiando alguem derruba o
+    numero e a moeda para, ate' repor.
+    """
+    completa = _manager(wanted={"stable": {"heavy": 500}}, total_troops={"heavy": 500})
+    assert completa.run() is True
+
+    apos_perda = _manager(
+        wanted={"stable": {"heavy": 500}}, total_troops={"heavy": 380}
+    )
+    assert apos_perda.run() is False
+
+
+def test_estagio_de_template_sem_tropa_nao_bloqueia():
+    """Primeiro estagio de `watchtower_support.txt` e' `build: {}` -- sem unidade
+    pedida nao ha' o que repor."""
+    man = _manager(wanted={"stable": {}}, total_troops={})
+    assert man.run() is True
 
 
 def test_pop_pendente_nao_bloqueia():
@@ -245,7 +283,7 @@ def _village(snobs=0, mint_coins=False, snob_level=1):
         wrapper=FakeWrapper(),
         builder=FakeBuilder(snob_level=snob_level),
         snobman=None,
-        units=types.SimpleNamespace(total_troops={}),
+        units=types.SimpleNamespace(wanted={}, total_troops={}),
         resman=FakeResman(),
     )
     vil.get_village_config = types.MethodType(Village.get_village_config, vil)

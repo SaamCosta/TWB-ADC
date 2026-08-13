@@ -1052,7 +1052,7 @@ cunha pelo caminho normal. `SnobManager` ganhou `mint_only` e o método
 `mint_coins()`, que vai direto ao `coin_item()` sem passar por
 `attempt_recruit()`.
 
-**Duas guardas que definem o que "excedente" significa aqui:**
+**Três guardas que definem o que "excedente" significa aqui:**
 1. **`builder_is_short()`** — não cunha enquanto `resman.requested["building"]`
    ainda pede madeira/argila/ferro. `Village.run()` roda o builder antes do
    snob, então o dado é do ciclo corrente. `pop` fica de fora de propósito:
@@ -1060,9 +1060,39 @@ cunha pelo caminho normal. `SnobManager` ganhou `mint_only` e o método
    vigia não vai cunhar nada enquanto estiver sendo construída** (4,85M de
    recursos), que é exatamente o pedido — "produção extra durante a construção,
    moeda depois".
-2. **`request=False`** em `has_enough()` — em `mint_only` a aldeia cunha do que
+2. **`troops_are_short()`** — não cunha enquanto a aldeia estiver abaixo do que
+   o template de tropas pede. Ver a seção "a guarda que faltou", abaixo.
+3. **`request=False`** em `has_enough()` — em `mint_only` a aldeia cunha do que
    sobra e **não registra pedido no `ResourceManager`**. Sem isso o mercado
    compraria madeira para virar moeda, que é o oposto de excedente.
+
+### A guarda que faltou (mesma sessão, achada por pergunta do usuário)
+
+A primeira versão tinha só a guarda do construtor, e o usuário perguntou outra
+coisa — se a bandeira de velocidade de recrutamento não serviria para repor
+cavalaria pesada perdida em suporte. Serviria (ver Feature 32 no backlog), **e a
+pergunta expôs um furo aqui**: a aldeia de torre é também aldeia de suporte
+(`watchtower_support.txt` pede 150 → 500 → 1350 de `heavy`,
+`profile_templates.watchtower` tem `support_others: true`). Depois de perder
+tropa apoiando alguém, ela ia **cunhar moeda com o recurso que o estábulo
+precisava** — a guarda do construtor não vê fila de recrutamento.
+
+O caminho óbvio seria olhar `resman.requested["recruitment_*"]`, e ele é uma
+armadilha: `TroopManager.reserve_resources()` registra esse pedido sempre que a
+aldeia quer mais tropa do que consegue pagar **agora**, e numa aldeia subindo
+para 1.350 de cavalaria isso vale quase sempre — `mint_coins` ficaria inerte
+para sempre, exatamente na aldeia para a qual foi escrito. É o mesmo
+auto-bloqueio documentado na Feature 27.
+
+`troops_are_short()` compara `TroopManager.wanted` (`{prédio: {unidade: qtd}}`)
+com `total_troops`, que vem da coluna **"total"** da tela de unidades — e por
+isso conta a tropa que está fora dando suporte. Perder cavalaria em combate
+derruba esse número e fecha a cunhagem até o estábulo repor; ter a tropa toda
+fora, apenas emprestada, não fecha.
+
+**Ordem de prioridade resultante, explícita: prédio → tropa → moeda.**
+Consequência deliberada e visível: uma aldeia que nunca alcança o template de
+tropas nunca cunha. A moeda é o que sobra, não uma meta.
 
 Terceiro detalhe, menor mas com dente: `coin_item()` só marca `is_incomplete`
 quando `request=True`. `is_incomplete` significa "a aldeia está poupando para um
@@ -1079,9 +1109,10 @@ coagido com `or 0` — `snobs: null` chegava em `None > 0`, que é `TypeError`.
 `build.version` 3.4 → 3.5. `webmanager/helpfile.py` atualizado. Na config local,
 a BBM 002 (38409) foi para `snobs: 0` / `mint_coins: true`.
 
-**Validação:** `tests/test_snob_mint_only.py`, 15 testes sem rede — cunhagem com
-recurso suficiente, ausência total de `action=train`/`action=reserve`, as duas
-guardas, `pop` pendente não bloqueando, tela indisponível (`get_action` → `None`),
+**Validação:** `tests/test_snob_mint_only.py`, 18 testes sem rede — cunhagem com
+recurso suficiente, ausência total de `action=train`/`action=reserve`, as três
+guardas (incluindo a perda de tropa em suporte fechando a cunhagem), `pop`
+pendente não bloqueando, tela indisponível (`get_action` → `None`),
 mundo sem sistema de moeda, e a ligação em `village.py` (incluindo `snobs: null`).
 O fixture `SNOB_SCREEN` é recorte verbatim de
 `game.php?village=41123&screen=snob` do br143 buscado no dia — é dele que sai o

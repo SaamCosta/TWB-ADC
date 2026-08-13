@@ -119,7 +119,7 @@ help_file = {
     'village.gather_enabled': 'Use left-over units to gather additional resources',
     'village.gather_selection': 'The gather operation to perform (must be unlocked first)',
     'village.snobs': 'Number of nobles to maintain in this village',
-    'village.mint_coins': 'Mint gold coins without ever recruiting a noble (only applies when snobs is 0). Coins belong to the account, nobles cost this village\'s population - this is what a watchtower village should do. Only mints from surplus: never while the build queue still lacks resources, and never requests resources from the market',
+    'village.mint_coins': 'Mint gold coins without ever recruiting a noble (only applies when snobs is 0). Coins belong to the account, nobles cost this village\'s population - this is what a watchtower village should do. Only mints from surplus - the priority order is buildings, then troops, then coins: it never mints while the build queue still lacks resources or while the village is below its troop template (support losses included), and it never requests resources from the market',
     'village.evacuate_fragile_units_on_attack': 'Automatically evacuate fragile units (axe, noble) to nearby safe villages when under attack',
     'village.support_others': 'Allow sending automatic support to allied villages',
     'village.support_others_factor': 'Fraction of defensive units to use in support operations',

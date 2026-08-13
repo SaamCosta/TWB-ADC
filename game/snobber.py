@@ -201,6 +201,28 @@ class SnobManager:
         pending = self.resman.requested.get("building", {})
         return any(pending.get(resource, 0) > 0 for resource in ("wood", "stone", "iron"))
 
+    def troops_are_short(self):
+        """
+        True enquanto a aldeia ainda nao tem as tropas que o template pede.
+
+        `TroopManager.wanted` e' `{predio: {unidade: quantidade}}` e
+        `total_troops` vem da coluna "total" da tela de unidades -- ou seja,
+        conta tambem a tropa que esta' fora dando suporte. Perder cavalaria
+        pesada apoiando outra aldeia derruba esse numero, e a moeda para de ser
+        cunhada ate' o estabulo repor: o excedente que vira moeda e' o que
+        sobra *depois* do predio e da tropa, nessa ordem.
+
+        Consequencia deliberada: uma aldeia que nunca alcanca o template nunca
+        cunha. A moeda e' a ultima prioridade da aldeia, nao a primeira.
+        """
+        wanted = getattr(self.troop_manager, "wanted", None) or {}
+        totals = getattr(self.troop_manager, "total_troops", None) or {}
+        for per_building in wanted.values():
+            for unit, amount in per_building.items():
+                if int(totals.get(unit, 0)) < int(amount):
+                    return True
+        return False
+
     def mint_coins(self):
         """
         Cunha moeda de ouro sem nunca recrutar nobre.
@@ -216,6 +238,12 @@ class SnobManager:
             # O excedente e' o que sobra depois do predio. Enquanto a torre
             # esta' sendo construida, a aldeia nao tem excedente nenhum.
             self.logger.debug("Not minting coins, builder still needs resources")
+            return False
+        if self.troops_are_short():
+            # A aldeia de torre e' tambem uma aldeia de suporte: se ela perdeu
+            # cavalaria pesada apoiando alguem, o recurso e' do estabulo, nao
+            # da moeda.
+            self.logger.debug("Not minting coins, village is below its troop template")
             return False
         result = self.wrapper.get_action(action="snob", village_id=self.village_id)
         if result is None:
