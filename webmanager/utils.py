@@ -548,7 +548,17 @@ class ConquestReader:
         loyalty_after_nobles = loyalty_start - (hits_done * drop_per_noble)
 
         if last_hit_ts:
-            hours_elapsed = (datetime.datetime.now().timestamp() - last_hit_ts) / 3600.0
+            # last_hit_timestamp passou a ser o *pouso* do ultimo nobre
+            # (game/attack.py::_send_train, 2026-08-13), nao mais o envio.
+            # Enquanto o nobre voa esse timestamp esta no futuro, e sem o
+            # max(0, ...) o tempo decorrido ficaria negativo -- a tela
+            # mostraria lealdade abaixo da real, ou zero, para um alvo que
+            # ainda nem foi atingido. Antes do pouso nao ha regeneracao a
+            # contar: zero decorrido e a resposta certa, nao um acidente.
+            hours_elapsed = max(
+                0.0,
+                (datetime.datetime.now().timestamp() - last_hit_ts) / 3600.0
+            )
             loyalty_current = loyalty_after_nobles + (hours_elapsed * regen_per_hour)
         else:
             loyalty_current = loyalty_after_nobles

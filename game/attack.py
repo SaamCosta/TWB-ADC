@@ -68,6 +68,13 @@ class AttackManager:
         self._unknown_ignored = []
         self.targets = {}
         self.extra_farm = []
+        # Duracao (segundos) do ultimo attack() confirmado pelo servidor, ou
+        # None se o ultimo attack() falhou/nao foi enviado. Existe para o
+        # ConquestManager saber *quando o nobre pousa*, sem recalcular
+        # distancia x velocidade por conta propria (o jogo ja devolve o numero
+        # na tela de confirmacao, e e ele que manda). Ver
+        # ConquestManager._arrival_from_last_attack().
+        self.last_attack_duration = None
 
     def enough_in_village(self, units):
         """
@@ -410,6 +417,10 @@ class AttackManager:
         # ensure_attack_manager), inclusive durante paz forcada. Antes o
         # bloqueio vinha de o objeto simplesmente nao existir; agora precisa
         # ser explicito, senao Hunter/PvP atacariam dentro da janela de paz.
+        # Zerado a cada tentativa para que um caller nunca leia a duracao de um
+        # ataque anterior como se fosse a deste (ver last_attack_duration).
+        self.last_attack_duration = None
+
         if self.in_forced_peace:
             self.logger.info("[Attack] %s -> %s: forced peace active, not sending", self.village_id, vid)
             return "forced_peace"
@@ -455,6 +466,7 @@ class AttackManager:
         self.logger.info(
             "[Attack] %s -> %s duration %f.1 h", self.village_id, vid, duration / 3600
         )
+        self.last_attack_duration = duration
 
         confirm_data = {}
         for u in Extractor.attack_form(conf):
@@ -518,6 +530,63 @@ class ConquestCache:
             if data and data.get("status") in ("train_sent", "extra_pending"):
                 reserved.add(fname.replace(".json", ""))
         return reserved
+
+    @staticmethod
+    def nobles_in_flight(data, now=None):
+        """
+        Devolve os timestamps de chegada, ainda no futuro, dos nobres ja
+        enviados contra este alvo -- ou seja, os que estao voando agora.
+
+        Incidente de 2026-08-12 (Barbara #40314) que motivou o campo: um trem
+        de 4 nobres saiu as 11:54 e pousou as 15:37 deixando a lealdade em 11.
+        O bot estimava 0 e marcou o alvo como resolvido; depois, sem nenhuma
+        nocao de que ainda havia nobre a caminho, mandou um segundo trem e um
+        nobre extra. Resultado: o nobre das 23:28 conquistou a aldeia e sua
+        escolta virou guarnicao dela; o nobre das 00:00 chegou 32 minutos
+        depois, autoconquistou a aldeia (queimando uma moeda) e matou os 421
+        homens da propria guarnicao, perdendo mais 106 no combate.
+
+        Repare que isto NAO olha `status`. A trava anterior dependia de o
+        status estar correto, e o status era justamente o que estava errado --
+        o alvo estava marcado "complete" com nobre no ar. Chegada e um fato
+        temporal: ou o nobre pousou ou nao pousou.
+
+        Um `null` na lista significa "nobre enviado, chegada desconhecida":
+        Extractor.attack_duration() devolve 0 quando o regex nao casa (markup
+        novo, resposta truncada), e somar 0 a hora de envio faria o nobre
+        nascer "ja pousado" -- justamente o estado que causou o incidente.
+        Nesse caso o nobre conta como em voo indefinidamente (inf), e so a
+        confirmacao de posse (_target_is_mine, avaliada *antes* desta trava em
+        _handle_existing justamente por isso) ou uma limpeza manual pelo
+        dashboard (ConquestReader.force_clear) liberam o alvo. Travar e a
+        direcao segura: o custo de nao mandar nobre e esperar, o custo de
+        mandar em cima de outro ja foi medido em 527 tropas.
+        """
+        if not data:
+            return []
+        if now is None:
+            now = time.time()
+        pending = []
+        for ts in data.get("noble_arrivals", []):
+            if ts is None:
+                pending.append(float("inf"))
+            elif ts > now:
+                pending.append(ts)
+        return sorted(pending)
+
+    @staticmethod
+    def targets_with_nobles_in_flight(now=None):
+        """
+        Conjunto de target_ids com pelo menos um nobre ainda no ar, de
+        qualquer aldeia. Usado por find_target() para nunca eleger um alvo que
+        ja tem nobre a caminho, mesmo que o registro dele diga "complete".
+        """
+        in_flight = set()
+        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+            data = FileManager.load_json_file(f"cache/conquest/{fname}")
+            if ConquestCache.nobles_in_flight(data, now=now):
+                in_flight.add(fname.replace(".json", ""))
+        return in_flight
 
 
 class ConquestManager:
@@ -658,7 +727,13 @@ class ConquestManager:
         max_radius = min(cfg.get("max_radius", 20), self.MAX_RADIUS)
         min_pts = cfg.get("min_points", 100)
         max_pts = cfg.get("max_points", 3000)
-        reserved = ConquestCache.all_reserved()
+        # `all_reserved` filtra por status; `targets_with_nobles_in_flight`
+        # filtra por chegada. Precisamos dos dois porque foi exatamente a
+        # divergencia entre eles que causou o incidente de 2026-08-12: o
+        # registro de 40314 estava "complete" (logo, fora de all_reserved) com
+        # quatro nobres no ar, e find_target() reelegeu o mesmo alvo como se
+        # fosse novo, disparando um segundo trem inteiro.
+        reserved = ConquestCache.all_reserved() | ConquestCache.targets_with_nobles_in_flight()
 
         # Collect managed village locations for gap-filling score
         my_locations = self._get_managed_locations()
@@ -807,11 +882,68 @@ class ConquestManager:
     # Train dispatch
     # ------------------------------------------------------------------
 
+    def _arrival_of_last_attack(self):
+        """
+        Timestamp de chegada do ataque que o AttackManager acabou de enviar,
+        derivado da duracao que o proprio jogo devolveu na tela de
+        confirmacao. None quando essa duracao nao veio -- ver
+        ConquestCache.nobles_in_flight() para o que um None significa.
+
+        Nao recalculamos distancia x velocidade aqui de proposito: o servidor
+        ja aplica velocidade de mundo, bonus e arredondamento, e duplicar essa
+        conta seria uma segunda fonte de verdade para divergir da primeira.
+        """
+        duration = getattr(self._attack_manager, "last_attack_duration", None)
+        if not duration:
+            self.logger.warning(
+                "Conquest: o jogo nao devolveu a duracao do ataque -- registro "
+                "o nobre como em voo por tempo indeterminado"
+            )
+            return None
+        return int(time.time() + duration)
+
+    def _noble_flight_guard(self, target_id, conquest_data=None):
+        """
+        True se ja existe nobre nosso a caminho de target_id -- nesse caso
+        nenhum outro nobre pode sair para la, ponto.
+
+        A regra e por alvo e independe de o trem anterior ter dado certo. Se
+        deu errado, so o relatorio dira quanta lealdade sobrou, e ele so
+        existe depois do pouso. Se deu certo, a escolta do nobre vencedor vira
+        guarnicao da aldeia nova, e o nobre seguinte entra matando os
+        proprios companheiros (2026-08-12: 421 defensores e 106 atacantes
+        mortos, todos nossos, alem da moeda da autoconquista).
+        """
+        if conquest_data is None:
+            conquest_data = ConquestCache.get(target_id)
+        pending = ConquestCache.nobles_in_flight(conquest_data)
+        if not pending:
+            return False
+
+        first = pending[0]
+        if first == float("inf"):
+            self.logger.info(
+                "Conquest: %d nobre(s) a caminho de %s com chegada desconhecida "
+                "-- nao envio mais nenhum ate confirmar a posse da aldeia "
+                "(limpe pelo dashboard se souber que nao ha nada voando)",
+                len(pending), target_id
+            )
+        else:
+            self.logger.info(
+                "Conquest: %d nobre(s) ja a caminho de %s, proximo pouso em "
+                "%.1f min -- nao envio mais nenhum antes disso",
+                len(pending), target_id, (first - time.time()) / 60
+            )
+        return True
+
     def _send_train(self, target_id, cfg):
         """
         Builds and sends a 4-noble train to target_id.
         Divides available escort troops evenly across 4 attacks.
         """
+        if self._noble_flight_guard(target_id):
+            return False
+
         escort_per_attack = self._build_escort(cfg)
         if escort_per_attack is None:
             self.logger.warning(
@@ -831,6 +963,7 @@ class ConquestManager:
 
         loyalty_drop = cfg.get("loyalty_drop_per_noble", 25)
         hits_sent = 0
+        arrivals = []
 
         for i in range(self.TRAIN_SIZE):
             troops = dict(escort_per_attack)
@@ -838,6 +971,7 @@ class ConquestManager:
             result = self._attack_manager.attack(target_id, troops=troops)
             if result and result != "forced_peace":
                 hits_sent += 1
+                arrivals.append(self._arrival_of_last_attack())
                 # Deduct from troopmanager so next iteration sees updated counts
                 for unit, qty in escort_per_attack.items():
                     current = int(self.troopmanager.troops.get(unit, 0))
@@ -867,13 +1001,22 @@ class ConquestManager:
         target_meta = self._get_village_meta(target_id)
 
         loyalty_after = max(0, 100 - (hits_sent * loyalty_drop))
+        # last_hit_timestamp passa a ser o *pouso* do ultimo nobre, nao o
+        # envio. O campo sempre foi lido como "quando a lealdade comecou a
+        # regenerar" -- por attack.py::_handle_existing e por
+        # webmanager/utils.py::ConquestReader._estimate_loyalty -- mas era
+        # gravado na saida do trem, 3h41 antes do impacto no caso do
+        # incidente de 40314. Os dois consumidores queriam a chegada; agora
+        # recebem a chegada.
+        known_arrivals = [ts for ts in arrivals if ts]
         ConquestCache.set(target_id, {
             "reserved_by": self.village_id,
             "hits_done": hits_sent,
             "hits_needed": self.TRAIN_SIZE,
             "loyalty_after_train": loyalty_after,
             "loyalty_source": "estimate",
-            "last_hit_timestamp": int(time.time()),
+            "noble_arrivals": arrivals,
+            "last_hit_timestamp": max(known_arrivals) if known_arrivals else int(time.time()),
             "status": "train_sent" if hits_sent == self.TRAIN_SIZE else "extra_pending",
             "target_name": target_meta.get("name") or ("Bárbara #%s" % target_id),
             "target_points": target_meta.get("points"),
@@ -1164,14 +1307,20 @@ class ConquestManager:
 
         Priority order for loyalty source:
         1. Village ownership check (cache/villages/) — definitive proof
-        2. Real loyalty from noble attack report (reports.py extracts it)
-        3. Mathematical estimate (fallback)
+        2. Nobre ainda no ar — nao se estima nada antes do pouso
+        3. Real loyalty from noble attack report (reports.py extracts it)
+        4. Mathematical estimate (fallback)
         """
         target_id = conquest_data["target_id"]
         regen = cfg.get("loyalty_regen_per_hour", 1.5)
         loyalty_drop = cfg.get("loyalty_drop_per_noble", 25)
 
         # --- Priority 1: ownership check (prova dos 9) ---
+        # Precisa continuar sendo o primeiro, *antes* da trava de nobre em
+        # voo: quando a chegada e desconhecida (ETA null) a trava e
+        # permanente, e esta e a unica saida automatica dela. Com a ordem
+        # invertida o alvo ficaria preso para sempre mesmo depois de
+        # conquistado, e a unica saida seria limpar na mao pelo dashboard.
         if self._target_is_mine(target_id):
             self.logger.info(
                 "Conquest: target %s confirmed as ours via village cache — marking complete",
@@ -1184,7 +1333,16 @@ class ConquestManager:
             )
             return False
 
-        # --- Priority 2: real loyalty from report ---
+        # --- Priority 2: nobre em voo ---
+        # A aldeia ainda nao e nossa e ha nobre a caminho: nao ha decisao a
+        # tomar. Nem enviar outro (o que esta no ar pode resolver sozinho, e
+        # se ele conquistar a escolta dele vira guarnicao — o proximo nobre
+        # entraria matando os proprios), nem marcar "complete" (a conquista
+        # ainda nao aconteceu). So esperar o pouso.
+        if self._noble_flight_guard(target_id, conquest_data):
+            return False
+
+        # --- Priority 3: real loyalty from report ---
         real_loyalty = self._get_real_loyalty(target_id)
         last_hit = conquest_data.get("last_hit_timestamp", 0)
 
@@ -1199,7 +1357,7 @@ class ConquestManager:
                 target_id, real_loyalty, current_loyalty, hours_since_report
             )
         else:
-            # --- Priority 3: mathematical estimate ---
+            # --- Priority 4: mathematical estimate ---
             loyalty_after = conquest_data.get("loyalty_after_train", 0)
             hours_elapsed = (time.time() - last_hit) / 3600
             current_loyalty = min(100.0, loyalty_after + (hours_elapsed * regen))
@@ -1237,6 +1395,7 @@ class ConquestManager:
 
         if result and result != "forced_peace":
             new_loyalty = max(0.0, current_loyalty - loyalty_drop)
+            arrival = self._arrival_of_last_attack()
             ConquestCache.set(target_id, {
                 **conquest_data,
                 # .get("hits", ...) e fallback p/ arquivos antigos gravados
@@ -1245,12 +1404,24 @@ class ConquestManager:
                 "hits_needed": conquest_data.get("hits_needed", self.TRAIN_SIZE),
                 "loyalty_after_train": new_loyalty,
                 "loyalty_source": loyalty_source,
-                "last_hit_timestamp": int(time.time()),
-                "status": "extra_pending" if new_loyalty > 0 else "complete",
+                # Só este nobre: chegamos aqui através de _noble_flight_guard,
+                # que garante que todos os anteriores já pousaram.
+                "noble_arrivals": [arrival],
+                "last_hit_timestamp": arrival or int(time.time()),
+                # Nunca "complete" aqui. O nobre acabou de sair e leva horas
+                # para pousar; marcar a conquista como resolvida no envio foi
+                # o que pintou a aldeia de verde no dashboard às 20:19:37 de
+                # 2026-08-12 com o nobre ainda no mapa, e o que fez o alvo
+                # deixar de ser rastreado. Quem fecha é _target_is_mine() ou a
+                # lealdade zerada *depois* do pouso, no topo deste método.
+                "status": "extra_pending",
             })
             self.logger.info(
-                "Conquest: extra noble sent to %s, estimated loyalty now %.1f",
-                target_id, new_loyalty
+                "Conquest: extra noble sent to %s, estimated loyalty now %.1f "
+                "(pouso em %s)",
+                target_id, new_loyalty,
+                datetime.fromtimestamp(arrival).strftime("%H:%M:%S")
+                if arrival else "horário desconhecido"
             )
             return True
 
