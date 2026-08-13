@@ -1312,7 +1312,7 @@ class ConquestManager:
         4. Mathematical estimate (fallback)
         """
         target_id = conquest_data["target_id"]
-        regen = cfg.get("loyalty_regen_per_hour", 1.5)
+        regen = cfg.get("loyalty_regen_per_hour", 1)
         loyalty_drop = cfg.get("loyalty_drop_per_noble", 25)
 
         # --- Priority 1: ownership check (prova dos 9) ---

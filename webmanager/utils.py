@@ -508,7 +508,7 @@ class ConquestReader:
         "hits_needed": 4,
         "loyalty_start": 100,
         "loyalty_drop_per_noble": 25,
-        "loyalty_regen_per_hour": 1.5,
+        "loyalty_regen_per_hour": 1,
         "last_hit_timestamp": 1718000000,
         "target_name": "Barbarian village",
         "target_points": 800,
@@ -542,7 +542,7 @@ class ConquestReader:
         loyalty_start       = data.get("loyalty_start", 100)
         hits_done           = data.get("hits_done", 0)
         drop_per_noble      = data.get("loyalty_drop_per_noble", 25)
-        regen_per_hour      = data.get("loyalty_regen_per_hour", 1.5)
+        regen_per_hour      = data.get("loyalty_regen_per_hour", 1)
         last_hit_ts         = data.get("last_hit_timestamp", None)
 
         loyalty_after_nobles = loyalty_start - (hits_done * drop_per_noble)

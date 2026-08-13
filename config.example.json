@@ -106,7 +106,7 @@
     "priority": "fill_gaps",
     "min_points": 100,
     "max_points": 3000,
-    "loyalty_regen_per_hour": 1.5,
+    "loyalty_regen_per_hour": 1,
     "loyalty_drop_per_noble": 25,
     "escort_ratio": 0.5,
     "min_escort": {},

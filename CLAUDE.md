@@ -175,6 +175,23 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
   `night.active` (0 = off, 1 = janela fixa do mundo, 2 = janela escolhida por
   cada jogador) e o `<duration>` constante saíram do "desconhecido". Tabelas
   completas no Lote 7 de `docs/auditoria_codigo_2026-08-08.md`.
+  **Quarta metade, cometida em 2026-08-13 — a nota acima já existia e mesmo
+  assim não me salvou.** Procurei a regeneração de lealdade
+  (`conquest.loyalty_regen_per_hour`, que valia 1.5), não achei campo
+  correspondente em `get_config`, e concluí em voz alta que "não tem fonte
+  verificável no servidor", propondo ao usuário medir na mão dentro do jogo. O
+  valor estava publicado em português, numa tabela, em `/page/settings`:
+  *"Aumento de lealdade por hora: 1"* — 50% abaixo do que o config assumia. O
+  usuário teve que mandar o print.
+  A lição anterior dizia "cruze os dois lados"; eu li isso como *"use
+  `/page/settings` para traduzir um enum que já achei em `get_config`"*, e não
+  como o que ela também diz: **`get_config` e `/page/settings` não expõem o
+  mesmo conjunto de campos.** Ausência em `get_config` não é ausência no
+  servidor. `/page/settings` é a página que fala a língua do jogador, então um
+  parâmetro de regra tende a aparecer lá com nome legível mesmo quando não há
+  tag XML para ele. Regra prática: **"não achei" só vale como conclusão depois
+  de dizer onde procurou** — e para número de mundo isso significa citar as
+  duas fontes, não uma.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
