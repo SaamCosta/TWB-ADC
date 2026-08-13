@@ -243,7 +243,7 @@ fazenda 30** em nenhuma configuração testada. Folga final: 261 pop.
 
 ### Pendências
 
-1. **Cunhagem de moeda depende de `snobs > 0`** (ver Feature 24 em
+1. **Cunhagem de moeda depende de `snobs > 0`** (ver Feature 30 em
    `docs/features_log.md`). A BBM 002 está com `snobs: 4` = 400 pop de nobres,
    que **não cabem** no orçamento acima. Só morde quando a academia ficar
    pronta, por volta do dia 25.
@@ -252,12 +252,17 @@ fazenda 30** em nenhuma configuração testada. Folga final: 261 pop.
    Numa aldeia que vive com cavalaria emprestada, isso decide se o alvo de 1350
    é "no total" ou "em casa" — e no segundo caso o teto de população estoura.
    Só verificável com o HTML real de `place&mode=units` com suporte em trânsito.
-3. `watchtower.enabled` segue `false`: a Feature 24 não vai designar torres
+3. **Fase 2 não iniciada** — planejamento *proativo* de sítios de torre
+   (procurar no mapa onde a próxima torre deveria ficar e alimentar isso na
+   seleção de alvos de conquista), registrada como **Feature 31** em
+   `docs/backlog.md`. A Feature 30 é só reativa: opina sobre aldeia já
+   conquistada, não sobre o que conquistar.
+4. `watchtower.enabled` segue `false`: a Feature 30 não vai designar torres
    novas até ser ligada.
 
 ## 7. Espaçamento entre torres — de onde vem o `min_spacing: 16`
 
-Levantado em 2026-08-13 para a Feature 24 (alocação territorial de aldeias de
+Levantado em 2026-08-13 para a Feature 30 (alocação territorial de aldeias de
 torre). A pergunta: qual a distância mínima entre duas torres para que a
 segunda não seja redundante?
 

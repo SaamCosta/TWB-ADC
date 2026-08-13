@@ -900,6 +900,81 @@ outro sistema, só falta de retry/sinalização de erro.
 
 ---
 
+## Feature 30 — Alocação territorial de aldeias de torre de vigia (fase 1) ✅ Implementado (2026-08-13)
+
+Nasceu direto da conversa, sem passar pelo backlog. Detalhe completo em
+`docs/features_log.md` e `docs/watchtower.md`. Resumo: a aldeia de torre sai da
+proporção ofensiva/defensiva do `empire` (`Village.NON_RATIO_PROFILES`) e passa
+a ser alocada por distância até as torres existentes
+(`watchtower.min_spacing`, padrão 16). A primeira torre é sempre manual.
+A continuação é a Feature 31 abaixo.
+
+## Feature 31 — Planejamento proativo de sítios de torre de vigia (fase 2)
+
+**Status:** não iniciada. É a **fase 2** da alocação territorial de torres; a
+fase 1 foi implementada em 2026-08-13 como **Feature 30** (ver
+`docs/features_log.md` e `docs/watchtower.md`).
+
+**Contexto mínimo para começar do zero.** A torre de vigia marca todo ataque que
+entra no seu raio com tamanho do exército e flag de nobre, inclusive ataques que
+apenas atravessam o raio. Raio 15,0 campos no nível 20, ao custo de **11.607 de
+população** (≈48% de uma fazenda 30) e **4,85M de recursos**. Por isso a aldeia
+de torre é alocada por **território**, não pela proporção ofensiva/defensiva do
+`empire` — e a Feature 30 a exclui dessa proporção via
+`Village.NON_RATIO_PROFILES`. Tabela completa de custo/pop/raio por nível na
+seção 3 de `docs/watchtower.md`.
+
+**O que a fase 1 já faz (`game/village.py`):** dentro de
+`apply_nearest_village_inheritance`, quando uma aldeia é **recém-conquistada** e
+o modo de herança é `empire_ratio`, `needs_watchtower(config, x, y)` verifica se
+ela está a ≥ `watchtower.min_spacing` (padrão 16) de toda torre existente. Se
+estiver, ela recebe `profile: "watchtower"` e os templates
+`watchtower_support`. A primeira torre é sempre manual, de propósito.
+
+**O gap.** A fase 1 é puramente **reativa**: ela só opina sobre aldeias que você
+já conquistou. Ela não responde *"onde a próxima torre deveria ficar"*, nem
+influencia **o que conquistar** para fechar a malha de cobertura. Formulação do
+usuário (2026-08-13): o bot precisa pensar *"essa aldeia aqui não vai ficar no
+range da torre — ela deve ser uma aldeia de torre, ou devo procurar no mapa a
+próxima aldeia de torre e colocar na lista?"*.
+
+**Escopo proposto:**
+1. Calcular os pontos descobertos do império (fora do raio de toda torre) e
+   propor coordenadas de sítio que fechem a malha, respeitando `min_spacing`.
+2. Cruzar esses sítios com aldeias reais no mapa (bárbaras ou alvos de conquista
+   PvP), produzindo uma **lista priorizada de alvos de conquista** em vez de só
+   um ponto geométrico.
+3. Alimentar essa lista no `ConquestManager` (bárbaras, Feature 8) e/ou no
+   `PvpConquestManager` (Feature 13) como prioridade de alvo.
+4. Persistir os sítios planejados em cache para não recalcular a cada ciclo.
+
+**Insumos que já existem:** `game/map.py` (`Map`), `game/zone_manager.py`
+(clustering geográfico, Feature 11), `Village.get_watchtower_sites(config)` da
+fase 1. O mapa público do mundo sai de `https://<mundo>/map/village.txt.gz`
+(id,nome,x,y,player,pontos,rank — sem autenticação), que foi o que se usou para
+calibrar o `min_spacing`.
+
+**Por que `min_spacing` é 16, e a armadilha a não repetir.** O ótimo hexagonal
+de cobertura é `d = R√3 = 25,98` — o maior espaçamento sem buraco. **É uma
+armadilha:** nesse espaçamento o ponto pior fica exatamente a `R` da torre mais
+próxima, ou seja o ataque é marcado no instante em que aterrissa. Aquilo
+maximiza **área** e zera **tempo de aviso**, que é o produto real da torre.
+Simulação contra o mapa real do br143 (seção 7 de `docs/watchtower.md`): com 26
+campos, um terço de um império de 67 aldeias fica cego; com 16, cobertura total
+e décimo percentil de aviso em 92 minutos. **Qualquer heurística nova de
+posicionamento deve ser avaliada por tempo de aviso, não por área coberta.**
+
+**Prioridade:** baixa enquanto o império tiver menos de ~40 aldeias — abaixo
+disso o `min_spacing` nem morde (de 14 a 26 tudo resulta em 1 torre). Ganha
+urgência conforme a expansão multidirecional avança.
+
+**Cuidado de escopo:** mexe em decisão de conquista, que move tropa real. O
+`CLAUDE.md` pede cautela extra em `AttackManager`/`ConquestManager`. Convém
+entregar primeiro como **sugestão em log/cache** (sem alterar alvos), e só
+depois ligar na seleção de alvos.
+
+---
+
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
 - **Auditar `village_template` contra tudo que o código lê por aldeia**

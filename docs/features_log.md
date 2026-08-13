@@ -972,7 +972,7 @@ devolveu `None` com o arquivo em `train_sent` e mtime de 11:56, e o
 descobri por quê. A trava do item 1 segura o estrago por não depender do
 status — mas isso é robustez, não diagnóstico.
 
-## 2026-08-13 — Feature 24: alocação territorial de aldeias de torre de vigia
+## 2026-08-13 — Feature 30: alocação territorial de aldeias de torre de vigia
 
 **Problema.** Uma aldeia de torre de vigia é defensiva por natureza, mas a
 necessidade dela é **territorial** (cobrir raio), não numérica. Se ela contasse

@@ -25,7 +25,7 @@ from core.exceptions import *
 
 
 class Village:
-    # Feature 24: perfis que NAO entram na proporcao ofensiva/defensiva do
+    # Feature 30: perfis que NAO entram na proporcao ofensiva/defensiva do
     # imperio (config `empire`). Ver get_needed_profile() para o porque.
     # Tupla, nao lista: constante de classe compartilhada, e imutavel evita o
     # primeiro padrao de bug do CLAUDE.md.
@@ -1017,7 +1017,7 @@ class Village:
         Feature 7: Calculates which profile (offensive/defensive) the next village
         should receive in order to maintain the configured empire ratio.
 
-        Feature 24: villages whose profile is in NON_RATIO_PROFILES (today just
+        Feature 30: villages whose profile is in NON_RATIO_PROFILES (today just
         "watchtower") are skipped on BOTH sides of the count. A watchtower
         village is defensive by nature, but its purpose is territorial (cover a
         radius), not numerical -- counting it as defensive would make the bot
@@ -1058,7 +1058,7 @@ class Village:
     @staticmethod
     def get_watchtower_sites(config):
         """
-        Feature 24: [(village_id, x, y)] of every village already designated as a
+        Feature 30: [(village_id, x, y)] of every village already designated as a
         watchtower village.
 
         Coordinates are not in config.json -- only the profile is. They come from
@@ -1083,7 +1083,7 @@ class Village:
     @staticmethod
     def needs_watchtower(config, my_x, my_y):
         """
-        Feature 24: decides whether a newly conquered village should become a
+        Feature 30: decides whether a newly conquered village should become a
         watchtower village. The criterion is purely territorial: the village is
         farther than watchtower.min_spacing from EVERY existing tower, i.e. it
         sits outside the area they already watch.
@@ -1249,7 +1249,7 @@ class Village:
                     self.village_id, my_zone
                 )
 
-        # Feature 24: territorial override. Decided before the ratio because a
+        # Feature 30: territorial override. Decided before the ratio because a
         # watchtower village is allocated by geography, not by count -- see
         # needs_watchtower(). Scoped to empire_ratio mode: the other inheritance
         # modes do not assign profiles at all.
