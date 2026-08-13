@@ -1028,7 +1028,8 @@ conquista), retrocompatibilidade de perfil ausente, guarda de divisão por zero,
 primeira torre nunca automática, limiar de espaçamento contra as coordenadas
 reais da BBM 002, distância euclidiana nos dois eixos. Nenhum envio ao jogo.
 
-⚠️ **Achado colateral não resolvido: cunhagem de moeda depende de querer nobre.**
+⚠️ **Achado colateral — ✅ resolvido em 2026-08-13, ver a seção seguinte
+(`mint_coins`).** Texto original do achado:
 `SnobManager.run()` só chega em `coin_item()` através de `attempt_recruit()`,
 dentro de `if self.wanted > 0`; e `village.py:455` nem instancia o SnobManager
 quando `snobs` é `0`, porque testa o valor por veracidade e `0` é falsy. Ou
@@ -1036,6 +1037,69 @@ seja, **`snobs: 0` desliga a cunhagem junto** — não existe modo "cunhar moeda
 sem recrutar nobre". Eu tinha posto `snobs: 0` em
 `profile_templates.watchtower` e tirei: decidir isso em silêncio mataria a
 única razão de a academia existir nessa aldeia. Fica em aberto.
+
+## 2026-08-13 (b) — `mint_coins`: cunhar moeda sem nunca recrutar nobre
+
+Fecha o achado colateral acima. **Decisão do usuário:** a aldeia de torre de
+vigia cunha moeda e nunca recruta nobre. A assimetria que justifica isso: a
+**moeda é da conta inteira**, o **nobre custa população da aldeia** — e a torre
+nível 20 já leva 11.607 de população. Cunhar lá é ganho do império; nobrar lá é
+gastar o recurso mais escasso da única aldeia que não pode gastá-lo.
+
+**Nova chave por aldeia `mint_coins`** (default `false`), lida em
+`Village.run_snob_recruit()`. Só vale quando `snobs` é 0 — quem recruta já
+cunha pelo caminho normal. `SnobManager` ganhou `mint_only` e o método
+`mint_coins()`, que vai direto ao `coin_item()` sem passar por
+`attempt_recruit()`.
+
+**Duas guardas que definem o que "excedente" significa aqui:**
+1. **`builder_is_short()`** — não cunha enquanto `resman.requested["building"]`
+   ainda pede madeira/argila/ferro. `Village.run()` roda o builder antes do
+   snob, então o dado é do ciclo corrente. `pop` fica de fora de propósito:
+   população não é recurso que a moeda dispute. Efeito prático: **a torre de
+   vigia não vai cunhar nada enquanto estiver sendo construída** (4,85M de
+   recursos), que é exatamente o pedido — "produção extra durante a construção,
+   moeda depois".
+2. **`request=False`** em `has_enough()` — em `mint_only` a aldeia cunha do que
+   sobra e **não registra pedido no `ResourceManager`**. Sem isso o mercado
+   compraria madeira para virar moeda, que é o oposto de excedente.
+
+Terceiro detalhe, menor mas com dente: `coin_item()` só marca `is_incomplete`
+quando `request=True`. `is_incomplete` significa "a aldeia está poupando para um
+nobre" e, com `prioritize_snob` ligado, **barra todo o recrutamento da aldeia**;
+em `mint_only` não há nobre a caminho, então faltar recurso para a moeda não
+pode travar as tropas.
+
+Trocado `self.builder.levels["snob"]` por `get_level("snob")` no gate (o
+primeiro levanta `KeyError` em aldeia sem academia) e `snobs` passou a ser
+coagido com `or 0` — `snobs: null` chegava em `None > 0`, que é `TypeError`.
+
+**Config:** `village_template.mint_coins` (false) e
+`profile_templates.watchtower` agora com `snobs: 0` + `mint_coins: true`.
+`build.version` 3.4 → 3.5. `webmanager/helpfile.py` atualizado. Na config local,
+a BBM 002 (38409) foi para `snobs: 0` / `mint_coins: true`.
+
+**Validação:** `tests/test_snob_mint_only.py`, 15 testes sem rede — cunhagem com
+recurso suficiente, ausência total de `action=train`/`action=reserve`, as duas
+guardas, `pop` pendente não bloqueando, tela indisponível (`get_action` → `None`),
+mundo sem sistema de moeda, e a ligação em `village.py` (incluindo `snobs: null`).
+O fixture `SNOB_SCREEN` é recorte verbatim de
+`game.php?village=41123&screen=snob` do br143 buscado no dia — é dele que sai o
+custo real da moeda, 28.000/30.000/25.000. **Pendente de validação em campo**, e
+inerte até a BBM 002 ter academia (o `watchtower_support.txt` constrói `snob:1`
+antes dos níveis de torre).
+
+⚠️ **Achado ao ler a tela real: o jogo tem cunhagem automática nativa.** A tela
+de academia traz um bloco "Criação automática" — *"Quando ativada, a
+disponibilidade de recursos nesta aldeia será usada para cunhar moedas de ouro.
+Assim que houver recursos suficientes para uma moeda de ouro, ela será cunhada
+automaticamente."* É um `<form method="post">` para
+`action=start_auto_minting_session&h=<token>`, sem campos, com **duração de 8h**.
+Ou seja: um POST a cada 8h substituiria a cunhagem por ciclo, e pegaria o recurso
+no instante em que ele basta em vez de na próxima passagem do bot. **Não foi
+usado** por dois motivos: não tem a guarda do construtor (durante a obra da torre
+ela cunharia justamente o que o prédio precisa), e não confirmei se depende de
+conta premium. Registrado como Feature 33 no backlog.
 
 ## Ambiente de referência
 

@@ -21,6 +21,7 @@ class SnobManager:
     building_level = 0
     is_incomplete = False
     using_coin_system = False
+    mint_only = False
 
     def level_system(self):
         """
@@ -144,7 +145,7 @@ class SnobManager:
             self.is_incomplete = True
             return False
 
-    def coin_item(self, result):
+    def coin_item(self, result, request=True):
         """
         Tries to create a new gold coin
         """
@@ -157,34 +158,86 @@ class SnobManager:
         raw_coin = storage_re.group(1)
         data = json.loads(raw_coin)
 
-        if self.has_enough(data):
+        if self.has_enough(data, request=request):
             get_post = f"game.php?village={self.village_id}&screen=snob&action=coin"
             data = {"coin_mint_count": "1", "count": "1", "h": self.wrapper.last_h}
             self.wrapper.post_url(url=get_post, data=data)
             return True
         else:
-            self.is_incomplete = True
+            # is_incomplete e' "a aldeia esta' poupando para um nobre": com
+            # prioritize_snob ligado ele barra todo o recrutamento da aldeia
+            # (village.py). Em mint_only nao ha' nobre nenhum a caminho, entao
+            # faltar recurso para a moeda nao pode travar as tropas da aldeia.
+            if request:
+                self.is_incomplete = True
             return False
 
-    def has_enough(self, build_item):
+    def has_enough(self, build_item, request=True):
         """
         Checks if there are enough resources available
-        If not, they will be requested from resources
+        If not, they will be requested from resources (unless request=False)
         """
         r = True
-        if build_item["wood"] > self.resman.actual["wood"]:
-            req = build_item["wood"] - self.resman.actual["wood"]
-            self.resman.request(source="snob", resource="wood", amount=req)
-            r = False
-        if build_item["stone"] > self.resman.actual["stone"]:
-            req = build_item["stone"] - self.resman.actual["stone"]
-            self.resman.request(source="snob", resource="stone", amount=req)
-            r = False
-        if build_item["iron"] > self.resman.actual["iron"]:
-            req = build_item["iron"] - self.resman.actual["iron"]
-            self.resman.request(source="snob", resource="iron", amount=req)
-            r = False
+        for resource in ("wood", "stone", "iron"):
+            if build_item[resource] > self.resman.actual[resource]:
+                if request:
+                    req = build_item[resource] - self.resman.actual[resource]
+                    self.resman.request(
+                        source="snob", resource=resource, amount=req
+                    )
+                r = False
         return r
+
+    def builder_is_short(self):
+        """
+        True enquanto a fila de construcao ainda nao tem madeira/argila/ferro
+        para o proximo item.
+
+        `BuildingManager` registra o que falta em `resman.requested["building"]`
+        e `Village.run()` roda o builder antes do snob, entao o dado e' deste
+        ciclo. `pop` fica de fora de proposito: populacao nao e' recurso que a
+        moeda dispute nem que o mercado compre.
+        """
+        pending = self.resman.requested.get("building", {})
+        return any(pending.get(resource, 0) > 0 for resource in ("wood", "stone", "iron"))
+
+    def mint_coins(self):
+        """
+        Cunha moeda de ouro sem nunca recrutar nobre.
+
+        A moeda e' da conta inteira, o nobre e' da aldeia -- e a aldeia de torre
+        de vigia existe para cobrir territorio, nao para nobrar (11.607 de
+        populacao no nivel 20 nao deixa margem). Ate' aqui esse modo nao
+        existia: `run()` so' alcancava `coin_item()` atraves de
+        `attempt_recruit()`, dentro de `if self.wanted > 0`, entao cunhar era
+        efeito colateral de querer um nobre e `snobs: 0` desligava os dois.
+        """
+        if self.builder_is_short():
+            # O excedente e' o que sobra depois do predio. Enquanto a torre
+            # esta' sendo construida, a aldeia nao tem excedente nenhum.
+            self.logger.debug("Not minting coins, builder still needs resources")
+            return False
+        result = self.wrapper.get_action(action="snob", village_id=self.village_id)
+        if result is None:
+            self.logger.warning(
+                "Snob screen request failed (timeout / non-200), skipping mint this cycle"
+            )
+            return False
+        if '"id":"coin"' in result.text:
+            self.using_coin_system = True
+        if not self.using_coin_system:
+            # Mundo sem moeda: o nobre sai de recurso guardado na propria
+            # aldeia (action=reserve), e guardar so' faz sentido para quem vai
+            # recrutar -- que e' exatamente o que mint_coins existe para nao
+            # fazer.
+            self.logger.warning(
+                "mint_coins is on but this world does not use the gold coin system, nothing to do"
+            )
+            return False
+        self.resman.update(Extractor.game_state(result))
+        # request=False: em mint_only a aldeia cunha do que sobra, ela nao pede
+        # recurso ao mercado/outras aldeias para cunhar.
+        return self.coin_item(result.text, request=False)
 
     def run(self):
         """
@@ -194,6 +247,8 @@ class SnobManager:
             return False
         if self.building_level == 0:
             return False
+        if self.mint_only:
+            return self.mint_coins()
         if self.wanted > 0:
             if "snob" not in self.troop_manager.total_troops:
                 return self.attempt_recruit(amount=self.wanted)

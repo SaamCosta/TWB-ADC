@@ -459,19 +459,27 @@ class Village:
         """
         Uses the snob to mint coins, store resources and recruit snobs
         """
-        if (
-                self.get_village_config(self.village_id, parameter="snobs", default=None)
-                and self.builder.levels["snob"] > 0
-        ):
+        wanted = self.get_village_config(
+            self.village_id, parameter="snobs", default=0
+        ) or 0
+        # A moeda de ouro e' da conta inteira, o nobre custa populacao da
+        # aldeia -- entao a aldeia de torre de vigia deve cunhar e nunca
+        # recrutar. Antes de mint_coins isso era impossivel de expressar:
+        # `snobs: 0` desligava a cunhagem junto (SnobManager.run() so' chegava
+        # em coin_item() atraves de attempt_recruit()), e esta funcao nem
+        # instanciava o manager, porque testava `snobs` por veracidade.
+        mint_only = not wanted and self.get_village_config(
+            self.village_id, parameter="mint_coins", default=False
+        )
+        if (wanted or mint_only) and self.builder.get_level("snob") > 0:
             if not self.snobman:
                 self.snobman = SnobManager(
                     wrapper=self.wrapper, village_id=self.village_id
                 )
                 self.snobman.troop_manager = self.units
                 self.snobman.resman = self.resman
-            self.snobman.wanted = self.get_village_config(
-                self.village_id, parameter="snobs", default=0
-            )
+            self.snobman.wanted = wanted
+            self.snobman.mint_only = bool(mint_only)
             self.snobman.building_level = self.builder.get_level("snob")
             self.snobman.run()
 

@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.4",
+    "version": "3.5",
     "author": "stefan2200"
   },
   "server": {
@@ -81,7 +81,9 @@
       "building": "watchtower_support",
       "units": "watchtower_support",
       "support_others": true,
-      "prioritize_building": true
+      "prioritize_building": true,
+      "snobs": 0,
+      "mint_coins": true
     }
   },
   "village_template": {
@@ -102,6 +104,7 @@
     "gather_selection": 1,
     "advanced_gather": true,
     "snobs": 0,
+    "mint_coins": false,
     "evacuate_fragile_units_on_attack": false,
     "evacuate_on_zone_attack": false,
     "zone_attack_threshold": 1,

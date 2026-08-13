@@ -3,8 +3,11 @@
 Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27` (✅ todas)
 
 Pendentes: **25** (inventário/boosts), **26** (envio em lote `train[N][unit]`)
-— ambas precisam de levantamento em campo antes de virar tarefa — e **28**
-(farm automático de aldeias de jogador), que precisa de desenho dos filtros.
+— ambas precisam de levantamento em campo antes de virar tarefa —, **28**
+(farm automático de aldeias de jogador), que precisa de desenho dos filtros,
+**29** (janela de bônus noturno do defensor), **31** (sítios de torre, fase 2),
+**32** (bandeira por perfil e fase da aldeia) e **33** (cunhagem automática
+nativa).
 
 ## Fila da auditoria de código
 
@@ -972,6 +975,110 @@ urgência conforme a expansão multidirecional avança.
 `CLAUDE.md` pede cautela extra em `AttackManager`/`ConquestManager`. Convém
 entregar primeiro como **sugestão em log/cache** (sem alterar alvos), e só
 depois ligar na seleção de alvos.
+
+## Feature 32 — Bandeira escolhida por perfil e por fase da aldeia
+
+**Origem:** conversa de 2026-08-13, na esteira da decisão de `mint_coins` (ver
+`docs/features_log.md`). Formulação do usuário: *"as aldeias de torre só
+precisam de produção de recursos extra durante o processo de construção; no
+final, ela pode se beneficiar de um sistema de seleção de bandeiras diferentes —
+talvez velocidade de recrutamento, população extra e até a de redução de custo
+de moedas"*.
+
+**O que existe hoje.** `DefenceManager.flag_logic()` funciona e é chamada todo
+ciclo, mas escolhe entre **dois** ids fixos, declarados como atributo de classe
+em `game/defence_manager.py:65-67`: `set_flag_not_under_attack = 1` (produção) e
+`set_flag_under_attack = 4` (defesa). Não são config, não são por aldeia, não
+são por perfil. `FLAG_TYPES` (mesmo arquivo, linha 13) **já mapeia os 8 tipos**
+— o mapeamento não é o que falta; falta quem escolha entre eles.
+
+Os 8 tipos, com os que interessam a esta feature em negrito (tabela completa em
+`docs/bugs_flags.md`): 1 produção, **2 recrutamento**, 3 ataque, 4 defesa,
+5 sorte, **6 população**, **7 custo de cunhagem**, 8 saque.
+
+**A ideia nova, e o que ela tem de diferente.** Não é só "bandeira por perfil"
+(ofensiva → ataque, defensiva → defesa). É **bandeira por fase**: a mesma aldeia
+quer coisas diferentes em momentos diferentes da própria vida. A aldeia de torre
+é o caso limpo:
+
+| Fase | O que ela está fazendo | Bandeira |
+|---|---|---|
+| Construção (4,85M de recursos, meses) | acumulando recurso para a obra | 1 produção |
+| Gargalo de população | fazenda não acompanha a torre | 6 população |
+| Madura | excedente virando moeda (`mint_coins`) | 7 custo de cunhagem |
+
+A de recrutamento (2) é a que **não** casa com a torre — vale para a aldeia
+ofensiva montando trem de nobre, não para quem não recruta. Vale registrar como
+parte da mesma feature, mas sob outro gatilho.
+
+**O que precisa ser desenhado (não está resolvido):**
+- **Qual sinal marca a fase.** Candidatos que já existem: fila de construção
+  vazia/estável (`BuildingManager`), `resman.requested["building"]` (mesmo sinal
+  que `SnobManager.builder_is_short()` usa), nível da torre igual ao do template,
+  `pop` no limite. Escolher um sinal **legível e verificável**, não um heurístico
+  composto.
+- **Precedência contra a defesa.** Bandeira sob ataque (4) tem que continuar
+  vencendo qualquer preferência de fase — a humanização/otimização não pode
+  degradar reação defensiva (mesma regra da Feature 23).
+- **Custo da troca.** Existe cooldown de troca de bandeira (`_can_change_flag`,
+  e um cooldown de 24h observado em campo, ver `docs/bugs_flags.md`). Uma
+  política que oscile entre duas bandeiras gasta o cooldown e chega atrasada na
+  defesa. Trocar por fase é raro por natureza — mas a política tem que ser
+  escrita para ser rara, não só esperar que seja.
+- **Quanto cada bandeira vale de fato.** Os percentuais por nível não estão
+  levantados. Antes de otimizar, ler os números reais (a tela de bandeiras os
+  publica) em vez de assumir que "produção" e "custo de cunhagem" são
+  comparáveis.
+
+**Pré-requisito honesto:** os fixes dos Bugs 1 e 2 de bandeira (2026-08-02)
+**ainda não foram validados em campo**, e o bot hoje só equipa os tipos 1 e 4.
+Ligar mais tipos antes de confirmar que a troca não entra em loop é multiplicar
+um bug não confirmado por 4.
+
+**Prioridade:** baixa hoje, e a razão é concreta — a BBM 002 ainda não tem torre
+nenhuma construída, então a fase "madura" que esta feature otimiza não existe em
+campo. Ganha sentido junto com a Feature 31.
+
+## Feature 33 — Cunhagem automática nativa (`start_auto_minting_session`)
+
+**Origem:** achado ao ler a tela real da academia em 2026-08-13, implementando
+`mint_coins` (ver `docs/features_log.md`).
+
+**O que é.** A tela `screen=snob` do br143 tem um bloco "Criação automática":
+*"Quando ativada, a disponibilidade de recursos nesta aldeia será usada para
+cunhar moedas de ouro. Assim que houver recursos suficientes para uma moeda de
+ouro, ela será cunhada automaticamente."* É um `<form method="post">` sem campos
+para `game.php?village=<id>&screen=snob&action=start_auto_minting_session&h=<token>`,
+com **duração de 8h** anunciada ao lado do botão.
+
+**O ganho sobre o que acabou de ser implementado.** `mint_coins` cunha **uma
+moeda por ciclo do bot**, no momento em que o bot passa. A sessão nativa cunha
+**no instante em que o recurso basta**, sem requisição nenhuma no meio — um POST
+a cada 8h contra um GET+POST por ciclo. Numa aldeia madura de armazém grande a
+diferença é real.
+
+**Por que não foi usado agora, e o que confirmar antes:**
+1. **Não tem a guarda do construtor.** `mint_coins` não cunha enquanto
+   `resman.requested["building"]` pede recurso — é o que impede a torre de
+   comer o próprio orçamento de obra. A sessão nativa não sabe disso: uma vez
+   ativada, ela cunha assim que o recurso bate, obra ou não. Só faz sentido
+   **depois** que a construção termina, o que a amarra ao mesmo sinal de "fase"
+   da Feature 32.
+2. **Não confirmei se depende de conta premium.** O bloco traz um
+   `<span class="avail auto-minting-status" title="Disponibilidade">` cuja classe
+   sugere disponibilidade, e nenhum ícone de PP aparece no botão — mas isso é
+   leitura de indício, não confirmação. A Feature 22 já detecta premium
+   (`world.premium_account`); dá para cruzar.
+3. **Não capturei o POST real.** Mesma cautela da Feature 26: o form não tem
+   campos visíveis além do `h` na query string, mas isso foi lido do HTML, não
+   de uma captura de rede do envio. Ativar às cegas gasta recurso real.
+
+**Escopo proposto:** chave por aldeia (ex.: `mint_coins_auto`), só efetiva com
+`mint_coins` ligado; o bot reativa a sessão quando ela expira (persistir o
+`expires_at` estimado em cache, 8h após o POST) e **para de reativar** quando o
+construtor volta a pedir recurso.
+
+**Prioridade:** baixa — `mint_coins` já entrega o resultado, isto é eficiência.
 
 ---
 
