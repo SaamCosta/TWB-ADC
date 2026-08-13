@@ -143,7 +143,71 @@ Ordem sã: construir a torre em campo primeiro (ou pelo menos decidir construir)
 depois capturar o HTML real da tela de chegadas com marcas, depois escrever o
 parser contra esse HTML.
 
-## 6. O que não foi verificado
+## 6. Espaçamento entre torres — de onde vem o `min_spacing: 16`
+
+Levantado em 2026-08-13 para a Feature 24 (alocação territorial de aldeias de
+torre). A pergunta: qual a distância mínima entre duas torres para que a
+segunda não seja redundante?
+
+**Geometria pura.** Duas torres de raio R a distância `d`:
+
+| `d` | Sobreposição | Área nova | pop/campo² | Situação |
+|---:|---:|---:|---:|---|
+| 10 | 58% | 294 | 39,4 | redundância pesada |
+| 15 | 39% | 430 | 27,0 | sem buraco |
+| 20 | 22% | 552 | 21,0 | sem buraco |
+| **25,98** | **6%** | **666** | **17,4** | **ótimo hexagonal** |
+| 30 | 0% | 707 | 16,4 | buraco de 2,3 campos |
+
+O ótimo hexagonal fica em `d = R√3 = 25,98` — o maior espaçamento sem buraco.
+
+**E é uma armadilha.** Numa malha com espaçamento `s`, o ponto pior fica a
+`s/√3` da torre mais próxima, então o aviso vale `R − s/√3` campos. Em
+`s = R√3` isso dá **exatamente zero**: o ataque é marcado no instante em que
+aterrissa. O ótimo hexagonal maximiza **área** e zera **tempo** — e tempo é o
+produto da torre.
+
+| `s` | Pior distância | Aviso (aro, 18 min/campo) | Aviso (nobre, 35) |
+|---:|---:|---:|---:|
+| 15 | 8,66 | 114 min | 221 min |
+| 18 | 10,39 | 82 min | 161 min |
+| 20 | 11,55 | 62 min | 120 min |
+| 24 | 13,86 | 20 min | 40 min |
+| 25,98 | 15,00 | **0 min** | **0 min** |
+| 28+ | 16,17 | descoberto | descoberto |
+
+**Simulação empírica** contra o mapa real do br143 (`/map/village.txt.gz`,
+público), conquistando as bárbaras mais próximas do cluster da conta em ordem
+de distância e aplicando a regra "aldeia a ≥ `s` de toda torre vira torre".
+Aviso em modelo de **pior caso** (ataque vindo do lado oposto à torre; a média
+é melhor, entre `R−d` e `R+d`).
+
+Império de 67 aldeias:
+
+| `s` | Torres | Descobertas | Aviso mediano | Aviso p10 |
+|---:|---:|---|---:|---:|
+| 15 | 4 | 0 | 149 min | 92 min |
+| **16** | **4** | **0** | **149 min** | **92 min** |
+| 17 | 2 | 5 | 107 min | 4 min |
+| 20 | 2 | 8 | 107 min | 0 min |
+| 26 | 1 | **22 de 67** | 29 min | 0 min |
+
+**16 é o maior espaçamento que ainda cobre tudo**, em todos os tamanhos de
+império testados (27, 47 e 67 aldeias). 17 é um precipício: perde uma torre e
+o décimo percentil do aviso cai de 92 para 4 minutos. Com 26, um terço do
+império fica cego.
+
+Leitura intuitiva: espaçamento ≈ raio significa *"conquistou uma aldeia que
+nenhuma torre enxerga? ela vira torre"*.
+
+⚠️ **O precipício entre 16 e 17 é propriedade da distribuição de aldeias desta
+vizinhança, não uma lei geral.** Numa região de densidade diferente ele se
+move — por isso o valor é configurável e o padrão fica no lado seguro.
+
+Custo: ~4 torres num império de 67 aldeias = 46.428 pop e 19,4M de recursos,
+6% das aldeias convertidas em olhos.
+
+## 7. O que não foi verificado
 
 - **Tempo de construção real.** O servidor dá `build_time=13200s`,
   `build_time_factor=1.2` e `buildtime_formula=2`. Isso rende 3,7h no nível 1 e

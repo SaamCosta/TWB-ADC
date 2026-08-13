@@ -85,12 +85,17 @@ help_file = {
     'conquest.escort_reserve_min_progress': 'Only start reserving troops for the escort once this fraction of the required total is already home (default: 0.5). Far from the target the reserve just freezes the farm income that funds recruitment, so it is skipped — 0.0 restores the old always-reserve behaviour',
     'inheritance': 'Config inheritance mode for newly conquered villages (Feature 6)',
     'inheritance.mode': 'Inheritance mode: "empire_ratio" (profile-aware), "nearest_village" (closest donor), "global_template" (original behaviour)',
-    'empire': 'Empire-wide offensive/defensive village ratio (Feature 7)',
-    'empire.offensive_ratio': 'Target number of offensive villages per defensive village (e.g. 3 means 3 offensive for every 1 defensive)',
-    'empire.defensive_ratio': 'Target number of defensive villages (usually 1)',
+    'empire': 'Empire-wide offensive/defensive village ratio (Feature 7). Villages with the "watchtower" profile are excluded from this count entirely (Feature 24)',
+    'empire.offensive_ratio': 'Offensive side of the ratio. With offensive_ratio 1 and defensive_ratio 3 the empire targets 1 offensive village for every 3 defensive ones',
+    'empire.defensive_ratio': 'Defensive side of the ratio (default 3, i.e. a defensive-leaning empire)',
+    'watchtower': 'Territorial allocation of watchtower villages (Feature 24). A watchtower village is defensive by nature but is allocated by geography, not by the empire ratio — so it is excluded from the empire count. Requires the world to actually have the watchtower building',
+    'watchtower.enabled': 'Allow the bot to designate newly conquered villages as ADDITIONAL watchtower villages. The first tower is never created automatically — pick an established, central village by hand and set its profile to "watchtower". Leave false on worlds without the watchtower building',
+    'watchtower.min_spacing': 'Minimum distance in tiles between two watchtower villages. A conquered village farther than this from every existing tower becomes a tower itself. Default 16, just above the level-20 radius of 15.0 tiles — larger values collapse the warning time at the seams (at 26 tiles, the worst point is tagged the instant the attack lands); see docs/watchtower.md',
+    'watchtower.min_villages': 'Do not designate any watchtower village until the empire has at least this many villages. Guards a young account against converting an early village into a tower it cannot afford',
     'profile_templates': 'Per-profile config applied to every newly conquered village (Feature 7). These keys always override whatever was inherited from the donor village, so put here anything that *defines* the profile',
     'profile_templates.offensive': 'Keys forced on villages assigned the "offensive" profile',
     'profile_templates.defensive': 'Keys forced on villages assigned the "defensive" profile (e.g. support_others, so defensive villages send support by default)',
+    'profile_templates.watchtower': 'Keys forced on villages assigned the "watchtower" profile (Feature 24)',
     'world': 'World-specific feature flags',
     'world.knight_enabled': 'The world has knights enabled',
     'world.flags_enabled': 'Allows automatic management of flags (upgrading and defence)',
@@ -144,4 +149,4 @@ buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "pla
              "stone", "iron", "farm", "hide", "wall", "snob", "church"]
 
 # Sections that contain nested dicts and need special rendering in the config UI
-nested_sections = ["conquest", "resource_sharing", "inheritance", "empire", "profile_templates", "pvp_conquest"]
+nested_sections = ["conquest", "resource_sharing", "inheritance", "empire", "watchtower", "profile_templates", "pvp_conquest"]

@@ -1,6 +1,7 @@
 import copy
 import json
 import logging
+import math
 import time
 from codecs import decode
 from datetime import datetime
@@ -24,6 +25,12 @@ from core.exceptions import *
 
 
 class Village:
+    # Feature 24: perfis que NAO entram na proporcao ofensiva/defensiva do
+    # imperio (config `empire`). Ver get_needed_profile() para o porque.
+    # Tupla, nao lista: constante de classe compartilhada, e imutavel evita o
+    # primeiro padrao de bug do CLAUDE.md.
+    NON_RATIO_PROFILES = ("watchtower",)
+
     village_id = None
     builder = None
     units = None
@@ -1009,20 +1016,36 @@ class Village:
         """
         Feature 7: Calculates which profile (offensive/defensive) the next village
         should receive in order to maintain the configured empire ratio.
+
+        Feature 24: villages whose profile is in NON_RATIO_PROFILES (today just
+        "watchtower") are skipped on BOTH sides of the count. A watchtower
+        village is defensive by nature, but its purpose is territorial (cover a
+        radius), not numerical -- counting it as defensive would make the bot
+        create towers by village count instead of by geography, and the radii
+        would overlap. A missing or unrecognised profile still counts as
+        defensive, exactly as before, so no existing config changes meaning.
         """
         empire = config.get("empire", {})
-        off_ratio = empire.get("offensive_ratio", 3)
-        def_ratio = empire.get("defensive_ratio", 1)
+        off_ratio = empire.get("offensive_ratio", 1)
+        def_ratio = empire.get("defensive_ratio", 3)
+        if off_ratio + def_ratio <= 0:
+            # Config invalida (ambos zero) -- sem isso o calculo abaixo divide
+            # por zero e derruba a heranca da aldeia recem conquistada.
+            return "defensive"
         target_off_pct = off_ratio / (off_ratio + def_ratio)
 
         villages = config.get("villages", {})
         total = 0
         offensive = 0
         for vcfg in villages.values():
-            if isinstance(vcfg, dict):
-                total += 1
-                if vcfg.get("profile") == "offensive":
-                    offensive += 1
+            if not isinstance(vcfg, dict):
+                continue
+            profile = vcfg.get("profile")
+            if profile in Village.NON_RATIO_PROFILES:
+                continue
+            total += 1
+            if profile == "offensive":
+                offensive += 1
 
         if total == 0:
             return "offensive"
@@ -1031,6 +1054,101 @@ class Village:
         if current_off_pct < target_off_pct:
             return "offensive"
         return "defensive"
+
+    @staticmethod
+    def get_watchtower_sites(config):
+        """
+        Feature 24: [(village_id, x, y)] of every village already designated as a
+        watchtower village.
+
+        Coordinates are not in config.json -- only the profile is. They come from
+        cache/managed/<vid>.json, which village.set_cache_vars() writes at the end
+        of every run. A village designated during the current cycle therefore only
+        becomes visible here on the next cycle; two villages conquered in the same
+        cycle could both be designated. That is rare and self-correcting (the
+        second one is simply an extra tower), so it is not guarded against.
+        """
+        sites = []
+        for vid, vcfg in config.get("villages", {}).items():
+            if not isinstance(vcfg, dict):
+                continue
+            if vcfg.get("profile") != "watchtower":
+                continue
+            cached = FileManager.load_json_file(f"cache/managed/{vid}.json")
+            if not cached or not cached.get("x") or not cached.get("y"):
+                continue
+            sites.append((vid, int(cached["x"]), int(cached["y"])))
+        return sites
+
+    @staticmethod
+    def needs_watchtower(config, my_x, my_y):
+        """
+        Feature 24: decides whether a newly conquered village should become a
+        watchtower village. The criterion is purely territorial: the village is
+        farther than watchtower.min_spacing from EVERY existing tower, i.e. it
+        sits outside the area they already watch.
+
+        Returns (bool, reason) -- reason is a human string for the caller to log.
+
+        On min_spacing: the default of 16 comes from simulating tower placement
+        against the real br143 map around the account (see docs/watchtower.md).
+        A tower's radius at level 20 is 15.0 fields, so spacing ~= radius means
+        "a conquered village no tower can see becomes a tower itself". Larger
+        spacing collapses the warning time at the seams: at 26 fields (the
+        hexagonal covering optimum, R*sqrt(3)) the worst point sits exactly at
+        the radius edge and is tagged the instant the attack lands -- it
+        optimises area covered and delivers zero warning, which is the actual
+        product. 17 was a cliff in the simulation: one fewer tower and the 10th
+        percentile of warning fell from 90 to 35 minutes.
+        """
+        wt = config.get("watchtower", {})
+        if not wt.get("enabled", False):
+            return False, None
+
+        managed = [
+            v for v in config.get("villages", {}).values() if isinstance(v, dict)
+        ]
+        min_villages = wt.get("min_villages", 5)
+        if len(managed) < min_villages:
+            return False, (
+                "empire has %d village(s), watchtower.min_villages is %d"
+                % (len(managed), min_villages)
+            )
+
+        min_spacing = wt.get("min_spacing", 16)
+        sites = Village.get_watchtower_sites(config)
+        if not sites:
+            # A PRIMEIRA torre e sempre manual, de proposito. Tres razoes:
+            #  1. Ela define o centro da malha inteira -- toda torre seguinte e
+            #     posicionada a >= min_spacing dela, entao errar a primeira
+            #     propaga o erro pela cobertura do imperio para sempre.
+            #  2. Esta funcao so roda para aldeia RECEM CONQUISTADA, que por
+            #     definicao esta na fronteira. A primeira torre nasceria na
+            #     borda, deixando o nucleo descoberto -- o inverso do desejado.
+            #  3. Aldeia recem conquistada e o pior sitio possivel: predios
+            #     baixos, e o projeto (fazenda 30 + minas 30 + torre 20) leva
+            #     mais tempo dali do que de qualquer aldeia ja estabelecida.
+            # Designar a primeira torre = por "profile": "watchtower" na aldeia
+            # escolhida, no config.json.
+            return False, (
+                "no watchtower village designated yet -- the first one must be "
+                "chosen by hand (set \"profile\": \"watchtower\" on an established, "
+                "central village); the bot only places additional towers"
+            )
+
+        nearest_vid, nearest_dist = min(
+            ((vid, math.hypot(my_x - x, my_y - y)) for vid, x, y in sites),
+            key=lambda entry: entry[1],
+        )
+        if nearest_dist >= min_spacing:
+            return True, (
+                "%.1f tiles from nearest tower (village %s), min_spacing is %s"
+                % (nearest_dist, nearest_vid, min_spacing)
+            )
+        return False, (
+            "only %.1f tiles from tower village %s (min_spacing %s) -- already watched"
+            % (nearest_dist, nearest_vid, min_spacing)
+        )
 
     def apply_nearest_village_inheritance(self, config):
         """
@@ -1131,15 +1249,39 @@ class Village:
                     self.village_id, my_zone
                 )
 
+        # Feature 24: territorial override. Decided before the ratio because a
+        # watchtower village is allocated by geography, not by count -- see
+        # needs_watchtower(). Scoped to empire_ratio mode: the other inheritance
+        # modes do not assign profiles at all.
+        wants_watchtower = False
+        if inheritance_mode == "empire_ratio":
+            wants_watchtower, wt_reason = Village.needs_watchtower(config, my_x, my_y)
+            if wt_reason:
+                # info, nao debug: isto roda uma vez por aldeia conquistada, e
+                # o caso "nenhuma torre designada" precisa ser visivel -- senao
+                # watchtower.enabled fica ligado sem efeito nenhum e em silencio.
+                self.logger.info(
+                    "Village %s: watchtower check — %s (designate: %s)",
+                    self.village_id, wt_reason, wants_watchtower
+                )
+
         # Feature 7: filter by needed profile when mode is empire_ratio
         needed_profile = None
         used_profile_template = False
         if inheritance_mode == "empire_ratio":
-            needed_profile = Village.get_needed_profile(config)
-            self.logger.info(
-                "Village %s: empire_ratio inheritance — needed profile = %s",
-                self.village_id, needed_profile
-            )
+            if wants_watchtower:
+                needed_profile = "watchtower"
+                self.logger.info(
+                    "Village %s: designated as WATCHTOWER village (%s) — "
+                    "excluded from the empire offensive/defensive ratio",
+                    self.village_id, wt_reason
+                )
+            else:
+                needed_profile = Village.get_needed_profile(config)
+                self.logger.info(
+                    "Village %s: empire_ratio inheritance — needed profile = %s",
+                    self.village_id, needed_profile
+                )
             filtered = [
                 (vid, data) for vid, data in candidates
                 if data.get("profile") == needed_profile

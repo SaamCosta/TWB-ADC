@@ -844,6 +844,71 @@ como não precisando de nada. O sistema nunca ajudaria ninguém a fechar um nobr
 
 `build.version` 3.1 → 3.2 (`village_template.keep_resources`).
 
+## 2026-08-13 — Feature 24: alocação territorial de aldeias de torre de vigia
+
+**Problema.** Uma aldeia de torre de vigia é defensiva por natureza, mas a
+necessidade dela é **territorial** (cobrir raio), não numérica. Se ela contasse
+na proporção ofensiva/defensiva do `empire` (Feature 7), o bot criaria torres
+pela contagem de aldeias em vez de pela geografia, e os raios se sobreporiam —
+destruindo o custo-benefício, já que cada torre custa 11.607 pop e 4,85M.
+
+**Arquivos.** `game/village.py`, `config.example.json`, `webmanager/helpfile.py`.
+
+- `Village.NON_RATIO_PROFILES = ("watchtower",)` — perfis fora da proporção.
+- `get_needed_profile()` pula esses perfis nos **dois** lados da contagem.
+  Perfil ausente ou desconhecido continua contando como defensiva, para não
+  mudar o significado de nenhuma config existente.
+- `get_watchtower_sites(config)` — coordenadas das torres existentes, lidas de
+  `cache/managed/<vid>.json` (o `config.json` só guarda o perfil).
+- `needs_watchtower(config, x, y)` — decide pela distância até a torre mais
+  próxima, devolvendo `(bool, motivo)` para o chamador logar.
+- Gancho em `apply_nearest_village_inheritance`, antes do cálculo de perfil e
+  **antes do filtro de zona** (a decisão de torre precisa varrer todas as
+  aldeias, não as filtradas por zona). Escopo: só modo `empire_ratio`; os
+  outros modos de herança não atribuem perfil nenhum.
+
+**Config nova (`build.version` 3.3 → 3.4).**
+`watchtower: {enabled: false, min_spacing: 16, min_villages: 5}` e
+`profile_templates.watchtower`. O padrão de `empire` foi **invertido** para
+`offensive_ratio: 1 / defensive_ratio: 3` — o default anterior (3:1 ofensivo)
+era o inverso do que a conta joga.
+
+**`min_spacing: 16`** vem de simulação contra o mapa real do br143 — ver a
+seção 6 de `docs/watchtower.md`. Resumo: o ótimo hexagonal (`R√3 = 25,98`)
+maximiza área e **zera o aviso** no ponto pior, que é o produto real da torre.
+16 é o maior espaçamento que ainda cobre tudo; 17 é um precipício (o décimo
+percentil do aviso cai de 92 para 4 minutos).
+
+**A primeira torre é sempre manual.** A primeira versão devolvia `True` quando
+não havia nenhuma torre designada — ou seja, **qualquer** aldeia conquistada
+viraria a primeira torre, em qualquer coordenada. Três motivos para não:
+1. a primeira torre define o centro da malha inteira (toda seguinte fica a
+   ≥ `min_spacing` dela), então errá-la propaga pelo império para sempre;
+2. `needs_watchtower()` só roda para aldeia **recém-conquistada**, que por
+   definição está na fronteira — a primeira torre nasceria na borda, deixando
+   o núcleo descoberto;
+3. aldeia recém-conquistada é o pior sítio possível: pela tabela de
+   viabilidade, BBM 002 leva 48 dias e a menor aldeia existente 54; uma
+   conquista fresca é pior que as duas.
+Designar = pôr `"profile": "watchtower"` na aldeia escolhida. O log do
+resultado da checagem é **info**, não debug, justamente para que
+`watchtower.enabled` ligado sem torre designada não fique inerte em silêncio.
+
+**Validação.** `tests/test_watchtower_allocation.py` — 13 testes: exclusão da
+proporção (invariante de que N torres não deslocam o perfil da próxima
+conquista), retrocompatibilidade de perfil ausente, guarda de divisão por zero,
+primeira torre nunca automática, limiar de espaçamento contra as coordenadas
+reais da BBM 002, distância euclidiana nos dois eixos. Nenhum envio ao jogo.
+
+⚠️ **Achado colateral não resolvido: cunhagem de moeda depende de querer nobre.**
+`SnobManager.run()` só chega em `coin_item()` através de `attempt_recruit()`,
+dentro de `if self.wanted > 0`; e `village.py:455` nem instancia o SnobManager
+quando `snobs` é `0`, porque testa o valor por veracidade e `0` é falsy. Ou
+seja, **`snobs: 0` desliga a cunhagem junto** — não existe modo "cunhar moeda
+sem recrutar nobre". Eu tinha posto `snobs: 0` em
+`profile_templates.watchtower` e tirei: decidir isso em silêncio mataria a
+única razão de a academia existir nessa aldeia. Fica em aberto.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.3",
+    "version": "3.4",
     "author": "stefan2200"
   },
   "server": {
@@ -59,8 +59,13 @@
     "mode": "empire_ratio"
   },
   "empire": {
-    "offensive_ratio": 3,
-    "defensive_ratio": 1
+    "offensive_ratio": 1,
+    "defensive_ratio": 3
+  },
+  "watchtower": {
+    "enabled": false,
+    "min_spacing": 16,
+    "min_villages": 5
   },
   "profile_templates": {
     "offensive": {
@@ -71,6 +76,12 @@
       "building": "purple_predator_into_def",
       "units": "defensive_1",
       "support_others": true
+    },
+    "watchtower": {
+      "building": "watchtower_support",
+      "units": "watchtower_support",
+      "support_others": true,
+      "prioritize_building": true
     }
   },
   "village_template": {
