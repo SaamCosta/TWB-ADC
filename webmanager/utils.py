@@ -522,6 +522,10 @@ class ConquestReader:
         "complete":      "Conquistada",
         "manual":        "Alvo Manual (na fila)",
         "invalid":       "Alvo Manual Inválido",
+        # Bárbara conquistada por outro jogador enquanto nosso trem voava.
+        # O bot desiste do alvo em vez de virar conquista de PvP por acidente
+        # (game/attack.py::_handle_existing, Priority 2).
+        "lost":          "Perdida para outro jogador",
     }
     STATUS_COLORS = {
         "train_sent":    "warning",
@@ -529,6 +533,7 @@ class ConquestReader:
         "complete":      "success",
         "manual":        "primary",
         "invalid":       "secondary",
+        "lost":          "danger",
     }
 
     @staticmethod
@@ -642,12 +647,18 @@ class ConquestReader:
                 "queued_at":      data.get("queued_at"),
                 "queued_at_fmt":  ConquestReader._fmt_ts(data.get("queued_at")),
                 "invalid_reason": data.get("invalid_reason"),
+                # Quem levou a bárbara antes de nós (status "lost").
+                "lost_to_owner":  data.get("lost_to_owner"),
             })
 
         # Ordenação: alvo manual pendente primeiro (precisa de atenção),
-        # depois em andamento (train_sent, extra_pending), completas, e por
-        # último inválidos (só relevantes para limpeza manual).
-        order = {"manual": -1, "train_sent": 0, "extra_pending": 1, "complete": 2, "invalid": 3}
+        # depois em andamento (train_sent, extra_pending), perdidas (nobre
+        # gasto à toa, vale ver), completas, e por último inválidos (só
+        # relevantes para limpeza manual).
+        order = {
+            "manual": -1, "train_sent": 0, "extra_pending": 1,
+            "lost": 2, "complete": 3, "invalid": 4,
+        }
         targets.sort(key=lambda t: (order.get(t["status"], 9), -t["last_hit_ts"]))
         return targets
 

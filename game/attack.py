@@ -1273,6 +1273,28 @@ class ConquestManager:
         owner = str(data.get("owner", "0"))
         return owner == player_id and owner != "0"
 
+    def _target_taken_by_other(self, target_id):
+        """
+        Id do jogador que conquistou o alvo, se ele deixou de ser barbaro e
+        nao e nosso. None quando ainda e barbaro, quando e nosso, ou quando
+        nao da para saber.
+
+        Le a mesma fonte que _target_is_mine (cache/villages/, alimentado pelo
+        scan de mapa de qualquer aldeia gerenciada). Ausencia de dado devolve
+        None de proposito: sem informacao nao se encerra alvo nenhum.
+        """
+        data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
+        if not data:
+            return None
+        owner = str(data.get("owner", "0"))
+        if owner == "0":
+            return None  # ainda barbara
+        own_data = FileManager.load_json_file(f"cache/villages/{self.village_id}.json")
+        player_id = str(own_data.get("owner", "0")) if own_data else "0"
+        if owner == player_id:
+            return None  # e nossa -- _target_is_mine trata
+        return owner
+
     def _get_real_loyalty(self, target_id):
         """
         Tries to extract real loyalty from the most recent noble attack report
@@ -1307,9 +1329,10 @@ class ConquestManager:
 
         Priority order for loyalty source:
         1. Village ownership check (cache/villages/) — definitive proof
-        2. Nobre ainda no ar — nao se estima nada antes do pouso
-        3. Real loyalty from noble attack report (reports.py extracts it)
-        4. Mathematical estimate (fallback)
+        2. Alvo conquistado por outro jogador — encerra o alvo
+        3. Nobre ainda no ar — nao se estima nada antes do pouso
+        4. Real loyalty from noble attack report (reports.py extracts it)
+        5. Mathematical estimate (fallback)
         """
         target_id = conquest_data["target_id"]
         regen = cfg.get("loyalty_regen_per_hour", 1)
@@ -1333,7 +1356,45 @@ class ConquestManager:
             )
             return False
 
-        # --- Priority 2: nobre em voo ---
+        # --- Priority 2: alguem se adiantou ---
+        # A barbara pode ter sido conquistada por OUTRO jogador enquanto nosso
+        # trem voava (~4h de voo numa barbara de 400-1000 pontos, que e alvo
+        # cobicado por todo mundo). Dai em diante nada abaixo faz sentido:
+        #
+        #   - a lealdade dele reiniciou em 25 e sobe do zero da conquista; a
+        #     nossa ultima leitura ("Descida 32 para 11") virou numero morto,
+        #     sem relacao nenhuma com o estado atual da aldeia;
+        #   - e continuar mandando nobre deixaria de ser limpeza de barbaro e
+        #     viraria conquista de aldeia de jogador, sem passar por nada do
+        #     PvpConquestManager (Feature 13), que existe para isso e e
+        #     semi-manual de proposito -- com simulador e aprovacao do alvo.
+        #     Declararia guerra a alguem como efeito colateral.
+        #
+        # find_target() ja filtra por dono na selecao e _get_manual_target()
+        # revalida antes de entregar o alvo; era este terceiro caminho, o da
+        # conquista ja em andamento, que nunca reconferia.
+        #
+        # Nao desfaz nada: nobre que ja saiu nao volta. So para de comprometer
+        # nobres novos, e libera a aldeia para escolher outro alvo.
+        taken_by = self._target_taken_by_other(target_id)
+        if taken_by:
+            self.logger.warning(
+                "Conquest: alvo %s deixou de ser barbaro (conquistado pelo "
+                "jogador %s) -- encerrando. Nobres ja em rota nao voltam.",
+                target_id, taken_by
+            )
+            ConquestCache.set(target_id, {
+                **conquest_data,
+                "status": "lost",
+                "lost_to_owner": taken_by,
+            })
+            self.wrapper.reporter.report(
+                self.village_id, "TWB_CONQUEST",
+                f"Alvo {target_id} perdido: conquistado pelo jogador {taken_by}"
+            )
+            return False
+
+        # --- Priority 3: nobre em voo ---
         # A aldeia ainda nao e nossa e ha nobre a caminho: nao ha decisao a
         # tomar. Nem enviar outro (o que esta no ar pode resolver sozinho, e
         # se ele conquistar a escolta dele vira guarnicao — o proximo nobre
@@ -1342,7 +1403,7 @@ class ConquestManager:
         if self._noble_flight_guard(target_id, conquest_data):
             return False
 
-        # --- Priority 3: real loyalty from report ---
+        # --- Priority 4: real loyalty from report ---
         real_loyalty = self._get_real_loyalty(target_id)
         last_hit = conquest_data.get("last_hit_timestamp", 0)
 
@@ -1376,7 +1437,7 @@ class ConquestManager:
                 target_id, real_loyalty, current_loyalty, hours_since_report
             )
         else:
-            # --- Priority 4: mathematical estimate ---
+            # --- Priority 5: mathematical estimate ---
             loyalty_after = conquest_data.get("loyalty_after_train", 0)
             hours_elapsed = (time.time() - last_hit) / 3600
             current_loyalty = min(100.0, loyalty_after + (hours_elapsed * regen))
