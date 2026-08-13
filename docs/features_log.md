@@ -844,6 +844,134 @@ como não precisando de nada. O sistema nunca ajudaria ninguém a fechar um nobr
 
 `build.version` 3.1 → 3.2 (`village_template.keep_resources`).
 
+## 2026-08-13 — Conquista bárbara: 4 correções, do incidente da Bárbara #40314
+
+**O incidente (2026-08-12).** Um trem de 4 nobres saiu às 11:54 contra a
+Bárbara #40314 (571|308, 443 pts) e pousou às 15:37–15:40. As quatro quedas
+foram 22, 21, 25 e 21 — somando 89, **deixando a lealdade em 11**. O bot
+assumia 25 fixos por nobre, registrou 0, deu a conquista por feita e seguiu.
+Depois mandou um segundo trem e um nobre extra. O nobre das 23:28 conquistou
+a aldeia e **sua escolta virou guarnição dela**; o das 00:00:59 chegou 32
+minutos depois, autoconquistou a aldeia (queimando uma moeda = 83.000
+recursos) e matou os 421 homens da própria guarnição, perdendo mais 106.
+**527 tropas próprias mortas.**
+
+**Arquivos.** `game/attack.py`, `core/extractors.py`, `core/world_config.py`,
+`core/filemanager.py`, `webmanager/utils.py`, `webmanager/templates/conquest.html`,
+`webmanager/helpfile.py`, `config.example.json`.
+
+### 1. Trava de nobre em voo (`4c4229b`)
+
+`AttackManager.attack()` expõe `last_attack_duration` (a duração que o próprio
+jogo devolve na confirmação — não recalculamos distância × velocidade, para não
+criar uma segunda fonte de verdade). `_send_train` e o nobre extra gravam
+`noble_arrivals`. `_noble_flight_guard()` bloqueia qualquer nobre para um alvo
+que já tenha nobre no ar, em `_send_train`, `_handle_existing` e `find_target`.
+
+⚠️ **A trava não olha `status`, de propósito.** No incidente o registro dizia
+`"complete"` com quatro nobres voando — era o status que estava mentindo, e era
+nele que a lógica antiga confiava. Chegada é fato temporal.
+
+⚠️ **ETA desconhecido trava indefinidamente.** `Extractor.attack_duration()`
+devolve **0** quando o regex não casa; somar 0 à hora de envio faria o nobre
+nascer "já pousado", o estado exato do incidente. Gravamos `null` e travamos. A
+saída é `_target_is_mine()`, que por isso roda **antes** da trava.
+
+`last_hit_timestamp` passou a ser o **pouso**, não o envio. Os dois consumidores
+sempre leram o campo como "quando a lealdade começou a regenerar", e ele era
+gravado 3h41 antes disso. Como agora pode estar no futuro,
+`ConquestReader._estimate_loyalty` ganhou `max(0, ...)`.
+
+### 2. Ler a lealdade real do relatório (`8922262`)
+
+O regex nunca casou com o markup do br143, então **nenhum** relatório em cache
+tinha `loyalty_after` e o bot estimava em 100% dos casos. Markup real:
+
+    <tr><th>Lealdade:</th>
+    <td colspan="2">Descida <b>32</b> para <b>11</b></td></tr>
+
+A versão antiga exigia o número colado no `<td>`; a palavra "Descida" fazia
+falhar sempre. Agora localiza a célula pelo rótulo e pega o **último** número.
+
+⚠️ **A lealdade fica negativa** em conquista (`Descida 18 para -7`). Um `\d+`
+sem sinal capturaria `7` — positivo — invertendo o significado do relatório.
+
+`_handle_existing` ganhou saída para `real_loyalty <= 0`: significa troca de
+dono, e o jogo **estabiliza a lealdade em 25** para o novo dono; ela não sobe do
+negativo. Sem isso, `-7` + algumas horas de regen viraria positivo e o bot
+mandaria nobre numa aldeia já conquistada.
+
+### 3. Separar posse confirmada de estimativa (`1a8cfb5`)
+
+Um único `"complete"` cobria prova (cache de aldeias, ou nosso relatório de
+nobre) e palpite (aritmética), e a tela pintava os três de verde. No incidente o
+alvo apareceu "Conquistada" às 20:19:37 com o nobre ainda no mapa.
+
+- `conquered` (verde) + `confirmed_by`: `village_cache` ou `noble_report`.
+- `assumed_done` (amarelo, "Sem confirmação — verifique no jogo").
+- `complete` vira "Concluída (registro antigo)" em cinza — registros anteriores
+  não permitem saber se foram prova ou palpite.
+
+O relatório de nobre **conta como prova** porque `_get_real_loyalty()` só lê
+relatórios dos *nossos* ataques, e a checagem de terceiro já rodou antes.
+
+### 4. Queda de lealdade é faixa, planejada pelo pior caso (`6459b42`)
+
+`core/world_config.py` já parseava `<mood> loss_min/loss_max` com um comentário
+dizendo *"nothing reads them"* — faltava saber o que os campos eram.
+`/page/settings` confirmou: **"Redução de lealdade por ataque do nobre: 20-35"**.
+Novo acessor `WorldConfig.loyalty_drop_range()`; `ConquestManager` planeja com o
+**piso**, o que torna a estimativa um limite superior ("no mínimo isto sobrou").
+
+Errar para cima só é seguro **porque o item 1 existe**: no máximo manda um nobre
+a mais, e nunca empilha em cima do que está no ar.
+`conquest.loyalty_drop_per_noble` virou fallback.
+
+### Achados fora do plano
+
+- **Alvo tomado por outro jogador** (`ca9f920`). A revalidação de "ainda é
+  bárbara?" existia em `find_target()` e `_get_manual_target()`, e faltava no
+  terceiro caminho — a conquista já em andamento. Sem ela o bot seguia nobrando
+  a aldeia de um jogador, virando conquista de PvP sem passar pelo
+  `PvpConquestManager` (Feature 13), que é semi-manual de propósito. Novo status
+  `lost`. **Ausência de dado nunca encerra alvo:** `cache/villages` só é
+  alimentado pelo scan de mapa.
+- **Encoding de JSON** (`4a5a3df`). `load_json_file` abria sem declarar
+  encoding: BOM (Bloco de Notas / `Set-Content -Encoding utf8`) derrubava o bot
+  com "Expecting value: line 1 column 1", e acento gravado pelo webmanager
+  (`ensure_ascii=False`) virava mojibake em cp1252. Agora `utf-8-sig`.
+- **`WorldConfig.get()` estourava com `server`/`endpoint` ausentes**, porque
+  `_fetch` faz `endpoint.split()` — derrubando a aldeia inteira por uma chave de
+  config faltando, num caminho que existe para degradar em silêncio. Valia
+  também para o `PvpConquestManager`.
+
+### Valores do mundo (br143), agora verificados
+
+| Parâmetro | Valor | Fonte |
+|---|---|---|
+| Aumento de lealdade por hora | **1** (era 1.5 no config) | só `/page/settings` |
+| Redução por ataque de nobre | **20–35** | ambas (`<mood>`) |
+| Lealdade de aldeia recém-conquistada | **25** | medido em relatório |
+| Distância máxima do nobre | 70 campos | ambas (`<snob><max_dist>`) |
+
+⚠️ **`get_config` e `/page/settings` não expõem o mesmo conjunto de campos.**
+O regen não existe no XML; eu declarei o número "não-verificável" tendo olhado
+só uma fonte. Ver o quarto parágrafo do segundo padrão em `CLAUDE.md`.
+
+**Validação.** 37 testes em `tests/` (diretório novo): `test_conquest_noble_flight.py`,
+`test_loyalty_from_report.py`, `test_conquest_target_lost.py`,
+`test_conquest_status_semantics.py`, `test_loyalty_drop_range.py`,
+`test_filemanager_encoding.py`. Os fixtures de relatório são **recortes verbatim**
+do HTML real buscado com a sessão do bot — a função anterior falhava justamente
+por ter sido escrita contra markup suposto. O extrator foi conferido contra os
+seis relatórios completos do incidente: 6/6.
+
+⚠️ **Mistério não resolvido.** Às 19:46 de 2026-08-12 o `_get_my_conquest()`
+devolveu `None` com o arquivo em `train_sent` e mtime de 11:56, e o
+`find_target()` reelegeu o mesmo alvo, disparando o segundo trem. Nunca
+descobri por quê. A trava do item 1 segura o estrago por não depender do
+status — mas isso é robustez, não diagnóstico.
+
 ## 2026-08-13 — Feature 24: alocação territorial de aldeias de torre de vigia
 
 **Problema.** Uma aldeia de torre de vigia é defensiva por natureza, mas a
