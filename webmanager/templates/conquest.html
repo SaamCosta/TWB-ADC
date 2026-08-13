@@ -14,7 +14,22 @@
       <span class="badge bg-secondary me-1">Total: {{ targets|length }}</span>
       <span class="badge bg-primary me-1">Manual pendente: {{ targets|selectattr('status','equalto','manual')|list|length }}</span>
       <span class="badge bg-warning text-dark me-1">Em andamento: {{ targets|selectattr('status','in',['train_sent','extra_pending'])|list|length }}</span>
-      <span class="badge bg-success">Completas: {{ targets|selectattr('status','equalto','complete')|list|length }}</span>
+      <span class="badge bg-success me-1">Conquistadas: {{ targets|selectattr('status','equalto','conquered')|list|length }}</span>
+      {# Contadores separados de proposito: juntar "confirmada" com "o bot
+         achou que acabou" foi o que fez a tela afirmar conquista que ninguem
+         tinha verificado. #}
+      {% set sem_conf = targets|selectattr('status','equalto','assumed_done')|list|length %}
+      {% if sem_conf %}
+      <span class="badge bg-warning text-dark me-1">Sem confirmação: {{ sem_conf }}</span>
+      {% endif %}
+      {% set perdidas = targets|selectattr('status','equalto','lost')|list|length %}
+      {% if perdidas %}
+      <span class="badge bg-danger me-1">Perdidas: {{ perdidas }}</span>
+      {% endif %}
+      {% set antigas = targets|selectattr('status','equalto','complete')|list|length %}
+      {% if antigas %}
+      <span class="badge bg-secondary">Registros antigos: {{ antigas }}</span>
+      {% endif %}
     </div>
   </div>
 
@@ -63,7 +78,10 @@
             <option value="manual">Alvo Manual (na fila)</option>
             <option value="train_sent">Train Enviado</option>
             <option value="extra_pending">Extra Pendente</option>
-            <option value="complete">Conquistada</option>
+            <option value="conquered">Conquistada (confirmada)</option>
+            <option value="assumed_done">Sem confirmação</option>
+            <option value="lost">Perdida para outro jogador</option>
+            <option value="complete">Concluída (registro antigo)</option>
             <option value="invalid">Alvo Manual Inválido</option>
           </select>
         </div>
@@ -118,7 +136,9 @@
         <tr class="conquest-row"
             data-status="{{ t.status }}"
             data-village="{{ t.reserved_by }}"
-            style="{% if t.status == 'complete' %}opacity:0.65;{% endif %}">
+            {# Esmaece o que esta resolvido. "assumed_done" e "lost" NAO entram:
+               os dois pedem olho humano. #}
+            style="{% if t.status in ('conquered', 'complete') %}opacity:0.65;{% endif %}">
 
           <!-- Alvo -->
           <td>
@@ -157,7 +177,7 @@
             {% else %}
             <div class="d-flex align-items-center gap-2">
               <div class="progress flex-grow-1" style="height:8px;min-width:80px;">
-                <div class="progress-bar bg-{{ 'success' if t.status == 'complete' else 'warning' }}"
+                <div class="progress-bar bg-{{ 'success' if t.status == 'conquered' else 'warning' }}"
                      style="width:{{ t.hits_pct }}%"></div>
               </div>
               <small class="text-nowrap">{{ t.hits_done }}/{{ t.hits_needed }}</small>
@@ -167,8 +187,30 @@
 
           <!-- Lealdade -->
           <td>
-            {% if t.status == 'complete' %}
-              <span class="badge bg-success">Conquistada</span>
+            {% if t.status == 'conquered' %}
+              <span class="badge bg-success"
+                    title="{% if t.confirmed_by == 'noble_report' %}Confirmada pelo relatório do nosso nobre (lealdade chegou a zero){% else %}Confirmada pelo cache de aldeias: o dono é você{% endif %}">
+                Conquistada &#10003;
+              </span>
+            {% elif t.status == 'assumed_done' %}
+              {# Nao e conquista: e a aritmetica do bot tendo chegado a zero sem
+                 nenhuma prova. Ate 2026-08-13 caia no mesmo verde de cima. #}
+              <span class="badge bg-warning text-dark"
+                    title="{{ t.assumed_reason or 'Sem confirmação de posse' }}">
+                Sem confirmação
+              </span>
+              <small class="text-warning d-block mt-1">Verifique no jogo se a aldeia é sua</small>
+            {% elif t.status == 'lost' %}
+              <span class="badge bg-danger"
+                    title="Outro jogador conquistou esta bárbara antes de nós. Os nobres já enviados não voltam.">
+                Tomada pelo jogador {{ t.lost_to_owner or '?' }}
+              </span>
+            {% elif t.status == 'complete' %}
+              {# Registro anterior a separacao conquered/assumed_done: nao da
+                 para saber se foi prova ou palpite, entao nao leva verde. #}
+              <span class="badge bg-secondary" title="Registro antigo, anterior à separação entre conquista confirmada e estimativa">
+                Concluída (registro antigo)
+              </span>
             {% elif t.status == 'manual' %}
               <span class="badge bg-primary">Na fila desde {{ t.queued_at_fmt }}</span>
             {% elif t.status == 'invalid' %}

@@ -516,24 +516,36 @@ class ConquestReader:
     }
     """
 
+    # "Conquistada" verde so para posse COMPROVADA. Ate 2026-08-13 um unico
+    # status "complete" cobria tanto a prova (cache de aldeias ou nosso
+    # relatorio de nobre) quanto a mera estimativa aritmetica, e a tela pintava
+    # os dois de verde igual. No incidente da Barbara #40314 o alvo apareceu
+    # como "Conquistada" as 20:19:37 com o nobre ainda voando e a aldeia ainda
+    # barbara -- a tela afirmava um fato que ninguem tinha verificado.
     STATUS_LABELS = {
         "train_sent":    "Train Enviado",
         "extra_pending": "Extra Pendente",
-        "complete":      "Conquistada",
-        "manual":        "Alvo Manual (na fila)",
-        "invalid":       "Alvo Manual Inválido",
+        "conquered":     "Conquistada (confirmada)",
+        "assumed_done":  "Sem confirmação — verifique no jogo",
         # Bárbara conquistada por outro jogador enquanto nosso trem voava.
         # O bot desiste do alvo em vez de virar conquista de PvP por acidente
         # (game/attack.py::_handle_existing, Priority 2).
         "lost":          "Perdida para outro jogador",
+        "manual":        "Alvo Manual (na fila)",
+        "invalid":       "Alvo Manual Inválido",
+        # Registros gravados antes da separacao acima. Nao da para saber se
+        # foram prova ou palpite, entao nao levam verde.
+        "complete":      "Concluída (registro antigo)",
     }
     STATUS_COLORS = {
         "train_sent":    "warning",
         "extra_pending": "info",
-        "complete":      "success",
+        "conquered":     "success",
+        "assumed_done":  "warning",
+        "lost":          "danger",
         "manual":        "primary",
         "invalid":       "secondary",
-        "lost":          "danger",
+        "complete":      "secondary",
     }
 
     @staticmethod
@@ -649,15 +661,21 @@ class ConquestReader:
                 "invalid_reason": data.get("invalid_reason"),
                 # Quem levou a bárbara antes de nós (status "lost").
                 "lost_to_owner":  data.get("lost_to_owner"),
+                # Como a posse foi comprovada: "village_cache" ou
+                # "noble_report" (status "conquered"). Ausente nos registros
+                # antigos e nos "assumed_done", que por definição não têm prova.
+                "confirmed_by":   data.get("confirmed_by"),
+                "assumed_reason": data.get("assumed_reason"),
             })
 
-        # Ordenação: alvo manual pendente primeiro (precisa de atenção),
-        # depois em andamento (train_sent, extra_pending), perdidas (nobre
-        # gasto à toa, vale ver), completas, e por último inválidos (só
-        # relevantes para limpeza manual).
+        # Ordenação por quanto pedem atenção, não por progresso: alvo manual na
+        # fila primeiro, depois em andamento, depois os dois casos que pedem
+        # olho humano (sem confirmação, e perdida para outro jogador), e por
+        # último o que está resolvido.
         order = {
             "manual": -1, "train_sent": 0, "extra_pending": 1,
-            "lost": 2, "complete": 3, "invalid": 4,
+            "assumed_done": 2, "lost": 3, "conquered": 4,
+            "complete": 5, "invalid": 6,
         }
         targets.sort(key=lambda t: (order.get(t["status"], 9), -t["last_hit_ts"]))
         return targets

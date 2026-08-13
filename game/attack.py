@@ -1346,10 +1346,14 @@ class ConquestManager:
         # conquistado, e a unica saida seria limpar na mao pelo dashboard.
         if self._target_is_mine(target_id):
             self.logger.info(
-                "Conquest: target %s confirmed as ours via village cache — marking complete",
+                "Conquest: target %s confirmed as ours via village cache — marking conquered",
                 target_id
             )
-            ConquestCache.set(target_id, {**conquest_data, "status": "complete"})
+            ConquestCache.set(target_id, {
+                **conquest_data,
+                "status": "conquered",
+                "confirmed_by": "village_cache",
+            })
             self.wrapper.reporter.report(
                 self.village_id, "TWB_CONQUEST",
                 f"Conquest CONFIRMED: {target_id} is now ours."
@@ -1418,12 +1422,22 @@ class ConquestManager:
             # positivo e o bot mandaria nobre numa aldeia ja conquistada --
             # que, se a conquista foi nossa e o cache de aldeias estiver
             # atrasado, e exatamente a autoconquista de novo.
+            # Isto tambem e prova, nao estimativa: _get_real_loyalty() so le
+            # relatorios dos NOSSOS ataques (dest == alvo e snob entre as
+            # unidades enviadas), e a Priority 2 acima ja teria encerrado o
+            # alvo se outro jogador fosse o dono. Um relatorio nosso dizendo
+            # que a lealdade foi a <= 0 significa que foi o nosso nobre que
+            # conquistou -- so o cache de aldeias ainda nao refletiu.
             self.logger.info(
-                "Conquest: target %s — relatorio mostra lealdade %.0f (<= 0): a "
-                "aldeia mudou de dono neste ataque, encerrando o alvo",
+                "Conquest: target %s — nosso relatorio marca lealdade %.0f (<= 0): "
+                "conquistada pelo nosso nobre, encerrando o alvo",
                 target_id, real_loyalty
             )
-            ConquestCache.set(target_id, {**conquest_data, "status": "complete"})
+            ConquestCache.set(target_id, {
+                **conquest_data,
+                "status": "conquered",
+                "confirmed_by": "noble_report",
+            })
             return False
 
         if real_loyalty is not None:
@@ -1449,10 +1463,30 @@ class ConquestManager:
             )
 
         if current_loyalty <= 0:
-            self.logger.info(
-                "Conquest: target %s loyalty at 0 — marking complete", target_id
+            # ATENCAO: isto NAO e prova de nada. As duas saidas acima
+            # ("conquered") tem evidencia -- o cache de aldeias ou o nosso
+            # proprio relatorio de nobre. Esta aqui e so aritmetica: lealdade
+            # inicial presumida, menos 25 por nobre presumidos, mais regen. Foi
+            # essa conta que disse "0" quando o servidor dizia 11 no incidente
+            # da Barbara #40314, e foi o rotulo unico "complete" que pintou
+            # aquilo de verde no dashboard como se fosse conquista consumada.
+            #
+            # O bot para de mandar nobre aqui de proposito: se a estimativa
+            # estiver certa, mandar mais e autoconquista; se estiver errada,
+            # quem decide o proximo passo e uma pessoa olhando a tela. Por isso
+            # o status e visivelmente distinto e nao verde.
+            self.logger.warning(
+                "Conquest: target %s — estimativa (nao confirmada) chegou a %.1f. "
+                "Encerrando SEM confirmacao de posse: verifique no jogo se a "
+                "aldeia e sua. Nenhum relatorio de nobre com lealdade real foi "
+                "encontrado para este alvo.",
+                target_id, current_loyalty
             )
-            ConquestCache.set(target_id, {**conquest_data, "status": "complete"})
+            ConquestCache.set(target_id, {
+                **conquest_data,
+                "status": "assumed_done",
+                "assumed_reason": "estimativa de lealdade chegou a zero sem confirmacao",
+            })
             return False
 
         self.logger.info(
