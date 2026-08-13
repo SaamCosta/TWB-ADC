@@ -1,0 +1,47 @@
+[
+  {
+    "building": "stable",
+    "level": 1,
+    "build": {},
+    "farm": []
+  },
+  {
+    "building": "smith",
+    "level": 15,
+    "upgrades": {
+      "heavy": 1
+    },
+    "build": {
+      "stable": {
+        "heavy": 150
+      }
+    },
+    "farm": []
+  },
+  {
+    "building": "watchtower",
+    "level": 10,
+    "upgrades": {
+      "heavy": 1
+    },
+    "build": {
+      "stable": {
+        "heavy": 500
+      }
+    },
+    "farm": []
+  },
+  {
+    "building": "watchtower",
+    "level": 20,
+    "upgrades": {
+      "heavy": 1
+    },
+    "build": {
+      "stable": {
+        "heavy": 1350
+      }
+    },
+    "farm": []
+  }
+]

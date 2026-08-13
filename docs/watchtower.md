@@ -1,0 +1,156 @@
+# Torre de Vigia (watchtower) — levantamento
+
+Levantamento feito em 2026-08-13. Números da wiki/suporte **cruzados contra o
+servidor br143**, seguindo a regra do projeto de não aceitar número de mundo
+vindo só da comunidade (ver `CLAUDE.md`, quinto padrão de bug).
+
+**Fontes consultadas:**
+- [Watchtower — Tribalwars Wiki EN](https://help.tribalwars.net/wiki/Watchtower) — tabela completa custo/pop/raio
+- [O que é uma Torre de Vigia? — Suporte InnoGames pt_BR](https://support.innogames.com/kb/TribalWars/pt_BR/1819) — faixas de tamanho de ataque, mesma tabela em pt
+- [Torre de Vigia — Tribalwars Wiki BR](https://help.tribalwars.com.br/wiki/Torre_de_Vigia) — múltiplas torres, destruição por catapulta, ícone de olho
+- [Watchtower — Suporte InnoGames en_DK](https://support.innogames.com/kb/TribalWars/en_DK/5306)
+- [Points (Totals)](https://help.tribalwars.net/wiki/Points_(Totals)), [Farm](https://help.tribalwars.net/wiki/Farm), [Warehouse](https://help.tribalwars.net/wiki/Warehouse) — wiki EN
+- Servidor br143: `interface.php?func=get_building_info`, `interface.php?func=get_config`, `/page/settings`
+
+---
+
+## 1. Estado no br143
+
+A feature está **ativa** no mundo, confirmada pelos dois lados do servidor
+(a lição do quinto padrão: `get_config` e `/page/settings` não expõem o mesmo
+conjunto de campos, então cita-se onde se procurou):
+
+| Fonte | Evidência |
+|---|---|
+| `get_config` → `<game>` | `<watchtower>1</watchtower>` (e `<church>0</church>`) |
+| `/page/settings` | "Igreja: Inativo — **Torre de vigia: Ativo**" |
+| `get_config` → `<buildings>` | `<custom_watchtower>-1</custom_watchtower>` — sem teto customizado, vale o máximo padrão 20 |
+| `get_config` → `<build>` | `<destroy>1</destroy>` — demolição permitida, a torre não é irreversível |
+| `get_building_info` → `<watchtower>` | `max_level=20 min_level=0`, base `12000/14000/10000`, `pop=500`, fatores `1.17/1.17/1.18`, `pop_factor=1.18`, `build_time=13200`, `build_time_factor=1.2` |
+
+**Nenhuma aldeia gerenciada tem torre.** O bot já lê o nível (chave
+`buidling_levels.watchtower` — sim, com o typo — em `cache/managed/*.json`) e o
+valor é `0` nas sete aldeias, snapshot de 2026-08-13:
+
+```
+BBM 001  pts=6021  main=20  farm=26  watchtower=0
+BBM 002  pts=1997  main=11  farm=15  watchtower=0
+BBM 003  pts=693   main=11  farm=11  watchtower=0
+BBM 004  pts=497   main=10  farm=9   watchtower=0
+BBM 005  pts=634   main=10  farm=10  watchtower=0
+BBM 006  pts=391   main=10  farm=9   watchtower=0
+BBM 007  pts=453   main=11  farm=10  watchtower=0
+```
+
+Nenhum template em `templates/builder/` menciona `watchtower`, e não há chave
+`watchtower` em `config.json` nem em `config.example.json`.
+
+## 2. Mecânica
+
+- Marca **todo ataque que entra no raio** com (a) tamanho do exército e (b) se
+  leva nobre — independentemente de qual aldeia é o alvo final. Vale inclusive
+  para ataques que apenas **atravessam** o raio a caminho de outro lugar.
+- As marcas **persistem** mesmo depois de o ataque sair do raio.
+- Faixas de tamanho: **pequeno 1–1000**, **médio 1001–5000**, **grande >5000** tropas.
+- Ícone de **olho** ao lado do comando = "este ataque será marcado quando entrar
+  no raio". Sem o olho, não será marcado.
+- Marcas aparecem na visão geral da aldeia; com Premium, também na tela de Chegadas.
+- Quantas torres quiser por conta. **Catapultas destroem.**
+- Raio desenhado no mapa (navegador); no mobile, tela `watchtower`.
+
+Limitações que importam para automação:
+
+- Só ataques enviados **depois** de a torre existir são garantidamente marcados.
+- Aldeia recém-conquistada: só ataques enviados enquanto ela já era sua.
+- **Compartilhar comandos com a tribo anula o efeito observável** — comandos
+  compartilhados já vêm todos visíveis e auto-marcados, então não sobra nada
+  para a torre marcar. É a causa nº 1 de "testei e não funciona".
+
+## 3. Tabela por nível
+
+Requisitos: **Edifício principal 5 + Fazenda 5** (todas as aldeias atuais já passam).
+
+A tabela pública bate exatamente com os fatores do `get_building_info` do br143 —
+recalculada a partir da base e dos fatores, fecha nos 20 níveis.
+
+| Nv | Madeira | Argila | Ferro | Custo total | Pop acum. | Raio (campos) | Pontos acum. | Armazém mín. |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 12.000 | 14.000 | 10.000 | 36.000 | 500 | 1,1 | 42 | 14 |
+| 2 | 14.040 | 16.380 | 11.800 | 42.220 | 590 | 1,3 | 50 | 15 |
+| 3 | 16.427 | 19.165 | 13.924 | 49.516 | 696 | 1,5 | 60 | 16 |
+| 4 | 19.219 | 22.423 | 16.430 | 58.072 | 822 | 1,7 | 73 | 17 |
+| 5 | 22.487 | 26.234 | 19.388 | 68.109 | 969 | 2,0 | 87 | 17 |
+| 6 | 26.309 | 30.694 | 22.878 | 79.881 | 1.144 | 2,3 | 105 | 18 |
+| 7 | 30.782 | 35.912 | 26.996 | 93.690 | 1.350 | 2,6 | 125 | 19 |
+| 8 | 36.015 | 42.017 | 31.855 | 109.887 | 1.593 | 3,0 | 150 | 20 |
+| 9 | 42.137 | 49.160 | 37.589 | 128.886 | 1.879 | 3,4 | 181 | 20 |
+| 10 | 49.301 | 57.518 | 44.355 | 151.174 | 2.218 | 3,9 | 217 | 21 |
+| 11 | 57.682 | 67.296 | 52.338 | 177.316 | 2.617 | 4,4 | 260 | 22 |
+| 12 | 67.488 | 78.736 | 61.759 | 207.983 | 3.088 | 5,1 | 312 | 23 |
+| 13 | 78.961 | 92.121 | 72.876 | 243.958 | 3.644 | 5,8 | 374 | 23 |
+| 14 | 92.384 | 107.782 | 85.994 | 286.160 | 4.300 | 6,7 | 449 | 24 |
+| 15 | 108.089 | 126.104 | 101.472 | 335.665 | 5.074 | 7,6 | 539 | 25 |
+| 16 | 126.465 | 147.542 | 119.737 | 393.744 | 5.987 | 8,7 | 647 | 26 |
+| 17 | 147.964 | 172.624 | 141.290 | 461.878 | 7.065 | 10,0 | 777 | 26 |
+| 18 | 173.117 | 201.970 | 166.722 | 541.809 | 8.336 | 11,5 | 932 | 27 |
+| 19 | 202.547 | 236.000 | 196.733 | 635.280 | 9.837 | 13,1 | 1.118 | 28 |
+| 20 | 236.981 | 276.477 | 232.144 | 745.602 | **11.607** | **15,0** | 1.342 | 29 |
+
+**Acumulado até o nível 20:** 1.560.384 madeira + 1.820.452 argila +
+1.466.271 ferro ≈ **4,85 milhões** de recursos.
+
+Raio ≈ `1,1 × 1,1475^(nível−1)` — cresce ~14,75% por nível, enquanto o custo
+cresce ~17%. Em **área** coberta o ganho é quadrático: ~3,8 campos² no nível 1
+contra ~707 campos² no nível 20.
+
+A coluna "armazém mín." é o nível de armazém que comporta o recurso mais caro
+daquele upgrade (capacidade do armazém 30 = 400.000).
+
+## 4. O custo real é população
+
+- Fazenda nível 30 = **24.000** de população.
+- Torre nível 20 = **11.607** de população → **48% da fazenda cheia**, e ela some
+  de uma vez, não gradualmente.
+- Traduzindo: 11.607 pop ≈ 11.607 lanças/espadas, ou ~1.934 cavalarias pesadas,
+  ou ~2.320 aríetes. É um exército inteiro.
+- O **nível 1 sozinho custa 500 pop** para 1,1 campo de raio — é de longe o pior
+  degrau da tabela (o salto 1→2 custa só 90 pop e ainda soma 0,2 campo).
+- Nível 10 (3,9 campos): 2.218 pop = 9,2% de uma fazenda 30, mais ~817k de
+  recurso acumulado.
+
+Conclusão de posicionamento: torre é decisão de **aldeia de retaguarda com
+fazenda alta e tropa baixa**, escolhida para cobrir o cluster — não de aldeia de
+front, que precisa da população para tropa. Pela foto atual da conta, a única
+candidata plausível é **BBM 001** (6.021 pts, fazenda 26); as outras seis não têm
+base econômica nem para o nível 5.
+
+## 5. Implicação para o bot
+
+`docs/game_comparison.md` §3 tratava watchtower como "sem ação — já coberto pela
+Feature 16". Duas correções:
+
+1. Aquele texto não trazia raio nem custo. Com os números acima, fica claro que
+   o fator dominante da decisão é **população**, não a mecânica de detecção.
+2. A Feature 16 (`docs/backlog.md`, "DefenceManager avançado") propõe consumir
+   dados de watchtower (`data-command-id`, tamanho, flag de nobre). **Hoje ela
+   teria zero dado de entrada**: o mundo tem a feature ativa, mas nenhuma aldeia
+   da conta tem torre. Escrever o parser antes de existir uma torre em campo é
+   escrever código que nunca será exercitado — exatamente o terceiro padrão de
+   bug do `CLAUDE.md` (função definida e nunca chamada / caminho morto que, ao
+   ser ressuscitado, revela bugs que ninguém tinha exercitado).
+
+Ordem sã: construir a torre em campo primeiro (ou pelo menos decidir construir),
+depois capturar o HTML real da tela de chegadas com marcas, depois escrever o
+parser contra esse HTML.
+
+## 6. O que não foi verificado
+
+- **Tempo de construção real.** O servidor dá `build_time=13200s`,
+  `build_time_factor=1.2` e `buildtime_formula=2`. Isso rende 3,7h no nível 1 e
+  684h acumuladas **assumindo Edifício Principal nível 1**. A fórmula de redução
+  por nível de EP na variante `formula=2` não foi confirmada: não aparece em
+  `get_config` nem em `/page/settings`, e a wiki não separa as duas fórmulas.
+  Os tempos reais serão bem menores que os da tabela acima.
+- **O markup HTML das marcas** na tela de chegadas — o que a Feature 16
+  precisaria casar por regex. Exige sessão autenticada *e* uma torre construída;
+  nenhuma das duas condições existe hoje.

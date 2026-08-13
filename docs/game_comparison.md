@@ -5,6 +5,9 @@ suporte Innogames, fórum) com o que o código do bot atualmente automatiza ou m
 Objetivo: identificar lacunas concretas, não just achados genéricos. Cada item abaixo
 cita o arquivo/linha do bot que foi checado.
 
+**Revisões posteriores:** a §3 (Watchtower) foi revisada em 2026-08-13 — ver o
+banner naquela seção e o levantamento completo em [`docs/watchtower.md`](watchtower.md).
+
 **Fontes consultadas:**
 - [Battles - Tribalwars Wiki EN](https://help.tribalwars.net/wiki/Battles)
 - [World settings - Tribalwars Wiki EN](https://help.tribalwars.net/wiki/World_settings)
@@ -104,19 +107,36 @@ conhecidas antes de decidir atacar.
 
 ## 3. Watchtower — detecção antecipada de ataques
 
-**Mecânica real:** a torre de vigia revela ataques chegando dentro de um raio (até
-nível 20) antes que apareçam como "comando chegando" normal na visão geral,
-oferecendo alerta mais cedo do que o padrão.
+> ⚠️ **Revisado em 2026-08-13.** A avaliação original desta seção estava
+> incompleta em dois pontos (detalhados abaixo). Levantamento completo — tabela
+> de custo/população/raio por nível, cruzada contra o servidor br143 — em
+> [`docs/watchtower.md`](watchtower.md).
+
+**Mecânica real:** a torre de vigia marca todo ataque que entra no seu raio com o
+tamanho do exército (pequeno 1–1000 / médio 1001–5000 / grande >5000) e um
+indicador de nobre, inclusive ataques que apenas *atravessam* o raio a caminho de
+outra aldeia. Raio de 1,1 campo no nível 1 a 15,0 campos no nível 20.
 
 **O que o bot faz hoje:** `DefenceManager.update()` (`game/defence_manager.py`)
 reage a `'no_ignored_command' in main`, que é o marcador padrão de "há um comando
 não ignorado chegando" na tela de visão geral — não usa dados específicos de
 watchtower (tempo de chegada, nome do atacante, `data-command-id`).
 
-**Observação:** isso já está coberto pelo backlog — ver Feature 16 em
-`docs/backlog.md` ("DefenceManager avançado"), que propõe exatamente usar
-`data-endtime`/atacante/`data-command-id` para priorizar evacuação por urgência.
-Nenhuma ação nova necessária aqui além de manter a prioridade dessa feature.
+**Correção 1 — o custo é população, não recurso.** A avaliação original não citou
+raio nem custo, o que fazia a torre parecer barata. O nível 20 consome **11.607
+de população**, ~48% de uma fazenda 30 (24.000), sumindo de uma vez; o nível 1
+sozinho já custa 500 pop para apenas 1,1 campo. Esse é o fator que decide se vale
+construir, não a mecânica de detecção. Torre é decisão de aldeia de retaguarda com
+fazenda alta e tropa baixa.
+
+**Correção 2 — a Feature 16 não tem dado de entrada hoje.** O texto original dizia
+"nenhuma ação nova necessária, já coberto pela Feature 16" (`docs/backlog.md`,
+"DefenceManager avançado"). Mas o br143 tem `<watchtower>1</watchtower>` ativo e
+**nenhuma das 7 aldeias gerenciadas tem torre** (`buidling_levels.watchtower == 0`
+em todas). Implementar o parser de marcas antes de existir uma torre em campo é
+escrever código que nunca será exercitado — o terceiro padrão de bug do
+`CLAUDE.md`. Ordem sã: decidir/construir a torre primeiro, capturar o HTML real da
+tela de chegadas com marcas, e só então escrever o parser contra esse HTML.
 
 ## 4. Paladin — unidade especial com experiência e equipamento
 
@@ -189,4 +209,5 @@ detectar isso (a tela de visão geral geralmente expõe esse dado) e ajustar
 | 6 | Detecção de conta premium para `max_queue_len` dinâmico | Baixa | Pequeno |
 | 2 | Suporte a igreja no ZoneManager/PvP conquest | Baixa (depende do mundo) | Médio-alto |
 | 4 | Gerenciamento de Paladin (XP, arma) | Baixa | Médio |
-| 3, 5 | Watchtower e Farm Assistant nativo | Sem ação — já cobertos (Feature 16) ou decisão de design válida | — |
+| 3 | Watchtower | Bloqueado por pré-requisito de campo — ver [`docs/watchtower.md`](watchtower.md). Feature 16 não tem dado de entrada enquanto nenhuma aldeia tiver torre | — |
+| 5 | Farm Assistant nativo | Sem ação — decisão de design válida | — |

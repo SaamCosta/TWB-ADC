@@ -1037,8 +1037,15 @@ outro sistema, só falta de retry/sinalização de erro.
 - Comparação de mecânicas reais do jogo vs. cobertura do bot — ver
   `docs/game_comparison.md` (pesquisa feita em 2026-08-02) para o raciocínio
   completo por trás das Features 18-22 acima, incluindo itens avaliados e
-  descartados (watchtower e farm assistant nativo, já cobertos ou decisão de
-  design válida).
+  descartados (farm assistant nativo: decisão de design válida).
+- Torre de vigia — levantamento completo em `docs/watchtower.md` (2026-08-13):
+  tabela de custo/população/raio por nível cruzada contra o servidor br143. O
+  mundo tem a feature **ativa**, mas nenhuma das 7 aldeias gerenciadas tem torre
+  (`buidling_levels.watchtower == 0` em todas), então a **Feature 16 não tem dado
+  de entrada hoje** — o parser de marcas só deve ser escrito depois que existir
+  uma torre em campo e o HTML real da tela de chegadas puder ser capturado.
+  Fator que decide a construção é população, não recurso: nível 20 custa 11.607
+  pop, ~48% de uma fazenda 30.
 - Levantamento de telas do jogo (`screen=`) já cobertas pelo bot vs. não
   cobertas, feito em 2026-08-02 a pedido do usuário (contexto: decidir se
   scraping adicional é necessário para a Feature 23). Cobertas: `overview`,
