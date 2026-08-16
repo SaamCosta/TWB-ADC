@@ -51,7 +51,8 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   — cada arquivo roda sozinho, sem depender de `pytest` instalado.
   Cobertura atual: conquista bárbara (nobre em voo, lealdade do relatório,
   alvo perdido, semântica de status, faixa de queda), encoding do
-  `FileManager` e alocação de torre de vigia. **A maior parte do bot continua
+  `FileManager`, alocação de torre de vigia e limiares de slot de Paladino
+  (`StatuePage`, recorte verbatim de `screen=statue`). **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
   teste pontual.
@@ -222,6 +223,25 @@ puxa o fio.**
   tag XML para ele. Regra prática: **"não achei" só vale como conclusão depois
   de dizer onde procurou** — e para número de mundo isso significa citar as
   duas fontes, não uma.
+  **Quinta metade, 2026-08-16, e a mais desconfortável: o código já nomeava a
+  fonte certa e argumentou contra ela.** `StatuePage._parse_locked_slots()`
+  regexava um texto renderizado que nunca chega na resposta HTTP (só existe
+  depois que o JS monta o template no navegador), então devolvia `[]` em todo
+  ciclo. O docstring dessa função **citava** o 3º argumento de
+  `BuildingStatue.initImmutables(...)` como alternativa — e a descartava por
+  ser "uma constante fixa do JS que teoricamente poderia variar". Era ali que
+  o dado estava, server-side, na mesma resposta que o bot já baixava; um
+  `requests.get` com a sessão do bot mostrou `[1,3,5,10,20,35,50,65,80,100]`
+  em dez segundos. A nota de campo que diagnosticou o bug repetiu o erro por
+  outro caminho: procurou os limiares no 3º argumento de `receiveKnightsData`
+  (que é `0`), não achou, e concluiu "provavelmente hardcoded num bundle JS
+  estático" — quase levando a chumbar a lista no bot.
+  As metades anteriores diziam "procure nas duas fontes antes de dizer que não
+  existe". Esta acrescenta: **quando você mesmo escreveu qual é a fonte
+  plausível, olhar custa menos que o parágrafo justificando não olhar.** Um
+  descarte fundamentado ("poderia variar") soa como análise e não passa de
+  palpite enquanto ninguém abriu a resposta — e um parser que devolve lista
+  vazia falha em silêncio, então ninguém percebe por meses.
 - ⚠️ **Sexto padrão, achado em 2026-08-13: decidir sobre um estado do mundo
   que mudou desde a última vez que se olhou.** Este bot age num mundo remoto
   com latência de **horas** — um trem de nobres voa ~4h. Entre decidir e o
