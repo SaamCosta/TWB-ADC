@@ -688,6 +688,43 @@ webmanager (`{% if data.locked_slot_thresholds %}`, `statue.html:106`) nunca
 renderiza — não é falta de dado do usuário, é o parser sempre devolvendo
 lista vazia.
 
+### ✅ Corrigido em 2026-08-16 — e a fonte server-side existia o tempo todo
+
+Antes de escrever o fix busquei o HTML real com a sessão do bot (cookies de
+`cache/session.json`, a mesma técnica que destravou a lealdade em 2026-08-13).
+A resposta desmentiu a conclusão acima em um ponto que muda a correção:
+
+- `"Obtenha"` e `"desbloquear"` **não existem** na resposta — confirmado, era
+  isso mesmo.
+- Mas `[1,3,5,10,20,35,50,65,80,100]` **está na resposta**, como **3º argumento
+  posicional de `BuildingStatue.initImmutables(...)`**:
+  `initImmutables({12 skills}, {tier_requirements + 3 árvores}, [limiares], {premium})`.
+  A nota acima procurou os limiares no 3º argumento de **`receiveKnightsData`**
+  (que é `0`) e concluiu "provavelmente hardcoded num bundle JS estático" — o
+  docstring do código antigo, esse sim, citava `initImmutables` corretamente e
+  ainda assim preferiu regexar o texto renderizado, chamando o argumento de
+  "constante fixa do JS". **Os dois erros são o mesmo:** decidir que um dado não
+  está na resposta sem ter olhado a resposta. Custou um `requests.get`.
+
+Consequência: nada foi hardcodado. `StatuePage._parse_slot_thresholds()` lê os
+limiares do argumento real, e `_parse_village_count()` lê o total de aldeias da
+conta de `TribalWars.updateGameData(...)` → `player.villages` (que vem como
+**string**, `"8"`) — o número certo, já que o bot pode gerenciar um subconjunto
+das aldeias. `locked_slot_thresholds` passou a ser derivado
+(`limiar > aldeias`), e sem contagem de aldeias devolve vazio em vez de chutar
+"tudo bloqueado".
+
+Conferido de ponta a ponta contra a página real: 10 limiares, 8 aldeias,
+**7 bloqueados** — exatamente os 7 que a tela renderizava — e 3 abertos, que
+batem com os 3 paladinos recrutados. `tests/test_statue_slots.py` (10 checks,
+sem rede) fixa isso com recorte verbatim do HTML real, incluindo uma guarda de
+regressão que documenta por que parsear texto renderizado não funciona aqui.
+
+Sobra dessa correção: `_parse_knights` e o novo parser dividem um
+`_call_arguments()` genérico (varredura de colchetes balanceados) em vez de
+duas cópias, e o `/statue` mostra a régua inteira ("3 de 10 desbloqueado(s)")
+em vez de só os bloqueados.
+
 ## Feature 25 — Catálogo e otimização de itens de inventário (boosts)
 
 `Perfil > Inventário` (não coberto hoje, nem lido) tem itens obtidos via

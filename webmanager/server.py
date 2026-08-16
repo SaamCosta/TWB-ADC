@@ -454,6 +454,10 @@ def get_statue():
     enabled = config.get("statue", {}).get("enabled", False)
     managed = sync()["bot"]
     data = StatueReader.load(managed_cache=managed)
+    # Fallback: quem decide os slots e o total de aldeias da CONTA, que o
+    # StatueManager le do game_data e grava em data["village_count"]. Aqui so da
+    # pra contar as gerenciadas, que podem ser um subconjunto -- serve para
+    # cache gravado antes desse campo existir.
     village_count = len(managed)
     return render_template(
         'statue.html',

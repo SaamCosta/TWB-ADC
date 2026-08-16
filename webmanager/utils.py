@@ -1796,6 +1796,8 @@ class StatueReader:
             "village_used_name": village_used_name,
             "statue_level": raw.get("statue_level"),
             "knights": knights,
+            "slot_thresholds": raw.get("slot_thresholds") or [],
+            "village_count": raw.get("village_count"),
             "locked_slot_thresholds": raw.get("locked_slot_thresholds") or [],
         }
 

@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 
 from requests import Response
 
+from core.extractors import Extractor
 from core.request import WebWrapper
 
 
@@ -40,7 +41,11 @@ class StatuePage:
         text = self.result_get.text
         self.statue_level: Optional[int] = self._parse_statue_level(text)
         self.knights: Dict[str, dict] = self._parse_knights(text)
-        self.locked_slot_thresholds: List[int] = self._parse_locked_slots(text)
+        self.slot_thresholds: List[int] = self._parse_slot_thresholds(text)
+        self.village_count: Optional[int] = self._parse_village_count(text)
+        self.locked_slot_thresholds: List[int] = self._locked_slots(
+            self.slot_thresholds, self.village_count
+        )
 
     def _get_statue_overview(self):
         return self.wrapper.get_action(self.village_id, "statue&mode=overview")
@@ -96,58 +101,101 @@ class StatuePage:
         return None
 
     @staticmethod
-    def _parse_knights(text: str) -> Dict[str, dict]:
+    def _call_arguments(text: str, marker: str, count: int) -> List[object]:
         """
-        Extrai o JSON de:
-            BuildingStatue.receiveKnightsData([...], {...knights...}, N);
+        Devolve os `count` primeiros argumentos posicionais da chamada JS que
+        começa em `marker`, já parseados de JSON, usando varredura de
+        colchetes balanceados em vez de regex guloso.
 
-        O primeiro argumento (array, vazio nas amostras coletadas) e o
-        segundo (dict de paladinos, chave = knight_id) são extraídos via
-        varredura de colchetes balanceados em vez de regex guloso, para não
-        quebrar com o conteúdo aninhado.
+        Para no primeiro argumento que não seja objeto/array — é o que
+        encerra `receiveKnightsData([], {...}, 0)` no `0` literal — e devolve
+        o que já tinha coletado. Marcador ausente, JSON inválido ou markup
+        diferente do esperado resultam em lista curta/vazia, nunca exceção:
+        quem chama decide o fallback.
         """
-        start_marker = "BuildingStatue.receiveKnightsData("
-        start = text.find(start_marker)
+        start = text.find(marker)
         if start == -1:
-            return {}
+            return []
 
-        i = start + len(start_marker)
-        while i < len(text) and text[i] in " \t\r\n":
-            i += 1
-        if i >= len(text) or text[i] != "[":
-            return {}
-        first_arg = StatuePage._extract_balanced(text, i)
-        if first_arg is None:
-            return {}
-
-        j = i + len(first_arg)
-        while j < len(text) and text[j] not in "{[":
-            j += 1
-        if j >= len(text) or text[j] != "{":
-            return {}
-        second_arg = StatuePage._extract_balanced(text, j)
-        if second_arg is None:
-            return {}
-
-        try:
-            return json.loads(second_arg, strict=False)
-        except (json.JSONDecodeError, ValueError):
-            return {}
+        i = start + len(marker)
+        args: List[object] = []
+        while len(args) < count:
+            while i < len(text) and text[i] in " \t\r\n,":
+                i += 1
+            if i >= len(text) or text[i] not in "{[":
+                break
+            raw = StatuePage._extract_balanced(text, i)
+            if raw is None:
+                break
+            try:
+                args.append(json.loads(raw, strict=False))
+            except (json.JSONDecodeError, ValueError):
+                break
+            i += len(raw)
+        return args
 
     @staticmethod
-    def _parse_locked_slots(text: str) -> List[int]:
+    def _parse_knights(text: str) -> Dict[str, dict]:
         """
-        Slots bloqueados renderizam "Obtenha N aldeias para desbloquear este
-        slot." — parsear esse texto é mais robusto do que depender do 3º
-        argumento posicional de BuildingStatue.initImmutables(...), já que
-        reflete o que foi de fato renderizado em vez de uma constante fixa do
-        JS que teoricamente poderia variar por configuração de mundo.
+        Extrai o 2º argumento de:
+            BuildingStatue.receiveKnightsData([...], {...knights...}, N);
+        (dict de paladinos, chave = knight_id). O 1º argumento é um array
+        vazio nas amostras coletadas e o 3º é o literal `0`.
+        """
+        args = StatuePage._call_arguments(text, "BuildingStatue.receiveKnightsData(", 2)
+        if len(args) >= 2 and isinstance(args[1], dict):
+            return args[1]
+        return {}
 
-        Limitação conhecida: não distingue um slot já desbloqueado mas ainda
-        sem paladino recrutado (não há amostra desse estado nesta sessão) —
-        nesse caso ele simplesmente não aparece nem aqui nem em `knights`.
+    @staticmethod
+    def _parse_slot_thresholds(text: str) -> List[int]:
         """
-        return [
-            int(n)
-            for n in re.findall(r"Obtenha (\d+) aldeias para desbloquear este slot", text)
-        ]
+        Número de aldeias necessário para abrir cada slot de Paladino, lido do
+        3º argumento posicional de:
+            BuildingStatue.initImmutables({skills}, {branches}, [1,3,5,...], {premium});
+
+        Confirmado na resposta HTTP real do br143 em 2026-08-16:
+        `[1,3,5,10,20,35,50,65,80,100]`.
+
+        A versão anterior desta leitura regexava o texto renderizado
+        ("Obtenha N aldeias para desbloquear este slot") por considerá-lo mais
+        fiel que "uma constante fixa do JS". O texto era de fato mais fiel e
+        **nunca chegava até aqui**: ele só existe depois que o JS do jogo monta
+        o template no navegador, então o parser devolvia lista vazia em todo
+        ciclo. O argumento posicional, ao contrário, vem server-side na mesma
+        resposta que o bot já lê — e por vir por requisição, continua
+        acompanhando a configuração do mundo em vez de ser um número chumbado
+        no bot.
+        """
+        args = StatuePage._call_arguments(text, "BuildingStatue.initImmutables(", 3)
+        if len(args) >= 3 and isinstance(args[2], list):
+            return sorted({int(n) for n in args[2] if isinstance(n, int)})
+        return []
+
+    @staticmethod
+    def _parse_village_count(text: str) -> Optional[int]:
+        """
+        Total de aldeias da conta, de `TribalWars.updateGameData(...)`
+        (`player.villages`, que vem como string). É o número que decide quais
+        slots estão abertos — e é da conta inteira, não das aldeias que o bot
+        gerencia, que podem ser um subconjunto.
+        """
+        try:
+            state = Extractor.game_state(text) or {}
+        except (json.JSONDecodeError, ValueError):
+            return None
+        try:
+            return int((state.get("player") or {}).get("villages"))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _locked_slots(thresholds: List[int], village_count: Optional[int]) -> List[int]:
+        """
+        Sem saber quantas aldeias a conta tem não dá para dizer o que está
+        bloqueado — devolve vazio em vez de chutar que tudo está bloqueado,
+        que apareceria na tela como uma afirmação falsa.
+        """
+        if village_count is None:
+            return []
+        return [t for t in thresholds if t > village_count]

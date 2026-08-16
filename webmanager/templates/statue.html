@@ -103,23 +103,32 @@
   {% endfor %}
 </div>
 
-{% if data.locked_slot_thresholds %}
+{% if data.slot_thresholds %}
+{% set owned = data.village_count if data.village_count is not none else village_count %}
+{# Conta os abertos a partir de `owned`, nao de locked_slot_thresholds: quando o
+   bot nao conseguiu ler o total de aldeias, essa lista vem vazia por significar
+   "desconhecido", e subtrair dela diria "tudo desbloqueado" logo abaixo de
+   badges mostrando o contrario. #}
+{% set abertos = data.slot_thresholds|select("le", owned)|list|length %}
 <div class="card mt-2" style="border-color:#c8a96e;">
   <div class="card-body">
-    <h6 class="card-title">Slots bloqueados ({{ village_count }} aldeia(s) atualmente)</h6>
+    <h6 class="card-title">
+      Slots de paladino ({{ owned }} aldeia(s) — {{ abertos }}
+      de {{ data.slot_thresholds|length }} desbloqueado(s))
+    </h6>
     <div>
-      {% for threshold in data.locked_slot_thresholds %}
-        {% if threshold <= village_count %}
+      {% for threshold in data.slot_thresholds %}
+        {% if threshold <= owned %}
           <span class="badge badge-success mr-1">{{ threshold }} aldeias — desbloqueado</span>
         {% else %}
-          <span class="badge badge-secondary mr-1">{{ threshold }} aldeias — faltam {{ threshold - village_count }}</span>
+          <span class="badge badge-secondary mr-1">{{ threshold }} aldeias — faltam {{ threshold - owned }}</span>
         {% endif %}
       {% endfor %}
     </div>
     <p class="text-muted small mt-2 mb-0">
-      Um slot pode já estar desbloqueado mas sem paladino recrutado ainda — este contador
-      só reflete o texto de bloqueio lido do jogo, não distingue esse caso (limitação
-      conhecida da fase 1, leia <code>docs/backlog.md</code>).
+      Um slot pode já estar desbloqueado mas sem paladino recrutado ainda — o contador
+      compara o total de aldeias da conta com os limiares lidos do jogo, então um slot
+      aberto e vazio aparece como desbloqueado aqui mas não na lista de paladinos acima.
     </p>
   </div>
 </div>

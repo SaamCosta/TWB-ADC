@@ -57,10 +57,19 @@ class StatueManager:
             "village_used": village_id,
             "statue_level": page.statue_level,
             "knights": page.knights,
+            "slot_thresholds": page.slot_thresholds,
+            "village_count": page.village_count,
             "locked_slot_thresholds": page.locked_slot_thresholds,
         }
         FileManager.save_json_file(data, CACHE_PATH)
         logger.debug(
-            "StatueManager: %d paladino(s) lido(s), %d slot(s) bloqueado(s)",
-            len(page.knights), len(page.locked_slot_thresholds)
+            "StatueManager: %d paladino(s) lido(s), %d de %d slot(s) bloqueado(s) "
+            "com %s aldeia(s)",
+            len(page.knights), len(page.locked_slot_thresholds),
+            len(page.slot_thresholds), page.village_count
         )
+        if not page.slot_thresholds:
+            logger.warning(
+                "StatueManager: limiares de slot ausentes na resposta de "
+                "screen=statue — initImmutables(...) mudou de formato?"
+            )
