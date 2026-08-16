@@ -204,6 +204,13 @@ comportamento fica idêntico ao pré-Feature-16 (evacua sempre). Recomendado
 validar em campo (log `WARNING` mostra ETA/atacante quando o parsing
 funciona) antes de contar com a priorização por urgência de fato acontecendo.
 
+**Tentativa de validação em 2026-08-16: não deu, sem dado disponível — não
+confundir com "confirmado".** Checado `window.game_data.player.incomings` na
+sessão real: `"0"` para a conta inteira (8 aldeias), não só para a 41123. Sem
+nenhum comando a caminho, não há markup real de `data-command-id` pra
+comparar contra o que `incoming_commands()` espera. Continua pendente de
+validação em campo — precisa de uma aldeia com ataque de verdade chegando.
+
 ## Feature 17 — Relatório de império no webmanager ✅ Implementado (2026-08-05)
 
 Dashboard em `/empire` com: total de tropas por tipo agregado (todas as
@@ -641,6 +648,46 @@ nem na lista de paladinos nem na de bloqueados. Fase 2 (treino por XP
 automático, re-especialização por perfil) segue sem desenho, precisa de mais
 definição do usuário antes de virar tarefa.
 
+**Ciclo real validado em campo em 2026-08-16, e achado um bug real em
+`locked_slot_thresholds`.** `cache/statue/status.json` está sendo escrito
+ciclo a ciclo pelo `StatueManager` de verdade (não é fixture) — o XP do
+paladino 554 no cache (211959/357871) já estava mais baixo que o valor ao
+vivo na mesma sessão (228579/357871), e os 3 paladinos (554, 65107, 66925,
+níveis 19/9/9) batem com o que a tela `screen=statue&mode=overview` mostra.
+
+O que não bate: `locked_slot_thresholds` está sempre `[]` no cache, embora a
+conta (8 aldeias) tenha claramente 7 slots bloqueados renderizados na tela
+("Obtenha 10/20/35/50/65/80/100 aldeias para desbloquear este slot."). Causa
+confirmada, não suposta: rodei `fetch(window.location.href, {credentials:
+'include'})` na mesma aba autenticada, contra a mesma URL que
+`StatuePage._get_statue_overview()` busca — a resposta HTTP bruta **não
+contém a string "Obtenha"** em lugar nenhum (`text.includes('Obtenha') ===
+false`), só `receiveKnightsData` está lá. O texto que
+`_parse_locked_slots()` (`pages/statue.py:140-153`) regexa só existe depois
+que o JS do próprio jogo monta o template no navegador — nunca chega na
+resposta que `requests` recebe. O regex está correto; o texto-alvo dele é
+que nunca existe no HTML que o bot lê.
+
+Conferi também a alternativa que o código já tinha descartado (3º argumento
+posicional de `receiveKnightsData(...)`, citado no docstring de
+`_parse_locked_slots` como "constante fixa do JS que teoricamente poderia
+variar"): na sessão real esse argumento é `0`, não uma lista de thresholds —
+não serve como fonte alternativa do jeito que está. Não achei em nenhum
+`<script>` da página (nem em `initImmutables(...)`, que traz as 12 skills e os
+portraits, mas termina no dict de portraits) uma fonte server-side para
+`[1,3,5,10,20,35,50,65,80,100]`; é provável que esses limiares estejam
+hardcoded num bundle JS estático do jogo, não em dado por requisição. Se for
+esse o caso, a correção realista é hardcodar a mesma lista no bot (documentar
+a fonte: consistente com o `[1,3,5,10,20,35,50,65,80,100]` já citado neste
+documento) e calcular bloqueado/desbloqueado contra `game_data.player.villages`
+em vez de tentar parsear texto que não existe na resposta — em vez de
+insistir em regex sobre uma string ausente.
+
+**Efeito prático hoje:** a seção de slots bloqueados do `/statue` no
+webmanager (`{% if data.locked_slot_thresholds %}`, `statue.html:106`) nunca
+renderiza — não é falta de dado do usuário, é o parser sempre devolvendo
+lista vazia.
+
 ## Feature 25 — Catálogo e otimização de itens de inventário (boosts)
 
 `Perfil > Inventário` (não coberto hoje, nem lido) tem itens obtidos via
@@ -655,9 +702,53 @@ ser instâncias consumíveis do mesmo sistema já gerenciado por
 `DefenceManager` (ver `docs/bugs_flags.md`) — ou um sistema totalmente
 separado. Confirmar antes de desenhar a automação, pra não duplicar lógica.
 
-**Prioridade:** depois da Feature 23/24. Precisa de levantamento mais
-detalhado (usuário tem mais contexto de jogo aqui) antes de virar plano de
-implementação — ainda não é uma tarefa pronta para começar.
+**Catálogo levantado em campo em 2026-08-16 — nota acima respondida.** Na
+conta real (`screen=inventory`, 8 aldeias), `window.Inventory.item_data`
+expõe o catálogo inteiro sem precisar de hover/click — 22 itens, cada um já
+com `admin_name` (nome + % + duração), `type`, `category` e `descriptions`
+completas. Categorias do jogo (`Inventory.item_categories`): 1 Premium,
+2 Pacotes de recurso, 3 Itens do evento, 4 Itens de unidade, 5 Itens de
+aldeia, 6 Itens de recrutamento, 7 Cosméticos, 8 Itens de relíquia. Tipos
+(`Inventory.item_types`): 1 Funcionalidade, 2 Consumível, 3 Passivo,
+4 Ativável. **Nenhum item de bandeira apareceu no inventário** — resposta à
+nota acima: são sistemas separados, o inventário não tem instância
+consumível de bandeira.
+
+Itens reais catalogados (id | nome/admin_name | tipo/categoria):
+- `201_11` Livro de habilidade: Persuasão | type2 cat4 — melhora eficácia de
+  ataque de nobre a partir da aldeia onde o paladino estiver parado.
+- `3001_0` Estado de Guerra (2 dias) | type2 cat5 — -10% produção de recurso,
+  +25% velocidade de recrutamento (inclusive nobre), efeito em todas as aldeias.
+- `3003_0` / `3005_0` Sinal da Aflição (10%/30%, 2 dias) | type2 cat4 — apoio
+  a caminho enviado enquanto ativo percorre X% mais rápido (não afeta apoio
+  já em trânsito), efeito em uma aldeia.
+- `3010_0` Bônus de bárbaros (5%, 1 dia) e `3041_0` (idem) | type2 cat4.
+- `3014_0` Bônus no saque máximo (15%, 2 dias) | type2 cat4.
+- `3016_0`/`3017_0`/`3082_0`/`3083_0` Bônus de ataque (5%/15%/5%/10%, 1 dia)
+  | type2 cat4 — bárbaro + cavalaria leve, efeito em todas as aldeias.
+- `3018_0`/`3019_0`/`3085_0` Bônus de defesa (5%/15%/5%, 1 dia) | type2 cat4.
+- `3040_0` Bônus de espadachim (5%, 1 dia) | type2 cat4.
+- `3043_0` Recrutador (10%, 1 dia) | type2 cat6.
+- `3050_0`/`3051_0` Bônus Cavalaria pesada (10%/15%, 2 dias) | type2 cat4.
+- `3055_0` Bônus do Nobre (+2, 2 dias) | type2 cat4.
+- `3073_0` Bônus de Estábulo (15%, 1 dia) e `3075_0` Bônus de Oficina (10%,
+  1 dia) | type2 cat6.
+- `3095_0` Reforço Defensivo (7%) | type2 cat6 — adiciona 7% do espaço livre
+  em unidades à aldeia atual (≈3.5% lanceiro + 3.5% espadachim), chegada
+  entre 20 e 24h, efeito em uma aldeia.
+
+Quantidades no momento do levantamento (via `.count` no DOM, não em
+`Inventory.num_owned_items` — esse objeto veio vazio nesta conta):
+`3005_0`×2, `3016_0`×4, `3018_0`×3, `3019_0`×2, `3040_0`×2, `3041_0`×3,
+`3043_0`×2; os demais sem badge de contagem visível (0 ou 1, não deu para
+distinguir só pelo DOM).
+
+**Ainda em aberto, e fora do escopo deste levantamento:** desenhar a lógica
+de "qual boost ativar e quando" — o catálogo agora existe, a política de uso
+não.
+
+**Prioridade:** depois da Feature 23/24. Levantamento inicial feito; falta
+desenho da lógica de uso antes de virar tarefa de implementação.
 
 ## Feature 26 — Envio de ataques múltiplos em lote (train[N][unit])
 
@@ -772,6 +863,15 @@ scrapeável, com as duas ressalvas.
 
 **Pré-requisito:** confirmar se a conta tem premium (a Feature 22 já detecta
 premium para a fila de construção — reaproveitar esse sinal).
+
+**Pré-requisito checado em 2026-08-16: conta não é premium.**
+`config.json` → `world.premium_account: false`, e é detecção real do bot
+(`OverviewPage.is_premium`, `twb.py:371`), não default. Confirmado também ao
+vivo: nenhum selo/ícone de premium apareceu na tela de academia ao checar a
+Feature 33 (ver abaixo). Consequência direta: o hover de mapa que expõe a
+janela do defensor não fica disponível nesta conta hoje — não dá pra coletar
+o formato real do tooltip enquanto isso não mudar. Nada novo a levantar aqui
+até a conta ter premium.
 
 **Prioridade:** média, e atrelada a querer usar `dynamic_moral_night_bonus` no
 br143. Sem isso a flag fica entre dois extremos ruins: assumir bônus sempre
@@ -1045,6 +1145,33 @@ tipos de gatilho, não de uma linha do tempo.
   publica) em vez de assumir que "produção" e "custo de cunhagem" são
   comparáveis.
 
+  **Levantado em campo em 2026-08-16 — resolve o ponto acima.** Direto do
+  `data-title` dos `flag_box_{tipo}_{nível}` em `screen=flags` (sem precisar
+  de hover real), os 8 tipos × 9 níveis:
+
+  | Nível | 1 Produção | 2 Recrutamento | 3 Ataque | 4 Defesa | 5 Sorte | 6 População | 7 Custo de cunhagem | 8 Saque |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | +4% | +6% | +2% | +2% | 6% | +2% | -10% | +2% |
+  | 2 | +6% | +8% | +3% | +3% | 8% | +3% | -12% | +3% |
+  | 3 | +8% | +10% | +4% | +4% | 10% | +4% | -14% | +4% |
+  | 4 | +10% | +12% | +5% | +5% | 12% | +5% | -16% | +5% |
+  | 5 | +12% | +14% | +6% | +6% | 14% | +6% | -18% | +6% |
+  | 6 | +14% | +16% | +7% | +7% | 16% | +7% | -20% | +7% |
+  | 7 | +16% | +18% | +8% | +8% | 18% | +8% | -22% | +8% |
+  | 8 | +17% | +19% | +9% | +9% | 19% | +9% | -23% | +9% |
+  | 9 | +18% | +20% | +9%* | +10% | 20% | +10% | -24% | +10% |
+
+  \* nível 9 do tipo 3 (ataque) veio como `+9%` no `data-title` capturado —
+  igual ao nível 8; não recapturei pra descartar erro de leitura, mas foi o
+  valor lido ao vivo, registro como veio. Todos os outros tipos sobem
+  estritamente por nível.
+
+  De quebra, confirmado estruturalmente (não só por observação, como o
+  `docs/bugs_flags.md` registrava): `FlagsScreen.cooldown_hours === "24"`,
+  `FlagsScreen.max_level === 9`, `FlagsScreen.required_for_upgrade === 3`
+  (3 bandeiras do mesmo tipo+nível fundem numa do próximo nível). Bandeira
+  atual da 41123 no momento: tipo 1 (produção), nível 5 (+12%).
+
 **Pré-requisito honesto:** os fixes dos Bugs 1 e 2 de bandeira (2026-08-02)
 **ainda não foram validados em campo**, e o bot hoje só equipa os tipos 1 e 4.
 Ligar mais tipos antes de confirmar que a troca não entra em loop é multiplicar
@@ -1084,9 +1211,26 @@ diferença é real.
    sugere disponibilidade, e nenhum ícone de PP aparece no botão — mas isso é
    leitura de indício, não confirmação. A Feature 22 já detecta premium
    (`world.premium_account`); dá para cruzar.
+
+   **Confirmado em 2026-08-16: não depende de premium.** Cruzei com a
+   Feature 22 como sugerido acima — `config.json` → `world.premium_account:
+   false` para esta conta — e mesmo assim o bloco "Criação automática" mostra
+   o botão "Ativar" normal, clicável, sem selo/paywall de premium. O
+   `<span class="auto-minting-status">` estava vazio no DOM (só a classe
+   `avail`, sem conteúdo renderizado) — não é indicador de bloqueio.
 3. **Não capturei o POST real.** Mesma cautela da Feature 26: o form não tem
    campos visíveis além do `h` na query string, mas isso foi lido do HTML, não
    de uma captura de rede do envio. Ativar às cegas gasta recurso real.
+
+   **Ainda não capturado em 2026-08-16, de propósito.** Cheguei a inspecionar
+   o botão via JS (`querySelector` + `outerHTML`), mas a ferramenta de
+   automação bloqueia qualquer leitura de `href`/query string na página (
+   `[BLOCKED: Cookie/query string data]` — provavelmente porque o link carrega
+   o token `h=` de autenticação) — o que, na prática, é uma proteção a favor
+   da mesma cautela que este item já pedia. Não cliquei em "Ativar": ativaria
+   a sessão de verdade e gastaria recurso real da conta sem autorização para
+   isso. Continua exigindo captura de rede controlada (ex: DevTools do
+   usuário) antes de implementar.
 
 **Escopo proposto:** chave por aldeia (ex.: `mint_coins_auto`), só efetiva com
 `mint_coins` ligado; o bot reativa a sessão quando ela expira (persistir o
@@ -1270,3 +1414,43 @@ construtor volta a pedir recurso.
   ainda. `Estatísticas` — não vira feature própria por ora, mas é candidata a
   fonte de dados para Feature 18 (cálculo de moral real) ou Feature 17
   (relatório de império) quando essas forem implementadas.
+- **Levantamento de campo em 2026-08-16, sessão via extensão Chrome contra a
+  conta real (sccj, 8 aldeias, br143).** Sem edição de código nesta sessão —
+  só coleta e registro. Resumo, detalhe embutido nas seções de cada feature:
+  Feature 25 catalogada por completo (22 itens, sem precisar hover — direto
+  de `Inventory.item_data`); Feature 24 fase 1 validada em campo e um bug real
+  encontrado (`locked_slot_thresholds` sempre `[]`, texto-alvo do regex nunca
+  chega na resposta HTTP que o bot lê); Feature 32 com a tabela de percentuais
+  dos 8 tipos × 9 níveis de bandeira completa; Feature 33 confirmado que não
+  depende de premium; Feature 29 confirmado que a conta não é premium (bloqueia
+  o levantamento até isso mudar); Feature 16 (limitação da DefenceManager
+  avançada) tentado e não deu — conta sem nenhum ataque a caminho no momento.
+  Nenhuma ação de jogo foi executada (nada clicado que gastasse recurso ou
+  mudasse estado) — só navegação e leitura de `window.*`/DOM/`fetch()` na aba
+  autenticada.
+
+- **Proposta registrada a pedido do usuário (2026-08-16): documento de
+  levantamento de campo entre sessões sem navegador.** O Claude Code que edita
+  este repositório roda sem acesso a navegador/extensão — boa parte das
+  pendências acima (`docs/backlog.md`, `docs/auditoria_codigo_2026-08-08.md`)
+  ficou marcada "precisa de levantamento em campo" justamente por essa
+  limitação, e até hoje esse levantamento dependia do usuário colar HTML/prints
+  manualmente na conversa. A ideia: quando o Claude Code identificar que uma
+  tarefa está bloqueada por falta de dado só disponível dentro do jogo (tela
+  nunca acessada, markup não confirmado, JS que só existe client-side como o
+  achado do statue acima), ele escreve um documento estruturado — por
+  pergunta, não por prosa livre — listando exatamente que tela abrir, o que
+  extrair (texto renderizado, `window.<objeto>`, `data-*` de um elemento,
+  resposta crua de uma URL) e por que aquele dado resolve o bloqueio. Uma
+  sessão com navegador (como esta) leria esse documento, cumpriria os pedidos
+  e devolveria os achados no mesmo arquivo ou em um novo, para o Claude Code
+  seguinte consumir sem precisar re-perguntar ao usuário o que já foi
+  levantado.
+  **Não implementado ainda** — é registro da possibilidade, não uma tarefa
+  pronta. Ficaria pendente decidir: nome/local do arquivo (`docs/` parece
+  natural, mas cria ruído se virar descartável a cada sessão), se cada pedido
+  vira uma entrada permanente ou é apagado depois de atendido, e como marcar
+  "atendido" sem duplicar o que já é escrito nas seções de feature (esta
+  sessão, por exemplo, já registrou os achados diretamente nas seções acima em
+  vez de um arquivo à parte — o ganho do documento estruturado seria do lado
+  do *pedido*, antes da coleta, não da entrega).
