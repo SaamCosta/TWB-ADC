@@ -270,6 +270,40 @@ puxa o fio.**
   padrão desta lista com outra máscara: ao consumir um parser, conferir *qual*
   valor ele devolve quando falha, e se esse valor é distinguível de um
   resultado legítimo.
+- ⚠️ **Sétimo padrão, achado em 2026-08-16: sondar a API com um cliente
+  diferente do que o bot usa.** Explorando o inventário com um
+  `requests.Session()` montado à mão, mandei só `X-Requested-With` e vi
+  `game.php?screen=inventory&ajax=get_inventory` devolver
+  `{"inventory":…,"data":…,"expire":…}` no topo. Escrevi o parser contra isso,
+  com fixture verbatim, e os testes passaram. Mas `WebWrapper.get_api_data`
+  manda **também** `TribalWars-Ajax: 1`, e com esse cabeçalho **o mesmo
+  endpoint embrulha tudo em `{"response": {...}, "game_data": {...}}`** — o
+  parser teria falhado no primeiro ciclo real. Só apareceu porque rodei um
+  smoke com os cabeçalhos do próprio wrapper antes de dar por pronto.
+  A quinta metade do padrão acima diz "vá olhar a resposta do servidor". Esta
+  acrescenta o que ela não diz: **a resposta depende de como você pergunta.**
+  Ao sondar uma tela nova, reproduzir os cabeçalhos que o bot manda de fato
+  (`core/request.py`: `get_url`, `get_api_data`, `get_api_action` — cada um
+  monta um conjunto diferente), ou melhor, sondar chamando o próprio método do
+  wrapper. Fixture capturada com o cliente errado é fixture de uma resposta
+  que o bot nunca vai receber. Corolário: um smoke contra o servidor **depois**
+  de os testes passarem não é redundância — foi o único passo que pegou isto.
+- ⚠️ **Oitavo padrão, achado em 2026-08-16: chave de dict que colide com
+  método de dict, em template Jinja2.** `{{ x.items }}`, `{{ x.pop }}`,
+  `{{ x.get }}`, `{{ x.keys }}`, `{{ x.values }}`, `{{ x.update }}`,
+  `{{ x.copy }}` — o Jinja2 tenta `getattr` **antes** de `x["chave"]`, então
+  num dict Python puro o método nativo vence: a página renderiza
+  `<built-in method …>` ou o `{% for %}` estoura com
+  `'builtin_function_or_method' object is not iterable`. Preferir **renomear a
+  chave** (foi o que `InventoryReader` fez: `entries`, não `items`) a
+  contornar com `x['items']` — o contorno funciona e a colisão volta na
+  próxima edição do template, porque nada no nome avisa que ela existe.
+  **A metade que importa desta entrada é onde ela está escrita.** O bug já
+  tinha acontecido na Feature 17 (coluna "Pop") e estava documentado — em
+  `docs/backlog.md`, que não entra em contexto. Repeti o mesmo erro em
+  2026-08-16 com a lição a um `grep` de distância e nunca lida. **Lição que
+  vale para uma classe de erro, e não só para o arquivo onde ela apareceu,
+  mora aqui**; o registro por feature guarda o caso, não a regra.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
