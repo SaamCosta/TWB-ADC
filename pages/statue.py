@@ -58,54 +58,12 @@ class StatuePage:
         return None
 
     @staticmethod
-    def _extract_balanced(text: str, start: int) -> Optional[str]:
-        """
-        Dado o índice de um caractere de abertura ('{' ou '['), retorna a
-        substring desde esse índice até o fechamento correspondente,
-        ignorando corretamente colchetes/chaves que apareçam dentro de
-        strings JSON entre aspas (inclusive aspas escapadas).
-
-        Necessário porque o payload de BuildingStatue.receiveKnightsData(...)
-        é um JSON profundamente aninhado (skills, branch_investments,
-        home_village, usable_regimens...) — um regex não-guloso simples como
-        os já usados em core/extractors.py (`\\{.+?\\}`) pararia no primeiro
-        "}" interno em vez do fim real do objeto.
-        """
-        if start >= len(text):
-            return None
-        open_ch = text[start]
-        close_ch = {"{": "}", "[": "]"}.get(open_ch)
-        if close_ch is None:
-            return None
-        depth = 0
-        in_string = False
-        escape = False
-        for i in range(start, len(text)):
-            ch = text[i]
-            if in_string:
-                if escape:
-                    escape = False
-                elif ch == "\\":
-                    escape = True
-                elif ch == '"':
-                    in_string = False
-                continue
-            if ch == '"':
-                in_string = True
-            elif ch == open_ch:
-                depth += 1
-            elif ch == close_ch:
-                depth -= 1
-                if depth == 0:
-                    return text[start:i + 1]
-        return None
-
-    @staticmethod
     def _call_arguments(text: str, marker: str, count: int) -> List[object]:
         """
         Devolve os `count` primeiros argumentos posicionais da chamada JS que
-        começa em `marker`, já parseados de JSON, usando varredura de
-        colchetes balanceados em vez de regex guloso.
+        começa em `marker`, já parseados de JSON, usando a varredura de
+        colchetes balanceados de Extractor.balanced_slice em vez de regex
+        guloso.
 
         Para no primeiro argumento que não seja objeto/array — é o que
         encerra `receiveKnightsData([], {...}, 0)` no `0` literal — e devolve
@@ -124,7 +82,7 @@ class StatuePage:
                 i += 1
             if i >= len(text) or text[i] not in "{[":
                 break
-            raw = StatuePage._extract_balanced(text, i)
+            raw = Extractor.balanced_slice(text, i)
             if raw is None:
                 break
             try:

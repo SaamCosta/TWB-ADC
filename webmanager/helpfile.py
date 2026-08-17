@@ -144,6 +144,8 @@ help_file = {
     'pvp_conquest.dynamic_moral_night_bonus': 'Calcula moral (por pontos atacante/defensor) e night bonus (horário + world settings) reais no simulador, em vez de valores neutros fixos (moral=100, sem night bonus). Estimativa best-effort — valide contra o simulador do próprio jogo antes de confiar totalmente (ver docs/game_comparison.md item 1)',
     'statue': 'Leitura periódica do estado do(s) Paladino(s) via screen=statue (Feature 24, fase 1 — só leitura, sem automação)',
     'statue.enabled': 'Ativar a leitura periódica do estado do Paladino (nível, XP, skills, slots) e persistência em cache/statue/status.json para exibição em /statue',
+    'inventory': 'Leitura periódica do inventário (Perfil > Inventário) via screen=inventory (Feature 25, fase 1 — só leitura, nenhum item é ativado)',
+    'inventory.enabled': 'Ativar a leitura periódica do inventário (itens, quantidades, descrições, validade) e persistência em cache/inventory/status.json para exibição em /inventory. Custa duas requisições por ciclo: o HTML da tela (rótulos de tipo/categoria) e o AJAX get_inventory (os itens)',
 }
 
 buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "place", "statue", "market", "wood",

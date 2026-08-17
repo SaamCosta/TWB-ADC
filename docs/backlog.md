@@ -1,13 +1,14 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27 → 25 (fase 1)` (✅ todas)
 
-Pendentes: **25** (inventário/boosts), **26** (envio em lote `train[N][unit]`)
-— ambas precisam de levantamento em campo antes de virar tarefa —, **28**
-(farm automático de aldeias de jogador), que precisa de desenho dos filtros,
-**29** (janela de bônus noturno do defensor), **31** (sítios de torre, fase 2),
-**32** (bandeira por perfil e fase da aldeia) e **33** (cunhagem automática
-nativa).
+Pendentes: **25 fase 2** (ativar boosts — o catálogo já é lido a cada ciclo,
+falta a política de uso e uma captura do POST de `consume`), **26** (envio em
+lote `train[N][unit]`, precisa de captura de rede), **28** (farm automático de
+aldeias de jogador), que precisa de desenho dos filtros, **29** (janela de
+bônus noturno do defensor, bloqueada por falta de premium), **31** (sítios de
+torre, fase 2), **32** (bandeira por perfil e fase da aldeia) e **33**
+(cunhagem automática nativa).
 
 ## Fila da auditoria de código
 
@@ -780,12 +781,66 @@ Quantidades no momento do levantamento (via `.count` no DOM, não em
 `3043_0`×2; os demais sem badge de contagem visível (0 ou 1, não deu para
 distinguir só pelo DOM).
 
-**Ainda em aberto, e fora do escopo deste levantamento:** desenhar a lógica
-de "qual boost ativar e quando" — o catálogo agora existe, a política de uso
-não.
+### ⚠️ `window.Inventory.item_data` não serve ao bot — a fonte é `ajax=get_inventory`
 
-**Prioridade:** depois da Feature 23/24. Levantamento inicial feito; falta
-desenho da lógica de uso antes de virar tarefa de implementação.
+Levantado em 2026-08-16, antes de escrever qualquer parser, justamente porque
+o levantamento acima nomeia um objeto de **navegador**. Buscando
+`screen=inventory` com a sessão do bot (cookies de `cache/session.json`), a
+resposta HTTP crua **não contém `item_data`** — o `<script>` inline traz só
+`Inventory.item_types`, `Inventory.item_categories`, `Inventory.item_tags` e
+um `Inventory.init(0)`. O catálogo é carregado depois, por AJAX. Um parser
+escrito contra o levantamento acima teria nascido devolvendo vazio em todo
+ciclo — **exatamente o bug do `_parse_locked_slots()` da Feature 24**, que
+custou meses de silêncio.
+
+O endpoint está nomeado no `Inventory.dff6db.js_`, em
+`loadInventory: TribalWars.get("inventory", {ajax:"get_inventory"}, ...)`:
+
+```
+game.php?village=<id>&screen=inventory&ajax=get_inventory   (GET, sem token h)
+→ {"inventory": {item_key: {item_id, instance_id, amount, instance_data, new}},
+   "data":      {item_key: {name, admin_name, type, category, descriptions,
+                            actions, tags, image, tooltip, ...}},
+   "expire":    []}
+```
+
+Confirmado ao vivo: 200, JSON, **23 itens** com `amount` exato. Três correções
+ao levantamento por DOM acima:
+
+- São **23 itens, não 22**. Faltavam `201_6` (Livro de habilidade: Equitação)
+  e `3056_0` (Recrutador 5%, 0.5 dias).
+- As quantidades listadas acima estão todas certas, e os "0 ou 1, não deu para
+  distinguir" são **todos 1** — nenhum item com 0.
+- `3010_0` é de **2 dias**, não 1; o de 1 dia é o `3041_0`.
+
+Consequências de desenho, já aplicadas na fase 1:
+- Os **rótulos** de `type`/`category` **não vêm** no JSON do AJAX, só os
+  números. Vêm traduzidos no `<script>` do HTML — então o bot lê as duas
+  coisas (HTML para os enums, AJAX para os itens) em vez de chumbar
+  "1 = Premium, 2 = Consumível…" no código. Mesmo princípio do quinto padrão
+  do `CLAUDE.md`: enum de jogo se mapeia contra o servidor.
+- `expire` veio `[]` (lista) por estar vazio; o JS o itera por chave
+  (`expiry_times[item_key]`), ou seja vira **objeto** quando houver item
+  expirando. O parser aceita as duas formas.
+- `actions[].link` já nomeia o caminho de ativação da fase 2
+  (`Inventory.openItemDialog('%item_key%', 'activate_reward' | 'use' |
+  'study' | 'reroll')`), e o JS expõe `ajaxaction:"consume"`. **Não exercitado**
+  — ativar item gasta recurso real.
+
+### Fase 1 ✅ Implementado (2026-08-16) — só leitura
+
+`pages/inventory.py::InventoryPage` (busca os dois lados e normaliza),
+`game/inventory_manager.py::InventoryManager` (uma vez por ciclo, opt-in
+`inventory.enabled`, persiste `cache/inventory/status.json`),
+`InventoryReader` + rota `/inventory` + `inventory.html` no webmanager.
+Nenhuma ativação de item, nenhum POST. `build.version` 3.5 → 3.6.
+
+**Ainda em aberto, e fora do escopo desta fase:** desenhar a lógica de "qual
+boost ativar e quando" — o catálogo agora existe e chega sozinho a cada ciclo,
+a política de uso não.
+
+**Prioridade:** fase 1 feita; fase 2 (ativação) precisa do desenho da política
+e de uma captura controlada do POST de `consume` antes de virar tarefa.
 
 ## Feature 26 — Envio de ataques múltiplos em lote (train[N][unit])
 

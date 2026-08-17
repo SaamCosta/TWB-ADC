@@ -12,6 +12,76 @@ class Extractor:
     Defines various non-compiled regexes for data retrieval
     TODO: use compiled various for CPU efficiency
     """
+
+    @staticmethod
+    def balanced_slice(text, start):
+        """
+        Dado o índice de um caractere de abertura ('{' ou '['), devolve a
+        substring desde esse índice até o fechamento correspondente,
+        ignorando corretamente colchetes/chaves que apareçam dentro de
+        strings JSON entre aspas (inclusive aspas escapadas). Devolve None
+        se `start` não apontar para uma abertura ou se ela nunca fechar.
+
+        Existe porque os regexes não-gulosos usados no resto deste arquivo
+        (`\\{.+?\\}`) param no primeiro "}" interno — o que basta para os
+        payloads rasos do jogo, mas não para os aninhados: o roster de
+        Paladinos (pages/statue.py) e o catálogo de inventário
+        (pages/inventory.py) quebrariam.
+        """
+        if start is None or start < 0 or start >= len(text):
+            return None
+        open_ch = text[start]
+        close_ch = {"{": "}", "[": "]"}.get(open_ch)
+        if close_ch is None:
+            return None
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+            elif ch == open_ch:
+                depth += 1
+            elif ch == close_ch:
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        return None
+
+    @staticmethod
+    def js_object_after(text, pattern):
+        """
+        Acha `pattern` (regex) no texto e devolve, já parseado, o objeto ou
+        array JSON que vem logo depois — o formato de
+        `Inventory.item_types = {...};` e afins embutidos em <script>.
+
+        Devolve None em qualquer falha (padrão ausente, nada abrindo depois
+        dele, JSON inválido) em vez de levantar: o consumidor típico está num
+        caminho de rede, onde a resposta pode ser um login ou uma página de
+        bot protection em vez da tela esperada.
+        """
+        if not text:
+            return None
+        match = re.search(pattern, text)
+        if not match:
+            return None
+        raw = Extractor.balanced_slice(text, match.end())
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw, strict=False)
+        except (json.JSONDecodeError, ValueError):
+            return None
+
     @staticmethod
     def village_data(res):
         """

@@ -1802,6 +1802,110 @@ class StatueReader:
         }
 
 
+class InventoryReader:
+    """
+    Le cache/inventory/status.json (persistido por game/inventory_manager.py,
+    Feature 25 fase 1) e agrupa os itens por categoria para o webmanager.
+
+    Deliberadamente fino: pages/inventory.py ja normalizou tudo (quantidade
+    como int, rotulos de tipo/categoria resolvidos contra os enums do
+    servidor, descricoes achatadas em texto puro). Duplicar essa logica aqui
+    daria duas versoes da mesma leitura divergindo com o tempo -- o que este
+    repositorio ja pagou caro no par hits/hits_done da Feature 15.
+
+    Somente leitura: esta feature nao ativa, consome nem presenteia item
+    nenhum. Ver docs/backlog.md Feature 25.
+    """
+
+    @staticmethod
+    def _path():
+        return os.path.join(
+            os.path.dirname(__file__), "..", "cache", "inventory", "status.json"
+        )
+
+    @staticmethod
+    def load(managed_cache=None):
+        """
+        Retorna um dict pronto para o template, ou None se ainda nao houver
+        cache (feature desligada ou bot ainda nao completou um ciclo com ela
+        ligada).
+        """
+        path = InventoryReader._path()
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            return None
+        if not isinstance(raw, dict):
+            return None
+
+        managed_cache = managed_cache or {}
+        fetched_at = raw.get("fetched_at", 0)
+        fetched_fmt = "—"
+        if fetched_at:
+            try:
+                fetched_fmt = datetime.datetime.fromtimestamp(fetched_at).strftime(
+                    "%d/%m %H:%M:%S"
+                )
+            except Exception:
+                pass
+
+        village_used = raw.get("village_used")
+        village_used_name = village_used
+        if village_used and str(village_used) in managed_cache:
+            pub = managed_cache[str(village_used)].get("public", {}) or {}
+            village_used_name = pub.get("name") or village_used
+
+        categories = collections.OrderedDict()
+        for item in (raw.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            item = dict(item)
+            item["expires_fmt"] = [
+                InventoryReader._fmt_timestamp(ts) for ts in (item.get("expires_at") or [])
+            ]
+            name = item.get("category_name") or "Sem categoria"
+            categories.setdefault(name, []).append(item)
+
+        # A chave e "entries", nao "items": no Jinja2, `group.items` resolve
+        # para o METODO dict.items antes de tentar a chave, e o template
+        # renderiza um <built-in method> em vez da lista. Foi o bug da coluna
+        # "Pop" da Feature 17 (ver docs/backlog.md) -- ali a saida foi trocar
+        # por acesso por chave; aqui o nome muda, para a armadilha nao voltar
+        # na proxima edicao do template.
+        groups = [
+            {
+                "name": name,
+                "entries": items,
+                "distinct": len(items),
+                "amount": sum(i.get("amount", 0) for i in items),
+            }
+            for name, items in categories.items()
+        ]
+        groups.sort(key=lambda g: g["name"])
+
+        return {
+            "fetched_at": fetched_at,
+            "fetched_at_fmt": fetched_fmt,
+            "village_used_name": village_used_name,
+            "groups": groups,
+            "total_distinct": raw.get("total_distinct", 0),
+            "total_amount": raw.get("total_amount", 0),
+            # Os rotulos vem do <script> da tela; se ela nao pode ser lida, os
+            # itens ainda aparecem, so que com "Categoria 4" no lugar do nome.
+            "labels_resolved": bool(raw.get("item_categories")),
+        }
+
+    @staticmethod
+    def _fmt_timestamp(ts):
+        try:
+            return datetime.datetime.fromtimestamp(int(ts)).strftime("%d/%m %H:%M")
+        except Exception:
+            return "—"
+
+
 class ReportReader:
     """
     Le cache/reports/*.json (escrito por game/reports.py::ReportManager) e

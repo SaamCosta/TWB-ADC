@@ -7,10 +7,10 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, EmpireReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, EmpireReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -464,6 +464,19 @@ def get_statue():
         enabled=enabled,
         data=data,
         village_count=village_count,
+    )
+
+
+@app.route('/inventory', methods=['GET'])
+def get_inventory():
+    config = DataReader.config_grab()
+    enabled = config.get("inventory", {}).get("enabled", False)
+    managed = sync()["bot"]
+    data = InventoryReader.load(managed_cache=managed)
+    return render_template(
+        'inventory.html',
+        enabled=enabled,
+        data=data,
     )
 
 

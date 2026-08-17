@@ -84,6 +84,7 @@ from game.village import Village
 from game.hunter import Hunter
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
+from game.inventory_manager import InventoryManager
 from game.pvp_conquest import PvpConquestManager
 from manager import VillageManager
 from pages.overview import OverviewPage
@@ -676,6 +677,11 @@ class TWB:
                 # automação ativa. Roda uma vez por ciclo (não por aldeia).
                 StatueManager.run(self.wrapper, config, self.found_villages)
 
+                # Feature 25 (fase 1): leitura periódica do inventário —
+                # opt-in (config["inventory"]["enabled"]), nenhum item é
+                # ativado. Roda uma vez por ciclo (não por aldeia).
+                InventoryManager.run(self.wrapper, config, self.found_villages)
+
                 sleep = 0
                 if self.is_active_hours(config=config):
                     sleep = config["bot"]["active_delay"]
@@ -776,6 +782,7 @@ class TWB:
             "cache/pvp_conquest",
             "cache/resource_sharing",
             "cache/statue",
+            "cache/inventory",
         ]
         FileManager.create_directories(directories)
 
