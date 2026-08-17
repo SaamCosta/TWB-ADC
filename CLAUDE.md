@@ -304,6 +304,23 @@ puxa o fio.**
   2026-08-16 com a lição a um `grep` de distância e nunca lida. **Lição que
   vale para uma classe de erro, e não só para o arquivo onde ela apareceu,
   mora aqui**; o registro por feature guarda o caso, não a regra.
+- ⚠️ **Nono padrão, achado em 2026-08-17: reconstruir estado passado a partir de
+  logs que só registram o que o *bot* fez.** Para saber como a `BBM 002` estava
+  quando foi conquistada, cruzei todas as linhas `TWB_BUILD` dela com os níveis
+  atuais e li "nenhuma linha para armazém/mercado" como "esses edifícios não
+  mudaram desde a conquista". Reportei com "confiança alta". Estava errado: o
+  usuário tinha **demolido o mercado manualmente** de 21 para 14, e demolição
+  manual não gera log nenhum — o valor que apresentei como herdado era um ponto
+  intermediário do trabalho dele. A conclusão de fundo sobreviveu (mercado 21 é
+  ainda mais extremo que 14), mas por sorte.
+  A regra: **o log é registro das ações do bot, não do estado do mundo.** Ausência
+  de linha prova que o bot não fez, não que ninguém fez — o usuário joga na mesma
+  conta, e as ações dele são invisíveis aqui. Ao reconstruir passado por log,
+  dizer explicitamente "o bot não mexeu nisso" em vez de "isso não mudou", e
+  perguntar antes de calibrar confiança. Corolário que salvou a análise: o
+  argumento independente (o template `watchtower_support` tem teto de mercado 10,
+  logo 14 não pode ter vindo do bot **sob este template**) não dependia de log
+  nenhum. Quando existir um argumento estrutural, ele vale mais que o rastro.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
@@ -361,6 +378,11 @@ Ver `docs/backlog.md` para a lista priorizada (Features 14–22 e seguintes).
 Features 18–22 vieram de uma comparação entre as mecânicas reais do jogo e o
 que o bot cobre hoje — ver `docs/game_comparison.md` para o raciocínio
 completo por trás delas.
+
+**Feature 34 (Troca Premium) tem documento próprio: `docs/troca_premium.md`** —
+mecânica medida no servidor, economia da bolsa por continente, a estratégia de
+fazer PP no início de mundo e o gap do `do_premium_stuff()`. Parada de propósito
+até abrir mundo novo (no K35 a bolsa está cheia e a venda está bloqueada).
 
 ## Features já implementadas (referência rápida)
 

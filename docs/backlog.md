@@ -1333,6 +1333,50 @@ construtor volta a pedir recurso.
 
 ---
 
+## Feature 34 — Troca Premium funcional (venda por limiar de taxa, e compra)
+
+**Origem:** levantamento de 2026-08-17 a pedido do usuário, que pretende coletar
+Pontos Premium no próximo mundo a abrir. Pesquisa completa —  mecânica medida no
+servidor, economia, estratégia dos vídeos e a leitura da aldeia BBM 002 — em
+**`docs/troca_premium.md`**. Esta entrada é só o recorte de código.
+
+**Estado atual.** `ResourceManager.do_premium_stuff()` (`game/resources.py`) veio
+do upstream (2021/2023) e **nunca rodou nesta conta**: `world.trade_for_premium` e
+o campo homônimo nas 8 aldeias estão `false`, e nenhum log menciona premium. O
+que falta, em ordem de gravidade:
+
+1. **Cálculo errado.** `resources.py:202` faz `prices[p] = stock[p] * rates[p]` —
+   isso é o valor em PP do estoque inteiro da bolsa, não um preço. O preço é
+   `1/rates[p]`. Rodado contra os dados reais de 2026-08-17, o `optimize_n`
+   devolve `n_to_sell: 0` e o guard `ratio > 0.4` aborta: não venderia nada, e não
+   por prudência.
+2. **Falta limiar de taxa** ("vender quando a taxa cair abaixo de X"), que é a
+   regra central da estratégia. Não existe config nem código.
+3. **Falta lote de venda configurável.** Vender muito de uma vez afunda a própria
+   taxa — `calculate_cost()` já modela o efeito, mas nada o controla.
+4. **O bot nunca compra** (`# twb never buys on premium exchange`), então a
+   arbitragem — a metade mais lucrativa, ~330 PP/dia contra ~20k PP em dois meses
+   de venda pura — está arquitetonicamente fora.
+5. **`n_to_sell: 0` não é checado** antes do envio; só o `ratio` impede o envio
+   vazio, por acaso.
+6. **`exchange_begin`/`exchange_confirm` nunca validados em pt-BR.** O formato
+   `result["response"][0]["rate_hash"]` é suposição do upstream — mesmo perfil da
+   Feature 9, cujo caminho de envio inteiro estava errado por nunca ter sido
+   exercitado.
+
+**Prioridade: parada até abrir mundo novo.** No K35 a bolsa está com estoque =
+capacidade nos três recursos, e estoque cheio bloqueia venda. Consertar agora não
+teria como ser validado em campo. A janela útil da feature é o **primeiro mês** de
+um mundo (taxa 64–79 na abertura contra ~820+ na saturação, ver o documento).
+
+**Pré-requisito de projeto, não de código:** a estratégia pede uma aldeia de
+coleta (2.000 lanceiros, mercado 17–21, armazém 20–23, sem minas nos primeiros 15
+dias), o que é um *perfil de aldeia* que o bot não tem — mais perto de um template
+novo em `templates/builder/` + `templates/troops/` do que de mexer no
+`ResourceManager`. Decidir o escopo antes de codar.
+
+---
+
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
 - **Auditar `village_template` contra tudo que o código lê por aldeia**
