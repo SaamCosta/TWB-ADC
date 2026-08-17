@@ -324,7 +324,13 @@ class AttackManager:
         if cache_entry and cache_entry["last_attack"]:
             last_attack = datetime.fromtimestamp(cache_entry["last_attack"])
             now = datetime.now()
-            if last_attack < now - timedelta(hours=12):
+            # 2026-08-17: era 12h. Medido no cache atual, a idade dos alvos e
+            # bimodal -- mediana de ~11h (os que o bot farma de fato) e uma
+            # cauda de ~31 alvos com mais de 72h. Entre 12h e 48h praticamente
+            # nao ha alvo, entao subir o limiar quase nao muda a demanda de
+            # explorador (45 -> 42 alvos); serve para parar de re-espiar alvo
+            # recem-farmado por causa de um atraso de ciclo.
+            if last_attack < now - timedelta(hours=48):
                 self.logger.debug(f"Attacked long ago %s, trying scout attack", {last_attack})
                 if self.scout(vid):
                     return False
