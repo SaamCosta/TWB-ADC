@@ -138,7 +138,7 @@ class WebWrapper:
         response = self.get_url(url)
         return response
 
-    def get_api_data(self, village_id, action, params={}):
+    def get_api_data(self, village_id, action, params=None):
         custom = dict(self.headers)
         custom['accept'] = "application/json, text/javascript, */*; q=0.01"
         custom['x-requested-with'] = "XMLHttpRequest"
@@ -148,7 +148,7 @@ class WebWrapper:
             'village': village_id,
             'screen': 'api'
         }
-        req.update(params)
+        req.update(params or {})
         payload = f"game.php?{urlencode(req)}"
         url = urljoin(self.endpoint, payload)
         res = self.get_url(url, headers=custom)
@@ -158,7 +158,7 @@ class WebWrapper:
             except:
                 return res
 
-    def post_api_data(self, village_id, action, params={}, data={}):
+    def post_api_data(self, village_id, action, params=None, data=None):
         custom = dict(self.headers)
         custom['accept'] = "application/json, text/javascript, */*; q=0.01"
         custom['x-requested-with'] = "XMLHttpRequest"
@@ -168,9 +168,11 @@ class WebWrapper:
             'village': village_id,
             'screen': 'api'
         }
-        req.update(params)
+        req.update(params or {})
         payload = f"game.php?{urlencode(req)}"
         url = urljoin(self.endpoint, payload)
+        # Ver a nota em get_api_action: copiar em vez de mutar o argumento.
+        data = dict(data or {})
         if 'h' not in data:
             data['h'] = self.last_h
         res = self.post_url(url, data=data, headers=custom)
@@ -180,7 +182,24 @@ class WebWrapper:
             except:
                 return res
 
-    def get_api_action(self, village_id, action, params={}, data={}):
+    def get_api_action(self, village_id, action, params=None, data=None):
+        """
+        ⚠️ `params`/`data` eram `{}` como default, e este método **escreve**
+        em `data` (o token `h`). Default mutável é avaliado uma vez, na
+        definição da função: o `h` da primeira chamada ficava gravado dentro
+        do próprio default e, da segunda em diante, `'h' not in data` era
+        falso — todo chamador que omitisse `data` reenviava para sempre o
+        token da primeira chamada do processo, que roda por dias.
+
+        Na prática só `Village.get_quests()` omitia `data`, então a conclusão
+        automática de missões funcionava na primeira missão e falhava em
+        silêncio nas seguintes (o retorno só é checado com `if qres:`).
+
+        `dict(...)` resolve as duas metades: descola do default e para de
+        escrever `h` dentro do dicionário de quem chamou. Primeiro padrão
+        recorrente do CLAUDE.md, desta vez num argumento em vez de num
+        atributo de classe.
+        """
         custom = dict(self.headers)
         custom['Accept'] = "application/json, text/javascript, */*; q=0.01"
         custom['X-Requested-With'] = "XMLHttpRequest"
@@ -190,9 +209,10 @@ class WebWrapper:
             'village': village_id,
             'screen': 'api'
         }
-        req.update(params)
+        req.update(params or {})
         payload = f"game.php?{urlencode(req)}"
         url = urljoin(self.endpoint, payload)
+        data = dict(data or {})
         if 'h' not in data:
             data['h'] = self.last_h
         res = self.post_url(url, data=data, headers=custom)
