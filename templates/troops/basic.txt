@@ -57,10 +57,10 @@
         "spear": 100,
         "sword": 50,
         "axe": 100
+      },
+      "stable": {
+        "spy": 10
       }
-    },
-    "stable": {
-      "spy": 10
     },
     "farm": [
         {"axe": 15},

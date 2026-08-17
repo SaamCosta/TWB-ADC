@@ -7,6 +7,7 @@ import random
 import time
 
 from core.extractors import Extractor
+from core.templates import UNIT_BUILDING
 from game.resources import ResourceManager
 
 logger = logging.getLogger("TroopManager")
@@ -44,19 +45,13 @@ class TroopManager:
 
     wanted = {"barracks": {}}
 
-    # Maps troops to the building they are created from
-    unit_building = {
-        "spear": "barracks",
-        "sword": "barracks",
-        "axe": "barracks",
-        "archer": "barracks",
-        "spy": "stable",
-        "light": "stable",
-        "marcher": "stable",
-        "heavy": "stable",
-        "ram": "garage",
-        "catapult": "garage",
-    }
+    # Maps troops to the building they are created from.
+    # A definicao vive em core/templates.py, que valida os templates contra
+    # este mesmo mapa. A copia que existia aqui era codigo morto -- nenhum
+    # leitor em todo o projeto -- e foi justamente por nao haver consumidor
+    # que o bloco "workshop" de templates/troops/offensive.txt pode sumir em
+    # silencio (aríete nunca recrutado em nenhuma aldeia).
+    unit_building = UNIT_BUILDING
 
     wanted_levels = {}
 

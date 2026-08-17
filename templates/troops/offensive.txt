@@ -1,9 +1,12 @@
 [{
     "building": "barracks",
     "level": 5,
-    "research": [
-        "axe", "light", "spy", "ram"
-    ],
+    "upgrades": {
+        "axe": 1,
+        "light": 1,
+        "spy": 1,
+        "ram": 1
+    },
     "build": {
       "barracks": {
         "axe": 7500
@@ -12,9 +15,8 @@
         "light": 1000,
         "spy": 500
        },
-       "workshop": {
-        "ram": 150,
-        "spy": 500
+       "garage": {
+        "ram": 150
        }
       },
     "farm": [

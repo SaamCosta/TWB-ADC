@@ -388,10 +388,15 @@ class Village:
                 category="troops", template=unit_config, output_json=True
             )
         except Exception as e:
+            # A mensagem do validador (core/templates.py::validate_troop_template)
+            # nomeia o estagio e a chave exata do problema. Engoli-la aqui era o
+            # que tornava um template *errado* indistinguivel de um *ausente* --
+            # e um template errado nao impede o bot de rodar, so faz ele nao
+            # recrutar. Repassar a causa e o ponto todo desta validacao.
             self.logger.error(
-                "Looks like the unit template file %s is either missing or corrupted", unit_config
+                "Unit template %s is missing, corrupted or invalid: %s", unit_config, e
             )
-            raise InvalidUnitTemplateException
+            raise InvalidUnitTemplateException(str(e))
 
     def run_builder(self):
         """
