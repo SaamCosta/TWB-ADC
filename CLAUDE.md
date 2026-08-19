@@ -51,8 +51,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   — cada arquivo roda sozinho, sem depender de `pytest` instalado.
   Cobertura atual: conquista bárbara (nobre em voo, lealdade do relatório,
   alvo perdido, semântica de status, faixa de queda), encoding do
-  `FileManager`, alocação de torre de vigia e limiares de slot de Paladino
-  (`StatuePage`, recorte verbatim de `screen=statue`). **A maior parte do bot continua
+  `FileManager`, alocação de torre de vigia, limiares de slot de Paladino
+  (`StatuePage`, recorte verbatim de `screen=statue`), escolha de pacote de
+  farm por saque esperado (`AttackManager._ordered_templates`) e mecânicas do
+  mundo lidas de `get_config` (`WorldConfig._parse_features`, com recortes
+  verbatim de br143 sem arqueiro e br142 com). **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
   teste pontual.
@@ -321,6 +324,43 @@ puxa o fio.**
   argumento independente (o template `watchtower_support` tem teto de mercado 10,
   logo 14 não pode ter vindo do bot **sob este template**) não dependia de log
   nenhum. Quando existir um argumento estrutural, ele vale mais que o rastro.
+- ⚠️ **Décimo padrão, achado em 2026-08-18: relatar um limite observado como se
+  fosse uma decisão de projeto.** Ao dimensionar templates de tropa, li nos
+  builders que a fazenda parava no nível 25, e apresentei isso ao usuário como
+  restrição — duas vezes, montando um plano inteiro em cima dela ("ou os builders
+  sobem a fazenda, ou os templates cabem em 8.400"). O usuário perguntou: *"você
+  chegou a investigar por que a fazenda aparece em 25?"*. Não tinha. O motivo é
+  que **o arquivo simplesmente acaba ali** — as últimas linhas de
+  `purple_predator_into_off` são `wood:30 stone:30 iron:30 storage:30 barracks:25`
+  e o `farm:25` anterior nunca teve continuação. Não era teto pensado; era o fim
+  de uma lista herdada do bot base. O `watchtower_support`, escrito neste projeto,
+  já ia até 30 — a prova de que 30 era alcançável estava no diretório ao lado.
+  A regra: **um limite lido de dados é um fato sobre o arquivo, não uma decisão
+  de alguém.** Antes de desenhar em volta de um teto, perguntar o que o colocou
+  lá; se a resposta for "ninguém, é onde acabou", ele não é restrição, é dívida.
+  O sinal de alerta é escrever "X está limitado a N" sem conseguir completar
+  "porque". Corolário barato: quando outro artefato do mesmo tipo ultrapassa o
+  limite (aqui, outro template de builder chegando a 30), isso sozinho já refuta
+  a leitura de que o limite é intrínseco.
+- ⚠️ **Décimo primeiro padrão, mesma sessão: estatística agregada sobre amostras
+  heterogêneas, que inverteu o sinal da conclusão.** Medi 336 ataques de farm e
+  reportei "34% voltaram lotados, e nos demais o aproveitamento mediano foi 15%",
+  concluindo que os pacotes eram **grandes demais** e propondo encolhê-los. Os
+  envios, porém, vinham de duas configurações distintas — capacidade 8.000 (175
+  ataques) e 1.600 (209). Separando: o de 8.000 lotou **46%** das vezes com 62%
+  de aproveitamento, e o de 1.600 lotou 33% com 53%. **Nenhum dos dois era grande
+  demais; os dois estouravam o teto.** A conclusão correta era o oposto da minha
+  — e pior, como 46% dos envios voltaram exatamente com 8.000, o valor real
+  daqueles alvos era e continuava **desconhecido acima disso**: a própria medição
+  estava censurada pelo instrumento.
+  A regra: **antes de tirar média de um conjunto, perguntar se ele é um conjunto.**
+  Aqui o agrupamento óbvio (tamanho do pacote enviado) estava no próprio dado e
+  custava um `groupby`. E quando a métrica é limitada por uma escolha nossa
+  (capacidade do pacote, `max_farms`, teto de qualquer fila), tratar os valores
+  no teto como **censurados**, não como observações — "voltou com 8.000" não
+  significa "o alvo tinha 8.000", significa "o alvo tinha 8.000 ou mais". Foi
+  exatamente por isso que a correção final aumentou o pacote maior: para medir
+  onde fica o teto de verdade.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

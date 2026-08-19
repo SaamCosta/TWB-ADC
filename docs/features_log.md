@@ -1132,6 +1132,196 @@ usado** por dois motivos: não tem a guarda do construtor (durante a obra da tor
 ela cunharia justamente o que o prédio precisa), e não confirmei se depende de
 conta premium. Registrado como Feature 33 no backlog.
 
+## 2026-08-18 — Templates de tropa reescritos, e o que a reescrita achou pelo caminho
+
+Começou como "os templates de tropa estão desatualizados, pesquisa quais os mais
+usados". Virou seis commits, porque escrever os templates exigiu descobrir por
+que os antigos não funcionavam — e três dos motivos eram bugs de código, não de
+composição.
+
+### O que o mundo diz, e o que o bot achava que ele dizia (`4c478da`)
+
+O br143 tem `<archer>0</archer>`. O `config.json` dizia `archers_enabled: true`.
+O bot tentava recrutar e pesquisar arqueiro em toda aldeia defensiva, todo ciclo:
+
+```
+18:36:43 - Attempting recruitment of 150 archer
+18:36:43 - Recruitment of 25 archer failed because it is not researched
+18:37:00 - Unit archer does not appear to be available or smith not built yet
+```
+
+**Não foi erro de leitura.** `core/world_config.py` já baixava e cacheava
+exatamente o XML que traz a resposta, e o parse extraía só `<night>`, `<moral>` e
+`<mood>` — a tag chegava e era descartada. O `true` provavelmente nunca foi
+escolhido por ninguém: é o default de `get_config(..., default=True)` e do
+`config.example.json`, herdado de um fork cujo autor jogava em mundo com arqueiro.
+
+`WorldConfig._parse_features()` passa a ler `<game><archer>`, `<game><knight>`,
+`<game><church>`, `<game><watchtower>`, `<game><tech>` e `<build><destroy>`.
+`feature_enabled()` resolve cada uma com o `config.json` **apenas como fallback**,
+para quando o mundo não responde. Tag ausente vira `None`, distinto de `0`, para
+que "o mundo diz que não tem" nunca seja confundido com "não sabemos" — há teste
+travando isso, porque um `value or fallback` ressuscitaria o bug exato.
+
+`flags_enabled` **continua manual de propósito**: `/page/settings` mostra
+"Bandeiras | Ativo", mas não existe tag correspondente em `get_config`. As duas
+fontes não expõem o mesmo conjunto de campos, então ausência numa não autoriza
+inferir nada.
+
+Detalhe que virou teste: `<knight_archer_bonus>` contém a substring `archer` e
+vale `0` no br143 — o mesmo valor de `<archer>`. Um regex frouxo casaria com a
+tag errada, passaria despercebido aqui, e só quebraria num mundo com arqueiro.
+O fixture do br142 (`archer=1`, `knight_archer_bonus=0`) existe para provar que o
+parser não confunde.
+
+### Validação de template no carregamento (`8e46a41`)
+
+`templates/troops/offensive.txt` declarava `"workshop"` como bloco de aríete. O
+edifício no bot é `garage`. `village.py` pulava a chave desconhecida com log de
+**debug** e seguia — resultado: `ram: 0` e `catapult: 0` nas 8 aldeias, incluindo
+as duas ofensivas. A BBM 001 tinha 2.739 machados e 1.000 cavalarias contra
+muralhas nível 20, sem um único aríete.
+
+O mesmo arquivo declarava `"research": [...]`, chave que nenhum consumidor lê (só
+`"upgrades"` é). As aldeias ofensivas nunca pesquisaram nada pelo bot — não
+mordeu porque o usuário pesquisou na mão, o que só se descobriu lendo o ferreiro
+no servidor, já que o log registra o que o *bot* faz, não o estado do mundo.
+
+`validate_troop_template()` confere estágio a estágio contra o vocabulário real e
+`get_template()` levanta `InvalidUnitTemplateException` nomeando o índice do
+estágio e a chave exata. `village.py` passou a repassar a mensagem em vez de
+engoli-la — antes, template *errado* e template *ausente* logavam a mesma frase.
+
+O mapa unidade→edifício era **cópia morta** em `TroopManager.unit_building`
+(definida, nenhum leitor em todo o projeto). Foi justamente a ausência de
+consumidor que deixou `workshop` passar. Virou fonte única em `core/templates.py`
+e é a base da validação.
+
+Rodando o validador nos templates existentes, ele achou um **terceiro** caso que
+ninguém tinha visto lendo: `basic.txt[3]` tem `"stable"` como irmão de `"build"`,
+não dentro dele. Os 10 exploradores daquele estágio nunca foram recrutados — e
+`basic.txt` é o padrão de `village_template`, ou seja valia para toda aldeia nova.
+
+### Fazenda 25 era onde o arquivo acabava (`bded867`)
+
+`purple_predator_into_off/def` terminavam em `farm:25`. Não era teto pensado: as
+últimas linhas são `wood:30 stone:30 iron:30 storage:30 barracks:25`, e acabou.
+Vieram do bot base; o `watchtower_support`, escrito neste projeto, já ia até 30.
+
+Capacidade real, ancorada no que o jogo mostra para a BBM 001 (12.715 na fazenda
+26, fator 1,1722):
+
+| fazenda | 25 | 26 | 27 | 28 | 29 | 30 |
+|---|---|---|---|---|---|---|
+| pop | 10.847 | 12.715 | 14.904 | 17.470 | 20.479 | **24.006** |
+
+**Isso não se corrigia sozinho.** `buildingmanager.py:297` insere fazenda na
+frente da fila quando falta pop — mas `in_need_of("pop")` só é setado por
+`buildingmanager.py:257`, quando um *edifício* está bloqueado. Recrutamento nunca
+pede pop; `get_min_possible()` apenas encolhe o lote em silêncio. Zero ocorrências
+de "Adding farm in front of queue" no log inteiro. A BBM 001 estava com
+11.775/12.715 querendo 4.761 machados, e ficaria ali para sempre.
+
+Quatro modelos novos, portáveis (sem igreja), com estágios verificados como
+alcançáveis e monotônicos contra o builder de cada perfil:
+
+| | composição final | pop |
+|---|---|---|
+| `off_no_archer` | axe 6000 · light 3000 · ram 250 · cat 50 · spy 100 | 19.950 |
+| `def_no_archer` | spear 7000 · sword 7000 · heavy 900 · light 200 · spy 50 | 20.300 |
+| `off_archer` | axe 6000 · light 2450 · marcher 520 · ram 230 · spy 100 | 20.050 |
+| `def_archer` | spear 4000 · sword 7500 · archer 7500 · light 200 · spy 50 | 19.900 |
+
+Orçamento conferido contra o servidor: pop de edifício é
+`round(pop * pop_factor^(nível-1))`, **não cumulativa** — calibrado contra os
+2.397 que o jogo mostra. No fim do `purple_predator` os edifícios somam 3.294,
+sobrando 20.712; os quatro modelos deixam de 262 a 812 de folga para nobres.
+
+**Por que quatro e não dois:** sem arqueiro o espadachim tem `def_cav` **25**
+(br143); em mundo com arqueiro tem **15**. A Innogames compensa a ausência do
+arqueiro no espadachim, então nem as stats são portáveis entre os dois tipos de
+mundo, quanto mais as composições.
+
+### O pacote de farm era um só (`42a3508`)
+
+`run()` sempre começava pelo **primeiro** item da lista `farm` do template, e só
+caía para um menor quando faltava tropa em casa. Aldeia cheia mandava o maior
+pacote em todo alvo; aldeia vazia sempre o menor. O que o alvo tinha nunca
+entrava na conta — a BBM 001 mandava 100 cavalarias tanto no alvo com 15.000
+quanto no alvo com 200 de madeira.
+
+`_ordered_templates()` passa a casar capacidade com saque esperado e devolve o
+pacote escolhido **mais os menores**, para a queda por falta de tropa continuar
+funcionando igual. A ordenação é recalculada por capacidade em vez de confiar na
+ordem do arquivo, para que um template escrito fora de ordem não inverta a escada
+em silêncio.
+
+`_expected_loot()` usa duas fontes e a maior vence. O `farm_score` sozinho **se
+auto-realimenta**, porque é a média do que *nós* saqueamos e portanto é capado
+pelo pacote que mandamos: pacote pequeno gera score pequeno, que escolhe pacote
+pequeno para sempre. O `resources` do relatório de exploração (319 relatórios têm
+o campo) é o que o explorador viu parado no alvo, independe do nosso pacote, e é
+o que quebra o ciclo.
+
+Simulado contra o cache, com a escada 12.000/4.000/1.200: 25 alvos passam a levar
+12.000, 26 levam 4.000 e 68 levam 1.200 — antes os 120 levariam 12.000. Cavalaria
+comprometida numa rodada completa cai de 17.850 para 6.070: a mesma tropa
+cobrindo 3× mais alvos.
+
+### Valores do mundo e do jogo verificados nesta sessão
+
+De `interface.php?func=get_config`, `?func=get_unit_info`,
+`?func=get_building_info` e `/page/settings` do br143:
+
+- **arqueiro desligado** (`<archer>0</archer>`; `get_unit_info` nem publica
+  `archer`/`marcher` — confirmação independente)
+- **pesquisa simplificada** (`<tech>2</tech>`, "Pesquisa simplificada") — só nível
+  1 existe, então qualquer `upgrades` ≥ 1 significa a mesma coisa
+- **espadachim `def_cav` 25** no br143 contra **15** no br142 (com arqueiro)
+- **carga por unidade idêntica** entre br142 e br143 → constante segura
+- **pop de edifício** `round(pop * pop_factor^(n-1))`, não cumulativa
+- **capacidade da fazenda** cresce 1,1722 por nível; nível 30 = 24.006
+- mundos br **com** arqueiro em 2026-08-18: br137, br141, br142, brc2, brp10.
+  **Sem**: br132, br138, br139, br140, br143
+
+### Config e limpeza (`8bb7d6d`, `5a814ac`)
+
+`config.example.json` passou a apontar `off_no_archer`/`def_no_archer`;
+`offensive.txt` e `defensive_1.txt` foram deletados. As variantes **sem** arqueiro
+são o padrão porque degradam melhor: em mundo com arqueiro elas só deixam de usar
+a melhor unidade defensiva, mas preenchem o orçamento inteiro. O contrário não
+vale — `def_archer` em mundo sem arqueiro pararia em ~11.600 de pop dos ~20.000
+planejados, porque os 7.500 arqueiros entram em `disabled_units` e **nada os
+substitui**.
+
+⚠️ **A detecção de mundo desabilita a unidade, não troca o template.** Quem abrir
+mundo com arqueiro precisa apontar `off_archer`/`def_archer` na mão; o
+`helpfile.py` diz isso nas duas chaves.
+
+Também: re-espionagem de alvo parado subiu de 12h para 48h. Medido, o efeito é
+pequeno (45 → 42 alvos disparando) porque a idade dos alvos é bimodal — mediana
+~11h e uma cauda de 31 alvos com mais de 72h, com quase ninguém entre 12h e 48h.
+
+### Na config local (não versionada)
+
+`max_farms` 25 → 45. As 8 aldeias estão empilhadas numa caixa de 13×5 campos e
+`search_radius` é 100, então **todas as 342 aldeias do mapa estão no raio de
+todas** — não há partição geográfica nenhuma. Com `max_farms: 25` os 200 slots
+(8×25) caíam sobre **42 alvos distintos**, e BBM 004 e BBM 005 tinham top-25
+idêntico. Em 45 a união vai a 72 e 28 alvos com histórico voltam para a fila,
+incluindo o de maior saque médio da conta (6.428), que estava na posição 37.
+
+`search_radius: 100` é **inerte** hoje pelo mesmo motivo — só terá efeito quando
+o império espalhar.
+
+### Ficou aberto
+
+Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em
+`manager.py`) foram calibrados quando os pacotes eram pequenos e hoje só governam
+o tempo de revisita. Com a escada nova ficaram desalinhados — mas convém medir
+alguns ciclos antes de mexer, porque os dados de saque vão parar de ser capados
+em 8.000 e o quadro real deve mudar.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`
