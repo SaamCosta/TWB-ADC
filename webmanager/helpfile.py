@@ -96,6 +96,8 @@ help_file = {
     'profile_templates.offensive': 'Keys forced on villages assigned the "offensive" profile',
     'profile_templates.defensive': 'Keys forced on villages assigned the "defensive" profile (e.g. support_others, so defensive villages send support by default)',
     'profile_templates.watchtower': 'Keys forced on villages assigned the "watchtower" profile (Feature 30)',
+    'profile_templates.offensive.units': 'Unit template. Defaults to off_no_archer, which is safe on any world; switch to off_archer on worlds where <game><archer> is 1 to gain mounted archers',
+    'profile_templates.defensive.units': 'Unit template. Defaults to def_no_archer, which is safe on any world; switch to def_archer on worlds where <game><archer> is 1 -- archers are the strongest defensive unit per population there',
     'world': 'World-specific feature flags. archers_enabled, building_destruction_enabled and knight_enabled are now read from the world itself (interface.php?func=get_config) -- the values here are only a fallback for when that fetch fails',
     'world.knight_enabled': 'FALLBACK ONLY -- read from the world <game><knight> tag; used only if the world config cannot be fetched',
     'world.flags_enabled': 'Allows automatic management of flags (upgrading and defence). Still manual: the world config does not publish a flags tag',

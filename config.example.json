@@ -70,11 +70,11 @@
   "profile_templates": {
     "offensive": {
       "building": "purple_predator_into_off",
-      "units": "offensive"
+      "units": "off_no_archer"
     },
     "defensive": {
       "building": "purple_predator_into_def",
-      "units": "defensive_1",
+      "units": "def_no_archer",
       "support_others": true
     },
     "watchtower": {
