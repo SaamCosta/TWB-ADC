@@ -22,6 +22,22 @@ UNIT_BUILDING = {
     "catapult": "garage",
 }
 
+# Capacidade de saque por unidade. Conferido identico em br142 (com arqueiro)
+# e br143 (sem), via interface.php?func=get_unit_info -- carga nao varia por
+# mundo, entao pode ser constante.
+UNIT_CARRY = {
+    "spear": 25,
+    "sword": 15,
+    "axe": 10,
+    "archer": 10,
+    "spy": 0,
+    "light": 80,
+    "marcher": 50,
+    "heavy": 50,
+    "ram": 0,
+    "catapult": 0,
+}
+
 # Edificios que aparecem como chave dentro de "build".
 RECRUIT_BUILDINGS = set(UNIT_BUILDING.values())
 

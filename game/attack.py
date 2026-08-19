@@ -11,6 +11,7 @@ from datetime import datetime
 from datetime import timedelta
 
 from core.filemanager import FileManager
+from core.templates import UNIT_CARRY
 from core.world_config import WorldConfig
 
 
@@ -119,23 +120,90 @@ class AttackManager:
         ignored = []
         # Limits the amount of villages that are farmed from the current village
         for target in self.targets[0: self.max_farms]:
-            if type(self.template) == list:
-                f = False
-                for template in self.template:
-                    if template in ignored:
-                        continue
-                    out_res = self.send_farm(target, template)
-                    if out_res == 1:
-                        f = True
-                        break
-                    elif out_res == -1:
-                        ignored.append(template)
-                if not f:
+            village, *_ = target
+            packs = self._ordered_templates(village["id"])
+            sent = False
+            for template in packs:
+                if template in ignored:
                     continue
-            else:
-                out_res = self.send_farm(target, self.template)
-                if out_res == -1:
+                out_res = self.send_farm(target, template)
+                if out_res == 1:
+                    sent = True
                     break
+                if out_res == -1:
+                    ignored.append(template)
+            # Se nem o menor pacote cabe no que sobrou em casa, os proximos
+            # alvos tambem nao vao caber -- encerra o ciclo em vez de repetir
+            # a mesma checagem para cada um. Preserva o `break` que o caminho
+            # de template unico ja tinha.
+            if not sent and packs and packs[-1] in ignored:
+                break
+
+    def _pack_capacity(self, template):
+        """
+        Capacidade de saque de um pacote de farm.
+        """
+        return sum(UNIT_CARRY.get(unit, 0) * int(qty) for unit, qty in template.items())
+
+    def _expected_loot(self, vid):
+        """
+        Quanto este alvo deve render agora. Duas fontes, a maior vence:
+
+        - `farm_score`: saque medio dos nossos proprios ataques. Sozinho ele se
+          auto-realimenta, porque e **capado pelo pacote que mandamos** --
+          pacote pequeno gera score pequeno, que escolhe pacote pequeno para
+          sempre. Medido em 2026-08-17: dos envios com capacidade 8.000, 46%
+          voltaram exatamente com 8.000, ou seja o valor real era desconhecido.
+        - `resources` do relatorio mais recente: o que o explorador viu parado
+          no alvo. Nao depende do nosso pacote, e e o que quebra o ciclo acima.
+
+        Zero significa "sem dado nenhum", e nao "alvo pobre" -- ver
+        _ordered_templates.
+        """
+        entry = AttackCache.get_cache(vid) or {}
+        expected = int(entry.get("farm_score") or 0)
+        if self.repman:
+            has_left, res = self.repman.has_resources_left(vid)
+            if has_left and res:
+                try:
+                    expected = max(expected, sum(int(v) for v in res.values()))
+                except (TypeError, ValueError):
+                    pass
+        return expected
+
+    def _ordered_templates(self, vid):
+        """
+        Escolhe com qual pacote de farm comecar neste alvo, casando capacidade
+        com o saque esperado, e devolve o escolhido mais os menores.
+
+        A cauda importa: a queda para pacote menor por falta de tropa em casa
+        ja existia em run() e continua valendo. O que muda e o ponto de
+        partida, que antes era sempre o primeiro item do template -- ou seja,
+        aldeia cheia mandava o maior pacote em todo alvo, e aldeia vazia sempre
+        o menor, independente do que o alvo tinha.
+
+        A ordenacao e recalculada por capacidade em vez de confiar na ordem do
+        arquivo, para que um template escrito fora de ordem nao inverta a
+        escada em silencio.
+        """
+        templates = self.template if isinstance(self.template, list) else [self.template]
+        packs = sorted(templates, key=self._pack_capacity, reverse=True)
+        if len(packs) < 2:
+            return packs
+
+        expected = self._expected_loot(vid)
+        if not expected:
+            # Nenhum historico: sonda com o menor em vez de comprometer o maior
+            # num alvo que pode nao render nada. Alvo novo costuma ser
+            # espionado antes do primeiro ataque (can_attack), entao este caso
+            # e raro -- o relatorio de exploracao ja popula `resources`.
+            return packs[-1:]
+
+        # Menor pacote que ainda cobre o esperado; se nenhum cobre, o maior.
+        for index in range(len(packs) - 1, -1, -1):
+            if self._pack_capacity(packs[index]) >= expected:
+                return packs[index:]
+        return packs
 
     def send_farm(self, target, template):
         """
