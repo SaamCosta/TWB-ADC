@@ -128,6 +128,69 @@ class WorldConfig:
         return int(m.group(1)) if m else None
 
     @staticmethod
+    def _parse_features(xml_text):
+        """
+        Mecanicas ligadas/desligadas por mundo, que o bot vinha lendo de flags
+        digitadas a mao em config.json["world"].
+
+        Isto existe porque em 2026-08-17 o br143 (sem arqueiro, <archer>0</archer>)
+        rodava com archers_enabled=true, e o bot tentava recrutar e pesquisar
+        arqueiro em toda aldeia defensiva, todo ciclo. Nao foi erro de leitura:
+        este mesmo modulo ja baixava o XML que traz a resposta e descartava a
+        tag no parse, e entao o valor era perguntado a um humano que nunca
+        atualizou o campo ao entrar no mundo. O default `true` vinha do
+        config.example.json de um fork cujo autor jogava em mundo com arqueiro.
+
+        Todas sao inteiros no XML e "ligado" e > 0:
+          <game><archer>    0/1
+          <game><knight>    0 = sem paladino; 1/2/3 = variantes (br143 = 3,
+                            "Ativo, habilidades podem ser aprendidas")
+          <game><church>    0/1
+          <game><watchtower> 0/1
+          <build><destroy>  0/1 -- demolicao, que e o que habilita ariete e
+                            catapulta terem para que servir
+          <game><tech>      sistema de pesquisa (br143 = 2, "simplificada")
+
+        Chave ausente vira None, para o consumidor distinguir "o mundo diz que
+        nao tem" (0) de "nao sabemos" (None) e so ai cair no config.json.
+        """
+
+        def _tag(name, block=None):
+            source = xml_text
+            if block:
+                m = re.search(fr"<{block}>(.*?)</{block}>", xml_text, re.S)
+                if not m:
+                    return None
+                source = m.group(1)
+            m = re.search(fr"<{name}>\s*(\d+)\s*</{name}>", source)
+            return int(m.group(1)) if m else None
+
+        return {
+            "archer": _tag("archer", block="game"),
+            "knight": _tag("knight", block="game"),
+            "church": _tag("church", block="game"),
+            "watchtower": _tag("watchtower", block="game"),
+            "destroy": _tag("destroy", block="build"),
+            "tech": _tag("tech", block="game"),
+        }
+
+    @staticmethod
+    def feature_enabled(world_config, name, fallback):
+        """
+        True/False para uma mecanica do mundo, com `fallback` (o valor do
+        config.json) usado apenas quando o mundo nao publicou o dado -- rede
+        fora no primeiro ciclo, ou tag que este mundo nao expoe.
+
+        O mundo vence quando responde. Foi a inversao disso que deixou o bot
+        recrutando arqueiro num mundo sem arqueiro: o campo manual estava
+        errado e nada o confrontava com a fonte.
+        """
+        value = ((world_config or {}).get("features") or {}).get(name)
+        if value is None:
+            return bool(fallback)
+        return value > 0
+
+    @staticmethod
     def _parse_mood(xml_text):
         """
         Extracts the <mood>...</mood> block.
@@ -197,18 +260,30 @@ class WorldConfig:
         cache_path = cls._cache_path(server)
         if not force_refresh:
             cached = FileManager.load_json_file(cache_path)
-            if cached and (time.time() - cached.get("_fetched_at", 0)) < CACHE_TTL:
+            if (
+                    cached
+                    and (time.time() - cached.get("_fetched_at", 0)) < CACHE_TTL
+                    # Cache gravado antes de "features" existir conta como
+                    # velho. Sem isto o bot rodaria ate CACHE_TTL inteiro com as
+                    # flags do mundo ausentes, caindo no config.json -- que e
+                    # exatamente a fonte que esta feature existe para nao usar.
+                    and "features" in cached
+            ):
                 return cached
 
         xml_text = cls._fetch(endpoint)
         if xml_text is None:
             cached = FileManager.load_json_file(cache_path)
-            return cached or {"night": None, "moral": None, "mood": None, "_fetched_at": 0}
+            return cached or {
+                "night": None, "moral": None, "mood": None,
+                "features": None, "_fetched_at": 0,
+            }
 
         result = {
             "night": cls._parse_night(xml_text),
             "moral": cls._parse_moral(xml_text),
             "mood": cls._parse_mood(xml_text),
+            "features": cls._parse_features(xml_text),
             "_fetched_at": int(time.time()),
         }
         FileManager.create_directory(FileManager.get_path("cache/world"))

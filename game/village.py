@@ -10,6 +10,7 @@ from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.templates import TemplateManager
 from core.twstats import TwStats
+from core.world_config import WorldConfig
 from game.attack import AttackManager, ConquestManager
 from game.pvp_conquest import PvpConquestManager
 from game.resource_sharing import ResourceSharingManager
@@ -54,6 +55,13 @@ class Village:
     forced_peace = False
     forced_peace_today_start = None
     disabled_units = []
+    # Mecanicas do mundo, resolvidas em set_world_config() a partir do
+    # WorldConfig (com as flags de config.json["world"] so como fallback).
+    # Sempre reatribuidas por inteiro, nunca mutadas -- seguras como default
+    # de classe, ao contrario de `disabled_units` logo acima.
+    archers_enabled = True
+    building_destruction_enabled = True
+    knight_enabled = False
     # Own village points, set once per cycle by twb.py from OverviewPage.villages_data
     # before village.run() -- used by Feature 18 (PvP conquest moral estimate).
     # Safe as a class default: always fully reassigned (self.points = X), never
@@ -144,14 +152,36 @@ class Village:
         Sets basic world options
         """
         self.disabled_units = []
-        if not self.get_config(
-                section="world", parameter="archers_enabled", default=True
-        ):
+
+        # O mundo publica estas mecanicas em interface.php?func=get_config, que
+        # este bot ja baixa e cacheia. As flags equivalentes em
+        # config.json["world"] passam a ser apenas fallback, para quando o
+        # mundo nao responder (rede fora no primeiro ciclo) ou nao expuser a
+        # tag. Ver WorldConfig.feature_enabled.
+        world = WorldConfig.get(
+            server=self.get_config(section="server", parameter="server", default=None),
+            endpoint=self.get_config(section="server", parameter="endpoint", default=None),
+        )
+
+        self.archers_enabled = WorldConfig.feature_enabled(
+            world, "archer",
+            self.get_config(section="world", parameter="archers_enabled", default=True),
+        )
+        self.building_destruction_enabled = WorldConfig.feature_enabled(
+            world, "destroy",
+            self.get_config(
+                section="world", parameter="building_destruction_enabled", default=True
+            ),
+        )
+        self.knight_enabled = WorldConfig.feature_enabled(
+            world, "knight",
+            self.get_config(section="world", parameter="knight_enabled", default=False),
+        )
+
+        if not self.archers_enabled:
             self.disabled_units.extend(["archer", "marcher"])
 
-        if not self.get_config(
-                section="world", parameter="building_destruction_enabled", default=True
-        ):
+        if not self.building_destruction_enabled:
             self.disabled_units.extend(["ram", "catapult"])
 
         if self.get_config(
@@ -427,9 +457,10 @@ class Village:
         if not self.builder.raw_template or self.builder.raw_template != new_queue:
             self.builder.queue = new_queue
             self.builder.raw_template = new_queue
-            if not self.get_config(
-                    section="world", parameter="knight_enabled", default=False
-            ):
+            # set_world_config() roda antes de run_builder() no ciclo (ver
+            # Village.run), entao self.knight_enabled ja reflete o <knight> do
+            # mundo, e nao mais a flag digitada a mao.
+            if not self.knight_enabled:
                 self.builder.queue = [
                     x for x in self.builder.queue if "statue" not in x
                 ]
