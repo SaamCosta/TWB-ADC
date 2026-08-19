@@ -60,6 +60,49 @@ class ReportManager:
             return True, entry["extra"]["resources"]
         return False, {}
 
+    def last_seen_value(self, vid):
+        """
+        Melhor estimativa do que este alvo rende, tirada do relatorio mais
+        recente dele **que carregue algum numero**, seja qual for o tipo:
+
+          exploracao -> `resources`, o estoque que o explorador viu parado
+          ataque     -> `loot`, o que trouxemos (um piso, porque e limitado
+                        pela capacidade do pacote enviado)
+
+        Zero quando nao existe relatorio utilizavel.
+
+        Existe separado de `has_resources_left()` de proposito. Aquele olha
+        **so o relatorio mais novo** e devolve False se ele nao tiver
+        `resources` -- o que passa a ser o caso permanente depois do primeiro
+        farm, ja que dali em diante o mais novo e sempre um relatorio de
+        ataque. Medido em 2026-08-19 rodando ao vivo: 11 dos 119 alvos caiam
+        nesse buraco e recebiam o menor pacote possivel, entre eles um com
+        10.292 de recurso visto na exploracao levando 640 de capacidade.
+        `has_resources_left` continua intocado porque alimenta o calculo de
+        tempo de revisita em can_attack(), onde a semantica de "o ultimo
+        evento foi uma exploracao que viu recurso" e a desejada.
+        """
+        best_when = None
+        best_value = 0
+        for entry in self.last_reports.values():
+            if entry.get("dest") != vid:
+                continue
+            extra = entry.get("extra") or {}
+            when = extra.get("when")
+            if not when:
+                continue
+            payload = extra.get("resources") or extra.get("loot")
+            if not payload:
+                continue
+            try:
+                when = int(when)
+                value = sum(int(v) for v in payload.values())
+            except (TypeError, ValueError):
+                continue
+            if best_when is None or when > best_when:
+                best_when, best_value = when, value
+        return best_value
+
     def safe_to_engage(self, vid):
         # P2-25: attack_report() so popula units_sent/defence_units quando a
         # tabela correspondente existe no HTML e o regex casa. Relatorio

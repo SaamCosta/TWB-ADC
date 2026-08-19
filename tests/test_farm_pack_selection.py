@@ -38,14 +38,17 @@ ESCADA = [GRANDE, MEDIO, PEQUENO]
 
 
 class _RepMan:
-    """Stub do ReportManager: devolve o que o explorador viu no alvo."""
+    """
+    Stub do ReportManager. `last_seen_value` e a observacao mais recente sobre
+    o alvo -- estoque visto pelo explorador OU saque do ultimo ataque, o que
+    for mais novo.
+    """
 
     def __init__(self, por_alvo):
         self.por_alvo = por_alvo
 
-    def has_resources_left(self, vid):
-        res = self.por_alvo.get(vid)
-        return (True, res) if res else (False, {})
+    def last_seen_value(self, vid):
+        return self.por_alvo.get(vid, 0)
 
 
 def _man(template=None, cache=None, repman=None, monkey=True):
@@ -95,24 +98,29 @@ def test_le_o_farm_score_do_cache():
     assert man._expected_loot("1") == 3000
 
 
-def test_relatorio_do_explorador_vence_o_score_capado():
+def test_observacao_recente_vence_o_score_capado():
     """
-    O caso que motiva a feature: mandamos pacote de 1.200, o score ficou
-    preso em 1.200, mas o explorador viu 40.000 parados no alvo.
+    O caso que motiva a feature: mandamos pacote de 1.200, o score ficou preso
+    em 1.200, mas o relatorio mais recente mostra 40.000 no alvo.
     """
-    man = _man(
-        cache={"1": {"farm_score": 1200}},
-        repman=_RepMan({"1": {"wood": "15000", "stone": "15000", "iron": "10000"}}),
-    )
+    man = _man(cache={"1": {"farm_score": 1200}}, repman=_RepMan({"1": 40000}))
     assert man._expected_loot("1") == 40000
 
 
-def test_score_vence_quando_o_relatorio_e_menor():
-    man = _man(
-        cache={"1": {"farm_score": 9000}},
-        repman=_RepMan({"1": {"wood": "100", "stone": "100", "iron": "100"}}),
-    )
+def test_score_vence_quando_a_observacao_e_menor():
+    man = _man(cache={"1": {"farm_score": 9000}}, repman=_RepMan({"1": 300}))
     assert man._expected_loot("1") == 9000
+
+
+def test_alvo_sem_score_usa_a_observacao():
+    """
+    O bug de 2026-08-19: farm_score ainda None (farm_manager nao pontuou) e o
+    relatorio mais novo era de ataque, entao o caminho antigo devolvia 0 e o
+    alvo levava o menor pacote da escada -- inclusive um com 10.292 parados.
+    """
+    man = _man(cache={"1": {"farm_score": None}}, repman=_RepMan({"1": 10292}))
+    assert man._expected_loot("1") == 10292
+    assert man._ordered_templates("1")[0] == GRANDE
 
 
 def test_sem_repman_nao_quebra():
@@ -127,14 +135,6 @@ def test_farm_score_zero_nao_e_confundido_com_ausente():
     """
     man = _man(cache={"1": {"farm_score": 0}})
     assert man._expected_loot("1") == 0
-
-
-def test_recurso_com_lixo_no_valor_nao_derruba():
-    man = _man(
-        cache={"1": {"farm_score": 700}},
-        repman=_RepMan({"1": {"wood": "abc", "stone": "1"}}),
-    )
-    assert man._expected_loot("1") == 700
 
 
 # --------------------------------------------------------------------------
@@ -154,6 +154,33 @@ def test_alvo_pobre_leva_o_menor():
 def test_alvo_medio_leva_o_menor_que_ainda_cobre():
     man = _man(cache={"1": {"farm_score": 3500}})
     assert man._ordered_templates("1")[0] == MEDIO
+
+
+def test_valor_exatamente_na_capacidade_escala_um_degrau():
+    """
+    Saque igual a capacidade nao e medicao, e observacao CENSURADA: significa
+    "tinha isso ou mais". Com `>=` o alvo fixaria o score no teto do pacote que
+    o censurou e escolheria esse mesmo pacote para sempre. Havia 18 alvos com
+    farm_score exatamente 1.600 no cache de 2026-08-19, todos capados pelo
+    pacote antigo de 20 cavalarias.
+    """
+    man = _man(cache={"1": {"farm_score": 1200}})
+    assert man._ordered_templates("1")[0] == MEDIO, "1200 e o teto do pacote de 1200"
+
+    man = _man(cache={"2": {"farm_score": 4000}})
+    assert man._ordered_templates("2")[0] == GRANDE, "4000 e o teto do pacote de 4000"
+
+
+def test_censura_no_maior_pacote_nao_tem_para_onde_escalar():
+    """No topo da escada nao ha degrau acima; devolve o maior e segue."""
+    man = _man(cache={"1": {"farm_score": 12000}})
+    assert man._ordered_templates("1")[0] == GRANDE
+
+
+def test_um_a_menos_que_a_capacidade_ainda_usa_o_pacote():
+    """A escalada e so no valor exato do teto, nao um degrau para todo mundo."""
+    man = _man(cache={"1": {"farm_score": 1199}})
+    assert man._ordered_templates("1")[0] == PEQUENO
 
 
 def test_esperado_acima_de_todos_leva_o_maior():
@@ -195,6 +222,84 @@ def test_template_com_um_item_so_nao_consulta_o_alvo():
     """Com um pacote so nao ha escolha a fazer; nao pode exigir cache."""
     man = _man(template=[GRANDE], cache={})
     assert man._ordered_templates("1") == [GRANDE]
+
+
+# --------------------------------------------------------------------------
+# ReportManager.last_seen_value -- a fonte fresca de _expected_loot
+# --------------------------------------------------------------------------
+
+from game.reports import ReportManager
+
+
+def _repman(*reports):
+    """
+    Monta um ReportManager com relatorios sinteticos no formato real:
+    exploracao carrega `resources`, ataque carrega `loot`.
+    """
+    man = ReportManager.__new__(ReportManager)
+    man.last_reports = {str(i): r for i, r in enumerate(reports)}
+    return man
+
+
+def _scout(vid, when, total):
+    return {"dest": vid, "type": "scout",
+            "extra": {"when": when, "resources": {"wood": str(total), "stone": "0", "iron": "0"}}}
+
+
+def _attack(vid, when, total):
+    return {"dest": vid, "type": "attack",
+            "extra": {"when": when, "loot": {"wood": str(total), "stone": "0", "iron": "0"}}}
+
+
+def test_relatorio_de_ataque_conta_pelo_saque():
+    assert _repman(_attack("1", 100, 1520)).last_seen_value("1") == 1520
+
+
+def test_exploracao_conta_pelo_estoque():
+    assert _repman(_scout("1", 100, 10292)).last_seen_value("1") == 10292
+
+
+def test_ataque_mais_novo_nao_apaga_a_exploracao_anterior():
+    """
+    O bug exato de 2026-08-19: has_resources_left pegava so o mais novo, via
+    que era um ataque sem `resources`, e devolvia False -- descartando a
+    exploracao logo abaixo. Aqui o mais novo vence por ser mais novo, mas a
+    exploracao continua utilizavel quando ela E a mais nova.
+    """
+    man = _repman(_scout("1", 100, 10292), _attack("1", 200, 1520))
+    assert man.last_seen_value("1") == 1520, "o ataque e mais novo, entao manda"
+
+    man = _repman(_attack("1", 100, 1520), _scout("1", 200, 10292))
+    assert man.last_seen_value("1") == 10292, "agora a exploracao e a mais nova"
+
+
+def test_relatorio_sem_numero_nao_apaga_o_anterior():
+    """Relatorio sem `resources` nem `loot` e ignorado, nao zera o sinal."""
+    vazio = {"dest": "1", "type": "support", "extra": {"when": 300}}
+    man = _repman(_scout("1", 100, 5000), vazio)
+    assert man.last_seen_value("1") == 5000
+
+
+def test_outro_alvo_nao_vaza():
+    man = _repman(_scout("1", 100, 5000), _scout("2", 200, 99999))
+    assert man.last_seen_value("1") == 5000
+
+
+def test_sem_relatorio_devolve_zero():
+    assert _repman().last_seen_value("1") == 0
+    assert _repman(_scout("2", 100, 5000)).last_seen_value("1") == 0
+
+
+def test_relatorio_sem_when_e_ignorado():
+    sem_when = {"dest": "1", "type": "scout", "extra": {"resources": {"wood": "9999"}}}
+    assert _repman(sem_when).last_seen_value("1") == 0
+
+
+def test_valor_com_lixo_nao_derruba():
+    ruim = {"dest": "1", "type": "scout",
+            "extra": {"when": 200, "resources": {"wood": "abc"}}}
+    man = _repman(_scout("1", 100, 5000), ruim)
+    assert man.last_seen_value("1") == 5000
 
 
 if __name__ == "__main__":

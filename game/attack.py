@@ -149,26 +149,29 @@ class AttackManager:
         """
         Quanto este alvo deve render agora. Duas fontes, a maior vence:
 
-        - `farm_score`: saque medio dos nossos proprios ataques. Sozinho ele se
-          auto-realimenta, porque e **capado pelo pacote que mandamos** --
-          pacote pequeno gera score pequeno, que escolhe pacote pequeno para
-          sempre. Medido em 2026-08-17: dos envios com capacidade 8.000, 46%
-          voltaram exatamente com 8.000, ou seja o valor real era desconhecido.
-        - `resources` do relatorio mais recente: o que o explorador viu parado
-          no alvo. Nao depende do nosso pacote, e e o que quebra o ciclo acima.
+        - `farm_score`: media longa do que nos saqueamos. E **capada pelo
+          pacote que mandamos** -- medido em 2026-08-17, dos envios com
+          capacidade 8.000, 46% voltaram exatamente com 8.000, ou seja o valor
+          real era desconhecido acima disso.
+        - `ReportManager.last_seen_value()`: a observacao mais recente sobre o
+          alvo -- estoque visto pelo explorador, ou o saque do ultimo ataque.
+          E o dado fresco, e o que corrige um `farm_score` velho ou ausente.
 
         Zero significa "sem dado nenhum", e nao "alvo pobre" -- ver
         _ordered_templates.
+
+        Este metodo consultava `has_resources_left()`, que olha **so o
+        relatorio mais novo** e devolve False quando ele nao e de exploracao.
+        Como depois do primeiro farm o mais novo passa a ser sempre um
+        relatorio de ataque, o caminho desligava de vez: em 2026-08-19, ao
+        vivo, 11 dos 119 alvos ficavam com expected=0 e levavam o menor pacote
+        da escada -- um deles com 10.292 vistos pelo explorador recebendo 640
+        de capacidade.
         """
         entry = AttackCache.get_cache(vid) or {}
         expected = int(entry.get("farm_score") or 0)
         if self.repman:
-            has_left, res = self.repman.has_resources_left(vid)
-            if has_left and res:
-                try:
-                    expected = max(expected, sum(int(v) for v in res.values()))
-                except (TypeError, ValueError):
-                    pass
+            expected = max(expected, int(self.repman.last_seen_value(vid) or 0))
         return expected
 
     def _ordered_templates(self, vid):
@@ -193,15 +196,23 @@ class AttackManager:
 
         expected = self._expected_loot(vid)
         if not expected:
-            # Nenhum historico: sonda com o menor em vez de comprometer o maior
-            # num alvo que pode nao render nada. Alvo novo costuma ser
-            # espionado antes do primeiro ataque (can_attack), entao este caso
-            # e raro -- o relatorio de exploracao ja popula `resources`.
+            # Nenhuma observacao: sonda com o menor em vez de comprometer o
+            # maior num alvo que pode nao render nada.
             return packs[-1:]
 
         # Menor pacote que ainda cobre o esperado; se nenhum cobre, o maior.
+        #
+        # A comparacao e ESTRITA de proposito. `expected` vem em boa parte de
+        # valores que sao o proprio teto do pacote anterior -- saque igual a
+        # capacidade nao e uma medicao, e uma observacao censurada: significa
+        # "tinha isso ou mais". Com `>=`, um alvo que volta lotado fixa o score
+        # na capacidade e escolhe para sempre o mesmo pacote que o censurou.
+        # Havia 18 alvos com farm_score exatamente 1.600 no cache de
+        # 2026-08-19, todos capados pelo pacote antigo de 20 cavalarias, para
+        # ilustrar que o caso e comum e nao teorico. Com `>`, esse alvo sobe um
+        # degrau, descobre o valor real e assenta onde deve.
         for index in range(len(packs) - 1, -1, -1):
-            if self._pack_capacity(packs[index]) >= expected:
+            if self._pack_capacity(packs[index]) > expected:
                 return packs[index:]
         return packs
 
