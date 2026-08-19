@@ -1,0 +1,261 @@
+[
+  {
+    "building": "barracks",
+    "level": 1,
+    "upgrades": {
+      "spear": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 20
+      }
+    },
+    "farm": [
+      {"spear": 15},
+      {"spear": 5}
+    ]
+  },
+  {
+    "building": "barracks",
+    "level": 5,
+    "upgrades": {
+      "spear": 1,
+      "axe": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 60,
+        "axe": 60
+      }
+    },
+    "farm": [
+      {"axe": 40},
+      {"spear": 20},
+      {"spear": 5}
+    ]
+  },
+  {
+    "building": "stable",
+    "level": 3,
+    "upgrades": {
+      "spear": 1,
+      "axe": 1,
+      "spy": 1,
+      "light": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 200
+      },
+      "stable": {
+        "spy": 15,
+        "light": 40
+      }
+    },
+    "farm": [
+      {"light": 25},
+      {"light": 10},
+      {"axe": 40}
+    ]
+  },
+  {
+    "building": "garage",
+    "level": 5,
+    "upgrades": {
+      "axe": 2,
+      "light": 2,
+      "spy": 1,
+      "ram": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 500
+      },
+      "stable": {
+        "spy": 25,
+        "light": 150
+      },
+      "garage": {
+        "ram": 20
+      }
+    },
+    "farm": [
+      {"light": 50},
+      {"light": 20},
+      {"light": 8}
+    ]
+  },
+  {
+    "building": "barracks",
+    "level": 10,
+    "upgrades": {
+      "axe": 2,
+      "light": 2,
+      "ram": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 1000
+      },
+      "stable": {
+        "spy": 50,
+        "light": 400
+      },
+      "garage": {
+        "ram": 40
+      }
+    },
+    "farm": [
+      {"light": 80},
+      {"light": 30},
+      {"light": 10}
+    ]
+  },
+  {
+    "building": "stable",
+    "level": 10,
+    "upgrades": {
+      "axe": 3,
+      "light": 3,
+      "ram": 2
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 2000
+      },
+      "stable": {
+        "spy": 75,
+        "light": 900
+      },
+      "garage": {
+        "ram": 70
+      }
+    },
+    "farm": [
+      {"light": 120},
+      {"light": 40},
+      {"light": 12}
+    ]
+  },
+  {
+    "building": "stable",
+    "level": 15,
+    "upgrades": {
+      "axe": 3,
+      "light": 3,
+      "ram": 2,
+      "catapult": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 3000
+      },
+      "stable": {
+        "spy": 100,
+        "light": 1500
+      },
+      "garage": {
+        "ram": 110,
+        "catapult": 10
+      }
+    },
+    "farm": [
+      {"light": 150},
+      {"light": 50},
+      {"light": 15}
+    ]
+  },
+  {
+    "building": "barracks",
+    "level": 20,
+    "upgrades": {
+      "axe": 3,
+      "light": 3,
+      "ram": 3,
+      "catapult": 2
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 4500
+      },
+      "stable": {
+        "spy": 100,
+        "light": 2200
+      },
+      "garage": {
+        "ram": 170,
+        "catapult": 25
+      }
+    },
+    "farm": [
+      {"light": 150},
+      {"light": 50},
+      {"light": 15}
+    ]
+  },
+  {
+    "building": "stable",
+    "level": 20,
+    "upgrades": {
+      "axe": 3,
+      "light": 3,
+      "ram": 3,
+      "catapult": 3
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 5200
+      },
+      "stable": {
+        "spy": 100,
+        "light": 2700
+      },
+      "garage": {
+        "ram": 210,
+        "catapult": 40
+      }
+    },
+    "farm": [
+      {"light": 150},
+      {"light": 50},
+      {"light": 15}
+    ]
+  },
+  {
+    "building": "barracks",
+    "level": 25,
+    "upgrades": {
+      "axe": 3,
+      "light": 3,
+      "ram": 3,
+      "catapult": 3,
+      "spy": 3
+    },
+    "build": {
+      "barracks": {
+        "spear": 100,
+        "axe": 6000
+      },
+      "stable": {
+        "spy": 100,
+        "light": 3000
+      },
+      "garage": {
+        "ram": 250,
+        "catapult": 50
+      }
+    },
+    "farm": [
+      {"light": 150},
+      {"light": 50},
+      {"light": 15}
+    ]
+  }
+]
