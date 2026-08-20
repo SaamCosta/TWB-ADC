@@ -240,6 +240,49 @@ Duas medições que resolvem perguntas antigas:
   **duas aldeias reais do br143 no mesmo dia**: fazenda 15 → pop_max 2216
   (fórmula: 2217) e fazenda 26 → 12715 (exato). Não veio de wiki.
 
+## 6c. Escolha de continente: o que o br144 tira e o que o item devolve
+
+**O br144 desativa a escolha de direção na entrada.** `/page/settings`:
+*"Capacidade de selecionar a direção de início: Inativo"*. Isso mata, na
+inscrição, a variante geográfica de 2020 registrada na seção 3 — fundar na
+beirada do mapa, em continente pouco povoado, onde a bolsa satura mais devagar.
+A colocação é automática e só dá para saber em que bolsa você caiu depois de
+entrar.
+
+**Uma bolsa por continente está CONFIRMADO por medição, não é suposição.** Na
+sonda de 2026-08-20 as aldeias 41123 e 38409 devolveram `stock` e `capacity`
+**idênticos** nos três recursos, diferindo só no número de mercadores
+disponíveis. As duas estão em K35. Isso fecha dois fatos de uma vez: a bolsa é
+por continente, e a venda usa os mercadores da própria aldeia.
+
+**O caminho que sobra é o item de relocação** (informado pelo usuário em
+2026-08-20): o jogo às vezes concede um item de uso único para mudar de lugar,
+com prazo de validade. O inventário que o bot já lê guarda `expires_at` por
+item (`cache/inventory/status.json`, Feature 25, somente leitura), então o
+prazo é observável sem trabalho manual.
+
+**Quando usar, e por quê tarde.** Raciocínio a partir da mecânica medida — não
+é algo observado acontecer:
+
+- No dia 1 **todas** as bolsas estão vazias. Mudar cedo troca bolsa vazia por
+  bolsa vazia e não ganha quase nada.
+- O ganho aparece quando a bolsa local já encheu um pouco e a de fora não. Aí
+  a mudança devolve a taxa de abertura enquanto a vizinhança já paga caro.
+- Logo, o ótimo é segurar o item e usá-lo **o mais tarde possível dentro do
+  prazo**, a menos que a bolsa local sature antes.
+
+A variável que decide isso — velocidade de saturação por continente — **ninguém
+aqui conhece**. É medível de graça, todo dia, com `cache/_smoke_premium.py`,
+que só lê. Se a `capacity`/`stock` local subir rápido, antecipar a mudança; se
+estiver lenta, esperar o prazo.
+
+⚠️ **Cuidado operacional não resolvido:** não sei se a relocação preserva o ID
+da aldeia ou cria outra, e não achei isso documentado. O bot guarda estado por
+aldeia em `cache/managed/<id>.json` e usa coordenadas em `cache/zones.json` e
+no cache de mapa. Se o ID mudar, o cache antigo vira lixo e o bot pode tratar
+como aldeia nova. **Fazer a mudança com o bot parado** e conferir o ID depois,
+em vez de descobrir com ele rodando.
+
 ## 7. O gap do nosso código
 
 `ResourceManager.do_premium_stuff()` (`game/resources.py`) é código do upstream
