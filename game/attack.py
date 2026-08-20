@@ -228,16 +228,25 @@ class AttackManager:
                 attack_result = self.attack(target["id"], troops=template)
                 if attack_result == "forced_peace":
                     return 0
-                self.logger.info(
-                    "Attacking %s -> %s (%s)" ,self.village_id, target["id"], str(template)
-                )
-                self.wrapper.reporter.report(
-                    self.village_id,
-                    "TWB_FARM",
-                    "Attacking %s -> %s (%s)"
-                    % (self.village_id, target["id"], str(template)),
-                )
+                # O log e o reporter ficam DENTRO do if: antes eles anunciavam
+                # o ataque antes de saber se o servidor aceitou, entao contavam
+                # tentativa como envio. Medido em 2026-08-19: num ciclo com 28
+                # tentativas da BBM 001, apenas 5 viraram POST de confirmacao e
+                # 23 foram recusadas -- e as 23 apareciam no log como
+                # "Attacking ...". Toda analise de campo feita por contagem de
+                # linha (volume de farm, capacidade enviada, /farmscores) saia
+                # inflada, e foi assim que a validacao desta feature comecou
+                # com numeros errados.
                 if attack_result:
+                    self.logger.info(
+                        "Attacking %s -> %s (%s)", self.village_id, target["id"], str(template)
+                    )
+                    self.wrapper.reporter.report(
+                        self.village_id,
+                        "TWB_FARM",
+                        "Attacking %s -> %s (%s)"
+                        % (self.village_id, target["id"], str(template)),
+                    )
                     for u in template:
                         self.troopmanager.troops[u] = str(
                             int(self.troopmanager.troops[u]) - template[u]
