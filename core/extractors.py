@@ -342,6 +342,40 @@ class Extractor:
         return data
 
     @staticmethod
+    def error_box_text(res):
+        """
+        Texto legivel do primeiro `error_box` de uma resposta do jogo. Aceita a
+        resposta do requests ou o HTML ja em string.
+
+        Saber apenas que "houve error_box" nao distingue as causas de uma
+        recusa, e elas pedem reacoes opostas -- falta de unidade quer dizer
+        "pare de tentar este pacote neste ciclo", enquanto aldeia inexistente
+        quer dizer "tire este alvo da lista". Quatro pontos do bot faziam
+        `if '<div class="error_box">' in resposta` e jogavam o motivo fora:
+        game/attack.py (farm), game/defence_manager.py (suporte, sem log
+        nenhum), game/hunter.py (logava que houve, nao o que dizia) e
+        game/resources.py -- este ultimo era o unico que lia o texto, com uma
+        copia local desta funcao. Foi justamente a mensagem "Modo invalido",
+        lida por ela em 2026-08-11, que revelou que a URL usada pela Feature 9
+        desde sempre nao existia.
+
+        Devolve string curta e sempre truthy, para poder ir direto num log sem
+        o chamador ter que tratar None.
+        """
+        if res is None:
+            return "sem resposta"
+        html = res if isinstance(res, str) else getattr(res, "text", "") or ""
+        # A forma com </div></div> casa o box completo quando ele embrulha um
+        # bloco interno; a segunda e o fallback para o box de linha unica.
+        box = re.search(r'<div class="error_box">(.*?)</div>\s*</div>', html, re.S)
+        if not box:
+            box = re.search(r'<div class="error_box">(.*?)</div>', html, re.S)
+        if not box:
+            return "sem error_box legivel"
+        text = re.sub(r"<[^>]+>", " ", box.group(1))
+        return " ".join(text.split())[:300] or "vazio"
+
+    @staticmethod
     def loyalty_from_report(res):
         """
         Extrai a lealdade *depois* do ataque de nobre (snob) do HTML do

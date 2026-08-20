@@ -436,6 +436,13 @@ class DefenceManager:
             self.logger.warning("[Support] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
             return False
         if '<div class="error_box">' in conf.text:
+            # Era o unico dos quatro pontos de error_box do bot que nao logava
+            # nada: o suporte simplesmente nao saia e nenhuma linha dizia por
+            # que. Ver Extractor.error_box_text.
+            self.logger.warning(
+                "[Support] %s -> %s recusado pelo jogo: %s",
+                self.village_id, vid, Extractor.error_box_text(conf)
+            )
             return False
         duration = Extractor.attack_duration(conf)
         self.logger.info(

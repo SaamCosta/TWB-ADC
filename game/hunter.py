@@ -346,8 +346,12 @@ class Hunter:
             return None
 
         if '<div class="error_box">' in conf.text:
+            # Logava que houve error_box, nao o que ele dizia -- e a sonda do
+            # Hunter existe justamente para descobrir por que um envio nao
+            # sairia. Ver Extractor.error_box_text.
             self.logger.warning(
-                "Hunter: server returned error box for probe %s -> %s", source_id, target_id
+                "Hunter: probe %s -> %s recusada pelo jogo: %s",
+                source_id, target_id, Extractor.error_box_text(conf)
             )
             return None
 

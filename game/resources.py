@@ -876,19 +876,17 @@ class ResourceManager:
     @staticmethod
     def _error_box_text(html):
         """
-        Texto legível do primeiro `error_box` da resposta. "Houve error_box" não
-        distingue as causas plausíveis de uma recusa (campo com nome errado,
-        falta de mercador, alvo inválido, modo inexistente) -- foi exatamente a
-        mensagem "Modo inválido" que revelou, em 2026-08-11, que a URL usada
-        pela Feature 9 desde sempre não existia.
+        Delega para Extractor.error_box_text, que e a versao compartilhada.
+
+        Esta era a implementacao original e a unica do projeto que lia o texto
+        do error_box -- foi a mensagem "Modo invalido" lida aqui, em
+        2026-08-11, que revelou que a URL usada pela Feature 9 desde sempre nao
+        existia. Outros tres pontos (farm, suporte, sonda do Hunter) faziam a
+        mesma checagem e descartavam o motivo, entao em 2026-08-19 a funcao
+        subiu para core/extractors.py e passou a servir os quatro. O metodo
+        continua aqui por causa dos cinco chamadores neste arquivo.
         """
-        box = re.search(r'<div class="error_box">(.*?)</div>\s*</div>', html, re.S)
-        if not box:
-            box = re.search(r'<div class="error_box">(.*?)</div>', html, re.S)
-        if not box:
-            return "sem error_box legível"
-        text = re.sub(r"<[^>]+>", " ", box.group(1))
-        return " ".join(text.split())[:300] or "vazio"
+        return Extractor.error_box_text(html)
 
     def _dump_response(self, path, content, overwrite=False):
         """

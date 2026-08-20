@@ -550,6 +550,14 @@ class AttackManager:
             self.logger.warning("[Attack] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
             return False
         if '<div class="error_box">' in conf.text:
+            # O motivo importa: "falta unidade" pede parar de tentar este
+            # pacote no ciclo, "aldeia nao existe" pede tirar o alvo da lista,
+            # e ate 2026-08-19 as duas viravam o mesmo False silencioso -- o
+            # chamador logava "server refused" sem dizer o que o jogo falou.
+            self.logger.warning(
+                "[Attack] %s -> %s recusado pelo jogo: %s",
+                self.village_id, vid, Extractor.error_box_text(conf)
+            )
             return False
         duration = Extractor.attack_duration(conf)
         if self.forced_peace_time:
