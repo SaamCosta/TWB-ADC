@@ -14,6 +14,24 @@ from core.filemanager import FileManager
 from core.templates import UNIT_CARRY
 from core.world_config import WorldConfig
 
+# Trechos do error_box que significam "o pacote nao cabe no que ha em casa".
+# So esta causa pode marcar o pacote como indisponivel no ciclo; qualquer
+# outra recusa e problema do alvo, e blacklistar o pacote por causa dela
+# pararia o farm da aldeia inteira.
+#
+# Verificado ao vivo no br143 em 2026-08-19, postando 9999 lanceiros de uma
+# aldeia que tem zero na etapa `try=confirm` (que valida e nao envia):
+#
+#     Nao existem unidades suficientes
+#
+# So ha a variante pt-BR porque e a unica que eu li de um servidor. Mundo em
+# outro idioma cai no caminho generico (segue para o proximo alvo, como antes)
+# e loga a mensagem em WARNING -- e de la que sai o texto para acrescentar
+# aqui, em vez de adivinhar traducoes.
+INSUFFICIENT_UNITS_MESSAGES = (
+    "unidades suficientes",
+)
+
 
 class AttackManager:
     """
@@ -77,6 +95,31 @@ class AttackManager:
         # na tela de confirmacao, e e ele que manda). Ver
         # ConquestManager._arrival_from_last_attack().
         self.last_attack_duration = None
+        # Texto do error_box da ultima recusa do jogo, ou None. E atributo em
+        # vez de valor de retorno de propositio: attack() ja devolve a string
+        # "forced_peace" como sentinel, e string e truthy -- scout() faz
+        # `if self.attack(...)` e trataria o sentinel como sucesso. Mais um
+        # sentinel string pioraria isso; o atributo mantem attack() devolvendo
+        # falsy em toda recusa.
+        self.last_refusal = None
+
+    def _refused_for_lack_of_units(self):
+        """
+        A ultima recusa do jogo foi por falta de tropa?
+
+        Distingue as duas reacoes possiveis: falta de unidade e problema do
+        *pacote* (nao adianta tentar o mesmo tamanho no proximo alvo), e
+        qualquer outra causa e problema do *alvo* (o pacote continua valido
+        para os demais). Tratar as duas igual e o que fazia o bot repetir a
+        mesma tentativa dezenas de vezes num ciclo.
+
+        Mensagem desconhecida devolve False de proposito: o comportamento
+        antigo (seguir para o proximo alvo) e o degradar seguro, e o texto vai
+        para o log em WARNING justamente para poder ser acrescentado a
+        INSUFFICIENT_UNITS_MESSAGES depois de lido de um servidor real.
+        """
+        reason = (self.last_refusal or "").lower()
+        return any(frag in reason for frag in INSUFFICIENT_UNITS_MESSAGES)
 
     def enough_in_village(self, units):
         """
@@ -263,6 +306,20 @@ class AttackManager:
                         else False,
                     )
                     return 1
+                elif self._refused_for_lack_of_units():
+                    # O jogo diz que a tropa nao da, e ele e a fonte da
+                    # verdade: o contador local so decrementa em caso de
+                    # sucesso, entao apos uma recusa ele segue afirmando que
+                    # ha tropa e enough_in_village() aprova de novo. Era esse
+                    # o loop que produziu 23 tentativas recusadas seguidas na
+                    # BBM 001 em 2026-08-19, cada uma com um GET e um POST.
+                    # -1 poe o pacote na lista de ignorados do ciclo, o mesmo
+                    # tratamento que a falta de tropa detectada localmente.
+                    self.logger.info(
+                        "Pacote %s nao cabe no que ha em %s (o jogo recusou), "
+                        "nao sera tentado de novo neste ciclo", str(template), self.village_id
+                    )
+                    return -1
                 else:
                     self.logger.debug(
                         "Ignoring target %s because unable to attack (server refused, not blocking future attempts)", target["id"]
@@ -397,7 +454,15 @@ class AttackManager:
         # chamador (`if self.scout(vid): return False`) nunca era verdadeiro --
         # o bot mandava o espiao E o farm no mesmo ciclo, contra o proprio
         # objetivo de "espiar antes de atacar".
-        if self.attack(vid, troops=troops):
+        #
+        # O `!= "forced_peace"` e o mesmo guard que os outros quatro
+        # chamadores de attack() ja tinham (ConquestManager duas vezes,
+        # Hunter, PvpConquest); este era o unico fora do padrao. Sem ele,
+        # durante a paz forcada o sentinel -- que e string, logo truthy --
+        # passava como sucesso e attacked() gravava last_attack=agora para um
+        # explorador que nunca saiu, adiando a proxima espionagem real.
+        result = self.attack(vid, troops=troops)
+        if result and result != "forced_peace":
             self.attacked(vid, scout=True, safe=False)
             return True
         return False
@@ -515,6 +580,7 @@ class AttackManager:
         # Zerado a cada tentativa para que um caller nunca leia a duracao de um
         # ataque anterior como se fosse a deste (ver last_attack_duration).
         self.last_attack_duration = None
+        self.last_refusal = None
 
         if self.in_forced_peace:
             self.logger.info("[Attack] %s -> %s: forced peace active, not sending", self.village_id, vid)
@@ -554,9 +620,10 @@ class AttackManager:
             # pacote no ciclo, "aldeia nao existe" pede tirar o alvo da lista,
             # e ate 2026-08-19 as duas viravam o mesmo False silencioso -- o
             # chamador logava "server refused" sem dizer o que o jogo falou.
+            self.last_refusal = Extractor.error_box_text(conf)
             self.logger.warning(
                 "[Attack] %s -> %s recusado pelo jogo: %s",
-                self.village_id, vid, Extractor.error_box_text(conf)
+                self.village_id, vid, self.last_refusal
             )
             return False
         duration = Extractor.attack_duration(conf)
