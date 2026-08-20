@@ -51,10 +51,19 @@ class _RepMan:
         return self.por_alvo.get(vid, 0)
 
 
-def _man(template=None, cache=None, repman=None, monkey=True):
+class _Silencioso:
+    def __getattr__(self, _):
+        return lambda *a, **k: None
+
+
+def _man(template=None, cache=None, repman=None, monkey=True,
+         min_pop=0, pontos=0):
     man = AttackManager.__new__(AttackManager)
     man.template = ESCADA if template is None else template
     man.repman = repman
+    man.logger = _Silencioso()
+    man.min_attack_pop = min_pop
+    man.village_points = pontos
     if monkey:
         # AttackCache le disco; aqui o cache e injetado por alvo.
         attack_mod.AttackCache.get_cache = staticmethod(
@@ -82,6 +91,76 @@ def test_unidade_sem_carga_nao_soma():
 def test_quantidade_como_string_nao_quebra():
     man = _man()
     assert man._pack_capacity({"light": "10"}) == 800
+
+
+# --------------------------------------------------------------------------
+# _pack_population e _legalize -- o limite de ataque falso do mundo
+# --------------------------------------------------------------------------
+
+def test_populacao_do_pacote():
+    man = _man()
+    assert man._pack_population({"light": 15}) == 60      # 4 de pop cada
+    assert man._pack_population({"spear": 100}) == 100
+    assert man._pack_population({"light": 10, "spy": 5}) == 50
+
+
+def test_sem_piso_o_pacote_nao_muda():
+    """Mundo sem limite de ataque falso (fake_limit 0) desliga a checagem."""
+    man = _man(min_pop=0)
+    assert man._legalize({"light": 15}) == {"light": 15}
+
+
+def test_pacote_acima_do_piso_nao_muda():
+    man = _man(min_pop=50)
+    assert man._legalize({"light": 15}) == {"light": 15}   # 60 >= 50
+
+
+def test_pacote_abaixo_do_piso_cresce():
+    """
+    O caso real: BBM 001 com 7.335 pontos tem piso 73, e o pacote de 15
+    cavalarias (60 de populacao) era recusado em todo alvo. 19 cavalarias dao
+    76, o primeiro valor legal.
+    """
+    man = _man(min_pop=73, pontos=7335)
+    assert man._legalize({"light": 15}) == {"light": 19}
+
+
+def test_crescimento_preserva_proporcao_entre_unidades():
+    man = _man(min_pop=100)
+    # 10 light (40) + 5 spear (5) = 45 de pop; fator 100/45 = 2,22
+    crescido = man._legalize({"light": 10, "spear": 5})
+    assert crescido == {"light": 23, "spear": 12}
+    assert man._pack_population(crescido) >= 100
+
+
+def test_crescimento_nunca_zera_uma_unidade():
+    """Arredondar para baixo poderia sumir com uma unidade do pacote."""
+    man = _man(min_pop=200)
+    crescido = man._legalize({"light": 40, "spy": 1})
+    assert crescido["spy"] >= 1
+
+
+def test_piso_alcanca_todas_as_aldeias_conforme_crescem():
+    """
+    O piso e 1% dos pontos, entao sobe sozinho. O mesmo pacote de template
+    passa de legal a ilegal sem nada no bot mudar -- por isso o ajuste e em
+    runtime e nao um numero fixo no arquivo.
+    """
+    pacote = {"light": 15}                      # 60 de populacao
+    assert _man(min_pop=5)._legalize(pacote) == pacote        # aldeia de 500 pts
+    assert _man(min_pop=11)._legalize(pacote) == pacote       # 1.100 pts
+    assert _man(min_pop=73)._legalize(pacote) == {"light": 19}   # 7.335 pts
+    assert _man(min_pop=120)._legalize(pacote) == {"light": 30}  # 12.000 pts
+
+
+def test_escada_deduplica_apos_o_piso():
+    """
+    Com piso alto dois pacotes distintos do arquivo viram o mesmo; tentar o
+    mesmo envio duas vezes seria requisicao jogada fora.
+    """
+    man = _man(template=[{"light": 15}, {"light": 12}], min_pop=100,
+               cache={"1": {"farm_score": 500}})
+    assert man._ordered_templates("1") == [{"light": 25}]
 
 
 # --------------------------------------------------------------------------

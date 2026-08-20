@@ -11,7 +11,7 @@ from datetime import datetime
 from datetime import timedelta
 
 from core.filemanager import FileManager
-from core.templates import UNIT_CARRY
+from core.templates import UNIT_CARRY, UNIT_POP
 from core.world_config import WorldConfig
 
 # Trechos do error_box que significam "o pacote nao cabe no que ha em casa".
@@ -32,6 +32,21 @@ INSUFFICIENT_UNITS_MESSAGES = (
     "unidades suficientes",
 )
 
+# Trechos do error_box do limite de ataque falso. Tambem e problema do PACOTE
+# e nao do alvo -- o pacote e pequeno demais para os pontos desta aldeia, e
+# sera recusado em todo alvo igualmente. Mensagem real do br143, 2026-08-19:
+#
+#     A forca de ataque precisa do minimo de 73 habitantes.
+#     Voce esta tentando enviar 60 fazendeiros.
+#
+# O bot passou a evitar esta recusa em vez de so reagir a ela (ver
+# _ordered_templates), mas o padrao fica como rede: os pontos usados no
+# calculo sao lidos uma vez por ciclo e podem envelhecer dentro do ciclo.
+FAKE_LIMIT_MESSAGES = (
+    "precisa do mínimo de",
+    "precisa do minimo de",
+)
+
 
 class AttackManager:
     """
@@ -44,6 +59,11 @@ class AttackManager:
     targets = {}
     logger = logging.getLogger("Attacks")
     max_farms = 15
+    # Pontos desta aldeia e populacao minima que o mundo exige por ataque
+    # (fake_limit% dos pontos). Ambos reatribuidos por village.py a cada ciclo;
+    # zero significa "sem limite conhecido" e desliga a checagem.
+    village_points = 0
+    min_attack_pop = 0
     template = {}
     extra_farm = []
     repman = None
@@ -103,23 +123,28 @@ class AttackManager:
         # falsy em toda recusa.
         self.last_refusal = None
 
-    def _refused_for_lack_of_units(self):
+    def _refused_for_pack_reason(self):
         """
-        A ultima recusa do jogo foi por falta de tropa?
+        A ultima recusa do jogo foi problema do PACOTE, e nao do alvo?
 
-        Distingue as duas reacoes possiveis: falta de unidade e problema do
-        *pacote* (nao adianta tentar o mesmo tamanho no proximo alvo), e
-        qualquer outra causa e problema do *alvo* (o pacote continua valido
-        para os demais). Tratar as duas igual e o que fazia o bot repetir a
-        mesma tentativa dezenas de vezes num ciclo.
+        Duas causas caem aqui, e ambas se repetiriam identicas em todo alvo:
+        falta de tropa em casa, e pacote abaixo do limite de ataque falso do
+        mundo. Qualquer outra causa e problema do alvo e o pacote continua
+        valido para os demais -- tratar as duas igual e o que fazia o bot
+        repetir a mesma tentativa dezenas de vezes por ciclo.
 
-        Mensagem desconhecida devolve False de proposito: o comportamento
-        antigo (seguir para o proximo alvo) e o degradar seguro, e o texto vai
-        para o log em WARNING justamente para poder ser acrescentado a
-        INSUFFICIENT_UNITS_MESSAGES depois de lido de um servidor real.
+        Mensagem desconhecida devolve False de proposito: seguir para o
+        proximo alvo e o degradar seguro, e o texto vai ao log em WARNING
+        justamente para poder ser acrescentado a uma das listas depois de lido
+        de um servidor real. Foi assim que o limite de ataque falso apareceu:
+        ele nao estava mapeado, caiu no caminho generico e se identificou pelo
+        log.
         """
         reason = (self.last_refusal or "").lower()
-        return any(frag in reason for frag in INSUFFICIENT_UNITS_MESSAGES)
+        return any(
+            frag in reason
+            for frag in INSUFFICIENT_UNITS_MESSAGES + FAKE_LIMIT_MESSAGES
+        )
 
     def enough_in_village(self, units):
         """
@@ -188,6 +213,47 @@ class AttackManager:
         """
         return sum(UNIT_CARRY.get(unit, 0) * int(qty) for unit, qty in template.items())
 
+    def _pack_population(self, template):
+        """
+        Populacao (fazendeiros) que um pacote ocupa -- a unidade em que o
+        limite de ataque falso e expresso.
+        """
+        return sum(UNIT_POP.get(unit, 0) * int(qty) for unit, qty in template.items())
+
+    def _legalize(self, template):
+        """
+        Devolve o pacote crescido o suficiente para respeitar o limite de
+        ataque falso desta aldeia, ou o proprio pacote se ele ja respeita.
+
+        Crescer e melhor do que descartar: o pacote pequeno existe para nao
+        desperdicar tropa em alvo pobre, e o piso do mundo nao muda essa
+        intencao, so o minimo. Descartar deixaria a aldeia grande sem opcao
+        pequena nenhuma e todo alvo pobre receberia o pacote medio.
+
+        O piso sobe junto com os pontos da aldeia, entao um pacote escrito no
+        template deixa de ser legal sozinho, sem nada no bot mudar -- a BBM
+        001 cruzou 6.000 pontos e os 60 de populacao do menor pacote viraram
+        ilegais. Por isso o ajuste e aqui, em runtime, e nao um numero fixo no
+        arquivo.
+        """
+        if not self.min_attack_pop:
+            return template
+        pop = self._pack_population(template)
+        if pop >= self.min_attack_pop or pop <= 0:
+            return template
+        # Cresce proporcionalmente, arredondando para cima, para preservar a
+        # proporcao entre unidades quando o pacote tem mais de uma.
+        factor = self.min_attack_pop / pop
+        grown = {
+            unit: max(1, math.ceil(int(qty) * factor)) for unit, qty in template.items()
+        }
+        self.logger.debug(
+            "Pacote %s tem %d de populacao, abaixo do minimo %d desta aldeia (%d pontos); "
+            "crescido para %s", str(template), pop, self.min_attack_pop,
+            self.village_points, str(grown)
+        )
+        return grown
+
     def _expected_loot(self, vid):
         """
         Quanto este alvo deve render agora. Duas fontes, a maior vence:
@@ -231,9 +297,22 @@ class AttackManager:
         A ordenacao e recalculada por capacidade em vez de confiar na ordem do
         arquivo, para que um template escrito fora de ordem nao inverta a
         escada em silencio.
+
+        Todo pacote passa por _legalize() antes: o mundo exige um minimo de
+        populacao por ataque que cresce com os pontos da aldeia, e um pacote
+        escrito no template deixa de ser legal sozinho conforme ela cresce.
+        Crescer o pacote e feito ANTES da ordenacao porque muda a capacidade e
+        pode reordenar a escada -- dois pacotes distintos no arquivo podem
+        virar o mesmo depois do piso, e a deduplicacao evita tentar duas vezes
+        exatamente o mesmo envio.
         """
         templates = self.template if isinstance(self.template, list) else [self.template]
-        packs = sorted(templates, key=self._pack_capacity, reverse=True)
+        legalizados = []
+        for pack in templates:
+            legal = self._legalize(pack)
+            if legal not in legalizados:
+                legalizados.append(legal)
+        packs = sorted(legalizados, key=self._pack_capacity, reverse=True)
         if len(packs) < 2:
             return packs
 
@@ -306,18 +385,19 @@ class AttackManager:
                         else False,
                     )
                     return 1
-                elif self._refused_for_lack_of_units():
-                    # O jogo diz que a tropa nao da, e ele e a fonte da
-                    # verdade: o contador local so decrementa em caso de
-                    # sucesso, entao apos uma recusa ele segue afirmando que
-                    # ha tropa e enough_in_village() aprova de novo. Era esse
-                    # o loop que produziu 23 tentativas recusadas seguidas na
+                elif self._refused_for_pack_reason():
+                    # Recusa que se repetiria identica em todo alvo -- ou nao
+                    # ha tropa em casa, ou o pacote e menor que o limite de
+                    # ataque falso desta aldeia. O contador local so decrementa
+                    # em caso de sucesso, entao sem isto enough_in_village()
+                    # aprovaria de novo e o bot tentaria o mesmo pacote no
+                    # proximo alvo: foram 23 tentativas recusadas seguidas na
                     # BBM 001 em 2026-08-19, cada uma com um GET e um POST.
                     # -1 poe o pacote na lista de ignorados do ciclo, o mesmo
-                    # tratamento que a falta de tropa detectada localmente.
+                    # tratamento da falta de tropa detectada localmente.
                     self.logger.info(
-                        "Pacote %s nao cabe no que ha em %s (o jogo recusou), "
-                        "nao sera tentado de novo neste ciclo", str(template), self.village_id
+                        "Pacote %s recusado por %s (%s), nao sera tentado de novo neste ciclo",
+                        str(template), self.village_id, self.last_refusal
                     )
                     return -1
                 else:

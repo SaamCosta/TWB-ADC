@@ -81,6 +81,58 @@ def test_mundo_sem_arqueiro():
     assert f["tech"] == 2
 
 
+def test_fake_limit_do_mundo():
+    """
+    Limite de ataque falso: percentual dos pontos da aldeia ATACANTE que todo
+    ataque precisa carregar em populacao. br143 = 1, br142 = 2.
+    """
+    assert WorldConfig._parse_features(BR143)["fake_limit"] == 1
+    assert WorldConfig._parse_features(BR142)["fake_limit"] == 2
+
+
+def test_min_attack_population_bate_com_o_jogo():
+    """
+    O numero exato que o servidor devolveu para a BBM 001 em 2026-08-19:
+    7.335 pontos x 1% -> "minimo de 73 habitantes". O jogo trunca, nao
+    arredonda -- 73,35 virou 73.
+    """
+    cfg = _cfg(BR143)
+    assert WorldConfig.min_attack_population(cfg, 7335) == 73
+    assert WorldConfig.min_attack_population(_cfg(BR142), 7335) == 146
+
+
+def test_min_attack_population_degrada_para_zero():
+    """Zero desliga a checagem: sem dado, nao inventamos um piso."""
+    assert WorldConfig.min_attack_population(None, 7335) == 0
+    assert WorldConfig.min_attack_population({"features": None}, 7335) == 0
+    assert WorldConfig.min_attack_population(_cfg(BR143), None) == 0
+    assert WorldConfig.min_attack_population(_cfg(BR143), 0) == 0
+
+
+def test_mundo_sem_limite_de_ataque_falso():
+    xml = BR143.replace("<fake_limit>1</fake_limit>", "<fake_limit>0</fake_limit>")
+    assert WorldConfig.min_attack_population(_cfg(xml), 99999) == 0
+
+
+def test_features_complete_invalida_cache_antigo():
+    """
+    Cache gravado antes de `fake_limit` existir ja tinha "features" e passaria
+    numa checagem de presenca -- o bot rodaria ate 6h sem saber o piso. O que
+    vale e o conjunto de chaves.
+    """
+    completo = WorldConfig._parse_features(BR143)
+    assert WorldConfig._features_complete(completo) is True
+    antigo = {k: v for k, v in completo.items() if k != "fake_limit"}
+    assert WorldConfig._features_complete(antigo) is False
+    assert WorldConfig._features_complete(None) is False
+
+
+def test_chave_presente_com_none_continua_valida():
+    """Chave existir com None significa "o mundo nao publicou"; nao invalida."""
+    parcial = dict.fromkeys(WorldConfig.FEATURE_KEYS, None)
+    assert WorldConfig._features_complete(parcial) is True
+
+
 def test_mundo_com_arqueiro():
     assert WorldConfig._parse_features(BR142)["archer"] == 1
 
@@ -106,7 +158,7 @@ def test_tag_ausente_vira_none_e_nao_zero():
 
 def test_xml_vazio_nao_derruba():
     f = WorldConfig._parse_features("")
-    assert set(f) == {"archer", "knight", "church", "watchtower", "destroy", "tech"}
+    assert set(f) == set(WorldConfig.FEATURE_KEYS)
     assert all(v is None for v in f.values())
 
 

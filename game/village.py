@@ -695,6 +695,19 @@ class Village:
         self.attack.scout_farm_amount = self.get_config(
             section="farms", parameter="farm_scout_amount", default=5
         )
+        # Limite de ataque falso: todo ataque precisa carregar pelo menos
+        # fake_limit% dos pontos DESTA aldeia em populacao. O piso cresce junto
+        # com a aldeia, entao um pacote que era legal deixa de ser sem nada no
+        # bot mudar -- a BBM 001 passou a ter todo pacote de 60 de populacao
+        # recusado ao cruzar 6.000 pontos. Ver AttackManager._min_attack_pop.
+        self.attack.village_points = self.points
+        self.attack.min_attack_pop = WorldConfig.min_attack_population(
+            WorldConfig.get(
+                server=self.get_config(section="server", parameter="server", default=None),
+                endpoint=self.get_config(section="server", parameter="endpoint", default=None),
+            ),
+            self.points,
+        )
         if self.current_unit_entry:
             self.attack.template = self.current_unit_entry["farm"]
 

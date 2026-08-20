@@ -38,6 +38,25 @@ UNIT_CARRY = {
     "catapult": 0,
 }
 
+# Populacao (fazendeiros) por unidade, da mesma fonte e com a mesma
+# verificacao que UNIT_CARRY. Existe porque o limite de ataque falso do mundo
+# e expresso em populacao: todo ataque precisa carregar pelo menos
+# fake_limit% dos pontos da aldeia que envia. Sem esta tabela nao da para
+# saber se um pacote cabe na regra antes de tentar -- ver
+# WorldConfig.min_attack_population e AttackManager._ordered_templates.
+UNIT_POP = {
+    "spear": 1,
+    "sword": 1,
+    "axe": 1,
+    "archer": 1,
+    "spy": 2,
+    "light": 4,
+    "marcher": 5,
+    "heavy": 6,
+    "ram": 5,
+    "catapult": 8,
+}
+
 # Edificios que aparecem como chave dentro de "build".
 RECRUIT_BUILDINGS = set(UNIT_BUILDING.values())
 

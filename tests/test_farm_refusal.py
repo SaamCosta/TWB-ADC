@@ -1,7 +1,7 @@
 """
 Testes do tratamento da recusa do jogo no farm.
 
-  AttackManager._refused_for_lack_of_units()  -- classifica a ultima recusa
+  AttackManager._refused_for_pack_reason()  -- classifica a ultima recusa
   AttackManager.send_farm()                   -- devolve -1 so nessa causa
 
 O que corrige: o contador local de tropa (`troopmanager.troops`) so decrementa
@@ -28,7 +28,11 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from game.attack import AttackManager, INSUFFICIENT_UNITS_MESSAGES
+from game.attack import (
+    AttackManager,
+    INSUFFICIENT_UNITS_MESSAGES,
+    FAKE_LIMIT_MESSAGES,
+)
 
 REAL = "Não existem unidades suficientes"
 
@@ -40,15 +44,15 @@ def _man(refusal=None):
 
 
 # --------------------------------------------------------------------------
-# _refused_for_lack_of_units
+# _refused_for_pack_reason
 # --------------------------------------------------------------------------
 
 def test_mensagem_real_do_servidor_e_reconhecida():
-    assert _man(REAL)._refused_for_lack_of_units() is True
+    assert _man(REAL)._refused_for_pack_reason() is True
 
 
 def test_sem_recusa_registrada():
-    assert _man(None)._refused_for_lack_of_units() is False
+    assert _man(None)._refused_for_pack_reason() is False
 
 
 def test_recusa_por_outro_motivo_nao_conta():
@@ -56,8 +60,24 @@ def test_recusa_por_outro_motivo_nao_conta():
     Problema do alvo, nao do pacote. Se isto devolvesse True, um unico alvo
     invalido tiraria o pacote de circulacao e pararia o farm da aldeia.
     """
-    assert _man("Esta aldeia não existe")._refused_for_lack_of_units() is False
-    assert _man("Modo inválido")._refused_for_lack_of_units() is False
+    assert _man("Esta aldeia não existe")._refused_for_pack_reason() is False
+    assert _man("Modo inválido")._refused_for_pack_reason() is False
+
+
+def test_limite_de_ataque_falso_e_problema_de_pacote():
+    """
+    Mensagem real do br143, 2026-08-19: a BBM 001 (7.335 pontos) tentando
+    mandar 15 cavalarias (60 de populacao) contra um piso de 73. Se repetiria
+    identica em todo alvo, entao o pacote e que tem que sair da rodada.
+    """
+    msg = ("A força de ataque precisa do mínimo de 73 habitantes. "
+           "Você está tentando enviar 60 fazendeiros.")
+    assert _man(msg)._refused_for_pack_reason() is True
+
+
+def test_limite_de_ataque_falso_sem_acento():
+    """Servidor ou proxy podem entregar sem acento; as duas formas contam."""
+    assert _man("precisa do minimo de 73 habitantes")._refused_for_pack_reason() is True
 
 
 def test_mensagem_desconhecida_degrada_para_o_comportamento_antigo():
@@ -66,16 +86,16 @@ def test_mensagem_desconhecida_degrada_para_o_comportamento_antigo():
     antes (segue para o proximo alvo) e o texto vai ao log em WARNING, que e
     de onde sai a string para acrescentar a lista.
     """
-    assert _man("Not enough units available")._refused_for_lack_of_units() is False
+    assert _man("Not enough units available")._refused_for_pack_reason() is False
 
 
 def test_comparacao_ignora_caixa():
-    assert _man("NÃO EXISTEM UNIDADES SUFICIENTES")._refused_for_lack_of_units() is True
+    assert _man("NÃO EXISTEM UNIDADES SUFICIENTES")._refused_for_pack_reason() is True
 
 
 def test_casa_como_substring():
     """A mensagem pode vir com pontuacao ou texto em volta."""
-    assert _man("Erro: não existem unidades suficientes.")._refused_for_lack_of_units() is True
+    assert _man("Erro: não existem unidades suficientes.")._refused_for_pack_reason() is True
 
 
 def test_string_de_falha_do_extractor_nao_e_confundida():
@@ -84,15 +104,16 @@ def test_string_de_falha_do_extractor_nao_e_confundida():
     nenhum deles pode ser lido como falta de tropa.
     """
     for s in ("sem resposta", "sem error_box legivel", "vazio"):
-        assert _man(s)._refused_for_lack_of_units() is False, s
+        assert _man(s)._refused_for_pack_reason() is False, s
 
 
-def test_lista_de_mensagens_e_imutavel():
+def test_listas_de_mensagens_sao_imutaveis():
     """
     Mutavel no corpo do modulo e o primeiro padrao de bug do CLAUDE.md; aqui
     tambem evita que um chamador acrescente idioma em runtime sem querer.
     """
     assert isinstance(INSUFFICIENT_UNITS_MESSAGES, tuple)
+    assert isinstance(FAKE_LIMIT_MESSAGES, tuple)
 
 
 # --------------------------------------------------------------------------

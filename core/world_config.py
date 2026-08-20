@@ -150,6 +150,14 @@ class WorldConfig:
           <build><destroy>  0/1 -- demolicao, que e o que habilita ariete e
                             catapulta terem para que servir
           <game><tech>      sistema de pesquisa (br143 = 2, "simplificada")
+          <game><fake_limit> percentual dos pontos da aldeia ATACANTE que todo
+                            ataque precisa carregar em populacao (br143 = 1,
+                            br142 = 2; 0 desliga). E o limite de ataque falso,
+                            e nao e cosmetico: a BBM 001, com 7.335 pontos,
+                            teve todo pacote de 60 de populacao recusado com
+                            "A forca de ataque precisa do minimo de 73
+                            habitantes" em 2026-08-19. O piso cresce junto com
+                            a aldeia, entao alcanca todas eventualmente.
 
         Chave ausente vira None, para o consumidor distinguir "o mundo diz que
         nao tem" (0) de "nao sabemos" (None) e so ai cair no config.json.
@@ -172,7 +180,31 @@ class WorldConfig:
             "watchtower": _tag("watchtower", block="game"),
             "destroy": _tag("destroy", block="build"),
             "tech": _tag("tech", block="game"),
+            "fake_limit": _tag("fake_limit", block="game"),
         }
+
+    @staticmethod
+    def min_attack_population(world_config, village_points, fallback_pct=0):
+        """
+        Populacao minima que um ataque precisa carregar, saindo de uma aldeia
+        com `village_points` pontos. Zero quando o mundo nao tem o limite ou
+        quando nao sabemos os pontos.
+
+        O jogo trunca: a BBM 001 com 7.335 pontos e fake_limit 1 recebeu
+        "minimo de 73 habitantes" (7.335 x 1% = 73,35), confirmado ao vivo em
+        2026-08-19.
+        """
+        pct = ((world_config or {}).get("features") or {}).get("fake_limit")
+        if pct is None:
+            pct = fallback_pct
+        try:
+            pct = float(pct)
+            points = float(village_points or 0)
+        except (TypeError, ValueError):
+            return 0
+        if pct <= 0 or points <= 0:
+            return 0
+        return int(points * pct / 100)
 
     @staticmethod
     def feature_enabled(world_config, name, fallback):
@@ -229,6 +261,21 @@ class WorldConfig:
             "load": _tag("load"),
         }
 
+    # Chaves que _parse_features produz. Serve para invalidar cache gravado
+    # por uma versao anterior, que teria `features` mas sem os campos novos.
+    FEATURE_KEYS = frozenset(
+        {"archer", "knight", "church", "watchtower", "destroy", "tech", "fake_limit"}
+    )
+
+    @classmethod
+    def _features_complete(cls, features):
+        """
+        O bloco `features` do cache tem todas as chaves que a versao atual
+        produz? Chave presente com valor None e valida -- significa "o mundo
+        nao publicou esta tag"; o que invalida e a chave nao existir.
+        """
+        return isinstance(features, dict) and cls.FEATURE_KEYS.issubset(features)
+
     @classmethod
     def get(cls, server, endpoint, force_refresh=False):
         """
@@ -263,11 +310,14 @@ class WorldConfig:
             if (
                     cached
                     and (time.time() - cached.get("_fetched_at", 0)) < CACHE_TTL
-                    # Cache gravado antes de "features" existir conta como
-                    # velho. Sem isto o bot rodaria ate CACHE_TTL inteiro com as
-                    # flags do mundo ausentes, caindo no config.json -- que e
-                    # exatamente a fonte que esta feature existe para nao usar.
-                    and "features" in cached
+                    # Cache gravado antes de um campo de `features` existir
+                    # conta como velho. Comparar o CONJUNTO de chaves, e nao
+                    # so a presenca de "features": quando `fake_limit` foi
+                    # acrescentado em 2026-08-19, o cache do dia anterior ja
+                    # tinha "features" e passava na checagem, entao o bot
+                    # rodaria ate o TTL inteiro (6h) com fake_limit=None --
+                    # ou seja, sem saber o piso de populacao por ataque.
+                    and cls._features_complete(cached.get("features"))
             ):
                 return cached
 
