@@ -8,7 +8,7 @@ from datetime import datetime
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
-from core.templates import TemplateManager
+from core.templates import TemplateManager, resolve_troop_template
 from core.twstats import TwStats
 from core.world_config import WorldConfig
 from game.attack import AttackManager, ConquestManager
@@ -413,6 +413,20 @@ class Village:
             unit_config = self.get_config(
                 section="units", parameter="default", default="basic"
             )
+
+        # A config nomeia o PAPEL da aldeia ("def"); qual arquivo esse papel
+        # usa depende do mundo ter arqueiro. self.archers_enabled ja foi
+        # resolvido em set_world_config(), que roda antes desta funcao no
+        # run(). Nome sem variante correspondente passa intacto.
+        resolved = resolve_troop_template(unit_config, self.archers_enabled)
+        if resolved != unit_config:
+            self.logger.info(
+                "Village %s: troop template '%s' -> '%s' (world %s archers)",
+                self.village_id, unit_config, resolved,
+                "has" if self.archers_enabled else "has no",
+            )
+            unit_config = resolved
+
         try:
             self.units.template = TemplateManager.get_template(
                 category="troops", template=unit_config, output_json=True

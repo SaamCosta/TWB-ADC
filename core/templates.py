@@ -75,6 +75,51 @@ FARM_UNITS = set(UNIT_BUILDING) | {"knight", "snob"}
 STAGE_KEYS = {"building", "level", "build", "farm", "upgrades"}
 REQUIRED_KEYS = {"building", "level", "build", "farm"}
 
+# Sufixo do arquivo de receita conforme o mundo tenha ou nao arqueiro.
+# archers_enabled -> sufixo
+TROOP_VARIANT_SUFFIX = {True: "_archer", False: "_no_archer"}
+
+
+def resolve_troop_template(name, archers_enabled):
+    """
+    Traduz o nome de receita gravado na config para o arquivo que este mundo
+    deve usar: "def" vira "def_archer" ou "def_no_archer" conforme o mundo
+    publique <game><archer> ligado ou desligado.
+
+    Existe porque a composicao NAO e portavel entre os dois tipos de mundo, e
+    isso e uma diferenca de uma linha, medida em 2026-08-20 com
+    interface.php?func=get_unit_info nos dois servidores: a UNICA estatistica
+    que muda entre br143 (sem arqueiro) e br144 (com) e o espadachim,
+    defense_cavalry 25 -> 15. Com o espadachim valendo 40% menos contra
+    cavalaria, a defesa precisa migrar para o arqueiro -- por isso
+    def_no_archer e spear 7000 + sword 7000 enquanto def_archer e spear 4000 +
+    sword 7500 + archer 7500. Uma nao e a outra menos os arqueiros.
+
+    Nao da para resolver isso com o filtro de unidades desativadas
+    (village.py::set_world_config): ele so REMOVE unidade que o mundo nao tem,
+    nunca acrescenta. A receita sem arqueiro rodando num mundo com arqueiro
+    nao falha -- ela so nunca constroi um arqueiro, em silencio, que e o modo
+    de falha mais caro deste projeto.
+
+    Resolucao por tentativa, e nao por tabela fixa de pares:
+      - existe templates/troops/<name><sufixo>.txt? usa ele.
+      - senao, devolve <name> intacto.
+
+    A segunda regra e o que mantem tudo que ja funciona funcionando, sem
+    migrar config nenhuma: "watchtower_support" nao tem par (e cavalaria pesada
+    pura, cujos atributos sao identicos nos dois mundos, entao e portavel
+    verbatim) e cai no proprio nome; um nome ja literal como "def_no_archer"
+    procuraria "def_no_archer_archer.txt", nao acha, e segue literal.
+    """
+    if not name:
+        return name
+    candidate = f"{name}{TROOP_VARIANT_SUFFIX[bool(archers_enabled)]}"
+    if FileManager.path_exists(
+            FileManager.get_path(f"templates/troops/{candidate}.txt")
+    ):
+        return candidate
+    return name
+
 
 def _check_unit_map(units, where, problems, allowed, building=None):
     """
