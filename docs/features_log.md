@@ -1314,6 +1314,63 @@ incluindo o de maior saque médio da conta (6.428), que estava na posição 37.
 `search_radius: 100` é **inerte** hoje pelo mesmo motivo — só terá efeito quando
 o império espalhar.
 
+### O que o primeiro ciclo em campo achou (2026-08-19)
+
+O bot rodou 1h31 com tudo acima, 7 aldeias, 36 ataques, 65.460 de capacidade
+enviada, zero erros. **A escada de pacotes funcionou**: nove tamanhos distintos
+num único ciclo (120, 60, 40, 25 lança, 20, 15, 12, 8, 6), média de 1.818 por
+ataque contra os 8.000 uniformes de antes.
+
+E achou três coisas, duas delas erros meus.
+
+**1. `_expected_loot` devolvia 0 para todo alvo já farmado (`405951f`).**
+Consultava `has_resources_left()`, que pega o relatório **mais novo** e só então
+checa se ele tem `resources`. Depois do primeiro farm o mais novo passa a ser
+sempre um relatório de ataque, que não tem esse campo — então o caminho desligava
+de vez, não "raramente" como o docstring afirmava. 11 dos 119 alvos ficaram com
+esperado 0 e levaram o menor pacote da escada; a BBM 003 mandou 8 cavalarias
+(640 de capacidade) num alvo que o explorador vira com 10.292.
+`ReportManager.last_seen_value()` passou a devolver a observação mais recente que
+carregue algum número — `resources` numa exploração, `loot` num ataque.
+`has_resources_left` ficou intocado porque alimenta o tempo de revisita, onde a
+semântica de "o último evento foi uma exploração" é a desejada.
+
+**2. Comparação de capacidade virou estrita (`405951f`).** Saque igual à
+capacidade não é medição, é observação **censurada**: significa "tinha isso ou
+mais". Com `>=`, o alvo que volta lotado fixa o `farm_score` no teto e escolhe
+para sempre o pacote que o censurou. O cache tinha 18 alvos com `farm_score`
+exatamente 1.600, todos capados pelo pacote antigo de 20 cavalarias.
+
+**3. Cavalaria pesada pedida antes do ferreiro (`fa0d7af`).** BBM 004 e 006
+logavam `heavy failed because it is not researched` todo ciclo — estão em
+estábulo 10 e **ferreiro 6**. Requisitos lidos da tela do ferreiro, não da
+memória:
+
+| unidade | requisito |
+|---|---|
+| Aríete | Oficina 1 |
+| Catapulta | Oficina 2 + Ferreiro 12 |
+| Cavalaria pesada | Estábulo 10 + **Ferreiro 15** |
+
+`def_no_archer` ganhou um estágio próprio gated em `smith:15`. Auditando os 8
+templates contra essa tabela — em vez de corrigir só o que falhou — apareceu o
+mesmo erro pré-existente vindo do bot base em `basic_into_off`, que pedia heavy e
+catapulta no estágio `barracks:15` com o ferreiro em 10.
+
+⚠️ **O `watchtower_support.txt` já usava `smith:15` para o heavy** desde que foi
+escrito neste projeto. A informação correta estava no diretório ao lado, num
+arquivo que eu tinha aberto no começo da mesma sessão.
+
+### Duas correções ao que eu mesmo tinha afirmado
+
+**`max_farms` não destravou nada.** Contei alvos a partir de `cache/villages/`
+(343 acumuladas em disco), mas `Map.villages` é populado **só** pelo fetch ao vivo
+de `screen=map` ([map.py:151](../game/map.py)), uma vez a cada ~24h e por
+instância de aldeia. Os alvos por aldeia neste ciclo foram 32, 36, 32, 13, 18, 25
+— todos abaixo de 45 e abaixo até de 36. Reportei o efeito como "união 42 → 72",
+depois corrigi para "+11", e o número certo neste ciclo é **zero**. O gargalo do
+farm não é o teto de alvos, é quantas aldeias o fetch do mapa devolve.
+
 ### Ficou aberto
 
 Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em
@@ -1321,6 +1378,10 @@ Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em
 o tempo de revisita. Com a escada nova ficaram desalinhados — mas convém medir
 alguns ciclos antes de mexer, porque os dados de saque vão parar de ser capados
 em 8.000 e o quadro real deve mudar.
+
+Vale também investigar por que o fetch do mapa devolve tão poucas aldeias por
+aldeia (93 para a BBM 001, das quais 36 farmáveis), já que é isso, e não
+`max_farms`, que limita o alcance do farm.
 
 ## Ambiente de referência
 

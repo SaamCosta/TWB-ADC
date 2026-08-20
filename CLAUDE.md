@@ -361,6 +361,27 @@ puxa o fio.**
   significa "o alvo tinha 8.000", significa "o alvo tinha 8.000 ou mais". Foi
   exatamente por isso que a correção final aumentou o pacote maior: para medir
   onde fica o teto de verdade.
+- ⚠️ **Décimo segundo padrão, achado em 2026-08-19: escrever um artefato novo de
+  um tipo que já existe sem ler os irmãos dele.** Ao escrever `def_no_archer.txt`
+  pus cavalaria pesada no estágio gated em `stable:10`. Rodando, as aldeias
+  logaram `heavy failed because it is not researched` todo ciclo: pesada exige
+  **Ferreiro 15** (lido de "Requisitos em falta" na tela do ferreiro), e elas
+  estavam com ferreiro 6. O `watchtower_support.txt` — escrito neste projeto,
+  no mesmo diretório, e que **eu tinha aberto e impresso na primeira ferramenta
+  dessa mesma sessão** — já gateava o heavy em `smith:15`. A regra do jogo
+  estava codificada corretamente a um arquivo de distância e eu não olhei.
+  A regra: **ao adicionar mais um de algo (template, parser, manager, migração),
+  ler os existentes antes — eles carregam restrições do domínio que ninguém
+  escreveu em documento nenhum.** Um template não é só dados; é o lugar onde as
+  regras do jogo foram descobertas na marra por quem veio antes. O sinal de
+  alerta é escrever o primeiro arquivo de uma leva nova sem ter aberto nenhum
+  irmão no mesmo passo.
+  Corolário que salvou o resto: ao corrigir, **auditei os 8 templates contra a
+  tabela de requisitos em vez de consertar só o que falhou**, e apareceu o mesmo
+  erro pré-existente em `basic_into_off` (heavy e catapulta no estágio
+  `barracks:15`, com ferreiro em 10), herdado do bot base e nunca exercitado.
+  Bug achado em campo raramente é o único da sua classe — a correção barata é
+  varrer a classe inteira enquanto a regra está fresca.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
