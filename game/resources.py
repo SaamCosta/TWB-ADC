@@ -444,7 +444,15 @@ class ResourceManager:
             # que a tornava impossivel de agir. Procurar o rotulo sozinho
             # separa as duas: se ele esta na pagina, o que mudou foi a
             # estrutura depois dele, e ai vale WARNING e uma amostra.
-            if re.search(r"(?:" + self.INCOMING_LABELS + r")", html):
+            # O ":\s" nao e detalhe: sem ele a guarda casava com o item de
+            # MENU "Chegando" (link para overview_villages&mode=incomings), que
+            # existe em toda tela de mercado. O warning disparava em todo ciclo
+            # sem nada a caminho -- verificado em 2026-08-20 na pagina que o
+            # proprio dump guardou, onde ha 1 ocorrencia do rotulo, no menu, e
+            # nenhuma seguida de ":". Uma guarda sempre ligada nao distingue
+            # nada e mascararia a mudanca de estrutura que ela existe para
+            # detectar. O ancoramento agora e o mesmo de INCOMING_RE.
+            if re.search(r"(?:" + self.INCOMING_LABELS + r"):\s", html):
                 self.logger.warning(
                     "Market: o rotulo de recursos a caminho existe na pagina mas "
                     "a estrutura depois dele nao casou -- INCOMING_RE precisa "
