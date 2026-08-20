@@ -1371,6 +1371,85 @@ instância de aldeia. Os alvos por aldeia neste ciclo foram 32, 36, 32, 13, 18, 
 depois corrigi para "+11", e o número certo neste ciclo é **zero**. O gargalo do
 farm não é o teto de alvos, é quantas aldeias o fetch do mapa devolve.
 
+### O instrumento estava mentindo (`7c85a22`)
+
+`send_farm()` logava `"Attacking X -> Y"` em INFO e mandava o mesmo texto ao
+reporter como `TWB_FARM` **antes** do `if attack_result:` que verifica se o envio
+foi aceito. Tentativa recusada aparecia idêntica a um envio real. Num ciclo da
+BBM 001:
+
+```
+28  GET screen=place&target        (tentativas)
+ 5  POST ajaxaction=popup_command  (envios de fato)
+23  linhas "Attacking ..." no log
+23  "server refused" logo abaixo, em DEBUG
+```
+
+Toda medição de campo feita por contagem de linha saía inflada — inclusive os
+"36 ataques, 65.460 de capacidade" e os "6 subdimensionados, ~30.386 perdidos"
+que este documento chegou a registrar antes da correção. O `/farmscores` e o
+histórico `TWB_FARM` carregam o mesmo viés acumulado.
+
+### O motivo da recusa era descartado em quatro lugares (`b36b17e`)
+
+`if '<div class="error_box">' in resposta` sem ler o que a caixa dizia, em
+`attack.py` (farm), `defence_manager.py` (suporte, **sem log nenhum**),
+`hunter.py` (logava que houve, não o conteúdo) e `resources.py` — este último o
+único que lia, com cópia local da função. Ela subiu para
+`Extractor.error_box_text` e passou a servir os quatro.
+
+O motivo importa porque as causas pedem reações opostas: falta de unidade quer
+dizer "pare de tentar este pacote", aldeia inexistente quer dizer "tire este alvo
+da lista".
+
+### O bot repetia o pacote recusado (`7afea9a`)
+
+O contador local de tropa só decrementa em caso de sucesso, então após uma recusa
+ele continua afirmando que há tropa e `enough_in_village()` aprova de novo.
+`send_farm()` passa a devolver `-1` quando a recusa é problema do **pacote**,
+tirando-o da rodada. Corrigido junto um caso pré-existente: `scout()` fazia
+`if self.attack(...)` sem o `!= "forced_peace"` que os outros **quatro**
+chamadores já tinham — durante paz forçada o sentinel (string, logo truthy)
+passava como sucesso e `attacked()` gravava `last_attack=agora` para um explorador
+que nunca saiu.
+
+### O limite de ataque falso (`50f1126`)
+
+Com o motivo enfim visível no log, a causa real das recusas apareceu — e **não
+era falta de tropa**:
+
+```
+[Attack] 41123 -> 49845 recusado pelo jogo: A força de ataque precisa do
+mínimo de 73 habitantes. Você está tentando enviar 60 fazendeiros.
+```
+
+Todo ataque precisa carregar pelo menos `fake_limit%` dos pontos da aldeia
+**atacante** em população. br143 usa 1%, br142 usa 2%. A BBM 001 tem 7.335 pontos
+→ piso 73; o menor pacote do template era 15 cavalarias = 60 de população,
+**ilegal desde que ela cruzou 6.000 pontos, sem nada no bot ter mudado**.
+
+`<game><fake_limit>` vinha no mesmo XML que o bot já baixava e era descartado no
+parse — o mesmo caso do `<archer>` em `4c478da`.
+`WorldConfig.min_attack_population()` reproduz o truncamento do jogo
+(7.335 × 1% = 73,35 → 73, igual ao número da mensagem), e
+`AttackManager._legalize()` **cresce** o pacote até o piso em vez de descartá-lo:
+descartar deixaria a aldeia grande sem opção pequena e todo alvo pobre passaria a
+receber o pacote médio.
+
+⚠️ **Os pacotes de farm dos estágios tardios estavam achatados, e isso não era
+detalhe.** Os quatro últimos estágios de `off_no_archer` repetiam 150/50/15
+enquanto o estábulo ia de 1.500 a 3.000 cavalarias e os pontos triplicavam.
+**Observação do usuário:** os templates originais do bot base escalavam de
+propósito — `basic_into_off` termina em 127/102 de população — e é justamente
+porque o piso do mundo sobe com a aldeia. Conferido no arquivo e corrigido: o
+menor pacote agora sobe de 60 para 140 de população entre `stable:15` e
+`barracks:25`, cobrindo até 14.000 pontos sem precisar do ajuste em runtime.
+
+Também: o cache do world config passa a ser invalidado por **conjunto de chaves**
+de `features`, não pela presença do bloco. O cache do dia anterior já tinha
+`features` e passaria na checagem antiga, então o bot rodaria o TTL inteiro (6h)
+com `fake_limit: None`.
+
 ### Ficou aberto
 
 Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em
@@ -1382,6 +1461,9 @@ em 8.000 e o quadro real deve mudar.
 Vale também investigar por que o fetch do mapa devolve tão poucas aldeias por
 aldeia (93 para a BBM 001, das quais 36 farmáveis), já que é isso, e não
 `max_farms`, que limita o alcance do farm.
+
+E **as métricas de farm anteriores a `7c85a22` não são confiáveis** — qualquer
+comparação "antes x depois" precisa começar do primeiro ciclo pós-correção.
 
 ## Ambiente de referência
 

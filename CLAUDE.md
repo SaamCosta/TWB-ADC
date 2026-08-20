@@ -53,9 +53,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   alvo perdido, semântica de status, faixa de queda), encoding do
   `FileManager`, alocação de torre de vigia, limiares de slot de Paladino
   (`StatuePage`, recorte verbatim de `screen=statue`), escolha de pacote de
-  farm por saque esperado (`AttackManager._ordered_templates`) e mecânicas do
+  farm por saque esperado (`AttackManager._ordered_templates`), mecânicas do
   mundo lidas de `get_config` (`WorldConfig._parse_features`, com recortes
-  verbatim de br143 sem arqueiro e br142 com). **A maior parte do bot continua
+  verbatim de br143 sem arqueiro e br142 com), o motivo da recusa do jogo
+  (`Extractor.error_box_text`, fixture verbatim de um `error_box` real) e o
+  limite de ataque falso (`_legalize`, `min_attack_population`). **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
   teste pontual.
@@ -382,6 +384,46 @@ puxa o fio.**
   `barracks:15`, com ferreiro em 10), herdado do bot base e nunca exercitado.
   Bug achado em campo raramente é o único da sua classe — a correção barata é
   varrer a classe inteira enquanto a regra está fresca.
+- ⚠️ **Décimo terceiro padrão, achado em 2026-08-19, e o mais traiçoeiro até
+  agora: provocar um erro para ler a mensagem dele, e tratar isso como
+  evidência sobre falhas que eu não tinha observado.** O bot vinha tendo
+  ataques recusados e o código descartava o motivo. Levantei a hipótese "falta
+  de tropa", e para confirmar **provoquei** uma recusa no servidor mandando
+  9999 lanceiros de uma aldeia que tem zero. Veio *"Não existem unidades
+  suficientes"*, e eu escrevi ao usuário: *"a hipótese estava certa, mas era
+  inferência; agora é leitura"*. Não era. Eu li a mensagem do erro que **eu
+  mesmo fabriquei** — um experimento que só podia produzir a resposta que eu já
+  esperava. A causa real das recusas do bot era outra: o **limite de ataque
+  falso** do mundo (todo ataque precisa carregar ≥ `fake_limit%` dos pontos da
+  aldeia atacante em população), que só apareceu quando o log passou a mostrar o
+  motivo verdadeiro, um ciclo depois.
+  A regra: **experimento que só pode confirmar a hipótese não é evidência.**
+  Antes de provocar um erro, perguntar "que resultado deste teste me faria mudar
+  de ideia?" — se não houver, o teste não informa nada. Para descobrir por que
+  algo falha, instrumentar a falha real e esperar; reproduzir uma falha de
+  desenho próprio e chamá-la de a mesma coisa é fabricar confirmação. O caminho
+  que funcionou custou uma linha de log e um ciclo de espera.
+  Corolário sobre linguagem: escrever "agora é leitura, não inferência" é uma
+  afirmação sobre a *procedência* do dado, e por isso soa mais forte que um
+  palpite. Só vale quando o dado veio do caso em questão — dizer *de qual
+  ocorrência* a mensagem foi lida é o que distingue as duas coisas.
+- ⚠️ **Décimo quarto padrão, mesma sessão: número em arquivo é foto de uma
+  relação, e expira sozinho quando o outro lado da relação se move.** O menor
+  pacote de farm dos templates era `{"light": 15}` = 60 de população. A regra do
+  jogo é "≥ 1% dos pontos da aldeia", então esse pacote era legal até a aldeia
+  chegar a 6.000 pontos e ilegal depois — **sem nenhuma mudança no bot**. O
+  sintoma foi 100% dos ataques de uma aldeia recusados, num código que não
+  tinha sido tocado.
+  A regra: ao escrever uma constante que existe em relação a um estado do jogo
+  (pontos, nível de edifício, número de aldeias), perguntar se esse estado
+  cresce. Se cresce, ou o valor vira função dele em runtime, ou o arquivo
+  precisa de degraus que acompanhem — e aí os degraus são a coisa importante,
+  não um detalhe de granularidade. Foi o usuário quem apontou que os templates
+  originais do bot base **já escalavam os pacotes por estágio**, e que era
+  justamente por isso; eu tinha achatado os quatro estágios finais num valor só
+  e lido isso como simplificação inofensiva. Quando um artefato herdado varia
+  onde eu simplificaria, a variação costuma estar codificando uma restrição que
+  eu ainda não entendi (ver também o décimo segundo padrão).
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
