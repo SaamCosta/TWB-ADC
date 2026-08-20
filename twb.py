@@ -783,6 +783,7 @@ class TWB:
             "cache/resource_sharing",
             "cache/statue",
             "cache/inventory",
+            "cache/premium",
         ]
         FileManager.create_directories(directories)
 

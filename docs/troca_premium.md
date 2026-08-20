@@ -198,6 +198,48 @@ mesma moeda: nada de militar.
   P2-03), P2-06, e as três de início de mundo (P5-*), que não tratam de PP.
   Lista completa e transcrições em `Desktop/ytdownloader/` (fora do repositório).
 
+## 6b. O mundo novo é o br144, e o ruleset já está publicado
+
+Levantado em 2026-08-20. **Correção de premissa:** eu tinha assumido que br144 já
+rodava e que o mundo novo seria o br145. Errado — `br145` ainda redireciona para
+o portal, e `br144` **está provisionado mas ainda não abriu**:
+
+> `/page/settings` do br144: **Início 27/ago./2026 (09:30)**
+
+Conferido contra os vizinhos na mesma leitura: br142 começou 22/abr, br143
+(o mundo em jogo hoje) 16/jun. Ou seja, `interface.php?func=get_config` e
+`/page/settings` respondem para um mundo **antes** da abertura — todo o ruleset
+está disponível com uma semana de antecedência, de graça e sem autenticação.
+
+⚠️ O usuário falou em "dia 26"; a página do jogo diz **27/ago 09:30**. Um dia
+importa quando a tese inteira é que os dias 1–8 são a janela mais valiosa.
+
+Regras do br144 que mudam decisão (todas de `/page/settings` + `get_config`):
+
+| parâmetro | br144 | por que importa |
+|---|---|---|
+| Velocidade do jogo | **2** | é o caso "2.000 lanceiros por volta do dia 9" dos vídeos |
+| Velocidade das unidades | 0.5 | |
+| Fator de produção | 1 | com `base_production` 30, mina nível 0 ainda rende |
+| **Arqueiros** | **Ativo** | br143 é Inativo — `resolve_troop_template` vai pedir a variante `_archer` |
+| **Coletando (scavenging)** | **Ativo** | é o motor de renda da estratégia inteira |
+| Proteção a novatos | **5 dias** | bate com "dia 5, últimas 24h: esconderijo 10, muralha 10" |
+| Moral | Baseado em pontos | |
+| Limite de ataque falso | 1% dos pontos | |
+| Aumento de lealdade/hora | **2** | br143 é 1 — confirma que isso é por mundo |
+| PremiumExchange | **1** | a bolsa existe |
+| Conta premium grátis | em **500** e 15.000 pontos | o teste grátis que os vídeos citam |
+
+Duas medições que resolvem perguntas antigas:
+
+- **`base_production = 30`** (bloco `<game>`). Mina em nível 0 **não** produz
+  zero, então "nada de minas nos primeiros 15 dias" é sobrevivível — não é o
+  suicídio econômico que parecia. Ressalva honesta: não confirmei se a
+  velocidade do mundo multiplica esse número.
+- **Capacidade da fazenda = `round(240 * 1,1721^(nível-1))`**, ajustada contra
+  **duas aldeias reais do br143 no mesmo dia**: fazenda 15 → pop_max 2216
+  (fórmula: 2217) e fazenda 26 → 12715 (exato). Não veio de wiki.
+
 ## 7. O gap do nosso código
 
 `ResourceManager.do_premium_stuff()` (`game/resources.py`) é código do upstream
@@ -227,5 +269,66 @@ premium. Distância entre o que existe e o que a estratégia exige:
    Feature 9, onde o caminho de envio inteiro estava errado e nunca tinha sido
    exercitado.
 
-**Não faz sentido consertar isso agora**: no K35 a bolsa está 100% cheia e a venda
-está fechada. Faz sentido se e quando abrir um mundo novo — ver Feature 34.
+## 8. O que foi feito em 2026-08-20 (Feature 34, primeira metade)
+
+Os itens 1, 2, 3 e 5 acima estão **fechados**; o 4 (compra/arbitragem) segue
+fora de propósito, e o 6 (validação em pt-BR) **não dá para fechar antes do
+dia 27** — ver o porquê no fim.
+
+**`ResourceManager.do_premium_stuff()` reescrito** (`game/resources.py`):
+
+- **O preço agora é `calculate_rate_for_one_point()`** (recursos por PP), não
+  `stock * rates`. Era isso que zerava o `n_to_sell` e abortava com "Not worth
+  trading" — uma recusa que parecia prudência e era erro de conta.
+- **Limiar de taxa** (`premium_exchange.max_rate_per_point`, padrão 90): só
+  vende enquanto a bolsa pedir no máximo X recursos por PP. É a regra central
+  da estratégia, e não existia nem como config.
+- **Lote configurável** (`sell_batch`, padrão 1000) e **piso de lote**
+  (`min_sell_batch`): cada lote relê a bolsa em vez de assumir a taxa do
+  anterior, porque a taxa piora dentro da própria venda. O piso existe porque
+  um mercador carrega 1000 e leva 2h de ida e volta — despachar 200 nele
+  desperdiça 80% do recurso que esta mesma pesquisa identificou como gargalo.
+- **Os três recursos**, não só o mais abundante. O gate anterior era
+  `get_plenty_off()`, que responde *"que recurso está transbordando o
+  armazém?"* — pergunta certa para o mercado normal e errada aqui. Terceiro
+  padrão do CLAUDE.md: função certa, uso errado.
+- **Bolsa cheia é checada por recurso** (`capacity - stock <= 0`), que é
+  exatamente o estado do K35 hoje e a razão de o bot não poder nem tentar.
+- **Reserva respeitada**: nunca vende o que `requested` já prometeu a
+  construção/recrutamento, nem abaixo do piso `keep_wood/stone/iron`.
+
+**Guardas no caminho de envio.** `get_api_action()` devolve **três** coisas
+diferentes — o JSON, o objeto `Response` cru quando o corpo não é JSON, ou
+`None` em falha de rede — e a versão anterior fazia
+`result["response"][0]["rate_hash"]` direto, o que era `TypeError` em dois dos
+três casos. Agora `_premium_extract_rate_hash()` aceita as formas plausíveis
+(lista, dict, hash na raiz) e, quando não acha, **despeja a resposta crua em
+`cache/premium/`** — para o diagnóstico do dia 1 custar um arquivo e não um
+ciclo perdido.
+
+**Testes:** `tests/test_premium_exchange.py`, com os números da bolsa lidos do
+br143 em 2026-08-20 (bolsa 100% cheia, o estado real). Cobre bolsa cheia,
+bolsa vazia na taxa de piso, limiar bloqueando, reserva, piso de lote,
+`premium_keep` por instância (primeiro padrão) e as oito formas de retorno do
+`exchange_begin`.
+
+**Smoke de leitura contra o servidor**, depois dos testes passarem
+(`cache/_smoke_premium.py`, sétimo padrão): lê a bolsa de verdade com os
+cabeçalhos do próprio wrapper e imprime a decisão, sem nunca chamar o envio.
+Rodado em 41123: taxa 773/796/754, espaço 0 nos três, decisão "não vender".
+
+### O que continua aberto, e por quê
+
+⚠️ **`exchange_begin`/`exchange_confirm` seguem NÃO validados em pt-BR.** A
+bolsa do K35 está 100% cheia nos três recursos (remedido em 2026-08-20: 0 de
+espaço), então **não existe forma de exercitar uma venda real antes do dia
+27**. Todo o resto do caminho está testado; o formato do `rate_hash` é a única
+peça que continua sendo suposição herdada do upstream. É o mesmo perfil da
+Feature 9, cujo caminho de envio inteiro estava errado por nunca ter rodado —
+e lá foram três erros distintos numa tacada só. **Planejar supervisão humana
+no primeiro envio real.**
+
+Detalhe medido de passagem: a capacidade da bolsa **encolheu duas vezes no
+mesmo dia** (madeira 257.683 às 10h → 256.087 às 12h; era 270.112 em 17/08).
+O rebalanceamento diário entre continentes adjacentes é real e mensurável —
+número de bolsa vale pelo dia em que foi lido.

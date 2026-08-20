@@ -1375,6 +1375,63 @@ dias), o que é um *perfil de aldeia* que o bot não tem — mais perto de um te
 novo em `templates/builder/` + `templates/troops/` do que de mexer no
 `ResourceManager`. Decidir o escopo antes de codar.
 
+### Estado em 2026-08-20: itens 1, 2, 3 e 5 FECHADOS
+
+`do_premium_stuff()` reescrito, com limiar de taxa, lote e piso de lote
+configuráveis, os três recursos, checagem de bolsa cheia por recurso e reserva
+respeitada. Config nova em `premium_exchange` (`build.version` 3.6 → 3.7).
+Testes em `tests/test_premium_exchange.py` + smoke de leitura contra o servidor.
+**Detalhe completo em `docs/troca_premium.md` seção 8.**
+
+Segue aberto:
+
+- **Item 4 (compra/arbitragem)** — de propósito. É a metade mais lucrativa
+  (~330 PP/dia somados à coleta), mas exige comprar, e o bot só vende. Fazer
+  depois que a venda estiver validada em campo.
+- **Item 6 (validação em pt-BR)** — impossível antes do dia 27: a bolsa do K35
+  está 100% cheia nos três recursos, então nenhuma venda real pode ser
+  exercitada no br143. Supervisionar o primeiro envio no mundo novo.
+
+**O mundo novo é o br144, e abre 27/ago/2026 09:30** (não 26, e não br145 — a
+página `/page/settings` responde para mundo ainda não aberto). Ruleset completo
+na seção 6b de `docs/troca_premium.md`; o que mais muda para nós é
+**arqueiros ativos** (o br143 não tem) e **coleta ativa**.
+
+### Feature 34b — o perfil de aldeia vendedora (feito em 2026-08-20)
+
+O pré-requisito de projeto acima está atendido. **Nenhum template servia:** os 5
+builders começavam todos por poços de minério, e a estratégia pede o oposto
+(renda vem de coleta, não de produção). Criados:
+
+- `templates/builder/premium_seller.txt` — main 3 e quartel primeiro, mercado
+  subindo até 20 (o gargalo é o mercador), armazém até 23, fazenda até 20,
+  esconderijo 10 + muralha 10 antes do fim da proteção de 5 dias, minas só
+  até 10 e tarde. Sem estábulo/oficina/academia/torre.
+- `templates/troops/premium_seller.txt` — lanceiro até 2.000 e espadachim até
+  600, em estágios amarrados ao nível de fazenda que comporta a população.
+- `tests/test_builder_templates.py` — não existia verificação nenhuma dos
+  templates de builder, num formato em que um token malformado é `ValueError`
+  no caminho quente (`entry.split(":")` desempacotado em duas variáveis).
+
+Dimensionamento com dados do servidor, não de memória: mercado 20 custa **395
+de população** (mais que todos os outros edifícios somados), e 2.000 lanceiros
++ 600 espadachins + edifícios = ~3.150, o que pede **fazenda 18**.
+
+⚠️ **Aberto, e é a única suposição do lote:** não achei o mínimo de Ferreiro
+para lanceiro/espadachim. Procurei em `get_building_info`, em `get_unit_info` e
+na tela `screen=smith` — esta última só mostra "Requisitos em falta" para o que
+**falta**, e numa aldeia com ferreiro 6 ambos já aparecem como "Pesquisado".
+(A mesma tela confirmou Cavalaria pesada = Ferreiro 15 e Catapulta = Oficina 2
++ Ferreiro 12.) Como o perfil vendedor não teria ferreiro nenhum e um template
+que não recruta falha **em silêncio**, o builder sobe `smith:1` e `smith:2`
+cedo (~20 de população, 0,6% do orçamento) e o estágio do espadachim é gateado
+em `smith:2`. É seguro por construção, não por conhecimento — se no dia 27 o
+lanceiro sair sem ferreiro, dá para remover e ganhar 20 de população.
+
+**Ainda não feito para o dia 27:** ligar `gather_enabled` (a coleta nunca foi a
+renda principal desta conta e não foi exercitada), desligar o `AttackManager`
+na aldeia vendedora, e criar a entrada de perfil em `profile_templates`.
+
 ---
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)

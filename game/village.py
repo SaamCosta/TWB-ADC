@@ -935,6 +935,29 @@ class Village:
         ):
             # Set the parameter correctly when the config says so.
             self.resman.do_premium_trade = True
+            self.resman.premium_max_rate = self.get_config(
+                section="premium_exchange", parameter="max_rate_per_point", default=90
+            )
+            self.resman.premium_batch = self.get_config(
+                section="premium_exchange", parameter="sell_batch", default=1000
+            )
+            self.resman.premium_min_batch = self.get_config(
+                section="premium_exchange", parameter="min_sell_batch", default=1000
+            )
+            self.resman.premium_max_batches = self.get_config(
+                section="premium_exchange", parameter="max_batches_per_run", default=2
+            )
+            self.resman.premium_min_free_merchants = self.get_config(
+                section="premium_exchange", parameter="min_free_merchants", default=1
+            )
+            # Piso por recurso: reatribuir um dict novo em vez de mutar o
+            # existente, para não acumular chave de ciclo anterior.
+            self.resman.premium_keep = {
+                res: self.get_config(
+                    section="premium_exchange", parameter=f"keep_{res}", default=0
+                )
+                for res in ("wood", "stone", "iron")
+            }
             self.resman.do_premium_stuff()
 
     def run(self, config=None, first_run=False):

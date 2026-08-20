@@ -2,12 +2,21 @@
 Anything with resources goes here
 """
 import logging
+import math
 import os
 import re
 import time
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+
+# Carga de um mercador, em recursos. NÃO é publicada em
+# interface.php?func=get_config: procurei nas duas fontes do mundo em
+# 2026-08-20 e o bloco <premium> do br144 só traz MerchantBonus,
+# MerchantExchange e MerchantExchange_ratio; /page/settings também não cita
+# carga. 1000 é o valor que o próprio JS do jogo usa e que `optimize_n` já
+# assumia via `size=1000` -- aqui vira nome em vez de literal solto.
+MERCHANT_CAPACITY = 1000
 
 
 class PremiumExchange:
@@ -106,6 +115,20 @@ class ResourceManager:
     wrapper = None
     village_id = None
     do_premium_trade = False
+    # Vender so quando a bolsa pedir no maximo este tanto de recurso por PP.
+    # E a regra central da estrategia (docs/troca_premium.md secao 3): espera-se
+    # a taxa cair em vez de despejar recurso. Numero baixo = mais exigente.
+    premium_max_rate = 90
+    # Lote de venda, em recursos. Vender muito de uma vez afunda a propria taxa
+    # -- calculate_cost() modela isso, e ate 2026-08-20 nada controlava.
+    premium_batch = 1000
+    # Piso do lote. Um mercador carrega MERCHANT_CAPACITY e leva 2h de ida e
+    # volta; despachar 200 nele desperdiça 80% do recurso que a própria
+    # estratégia identifica como gargalo ("o gargalo é o mercador, não a
+    # produção", docs/troca_premium.md). Melhor esperar juntar o lote.
+    premium_min_batch = 1000
+    premium_max_batches = 2
+    premium_min_free_merchants = 1
 
     def __init__(self, wrapper=None, village_id=None):
         """
@@ -130,6 +153,11 @@ class ResourceManager:
         # confirmação. None enquanto nada foi enviado ou quando não deu para
         # ler -- ver send_resources/_parse_travel_seconds.
         self.last_send_travel_seconds = None
+        # Piso por recurso que a troca premium nunca vende. MUTÁVEL, então mora
+        # aqui e não no corpo da classe: existe um ResourceManager por aldeia e
+        # um dict de classe seria compartilhado por todas (primeiro padrão
+        # recorrente do CLAUDE.md).
+        self.premium_keep = {"wood": 0, "stone": 0, "iron": 0}
 
     def update(self, game_state):
         """
@@ -159,108 +187,263 @@ class ResourceManager:
         store_state = game_state["village"]["name"]
         self.logger = logging.getLogger(f"Resource Manager: {store_state}")
 
-    def do_premium_stuff(self):
+    def _premium_reserved(self, resource):
         """
-        Does premium stuff
+        Quanto deste recurso já está prometido a outro sistema (construção,
+        recrutamento, nobre). Vender isso seria desfazer o trabalho do ciclo.
         """
-        gpl = self.get_plenty_off()
-        self.logger.debug(
-            "Trying premium trade: gpl %s do? %s", gpl, self.do_premium_trade
+        return sum(
+            self.requested[source].get(resource, 0) for source in self.requested
         )
-        if gpl and self.do_premium_trade:
-            url = f"game.php?village={self.village_id}&screen=market&mode=exchange"
-            res = self.wrapper.get_url(url=url)
-            if res is None:
-                self.logger.warning("Premium trade: request timed out, skipping")
-                return
-            data = Extractor.premium_data(res.text)
-            # P2-30: a checagem `if not data` existia, mas 15 linhas depois de
-            # data["stock"] -- o TypeError vinha antes.
-            if not data:
-                self.logger.warning("Error reading premium data!")
-                return
 
-            premium_exchange = PremiumExchange(
-                wrapper=self.wrapper,
-                stock=data["stock"],
-                capacity=data["capacity"],
-                tax=data["tax"],
-                constants=data["constants"],
-                duration=data["duration"],
-                merchants=data["merchants"]
+    def _premium_sellable(self, resource):
+        """
+        Quanto dá para vender sem comer reserva nem o piso configurado.
+        """
+        have = self.actual.get(resource, 0)
+        keep = self.premium_keep.get(resource, 0)
+        return max(0, have - self._premium_reserved(resource) - keep)
+
+    def _premium_read_exchange(self):
+        """
+        Lê a tela da bolsa e devolve (data, PremiumExchange) ou (None, None).
+
+        Toda saída de rede/parse aqui é tratada como podendo faltar: get_url()
+        devolve None em qualquer exceção e premium_data() devolve None quando o
+        regex não casa (sessão expirada virando login, bot protection, markup
+        novo). Segundo padrão recorrente do CLAUDE.md.
+        """
+        url = f"game.php?village={self.village_id}&screen=market&mode=exchange"
+        res = self.wrapper.get_url(url=url)
+        if res is None:
+            self.logger.warning("Premium trade: request failed, skipping this cycle")
+            return None, None
+
+        data = Extractor.premium_data(res.text)
+        if not data:
+            self.logger.warning("Premium trade: could not parse exchange data")
+            return None, None
+
+        missing = [
+            k for k in ("stock", "capacity", "tax", "constants", "duration", "merchants")
+            if k not in data
+        ]
+        if missing:
+            self.logger.warning(
+                "Premium trade: exchange payload missing %s -- not trading", missing
+            )
+            return None, None
+
+        return data, PremiumExchange(
+            wrapper=self.wrapper,
+            stock=data["stock"],
+            capacity=data["capacity"],
+            tax=data["tax"],
+            constants=data["constants"],
+            duration=data["duration"],
+            merchants=data["merchants"],
+        )
+
+    def _premium_pick_offer(self, data, premium_exchange):
+        """
+        Escolhe (recurso, quantidade) para UM lote, ou None se nada compensa.
+
+        Duas diferenças em relação à versão anterior, que nunca vendeu nada:
+
+        1. O preço é `calculate_rate_for_one_point()` -- recursos por PP. A
+           versão antiga usava `stock[p] * rates[p]`, que é o valor em PP da
+           bolsa INTEIRA (~330 PP no K35), não um preço. Com aquele número o
+           `optimize_n` devolvia n_to_sell 0 e o guard abortava com "Not worth
+           trading" -- e não por prudência.
+        2. Considera os três recursos, não só o mais abundante. O gate anterior
+           era `get_plenty_off()`, que responde "que recurso está transbordando
+           o armazém?" -- pergunta certa para o mercado normal e errada aqui,
+           onde se quer vender sempre que a taxa estiver boa.
+        """
+        best = None
+        for resource in ("wood", "stone", "iron"):
+            stock = data["stock"].get(resource)
+            capacity = data["capacity"].get(resource)
+            if stock is None or capacity is None:
+                continue
+
+            # "Quando o estoque de uma troca está cheio, nenhum recurso desse
+            # tipo pode mais ser vendido para ela." É o estado do K35 hoje.
+            bag_space = capacity - stock
+            if bag_space <= 0:
+                self.logger.debug("Premium trade: %s bag is full, cannot sell", resource)
+                continue
+
+            rate = premium_exchange.calculate_rate_for_one_point(resource)
+            if not rate or rate <= 0:
+                self.logger.debug("Premium trade: %s rate unusable (%s)", resource, rate)
+                continue
+
+            sellable = self._premium_sellable(resource)
+            amount = min(self.premium_batch, sellable, bag_space)
+
+            self.logger.debug(
+                "Premium trade: %s rate %s/PP (limit %s), sellable %s, bag space %s",
+                resource, rate, self.premium_max_rate, sellable, bag_space,
             )
 
-            cost_per_point = premium_exchange.calculate_rate_for_one_point(gpl)
+            if rate > self.premium_max_rate:
+                continue
+            # Um lote precisa render pelo menos 1 PP, senão a ordem é ruído.
+            if amount < rate:
+                continue
+            # ...e precisa encher o mercador, senão a viagem de 2h é desperdício.
+            if amount < self.premium_min_batch:
+                self.logger.debug(
+                    "Premium trade: only %s %s free, below the %s lot floor",
+                    amount, resource, self.premium_min_batch,
+                )
+                continue
+            if best is None or rate < best[2]:
+                best = (resource, int(amount), rate)
 
-            self.logger.debug("Cost per point: %s", cost_per_point)
-            self.logger.info("Current %s price: ", self.actual[gpl])
+        return best
 
-            price_fetch = ["wood", "stone", "iron"]
-            prices = {}
+    def _premium_send(self, resource, amount):
+        """
+        Envia um lote: exchange_begin (que devolve o rate_hash) e
+        exchange_confirm. Devolve True se o jogo aceitou.
 
-            for p in price_fetch:
-                prices[p] = data["stock"][p] * data["rates"][p]
+        ⚠️ Este caminho NUNCA foi exercitado em pt-BR: `rate_hash` e o formato
+        `result["response"][0]` são suposição herdada do upstream. É o mesmo
+        perfil da Feature 9, onde o caminho de envio inteiro estava errado
+        justamente por nunca ter rodado. Por isso cada passo guarda o formato e
+        despeja a resposta crua em cache/premium/ quando ela surpreende: no dia
+        1 do mundo novo o diagnóstico precisa custar um arquivo, não um ciclo.
+        """
+        begin = self.wrapper.get_api_action(
+            self.village_id,
+            action="exchange_begin",
+            params={"screen": "market"},
+            data={f"sell_{resource}": amount},
+        )
+        rate_hash = self._premium_extract_rate_hash(begin, resource, amount)
+        if not rate_hash:
+            return False
 
-            self.logger.info("Actual premium prices: %s",  prices)
+        confirm = self.wrapper.get_api_action(
+            self.village_id,
+            action="exchange_confirm",
+            params={"screen": "market"},
+            data={f"sell_{resource}": amount, "rate_hash": rate_hash, "mb": "1"},
+        )
+        if not confirm:
+            self.logger.warning(
+                "Premium trade: exchange_confirm failed for %s %s", amount, resource
+            )
+            self._premium_dump("confirm_failed", confirm)
+            return False
 
-            if gpl in prices and prices[gpl] * 1.1 < self.actual[gpl]:
+        self.logger.info(
+            "Premium trade: sold %s %s (rate hash %s)", amount, resource, rate_hash
+        )
+        return True
+
+    def _premium_extract_rate_hash(self, begin, resource, amount):
+        """
+        Tira o rate_hash da resposta do exchange_begin, aceitando as formas que
+        o servidor pode devolver em vez de assumir uma.
+
+        get_api_action() devolve TRÊS coisas diferentes: o JSON decodificado, o
+        objeto Response cru quando o corpo não é JSON, ou None em falha de
+        rede. A versão anterior fazia `result["response"][0]["rate_hash"]` sem
+        distinguir -- TypeError nos outros dois casos.
+        """
+        if not begin:
+            self.logger.warning(
+                "Premium trade: exchange_begin failed for %s %s", amount, resource
+            )
+            return None
+        if not isinstance(begin, dict):
+            self.logger.warning(
+                "Premium trade: exchange_begin did not return JSON (%s)",
+                type(begin).__name__,
+            )
+            self._premium_dump("begin_not_json", begin)
+            return None
+
+        response = begin.get("response", begin)
+        candidates = response if isinstance(response, list) else [response]
+        for candidate in candidates:
+            if isinstance(candidate, dict) and candidate.get("rate_hash"):
+                return candidate["rate_hash"]
+
+        self.logger.warning(
+            "Premium trade: no rate_hash in exchange_begin response for %s %s",
+            amount, resource,
+        )
+        self._premium_dump("begin_no_rate_hash", begin)
+        return None
+
+    def _premium_dump(self, label, payload):
+        """
+        Grava a resposta que surpreendeu, para o diagnóstico do dia 1 não
+        depender de reproduzir o momento.
+        """
+        try:
+            body = payload if isinstance(payload, (dict, list)) else str(
+                getattr(payload, "text", payload)
+            )
+            FileManager.save_json_file(
+                {"village": self.village_id, "label": label, "payload": body},
+                f"cache/premium/{label}_{self.village_id}.json",
+            )
+        except Exception as exc:  # nunca derrubar o ciclo por causa do dump
+            self.logger.debug("Premium trade: could not dump %s: %s", label, exc)
+
+    def do_premium_stuff(self):
+        """
+        Vende recurso na bolsa premium quando a taxa está boa.
+
+        Em lotes pequenos e um por execução do laço: a taxa piora DENTRO da
+        própria venda (é a integral que calculate_cost modela), então cada lote
+        relê a bolsa em vez de assumir a taxa do lote anterior.
+        """
+        if not self.do_premium_trade:
+            return
+
+        for _ in range(max(1, self.premium_max_batches)):
+            data, premium_exchange = self._premium_read_exchange()
+            if not data:
+                return
+
+            free_merchants = data.get("merchants") or 0
+            if free_merchants < self.premium_min_free_merchants:
                 self.logger.info(
-                    "Attempting trade of %d %s for premium point", prices[gpl], gpl
+                    "Premium trade: only %s merchants free (need %s), waiting",
+                    free_merchants, self.premium_min_free_merchants,
                 )
+                return
 
-                if data["merchants"] < 1:
-                    self.logger.info("Not enough merchants available!")
+            offer = self._premium_pick_offer(data, premium_exchange)
+            if not offer:
+                self.logger.debug("Premium trade: no resource worth selling right now")
+                return
+
+            resource, amount, rate = offer
+            needed_merchants = math.ceil(amount / MERCHANT_CAPACITY)
+            if needed_merchants > free_merchants:
+                amount = free_merchants * MERCHANT_CAPACITY
+                if amount < rate:
+                    self.logger.info(
+                        "Premium trade: %s merchants cannot carry a worthwhile lot",
+                        free_merchants,
+                    )
                     return
 
-                self.logger.debug(f"Trying to trade {gpl} - exchange_begin")
-
-                prices[gpl] = int(prices[gpl])
-
-                gpl_data = PremiumExchange.optimize_n(
-                    amount=prices[gpl],
-                    sell_price=cost_per_point,
-                    merchants=data["merchants"],
-                    size=1000
-                )
-
-                self.logger.debug(f"Optimized trade: {gpl} {gpl_data} {gpl_data['n_to_sell'] * cost_per_point}")
-
-                if gpl_data["ratio"] > 0.4:
-                    self.logger.info("Not worth trading!")
-                    return
-
-                result = self.wrapper.get_api_action(
-                    self.village_id,
-                    action="exchange_begin",
-                    params={"screen": "market"},
-                    data={f"sell_{gpl}": (gpl_data["n_to_sell"] * cost_per_point)},
-                )
-
-                if result:
-                    _rate_hash = result["response"][0]["rate_hash"]
-
-                    trade_data = {
-                        "sell_%s" % gpl: (gpl_data["n_to_sell"] * cost_per_point),
-                        "rate_hash": _rate_hash,
-                        "mb": "1"
-                    }
-
-                    result = self.wrapper.get_api_action(
-                        self.village_id,
-                        action="exchange_confirm",
-                        params={"screen": "market"},
-                        data=trade_data,
-                    )
-
-                    if result:
-                        self.logger.info("Trade successful!")
-                    else:
-                        self.logger.info("Trade failed!")
-                else:
-                    self.logger.debug(
-                        f"Trying to trade %s for premium points - exchange_begin - failed", gpl
-                    )
-                    self.logger.info("Trade failed!")
+            self.logger.info(
+                "Premium trade: selling %s %s at %s per point", amount, resource, rate
+            )
+            if not self._premium_send(resource, amount):
+                return
+            # O recurso saiu da aldeia: refletir localmente para o próximo lote
+            # (e para quem consultar actual) não contar duas vezes o mesmo saldo.
+            self.actual[resource] = max(0, self.actual.get(resource, 0) - amount)
 
     def check_state(self):
         """

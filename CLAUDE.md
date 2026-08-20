@@ -57,7 +57,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   mundo lidas de `get_config` (`WorldConfig._parse_features`, com recortes
   verbatim de br143 sem arqueiro e br142 com), o motivo da recusa do jogo
   (`Extractor.error_box_text`, fixture verbatim de um `error_box` real) e o
-  limite de ataque falso (`_legalize`, `min_attack_population`). **A maior parte do bot continua
+  limite de ataque falso (`_legalize`, `min_attack_population`), a venda na
+  bolsa premium (`do_premium_stuff`, com os números da bolsa lidos do br143 em
+  2026-08-20) e a integridade dos templates de builder
+  (`tests/test_builder_templates.py`). **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
   teste pontual.
@@ -69,10 +72,20 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `game.php?village=NNN&screen=report&mode=all&view=<id>` sem atrapalhar o bot
   rodando.
 - **Nunca commitar `config.json`** (contém credenciais/sessão) — só `config.example.json`.
-- **Sempre bumpar a versão do build** (`config.example.json` e `config.json`,
-  campo `build.version`) ao adicionar novo bloco de configuração estrutural,
-  para evitar merge automático indesejado pelo bot (`twb.py` faz merge
-  baseado em `build.version` divergente).
+- **Ao adicionar bloco de configuração novo, bumpar `build.version` SÓ em
+  `config.example.json`.** A redação anterior desta linha mandava bumpar "em
+  `config.example.json` e `config.json`", e está errada: seguindo-a ao pé da
+  letra em 2026-08-20 eu deixei as duas versões iguais e **desliguei** a
+  propagação que queria causar. O mecanismo real (`twb.py:231`) é
+  `if config["build"]["version"] != template["build"]["version"]: merge` — o
+  merge roda quando as versões **divergem**, e é ele que injeta a seção nova no
+  `config.json` do usuário (salvando `config.bak` antes). Versões iguais = nada
+  acontece e a seção nunca chega na config real.
+  Antes de disparar o merge num `config.json` vivo, conferir o que
+  `merge_configs()` descarta: ele usa o template como base e só preserva chave
+  que exista **nos dois**, então chave que só existe no `config.json` some.
+  (Aldeias são a exceção: lá ele acrescenta do `village_template` sem remover —
+  foi assim que `scout_first`, chave morta que nenhum código lê, sobreviveu.)
 - Ao adicionar config nova, atualizar **`config.example.json`** e
   **`webmanager/helpfile.py`** (`help_file` + `nested_sections` se for dict aninhado)
   no mesmo commit.
@@ -443,6 +456,22 @@ puxa o fio.**
   responder "está tudo certo?", medir de novo em vez de inferir da ausência de
   eventos — foi assim que este alerta apareceu, num `grep` de todos os WARNING
   que o monitor não cobria.
+- ⚠️ **Décimo sexto padrão, achado em 2026-08-20: seguir uma instrução deste
+  arquivo sem conferir o código que ela descreve.** A regra de bumpar
+  `build.version` mandava bumpar nos **dois** arquivos; obedeci literalmente e
+  com isso deixei as versões iguais, o que **desliga** o merge — exatamente o
+  contrário do efeito pretendido, porque `twb.py` só faz merge quando elas
+  divergem. A seção de config nova nunca teria chegado ao `config.json`, e o
+  sintoma seria mudo: `get_config()` cai no default e o bot roda "normal".
+  A regra: **este arquivo é memória, não especificação.** Ele registra o que
+  alguém entendeu na época, e envelhece ou nasce errado como qualquer nota. Ao
+  agir sobre uma instrução daqui que descreve *comportamento de código*
+  (merge, ordem de chamada, formato de arquivo), abrir o código e confirmar —
+  são dois minutos, e o custo de não fazer é uma mudança que parece aplicada e
+  não está. Corolário: quando a instrução estiver errada, **corrigir a
+  instrução no mesmo passo**, senão o próximo a ler cai igual. O mesmo vale
+  para o oitavo padrão desta lista, que existe porque uma lição verdadeira
+  estava escrita num arquivo que ninguém lê.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.6",
+    "version": "3.7",
     "author": "stefan2200"
   },
   "server": {
@@ -162,6 +162,16 @@
     "trade_multiplier": true,
     "trade_multiplier_value": 1.0,
     "trade_max_per_hour": 1
+  },
+  "premium_exchange": {
+    "max_rate_per_point": 90,
+    "sell_batch": 1000,
+    "min_sell_batch": 1000,
+    "max_batches_per_run": 2,
+    "min_free_merchants": 1,
+    "keep_wood": 0,
+    "keep_stone": 0,
+    "keep_iron": 0
   },
   "world": {
     "knight_enabled": null,
