@@ -87,8 +87,7 @@
     "level": 10,
     "upgrades": {
       "spear": 2,
-      "sword": 2,
-      "heavy": 1
+      "sword": 2
     },
     "build": {
       "barracks": {
@@ -97,7 +96,31 @@
       },
       "stable": {
         "spy": 40,
-        "light": 150,
+        "light": 150
+      }
+    },
+    "farm": [
+      {"light": 60},
+      {"light": 20},
+      {"light": 8}
+    ]
+  },
+  {
+    "building": "smith",
+    "level": 15,
+    "upgrades": {
+      "spear": 2,
+      "sword": 2,
+      "heavy": 1
+    },
+    "build": {
+      "barracks": {
+        "spear": 1600,
+        "sword": 1400
+      },
+      "stable": {
+        "spy": 40,
+        "light": 180,
         "heavy": 100
       }
     },

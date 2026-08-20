@@ -176,7 +176,7 @@
     ]
   },
   {
-    "building": "barracks",
+    "building": "smith",
     "level": 15,
     "upgrades": {
         "axe": 10,
