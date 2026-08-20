@@ -1450,6 +1450,43 @@ de `features`, não pela presença do bloco. O cache do dia anterior já tinha
 `features` e passaria na checagem antiga, então o bot rodaria o TTL inteiro (6h)
 com `fake_limit: None`.
 
+### Validado em campo (2026-08-20)
+
+Primeiro ciclo com tudo acima, 6 aldeias com farm rodado:
+
+| verificação | resultado |
+|---|---|
+| `Attacking` = `popup_command` = `[Attack] duration` | **23 = 23 = 23** |
+| recusas do jogo | **0** |
+| limite de ataque falso | não reapareceu |
+| erros / crashes | nenhum |
+
+A primeira linha é a que importa mais: **a instrumentação passou a contar
+envios**, não tentativas. Daqui para frente comparação "antes × depois" de farm
+é possível; antes de `7c85a22` não era.
+
+Os warnings restantes são benignos e esperados: `Building queue out of sync` é o
+builder respeitando construções manuais do usuário, e `recruitment queue
+out-of-sync` é ele respeitando filas já existentes sem cancelá-las
+(`remove_manual_queued: false`).
+
+### Um alerta que estava sempre ligado (`733be07`)
+
+`_parse_incoming_resources()` distingue duas hipóteses que antes se confundiam
+num DEBUG só: "nada a caminho" (normal) e "o rótulo está lá mas a estrutura
+mudou" (precisa de ação, WARNING + dump da página). A guarda procurava o rótulo
+**solto** no HTML — e `Chegando` também é o nome de um item do **menu de
+navegação**, presente em toda tela de mercado.
+
+Resultado: WARNING em todo ciclo sem nada a caminho, mais um dump de 58 KB. O
+problema não é o ruído: **uma guarda que sempre dispara não distingue nada**, e
+mascararia para sempre a mudança de estrutura que ela existe para detectar.
+
+Diagnóstico feito na página que o próprio dump tinha guardado — 1 ocorrência do
+rótulo, no menu, e nenhuma seguida de `:`. Ou seja o parser estava certo e
+realmente não havia nada a caminho. A guarda passou a exigir `:\s`, o mesmo
+ancoramento de `INCOMING_RE`.
+
 ### Ficou aberto
 
 Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em

@@ -424,6 +424,25 @@ puxa o fio.**
   e lido isso como simplificação inofensiva. Quando um artefato herdado varia
   onde eu simplificaria, a variação costuma estar codificando uma restrição que
   eu ainda não entendi (ver também o décimo segundo padrão).
+- ⚠️ **Décimo quinto padrão, achado em 2026-08-20: detector que dispara sempre
+  não detecta nada, e o custo é mascarar o caso que ele existia para pegar.**
+  `_parse_incoming_resources()` tinha uma guarda boa no desenho — separava
+  "nada a caminho" (normal, DEBUG) de "o rótulo está lá mas a estrutura mudou"
+  (WARNING + dump da página). Só que ela procurava o rótulo **solto** no HTML,
+  e `Chegando` também é item do menu de navegação, presente em toda tela de
+  mercado. O WARNING disparava em todo ciclo, com um dump de 58 KB junto.
+  A regra: ao escrever uma guarda que distingue A de B, perguntar **em que
+  outro lugar da página aquele sinal aparece** — quase sempre há um C. O
+  sintoma é um alerta que nunca fica quieto; a partir daí ele é indistinguível
+  de um alerta quebrado, e ninguém vai investigar quando A finalmente
+  acontecer. Correção barata e geral: ancorar a guarda no **mesmo** padrão que
+  o parser real usa (aqui, exigir `:\s` como o `INCOMING_RE` já exigia), em vez
+  de numa versão frouxa dele.
+  Corolário sobre monitoramento, da mesma sessão: silêncio de um filtro não é
+  prova de que está tudo bem, porque o filtro só vê o que eu escolhi. Ao
+  responder "está tudo certo?", medir de novo em vez de inferir da ausência de
+  eventos — foi assim que este alerta apareceu, num `grep` de todos os WARNING
+  que o monitor não cobria.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
