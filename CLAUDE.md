@@ -59,8 +59,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   (`Extractor.error_box_text`, fixture verbatim de um `error_box` real) e o
   limite de ataque falso (`_legalize`, `min_attack_population`), a venda na
   bolsa premium (`do_premium_stuff`, com os números da bolsa lidos do br143 em
-  2026-08-20) e a integridade dos templates de builder
-  (`tests/test_builder_templates.py`). **A maior parte do bot continua
+  2026-08-20), a integridade dos templates de builder
+  (`tests/test_builder_templates.py`) e a leitura dos comandos recebidos na
+  visão geral (`Extractor.incoming_commands`, recorte verbatim de um trem de
+  nobres real em 2026-08-22 — inclui um teste que roda o regex **antigo**
+  contra o markup real e exige zero casamentos, para o bug não voltar calado).
+  **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
   teste pontual.

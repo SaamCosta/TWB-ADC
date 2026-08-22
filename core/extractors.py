@@ -6,6 +6,24 @@ import json
 import re
 import time
 
+# Linha de comando recebido no widget "Comandos" da visão geral de uma aldeia.
+# Vive no nível de módulo porque DUAS coisas precisam concordar sobre o que
+# conta como "há comando recebido": o parser (Extractor.incoming_commands) e a
+# guarda que decide se um parsing vazio é falha de markup ou ausência legítima
+# de linhas (DefenceManager._parse_incoming_urgency).
+#
+# O motivo de não bastar procurar a string solta: no HTML do br143 ela também
+# aparece num comentário de JavaScript da própria página --
+#   //hide bar if all attacks are ignored  if ($('.no_ignored_command').length
+# -- que está presente sempre que o widget renderiza, inclusive quando todos os
+# comandos foram ignorados pelo jogador e não existe <tr> nenhum. Guarda frouxa
+# nesse caso acusaria "markup mudou" para uma página perfeitamente normal (ver
+# o décimo quinto padrão em CLAUDE.md: alerta que dispara sozinho é
+# indistinguível de alerta quebrado).
+INCOMING_ROW_RE = re.compile(
+    r'<tr[^>]*class="[^"]*\bno_ignored_command\b[^"]*"[^>]*>(.*?)</tr>', re.S
+)
+
 
 class Extractor:
     """
@@ -439,30 +457,56 @@ class Extractor:
         evacuação por urgência real (ETA) em vez de reagir igual a qualquer
         comando recebido, esteja ele chegando em minutos ou horas.
 
-        Cada linha de comando no widget de "comandos recebidos" do jogo é
-        varrida via <tr ... data-command-id="N" ...>...</tr>; dentro do
-        bloco procura o contador de chegada, que no jogo aparece em duas
-        variantes conhecidas (ambas já usadas em outras páginas do jogo,
-        ver attack_duration() acima para data-duration):
+        Markup real do br143, capturado em 2026-08-22 com quatro ataques a
+        caminho da aldeia 41114 (recorte verbatim em
+        tests/test_incoming_commands.py). Uma linha do widget é:
+
+            <tr class="command-row no_ignored_command">
+              <td> ... <span class="quickedit" data-id="421560489">
+                         ... <span class=" tooltip" data-command-id="421560489"
+                                   title="Ataque"> ... </span>
+                         ... <span class="quickedit-label">
+                               0014 | Aldeia de bárbaros</span> ... </td>
+              <td>hoje às 13:13:09:<span class="grey small">598</span></td>
+              <td><span class="widget-command-timer"
+                        data-endtime="1787415189">5:27:17</span></td>
+            </tr>
+
+        A versão anterior procurava data-command-id **no próprio <tr>** e por
+        isso não casava linha nenhuma: o atributo mora em spans aninhados,
+        seis níveis abaixo. O regex tinha sido inferido de padrões de outras
+        telas e nunca conferido contra um ataque real -- limitação que estava
+        registrada em docs/backlog.md e se confirmou em campo. A falha era
+        silenciosa e cara: lista vazia é lida por _is_urgent() como "urgente",
+        então o bot evacuava em **todo** ataque, que é precisamente o que a
+        Feature 16 existia para evitar.
+
+        A âncora agora é a classe `no_ignored_command` do <tr> -- o mesmo
+        marcador que DefenceManager.update() já usa para decidir "sob ataque",
+        e que vem do bot base (portanto não é markup de conta premium).
+
+        ETA em três fontes, nesta ordem de confiança:
           - data-endtime="UNIX_TS" (timestamp absoluto de chegada)
           - data-duration="SEGUNDOS" (segundos restantes já calculados)
-        e o nome do atacante via link para screen=info_player.
+          - texto renderizado do contador ("5:27:17") que, ao contrário do
+            caso do Paladino em StatuePage, **vem preenchido pelo servidor**
+            no HTML cru -- conferido na captura de 2026-08-22.
 
-        Retorna lista de dicts {command_id, eta_seconds, attacker} --
-        lista vazia se nada foi encontrado (markup não reconhecido ou
-        página sem comandos). Nunca lança exceção: chamadores devem tratar
-        lista vazia como "urgência desconhecida", não como "sem ataques",
-        e cair de volta no comportamento seguro anterior (ver
+        Retorna lista de dicts {command_id, eta_seconds, origin, attacker}.
+        `attacker` é o nome do jogador e vem None nesta tela: a linha traz o
+        nome da *aldeia* de origem (devolvido em `origin`), não o do dono.
+        Lista vazia se nada casou -- chamadores devem tratar isso como
+        "urgência desconhecida", não como "sem ataques" (ver
         DefenceManager._parse_incoming_urgency).
         """
         if type(res) != str:
             res = res.text
         commands = []
         try:
-            rows = re.findall(r'<tr[^>]*data-command-id="(\d+)"[^>]*>(.*?)</tr>', res, re.S)
+            rows = INCOMING_ROW_RE.findall(res)
         except Exception:
             return commands
-        for command_id, block in rows:
+        for block in rows:
             eta_seconds = None
             endtime_match = re.search(r'data-endtime="(\d+)"', block)
             if endtime_match:
@@ -471,12 +515,28 @@ class Extractor:
                 duration_match = re.search(r'data-duration="(\d+)"', block)
                 if duration_match:
                     eta_seconds = int(duration_match.group(1))
+                else:
+                    timer_match = re.search(
+                        r'class="[^"]*widget-command-timer[^"]*"[^>]*>\s*'
+                        r'(\d+):([0-5]\d):([0-5]\d)\s*<',
+                        block,
+                    )
+                    if timer_match:
+                        hours, minutes, seconds = (int(g) for g in timer_match.groups())
+                        eta_seconds = hours * 3600 + minutes * 60 + seconds
             if eta_seconds is None:
                 continue
+            id_match = re.search(r'data-(?:command-)?id="(\d+)"', block)
+            origin_match = re.search(
+                r'class="[^"]*quickedit-label[^"]*"[^>]*>\s*(.*?)\s*</span>',
+                block,
+                re.S,
+            )
             attacker_match = re.search(r'screen=info_player[^"]*"[^>]*>([^<]+)</a>', block)
             commands.append({
-                "command_id": command_id,
+                "command_id": id_match.group(1) if id_match else None,
                 "eta_seconds": max(0, eta_seconds),
+                "origin": origin_match.group(1).strip() if origin_match else None,
                 "attacker": attacker_match.group(1).strip() if attacker_match else None,
             })
         return commands

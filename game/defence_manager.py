@@ -4,7 +4,7 @@ import random
 import re
 import time
 
-from core.extractors import Extractor
+from core.extractors import INCOMING_ROW_RE, Extractor
 
 # Mapeamento dos 8 tipos de bandeira do jogo (ver docs/bugs_flags.md).
 # O bot hoje só gerencia ativamente os tipos 1 (produção) e 4 (defesa) via
@@ -54,6 +54,14 @@ class DefenceManager:
     incoming_eta = None
     incoming_attacker = None
     incoming_command_id = None
+    # Nome da *aldeia* de origem do comando. A linha do widget não traz o dono
+    # (ver Extractor.incoming_commands), então incoming_attacker fica None nesta
+    # tela e a origem é o único identificador legível que sobra.
+    incoming_origin = None
+    # Quantas linhas <tr> de comando a página trazia, independente de o ETA ter
+    # sido lido. Separa "markup mudou" (linhas > 0 e nenhum ETA) de "não havia
+    # linha nenhuma" -- ver o bloco de log em update().
+    incoming_rows_seen = 0
 
     _can_change_flag = False
     # True once manage_flags() has confirmed the real flag state from the
@@ -114,17 +122,34 @@ class DefenceManager:
 
             if self.incoming_eta is not None:
                 self.logger.warning(
-                    "Village %s: incoming command from %s, eta %ds (command_id=%s) -- %s",
+                    "Village %s: incoming command from %s, eta %ds (%.1fh) "
+                    "(command_id=%s) -- %s",
                     self.village_id,
-                    self.incoming_attacker or "?",
+                    self.incoming_attacker or self.incoming_origin or "?",
                     self.incoming_eta,
+                    self.incoming_eta / 3600,
                     self.incoming_command_id or "?",
                     "urgent, evacuating now" if urgent else "not urgent yet, monitoring",
                 )
-            else:
+            elif self.incoming_rows_seen:
+                # Existe <tr> de comando e mesmo assim nenhum ETA saiu: isto é
+                # markup novo do jogo, e é o alarme que merece investigação.
                 self.logger.warning(
-                    "Village %s: incoming command detected, but ETA/attacker "
-                    "could not be parsed from overview HTML -- treating as urgent",
+                    "Village %s: %d linha(s) de comando na visão geral, mas "
+                    "nenhum ETA pôde ser lido -- markup provavelmente mudou, "
+                    "tratando como urgente (ver Extractor.incoming_commands)",
+                    self.village_id,
+                    self.incoming_rows_seen,
+                )
+            else:
+                # Marcador presente sem nenhuma linha: o caso conhecido é o
+                # comentário de JS "hide bar if all attacks are ignored", que o
+                # jogo serve quando todos os comandos recebidos foram ignorados
+                # pelo jogador. Não é falha de parsing, então não é WARNING --
+                # mas o bot ainda assume urgente, que é o comportamento seguro.
+                self.logger.info(
+                    "Village %s: marcador de comando presente sem nenhuma linha "
+                    "(comandos ignorados pelo jogador?) -- tratando como urgente",
                     self.village_id,
                 )
 
@@ -137,6 +162,8 @@ class DefenceManager:
             self.incoming_eta = None
             self.incoming_attacker = None
             self.incoming_command_id = None
+            self.incoming_origin = None
+            self.incoming_rows_seen = 0
             self.flag_logic(self.set_flag_not_under_attack)
             if not with_defence:
                 self.under_attack = False
@@ -179,16 +206,19 @@ class DefenceManager:
         o comportamento seguro de antes da Feature 16 (evacua sempre que
         'no_ignored_command' aparece no HTML).
         """
+        self.incoming_rows_seen = len(INCOMING_ROW_RE.findall(main))
         commands = Extractor.incoming_commands(main)
         if not commands:
             self.incoming_eta = None
             self.incoming_attacker = None
             self.incoming_command_id = None
+            self.incoming_origin = None
             return
         soonest = min(commands, key=lambda c: c["eta_seconds"])
         self.incoming_eta = soonest["eta_seconds"]
         self.incoming_attacker = soonest.get("attacker")
         self.incoming_command_id = soonest.get("command_id")
+        self.incoming_origin = soonest.get("origin")
 
     def _is_urgent(self, eta_seconds):
         # eta_seconds is None quando o parsing não achou nada usável --

@@ -212,6 +212,63 @@ nenhum comando a caminho, não há markup real de `data-command-id` pra
 comparar contra o que `incoming_commands()` espera. Continua pendente de
 validação em campo — precisa de uma aldeia com ataque de verdade chegando.
 
+### ❌ Validado em 2026-08-22: estava quebrado desde sempre. ✅ Corrigido.
+
+A limitação acima se confirmou na primeira oportunidade real (quatro nobres a
+caminho da BBM 008 / 41114, combinados com um vizinho). **O parser nunca casou
+uma única linha em campo.** O markup real do br143 é:
+
+```html
+<tr class="command-row no_ignored_command">
+  <td> ... <span class="quickedit" data-id="421560489">
+             ... <span class=" tooltip" data-command-id="421560489" title="Ataque">
+             ... <span class="quickedit-label">0014 | Aldeia de bárbaros</span>
+  <td>hoje às 13:13:09:<span class="grey small">598</span></td>
+  <td><span class="widget-command-timer" data-endtime="1787415189">5:27:17</span></td>
+</tr>
+```
+
+Três divergências em relação ao que foi inferido:
+1. `data-command-id` **não fica no `<tr>`** — mora em spans aninhados seis
+   níveis abaixo. O `<tr>` se identifica pela classe `no_ignored_command`, que
+   é o mesmo marcador que o `DefenceManager` já usava. Era só isso que faltava.
+2. O ETA fica num span **irmão**, `widget-command-timer`, fora do span do
+   comando — não dá para pegar os dois com um regex só.
+3. **Não existe link `screen=info_player` na linha.** O rótulo é o nome da
+   *aldeia* de origem, não do jogador. `attacker` era inatingível nesta tela;
+   agora existe `origin` com o dado que de fato está lá.
+
+**O efeito da falha era o oposto do que a nota acima previa.** A nota dizia que
+o pior caso seria "idêntico ao pré-Feature-16". Isso está certo sobre o
+comportamento e errado sobre a consequência: como o pior caso era também o
+*único* caso, a Feature 16 nunca existiu na prática — o bot evacuava em todo
+ataque, inclusive num fake com 100h de viagem, que é precisamente o cenário que
+motivou a feature. Fallback seguro que vira o caminho único não é fallback, é o
+comportamento; e por ser silencioso, ninguém percebeu por 17 dias.
+
+Achado extra, do smoke contra o servidor **depois** de os testes passarem: a
+string `no_ignored_command` aparece 5 vezes na página com 4 ataques. A quinta é
+um comentário de JS do próprio jogo (`//hide bar if all attacks are ignored`),
+servido sempre que o widget renderiza — inclusive quando o jogador ignorou
+todos os comandos e não há `<tr>` nenhum. `INCOMING_ROW_RE` subiu para o nível
+de módulo em `core/extractors.py` para que o parser e a guarda de diagnóstico
+concordem, e o log agora separa "linha existe mas sem ETA" (WARNING, markup
+mudou) de "marcador sem linha" (INFO, comandos ignorados). Nas 8 aldeias sem
+ataque a string aparece 0 vezes, então o marcador de "sob ataque" não dispara
+sozinho.
+
+Cobertura: `tests/test_incoming_commands.py`, com recorte **verbatim** da
+resposta crua de `game.php?village=41114&screen=overview` (só `href`/`src`
+redigidos, continham token de sessão). Um dos testes roda o regex antigo contra
+o markup real e afirma que ele acha zero linhas, para o bug não voltar
+silenciosamente.
+
+**Ainda não verificado:** se `no_ignored_command` marca também apoio recebido
+ou tropa própria retornando. Com o bot desligado não havia comando meu em voo
+para comparar, e as 8 aldeias sem ataque não têm linha nenhuma. Se marcar, o
+bot se declara "sob ataque" com tropa amiga chegando — vale conferir na próxima
+vez que houver apoio a caminho.
+
 ## Feature 17 — Relatório de império no webmanager ✅ Implementado (2026-08-05)
 
 Dashboard em `/empire` com: total de tropas por tipo agregado (todas as

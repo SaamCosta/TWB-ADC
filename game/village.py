@@ -1462,6 +1462,7 @@ class Village:
         incoming_state = {
             "eta_seconds": self.def_man.incoming_eta,
             "attacker": self.def_man.incoming_attacker,
+            "origin": self.def_man.incoming_origin,
             "command_id": self.def_man.incoming_command_id,
             "urgency_threshold_sec": self.def_man.urgency_threshold_sec,
             "urgent": self.def_man._is_urgent(self.def_man.incoming_eta) if self.def_man.under_attack else False,
