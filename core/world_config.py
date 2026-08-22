@@ -149,7 +149,7 @@ class WorldConfig:
         return speeds
 
     @staticmethod
-    def travel_seconds(unit_speeds, distance_fields, units):
+    def travel_seconds(unit_speeds, distance_fields, units, speed_bonus_pct=0):
         """
         Segundos de viagem para `units` percorrerem `distance_fields`.
 
@@ -157,6 +157,14 @@ class WorldConfig:
         carrega -- por isso o max() e não uma média. Só conta unidade com
         quantidade > 0: mandar `{"spear": 10, "sword": 0}` viaja a 18 min/campo,
         não a 22.
+
+        `speed_bonus_pct` é a aceleração de itens ativos no DESTINO (hoje só o
+        "Sinal da Aflição", ver Extractor.incoming_support_speed_bonus). A
+        conta é **duração / (1 + pct/100)**, medida contra o servidor em
+        2026-08-22: com +30%, uma viagem de 4.174 s virou 3.211 s no jogo, e
+        4.174/1,3 = 3.211. Não é `duração * (1 - pct/100)`, que daria 2.922 s.
+        A diferença entre as duas leituras é de 5 minutos numa viagem de uma
+        hora, e cresce com a distância.
 
         Devolve None quando não dá para saber (sem tabela de velocidade, sem
         distância, ou nenhuma unidade reconhecida). None é "não sei" e o
@@ -173,7 +181,14 @@ class WorldConfig:
         ]
         if not relevant:
             return None
-        return int(max(relevant) * distance_fields * 60)
+        seconds = max(relevant) * distance_fields * 60
+        try:
+            pct = float(speed_bonus_pct or 0)
+        except (TypeError, ValueError):
+            pct = 0
+        if pct > 0:
+            seconds /= 1 + pct / 100
+        return int(seconds)
 
     @staticmethod
     def _parse_night(xml_text):

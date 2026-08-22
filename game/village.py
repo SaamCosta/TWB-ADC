@@ -268,6 +268,7 @@ class Village:
         # Reads cache/managed/*.json written by set_cache_vars() each cycle.
         other_villages = {}
         other_villages_eta = {}
+        other_villages_bonus = {}
         for cache_file in FileManager.list_directory("cache/managed", ends_with=".json"):
             cached_vid = cache_file.replace(".json", "")
             if cached_vid == self.village_id:
@@ -283,8 +284,15 @@ class Village:
                 other_villages_eta[cached_vid] = (
                     cached.get("incoming_attack") or {}
                 ).get("eta_seconds")
+                # Aceleração do apoio que CHEGA naquela aldeia. Fica no cache
+                # dela porque é ela que lê o próprio widget de efeitos; quem
+                # usa o número é esta aldeia, ao estimar a viagem até lá.
+                other_villages_bonus[cached_vid] = cached.get(
+                    "support_speed_bonus_pct", 0
+                )
         self.def_man.my_other_villages = other_villages
         self.def_man.my_other_villages_eta = other_villages_eta
+        self.def_man.my_other_villages_support_bonus = other_villages_bonus
         if other_villages:
             self.logger.debug(
                 "DefenceManager: %d other villages loaded %s",
@@ -1523,6 +1531,10 @@ class Village:
             "troops": self.units.total_troops,
             "under_attack": self.def_man.under_attack,
             "incoming_attack": incoming_state,
+            # Aceleração do apoio que chega AQUI (item "Sinal da Aflição").
+            # Publicado para as outras aldeias: quem calcula a viagem é a
+            # doadora, e ela só descobre isto lendo o cache do destino.
+            "support_speed_bonus_pct": self.def_man.support_speed_bonus_pct,
             "last_run": int(time.time()),
             "zone": current_zone,
             "points": self.points,

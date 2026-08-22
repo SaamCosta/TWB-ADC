@@ -344,6 +344,56 @@ nem *para quem*. `support_factor` continua 25% fixo, independente do tamanho do
 ataque, e `support_max_villages` limita por doadora e não por alvo. Um ataque
 de quatro nobres e um de dez lanceiros puxam exatamente o mesmo apoio.
 
+### Item "Sinal da Aflição" no cálculo de viagem ✅ 2026-08-22
+
+O item acelera o apoio que **chega** na aldeia que o ativou. Sem lê-lo, o gate
+superestimava a viagem em 30% e recusava envios que chegariam a tempo — no dia
+em que apareceu, a BBM 007 (13 campos) tinha janela real até 09:32 e o bot
+achava que ela havia fechado às 08:26.
+
+**A fórmula foi medida, não deduzida do texto.** "30% mais rápido" comporta
+duas leituras, e elas divergem em 5 minutos numa viagem de uma hora:
+
+| leitura | conta | resultado |
+|---------|-------|-----------|
+| duração ÷ 1,3 | 4.174 / 1,3 | **3.211 s = 0:53:31** ✅ |
+| duração × 0,7 | 4.174 × 0,7 | 2.922 s = 0:48:41 ❌ |
+
+O jogo mostrou **0:53:31** para um envio real da BBM 009 (3,16228 campos,
+espada a 22 min/campo) — bate com ÷ 1,3 em 1 segundo. A leitura ingênua erra
+sempre para menos, ou seja, faria o bot achar que ainda dá tempo quando não dá.
+
+Duas propriedades do efeito, do texto do jogo, que definem o desenho: vale no
+momento do **envio** ("sem efeito em apoio já enviado"), o que permite tratá-lo
+como fator no cálculo em vez de rastrear comandos em voo; e fica no **destino**,
+não na doadora — por isso o valor trafega por `cache/managed/<destino>.json`
+até quem envia, no mesmo caminho do `incoming_attack.eta_seconds`.
+
+**O percentual é lido, nunca assumido:** o item existe em mais de uma potência
+na conta. `EFFECT_PERCENT_RE` extrai de `<b>+NN%</b>` e rejeita fora de 0–100.
+A âncora é o nome do ícone, `benefit_incoming_support_speed`, que é
+**independente de idioma** — o nome visível muda por mercado.
+
+**Armadilha do markup, medida em vez de suposta.** O `title` da célula carrega
+HTML literal, então contém `>`. Eu afirmei no teste que por isso um regex com
+`<td[^>]*>` "não casaria" a célula; rodei e era falso. O que acontece de fato:
+a tag de abertura é **truncada** no `>` do `<h3>` de dentro do atributo, e por
+isso extrair `title="..."` da tag casada falha — mas a forma em bloco
+`<td …>(.*?)</td>` se recupera, porque o `(.*?)` atravessa. Os três fatos estão
+fixados em teste para ninguém "simplificar" na direção que quebra.
+
+Smoke contra o servidor depois dos testes: quatro aldeias lidas, a BBM 008
+devolve 30 e as outras 0 — inclusive a BBM 006, que tem **seis** células de
+efeito ativas e mesmo assim não confunde o parser.
+
+Arquivos: `core/extractors.py` (`incoming_support_speed_bonus`,
+`EFFECT_CELL_RE`, `EFFECT_PERCENT_RE`), `core/world_config.py`
+(`travel_seconds` com `speed_bonus_pct`), `game/defence_manager.py`
+(`support_speed_bonus_pct`, `my_other_villages_support_bonus`),
+`game/village.py` (publica no cache, lê o das outras), `twb.py`
+(`defense_bonus`). Cobertura em `tests/test_support_speed_bonus.py`.
+Sem config nova: o dado vem do jogo.
+
 ## Feature 17 — Relatório de império no webmanager ✅ Implementado (2026-08-05)
 
 Dashboard em `/empire` com: total de tropas por tipo agregado (todas as

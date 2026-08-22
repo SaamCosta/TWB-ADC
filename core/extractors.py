@@ -24,6 +24,28 @@ INCOMING_ROW_RE = re.compile(
     r'<tr[^>]*class="[^"]*\bno_ignored_command\b[^"]*"[^>]*>(.*?)</tr>', re.S
 )
 
+# Efeitos ativos da aldeia, no widget "Efeitos ativos" da visao geral.
+#
+# ⚠️ O atributo `title` desta celula carrega HTML literal (`<h3>`, `<i>`,
+# `<b>`, `<ul>`), entao ele contem `>`. Consequencia medida no br143 em
+# 2026-08-22 (ver tests/test_support_speed_bonus.py, que fixa os tres fatos):
+# `<td[^>]*>` TRUNCA a tag de abertura no `>` do `<h3>` de dentro do title, e
+# por isso extrair `title="..."` da tag casada falha. A forma em bloco abaixo
+# nao sofre disso porque o `(.*?)` atravessa o resto do atributo -- ancora na
+# classe, fim no `</td>`. Nao trocar por um regex que escope no atributo.
+EFFECT_CELL_RE = re.compile(
+    r'<td\s+class="[^"]*village_overview_effect[^"]*"(.*?)</td>', re.S
+)
+# "+30%" dentro do <li> de expiracao. O percentual e lido, nunca assumido:
+# o item existe em mais de uma potencia (o jogador tem um de 30% e outro de
+# valor diferente), e chumbar 30 daria numero errado no dia em que o outro
+# for usado.
+EFFECT_PERCENT_RE = re.compile(r"<b>\s*\+?(\d+)\s*%\s*</b>")
+# Nome do icone servido pelo jogo. Serve de chave INDEPENDENTE DE IDIOMA --
+# o nome visivel ("Sinal da Aflicao" em pt-BR) muda por mercado, o arquivo do
+# icone nao.
+INCOMING_SUPPORT_SPEED_ICON = "benefit_incoming_support_speed"
+
 
 class Extractor:
     """
@@ -540,6 +562,55 @@ class Extractor:
                 "attacker": attacker_match.group(1).strip() if attacker_match else None,
             })
         return commands
+
+    @staticmethod
+    def incoming_support_speed_bonus(res):
+        """
+        Percentual de aceleracao do apoio que CHEGA nesta aldeia, do item
+        "Sinal da Aflicao" (icone benefit_incoming_support_speed). Zero quando
+        o efeito nao esta ativo.
+
+        Medido no br143 em 2026-08-22, com o item ativo na BBM 008 e um envio
+        real da BBM 009 (3,16 campos, espada a 22 min/campo):
+
+            sem bonus   3,16227 x 22 x 60 = 4.174 s = 1:09:34
+            o jogo deu                              = 0:53:31
+            4.174 / 1,3                   = 3.211 s = 0:53:30   <-- bate
+
+        Ou seja, **"30% mais rapido" e duracao / 1,3**, e nao duracao x 0,7
+        (que daria 0:48:41, cinco minutos a menos). A leitura ingenua erra
+        para menos e o erro cresce com a distancia. Ver
+        WorldConfig.travel_seconds para onde o numero e aplicado.
+
+        Duas propriedades do efeito, do texto do proprio jogo:
+          - vale no momento do ENVIO ("sem efeito em apoio ja enviado"), o que
+            e o que permite trata-lo como um fator no calculo de viagem;
+          - fica na aldeia de DESTINO, nao na doadora -- por isso o valor
+            trafega por cache/managed e nao pelo estado local de quem envia.
+
+        Devolve int (0..100). Zero tanto para "sem efeito" quanto para
+        "markup nao reconhecido": aqui as duas coisas levam a mesma acao
+        correta (usar a viagem sem bonus), que e a estimativa conservadora --
+        o bot manda mais cedo do que precisaria, nunca mais tarde.
+        """
+        if type(res) != str:
+            res = res.text
+        try:
+            cells = EFFECT_CELL_RE.findall(res)
+        except Exception:
+            return 0
+        for block in cells:
+            if INCOMING_SUPPORT_SPEED_ICON not in block:
+                continue
+            match = EFFECT_PERCENT_RE.search(block)
+            if not match:
+                continue
+            pct = int(match.group(1))
+            # Sanidade: um bonus fora de 0-100 e leitura errada, nao um item
+            # milagroso. Melhor ignorar do que dividir a viagem por 6.
+            if 0 < pct <= 100:
+                return pct
+        return 0
 
     @staticmethod
     def get_daily_reward(res):

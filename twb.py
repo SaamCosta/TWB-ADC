@@ -673,6 +673,10 @@ class TWB:
                 # as doadoras só sabem "está sob ataque", não "chega quando" --
                 # e mandavam 25% da defesa por um fake de dias de viagem.
                 defense_etas = {}
+                # {village_id: percentual} do "Sinal da Aflicao" ativo em cada
+                # aldeia -- acelera o apoio que CHEGA nela, entao quem precisa
+                # do numero e a doadora, na hora de estimar a viagem.
+                defense_bonus = {}
 
                 for village in processing_order:
                     if village.village_id not in self.found_villages:
@@ -731,6 +735,12 @@ class TWB:
                             if village.def_man.allow_support_recv
                             else None
                         )
+                        # Independe de allow_support_recv: e um fato sobre a
+                        # aldeia, nao uma preferencia. Quem decide se manda e
+                        # o gate; isto so diz quanto tempo a viagem leva.
+                        defense_bonus[village.village_id] = (
+                            village.def_man.support_speed_bonus_pct
+                        )
 
                 if len(defense_states) and config["farms"]["farm"]:
                     print("Syncing attack states")
@@ -744,6 +754,7 @@ class TWB:
                             continue
                         village.def_man.my_other_villages = defense_states
                         village.def_man.my_other_villages_eta = defense_etas
+                        village.def_man.my_other_villages_support_bonus = defense_bonus
 
                 # Feature 11: rebuild geographic zones from managed village cache
                 ZoneManager.build_from_cache(config)

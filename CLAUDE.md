@@ -66,7 +66,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   contra o markup real e exige zero casamentos, para o bug não voltar calado)
   e o gate de urgência do apoio (`DefenceManager.support_timing`,
   `WorldConfig.travel_seconds`, com as velocidades de quatro mundos que provam
-  que `get_unit_info` já publica min/campo **efetivo**).
+  que `get_unit_info` já publica min/campo **efetivo**) e o bônus do "Sinal da
+  Aflição" (`Extractor.incoming_support_speed_bonus`, com a fórmula
+  `duração / 1,3` medida contra um envio real em vez de deduzida do texto).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -517,6 +519,26 @@ puxa o fio.**
   aldeia em 2026-08-21), não por parecer razoável. **Limiar de tempo em sistema
   que roda em ciclos precisa ser comparado com o período do ciclo** — senão a
   condição é logicamente correta e nunca observada.
+- ⚠️ **Décimo nono padrão, achado em 2026-08-22: percentual escrito em
+  português não define uma conta.** O item "Sinal da Aflição" diz *"apoio irá
+  percorrer 30% mais rápido"*. Isso comporta duas leituras — `duração / 1,3` e
+  `duração × 0,7` — que diferem em **5 minutos numa viagem de uma hora**, e a
+  ingênua erra sempre para menos (o bot acharia que ainda dá tempo quando não
+  dá). Só a medição decide: o jogo mostrou `0:53:31` para um envio real, e
+  `4.174/1,3 = 3.211 s` bate em 1 segundo enquanto `×0,7` dá `0:48:41`.
+  A regra: **texto de item/bônus descreve o efeito, não a fórmula.** Ao
+  consumir qualquer "+N%" do jogo, montar as duas ou três leituras plausíveis,
+  ver de quanto elas divergem, e medir uma instância real antes de escolher —
+  a tela de confirmação da praça de reunião entrega o número de graça, sem
+  enviar nada. Se as leituras divergem pouco no seu caso de teste, procurar um
+  caso onde divirjam muito (mesmo raciocínio do décimo sétimo padrão).
+  Corolário sobre asserção inventada, cometido na mesma sessão: escrevi um
+  teste afirmando que um regex ingênuo "não casaria" o markup, por causa de um
+  `>` dentro do atributo. Rodei: ele casa. O `[^>]*` de fato trunca a tag de
+  abertura, mas a forma em bloco `(.*?)</td>` se recupera. **Armadilha
+  plausível também precisa ser medida antes de virar comentário no código** —
+  eu já tinha escrito a justificativa errada em `extractors.py`, e foi o teste
+  que me pegou.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

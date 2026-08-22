@@ -82,6 +82,10 @@ class DefenceManager:
     # Village.setup_defence_manager. None = tabela indisponível (rede fora no
     # primeiro ciclo), e aí o tempo de viagem é desconhecido.
     unit_speeds = None
+    # Aceleração do apoio que chega NESTA aldeia (item "Sinal da Aflição"),
+    # lida da própria visão geral. Só existe para ser publicada no cache e
+    # lida pelas doadoras -- quem usa é o cálculo de viagem DELAS.
+    support_speed_bonus_pct = 0
 
     _can_change_flag = False
     # True once manage_flags() has confirmed the real flag state from the
@@ -119,6 +123,9 @@ class DefenceManager:
         # por instância (não atributo de classe) pelo primeiro padrão do
         # CLAUDE.md: mutável no corpo da classe é compartilhado entre aldeias.
         self.my_other_villages_eta = {}
+        # {village_id: percentual} de aceleração do apoio que chega naquela
+        # aldeia (item "Sinal da Aflição"). Mesmo motivo para estar aqui.
+        self.my_other_villages_support_bonus = {}
 
     def _planned_support(self):
         """
@@ -142,6 +149,11 @@ class DefenceManager:
         Segundos que o apoio desta aldeia levaria até `vid`, ou None quando não
         dá para saber (sem mapa, sem posição do destino, sem tabela de
         velocidades, ou sem tropa para mandar).
+
+        O bônus de velocidade é do DESTINO, não desta aldeia: o "Sinal da
+        Aflição" acelera o apoio que chega em quem o ativou. Por isso ele vem
+        de my_other_villages_support_bonus, alimentado pelo cache da outra
+        aldeia, e não de um atributo local.
         """
         if not self.map or vid not in getattr(self.map, "map_pos", {}):
             return None
@@ -150,7 +162,10 @@ class DefenceManager:
         except Exception:
             return None
         return WorldConfig.travel_seconds(
-            self.unit_speeds, distance, troops if troops is not None else self._planned_support()
+            self.unit_speeds,
+            distance,
+            troops if troops is not None else self._planned_support(),
+            speed_bonus_pct=self.my_other_villages_support_bonus.get(vid, 0),
         )
 
     def support_timing(self, vid):
@@ -209,6 +224,17 @@ class DefenceManager:
         ok = True
         self.manage_flags()
         self.runs += 1
+        # Lido em todo ciclo, com ou sem ataque: o item pode ser ativado a
+        # qualquer momento, e quem consome o valor sao as OUTRAS aldeias, via
+        # cache/managed. Zero quando nao ha efeito ativo.
+        previous_bonus = self.support_speed_bonus_pct
+        self.support_speed_bonus_pct = Extractor.incoming_support_speed_bonus(main)
+        if self.support_speed_bonus_pct != previous_bonus:
+            self.logger.info(
+                "Village %s: bonus de velocidade do apoio recebido agora e %d%% "
+                "(era %d%%)",
+                self.village_id, self.support_speed_bonus_pct, previous_bonus,
+            )
         if 'no_ignored_command' in main:
             self._parse_incoming_urgency(main)
             urgent = self._is_urgent(self.incoming_eta)
