@@ -264,6 +264,42 @@ class TWB:
         new_config["villages"] = villages
         return new_config
 
+    @staticmethod
+    def purge_refusal_reason(found_villages, config_villages):
+        """
+        Motivo para NAO deixar a limpeza de aldeias perdidas rodar, ou None
+        quando ela pode rodar.
+
+        Existe porque a limpeza e destrutiva e irreversivel no config, e seu
+        unico insumo e um parse que devolve lista vazia em silencio quando a
+        pagina nao e a esperada. Ver o incidente de 2026-08-22 em
+        docs/backlog.md.
+
+        Duas recusas, ambas baseadas no mesmo fato do jogo: uma conta ativa
+        sempre tem pelo menos uma aldeia, senao o jogador foi eliminado e nao
+        ha bot para rodar.
+        """
+        config_villages = config_villages or {}
+        if not config_villages:
+            # Config sem aldeia nenhuma: nao ha o que limpar, e o caminho de
+            # add_new_villages cuida do resto.
+            return None
+        if not found_villages:
+            return (
+                "a tela de visao geral nao devolveu NENHUMA aldeia, mas o "
+                f"config tem {len(config_villages)}. Isso e falha de leitura "
+                "(sessao expirada? bot protection? markup novo?), nao perda "
+                "de aldeias"
+            )
+        if not set(config_villages) & set(found_villages):
+            # Leu aldeias, mas nenhuma delas e conhecida. Ids de aldeia nao
+            # mudam, entao isto e leitura de outra conta/tela, nao perda.
+            return (
+                f"a visao geral devolveu {len(found_villages)} aldeia(s), mas "
+                f"nenhuma coincide com as {len(config_villages)} do config"
+            )
+        return None
+
     def get_overview(self, config):
         """
         Gets the overview page to automatically detect world options and owned villages.
@@ -277,6 +313,35 @@ class TWB:
             return None, config
 
         self.found_villages = Extractor.village_ids_from_overview(overview_page.result_get.text)
+
+        # ---------------------------------------------------------------
+        # Guarda contra a limpeza destrutiva abaixo (2026-08-22).
+        #
+        # `village_ids_from_overview` devolve [] quando o regex nao casa, e
+        # isso acontece numa resposta 200 que simplesmente nao e a tela
+        # esperada: sessao expirada caindo na landing page do portal, bot
+        # protection, ou markup novo. `OverviewPage` nao levanta RuntimeError
+        # nesse caso, porque do ponto de vista dele o HTTP deu certo.
+        #
+        # Sem esta guarda, lista vazia significa "voce nao tem aldeia
+        # nenhuma", e as duas limpezas abaixo apagam TODO o cache/managed e
+        # TODAS as aldeias do config.json. Aconteceu em campo as 08:26 de
+        # 2026-08-22: as 11 aldeias foram removidas do config numa unica
+        # passada, com a sessao invalida ("Current session cache not valid")
+        # e um 200 vindo do portal. So nao foi perda definitiva porque a
+        # copia config.bak da linha seguinte foi feita antes.
+        #
+        # Uma conta nunca tem zero aldeias: se voce perdeu a ultima, o jogo
+        # te elimina e nao ha bot para rodar. Entao lista vazia com aldeias
+        # conhecidas no config e SEMPRE falha de leitura, nunca um fato.
+        refusal = self.purge_refusal_reason(self.found_villages, config.get("villages"))
+        if refusal:
+            logging.error(
+                "get_overview: %s -- pulando a limpeza e o ciclo para nao "
+                "apagar o config. Confira o login.", refusal
+            )
+            return None, config
+        # ---------------------------------------------------------------
 
         # Remove stale entries for villages no longer owned by the player.
         # Cleans both cache/managed/ and config["villages"] so the UI stays accurate.

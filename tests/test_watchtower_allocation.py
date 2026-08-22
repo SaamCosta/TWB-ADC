@@ -26,6 +26,45 @@ from game.village import Village
 
 BBM002_X, BBM002_Y = 578, 305
 
+# --------------------------------------------------------------------------
+# Isolamento do estado de jogo (acrescentado em 2026-08-22).
+#
+# Estes testes se diziam puros e nao eram: `needs_watchtower` chama
+# `get_watchtower_sites`, que le a COORDENADA da aldeia de torre em
+# cache/managed/<vid>.json -- o config.json so guarda o perfil. Os tres testes
+# de espacamento passavam apenas porque cache/managed/38409.json existia na
+# maquina com 578|305 dentro.
+#
+# Isso apareceu do pior jeito possivel: em 2026-08-22 o bot apagou
+# cache/managed inteiro num incidente (ver tests/test_village_purge_guard.py),
+# e tres testes que nada tinham a ver com aquilo passaram a falhar. Um teste
+# que depende de estado de runtime nao mede o que diz medir, e quando quebra
+# aponta para o lugar errado.
+#
+# O stub abaixo devolve a coordenada da BBM 002 sem tocar no disco.
+import game.village as _village_mod
+
+_MANAGED_FIXTURE = {
+    "cache/managed/38409.json": {"x": BBM002_X, "y": BBM002_Y, "name": "BBM 002"},
+}
+
+_REAL_FILEMANAGER = _village_mod.FileManager
+
+
+class _StubFileManager:
+    """Só intercepta load_json_file; o resto delega para o FileManager real
+    (capturado ANTES da troca -- delegar para o modulo daria recursao)."""
+
+    @staticmethod
+    def load_json_file(path, *a, **kw):
+        return _MANAGED_FIXTURE.get(path)
+
+    def __getattr__(self, name):
+        return getattr(_REAL_FILEMANAGER, name)
+
+
+_village_mod.FileManager = _StubFileManager()
+
 
 def _cfg(perfis, off=1, dfn=3, **watchtower):
     """Config minima: uma aldeia por perfil da lista."""
