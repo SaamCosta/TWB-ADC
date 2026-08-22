@@ -60,14 +60,18 @@ class WorldConfig:
         return f"cache/world/config_{server}.json"
 
     @staticmethod
-    def _fetch(endpoint):
+    def _units_cache_path(server):
+        return f"cache/world/units_{server}.json"
+
+    @staticmethod
+    def _fetch(endpoint, func="get_config"):
         """
-        Fetches the raw world config XML. `endpoint` is the configured
-        game.php URL (config["server"]["endpoint"]) -- the interface.php
-        endpoint lives at the same host, one level up.
+        Fetches raw XML from the public interface.php. `endpoint` is the
+        configured game.php URL (config["server"]["endpoint"]) -- interface.php
+        lives at the same host, one level up. No authentication required.
         """
         base = endpoint.split("/game.php")[0].rstrip("/")
-        url = f"{base}/interface.php?func=get_config"
+        url = f"{base}/interface.php?func={func}"
         try:
             res = requests.get(url, timeout=(10, 20))
             if res.status_code != 200:
@@ -77,6 +81,99 @@ class WorldConfig:
         except Exception as e:
             logger.warning("Failed to fetch %s: %s", url, e)
             return None
+
+    @staticmethod
+    def _parse_unit_speeds(xml_text):
+        """
+        Minutos por campo de cada unidade, de interface.php?func=get_unit_info.
+
+        ⚠️ O valor publicado **já é o efetivo do mundo** -- a velocidade do
+        mundo e o modificador de unidade já estão embutidos. Não dividir de
+        novo por <speed>/<unit_speed> do get_config, ou o tempo de viagem sai
+        pela metade (ou pelo dobro).
+
+        Medido em 2026-08-22 comparando quatro mundos br, que é o único jeito
+        de ver isso -- num mundo de velocidade 1 as duas leituras coincidem e
+        o erro fica invisível:
+
+            mundo   speed  unit_speed  lanceiro publicado   18/(speed*us)
+            br143   1      1           18                   18
+            br132   2      0.5         18                   18
+            br139   1.4    0.75        17.142857...         17.142857...
+            brc1    4      1           4.5                  4.5
+
+        Devolve {} quando o markup não casa -- o consumidor deve tratar isso
+        como "não sei o tempo de viagem", não como "viagem instantânea".
+        """
+        speeds = {}
+        if not xml_text:
+            return speeds
+        body = re.search(r"<config>(.*)</config>", xml_text, re.S)
+        if not body:
+            return speeds
+        for unit, block in re.findall(r"<(\w+)>(.*?)</\1>", body.group(1), re.S):
+            match = re.search(r"<speed>\s*([\d.]+)\s*</speed>", block)
+            if not match:
+                continue
+            try:
+                speeds[unit] = float(match.group(1))
+            except ValueError:
+                continue
+        return speeds
+
+    @classmethod
+    def unit_speeds(cls, server, endpoint, force_refresh=False):
+        """
+        {unidade: minutos por campo}, em cache igual ao world config.
+
+        Cache vazio/ausente e rede fora devolvem {}, e não um palpite: quem
+        calcula tempo de viagem precisa distinguir "não sei" de um número.
+        """
+        if not server or not endpoint:
+            return {}
+        cache_path = cls._units_cache_path(server)
+        if not force_refresh:
+            cached = FileManager.load_json_file(cache_path)
+            if cached and (time.time() - cached.get("_fetched_at", 0)) < CACHE_TTL:
+                return cached.get("speeds") or {}
+
+        speeds = cls._parse_unit_speeds(cls._fetch(endpoint, func="get_unit_info"))
+        if not speeds:
+            cached = FileManager.load_json_file(cache_path)
+            return (cached or {}).get("speeds") or {}
+
+        FileManager.create_directory(FileManager.get_path("cache/world"))
+        FileManager.save_json_file(
+            {"speeds": speeds, "_fetched_at": int(time.time())}, cache_path
+        )
+        return speeds
+
+    @staticmethod
+    def travel_seconds(unit_speeds, distance_fields, units):
+        """
+        Segundos de viagem para `units` percorrerem `distance_fields`.
+
+        O comando inteiro anda na velocidade da unidade **mais lenta** que ele
+        carrega -- por isso o max() e não uma média. Só conta unidade com
+        quantidade > 0: mandar `{"spear": 10, "sword": 0}` viaja a 18 min/campo,
+        não a 22.
+
+        Devolve None quando não dá para saber (sem tabela de velocidade, sem
+        distância, ou nenhuma unidade reconhecida). None é "não sei" e o
+        chamador tem que tratar como tal -- devolver 0 aqui faria o comando
+        parecer instantâneo, que é o erro do Extractor.attack_duration()
+        documentado no CLAUDE.md.
+        """
+        if not unit_speeds or not distance_fields or distance_fields <= 0:
+            return None
+        relevant = [
+            unit_speeds[u]
+            for u, amount in (units or {}).items()
+            if u in unit_speeds and amount and int(amount) > 0 and unit_speeds[u] > 0
+        ]
+        if not relevant:
+            return None
+        return int(max(relevant) * distance_fields * 60)
 
     @staticmethod
     def _parse_night(xml_text):

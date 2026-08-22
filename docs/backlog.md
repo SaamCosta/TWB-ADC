@@ -269,6 +269,81 @@ para comparar, e as 8 aldeias sem ataque não têm linha nenhuma. Se marcar, o
 bot se declara "sob ataque" com tropa amiga chegando — vale conferir na próxima
 vez que houver apoio a caminho.
 
+### Gate de urgência no apoio e na evacuação de zona ✅ 2026-08-22
+
+Consequência direta do conserto acima: com o ETA finalmente legível, as duas
+reações que **não** consultavam o relógio passaram a consultar. Antes, o único
+sinal que atravessava o sistema era o booleano `under_attack`, e as duas
+disparavam no instante em que o comando aparecia na tela — para um fake com
+100h de viagem, quatro aldeias esvaziavam 25% da defesa por quatro dias e as
+vizinhas de zona despachavam nobre e bárbaro pelo mesmo período.
+
+**O limiar da evacuação não serve para o apoio, e reusá-lo teria sido pior que
+não fazer nada.** Esconder tropa é instantâneo e quanto mais tarde melhor —
+daí os 30 min de `evacuate_urgency_threshold_sec`. Apoio precisa *chegar* antes
+do impacto e ele mesmo leva horas viajando: despachado 30 min antes de um
+ataque que está a 3h40 de viagem, pousa 3h depois da batalha. A regra correta
+depende do tempo de viagem, então o gate calcula:
+
+    envia quando   viagem < ETA <= viagem + support_lead_time_sec
+
+Isso fecha os dois lados de uma vez: cedo demais (o fake) e tarde demais (o
+apoio que não chega — desperdício que existia antes e ninguém tinha notado).
+
+`support_lead_time_sec` tem default **7200 (2h)** e a razão é a largura da
+janela, não a antecedência: a janela mede `lead` segundos, e se ela for menor
+que o intervalo entre dois ciclos da mesma aldeia o bot passa por cima e nunca
+envia. Nos logs de 2026-08-21 a mesma aldeia levou **1h39** para voltar a
+rodar. Baixar esse valor para "economizar" reintroduz o bug em silêncio.
+
+**Tempo de viagem veio do servidor, e a medição corrigiu uma suposição.** As
+velocidades saem de `interface.php?func=get_unit_info` (público, sem auth),
+cacheadas em `cache/world/units_{server}.json` por `WorldConfig.unit_speeds()`.
+O valor publicado **já é o efetivo do mundo** — velocidade do mundo e
+modificador de unidade embutidos. Num mundo de velocidade 1 como o br143 isso é
+invisível, então comparei quatro mundos:
+
+| mundo | `speed` | `unit_speed` | lanceiro publicado | `18/(speed*us)` |
+|-------|---------|--------------|--------------------|-----------------|
+| br143 | 1       | 1            | 18                 | 18              |
+| br132 | 2       | 0.5          | 18                 | 18              |
+| br139 | 1.4     | 0.75         | 17.142857…         | 17.142857…      |
+| brc1  | 4       | 1            | 4.5                | 4.5             |
+
+Dividir de novo por `speed * unit_speed` teria cortado o tempo de viagem pela
+metade no br132 e por 4 no brc1 — e no br143 nada apareceria. Não dividir é o
+certo, e o br139 é o mundo que separa as hipóteses.
+
+`travel_seconds()` usa a unidade **mais lenta** com quantidade > 0 (o comando
+anda na velocidade dela) e devolve `None`, nunca 0, quando não sabe — pelo
+motivo registrado no CLAUDE.md sobre `attack_duration()` devolver 0 e fazer o
+nobre nascer já pousado.
+
+**Direção da degradação:** ETA desconhecido, mapa ausente ou tabela de
+velocidades vazia → **envia**, que é o comportamento anterior ao gate. Deixar
+uma aldeia real sem defesa por causa de um parse que falhou é pior que mandar
+apoio a mais; mesma direção do `_is_urgent(None) = True`.
+
+Evacuação de zona ganhou `zone_attack_eta_window_sec` (default 14400 = 4h): um
+vizinho só conta como "sob ataque" se o ataque dele chegar dentro da janela.
+Janela mais larga que a do apoio de propósito — a evacuação preventiva existe
+para agir *antes* de você ser o alvo, então 30 min não faria sentido.
+
+Arquivos: `core/world_config.py` (`unit_speeds`, `_parse_unit_speeds`,
+`travel_seconds`), `game/defence_manager.py` (`support_timing`,
+`support_travel_seconds`, `_planned_support`, `my_other_villages_eta`),
+`game/village.py` (ETA vindo do cache + janela da zona), `twb.py`
+(`defense_etas` espelhando `defense_states`). Config nova em
+`village_template`: `support_lead_time_sec`, `zone_attack_eta_window_sec`;
+`build.version` 3.7 → 3.8 **só no `config.example.json`**, que é o que faz o
+merge rodar. Conferido antes: o merge não descartaria nenhuma chave de topo do
+`config.json` vivo. Cobertura em `tests/test_support_urgency_gate.py`.
+
+**Não coberto ainda (a discutir):** o gate decide *quando* enviar, não *quanto*
+nem *para quem*. `support_factor` continua 25% fixo, independente do tamanho do
+ataque, e `support_max_villages` limita por doadora e não por alvo. Um ataque
+de quatro nobres e um de dez lanceiros puxam exatamente o mesmo apoio.
+
 ## Feature 17 — Relatório de império no webmanager ✅ Implementado (2026-08-05)
 
 Dashboard em `/empire` com: total de tropas por tipo agregado (todas as

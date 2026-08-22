@@ -252,10 +252,22 @@ class Village:
         self.def_man.urgency_threshold_sec = self.get_village_config(
             self.village_id, parameter="evacuate_urgency_threshold_sec", default=1800
         )
+        # Janela de envio de apoio, somada ao tempo de viagem (ver
+        # DefenceManager.support_timing).
+        self.def_man.support_lead_time_sec = self.get_village_config(
+            self.village_id, parameter="support_lead_time_sec", default=7200
+        )
+        # Tabela de min/campo do mundo, para estimar quanto tempo o apoio leva.
+        # Sem ela support_timing() não consegue decidir e cai no envio.
+        self.def_man.unit_speeds = WorldConfig.unit_speeds(
+            self.get_config(section="server", parameter="server", default=None),
+            self.get_config(section="server", parameter="endpoint", default=None),
+        )
 
         # Populate other villages state so support/evacuation logic can execute.
         # Reads cache/managed/*.json written by set_cache_vars() each cycle.
         other_villages = {}
+        other_villages_eta = {}
         for cache_file in FileManager.list_directory("cache/managed", ends_with=".json"):
             cached_vid = cache_file.replace(".json", "")
             if cached_vid == self.village_id:
@@ -265,7 +277,14 @@ class Village:
             cached = FileManager.load_json_file(f"cache/managed/{cache_file}")
             if cached:
                 other_villages[cached_vid] = cached.get("under_attack", False)
+                # ETA do comando mais próximo daquela aldeia, gravado por
+                # set_cache_vars(). None = sob ataque mas sem ETA legível, que
+                # support_timing() trata como "envia".
+                other_villages_eta[cached_vid] = (
+                    cached.get("incoming_attack") or {}
+                ).get("eta_seconds")
         self.def_man.my_other_villages = other_villages
+        self.def_man.my_other_villages_eta = other_villages_eta
         if other_villages:
             self.logger.debug(
                 "DefenceManager: %d other villages loaded %s",
@@ -348,10 +367,25 @@ class Village:
             if cached:
                 managed_cache[nid] = cached
 
-        neighbors_under_attack = sum(
-            1 for nid in neighbors
-            if managed_cache.get(nid, {}).get("under_attack", False)
+        # Gate de urgência (2026-08-22): só conta vizinho cujo ataque está
+        # dentro da janela. Antes bastava `under_attack`, e um fake com dias de
+        # viagem numa aldeia vizinha mandava esta aqui despachar nobre e
+        # bárbaro imediatamente -- por dias. ETA None (sob ataque, mas sem ETA
+        # legível) continua contando: mesma direção do _is_urgent(None).
+        eta_window = self.get_village_config(
+            self.village_id, "zone_attack_eta_window_sec", default=14400
         )
+        neighbors_under_attack = 0
+        ignored_by_eta = 0
+        for nid in neighbors:
+            cached = managed_cache.get(nid, {})
+            if not cached.get("under_attack", False):
+                continue
+            eta = (cached.get("incoming_attack") or {}).get("eta_seconds")
+            if eta is not None and eta > eta_window:
+                ignored_by_eta += 1
+                continue
+            neighbors_under_attack += 1
 
         threshold = self.get_village_config(
             self.village_id, "zone_attack_threshold", default=1
@@ -359,8 +393,10 @@ class Village:
 
         if neighbors_under_attack < threshold:
             self.logger.debug(
-                "Feature 12: %d/%d vizinhos sob ataque (threshold=%d) — sem evacuação",
-                neighbors_under_attack, len(neighbors), threshold
+                "Feature 12: %d/%d vizinhos sob ataque dentro da janela de %ds "
+                "(threshold=%d, %d fora da janela) — sem evacuação",
+                neighbors_under_attack, len(neighbors), eta_window,
+                threshold, ignored_by_eta
             )
             return
 

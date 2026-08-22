@@ -140,6 +140,8 @@ help_file = {
     'village.evacuate_on_zone_attack': 'Trigger preemptive evacuation of fragile units (axe, noble) when zone neighbors are under attack — requires evacuate_fragile_units_on_attack: true (Feature 12)',
     'village.zone_attack_threshold': 'Minimum number of zone neighbors that must be under attack simultaneously to trigger preemptive evacuation (Feature 12)',
     'village.evacuate_urgency_threshold_sec': 'Only actually evacuate when the soonest incoming command is within this many seconds of arriving (default 1800 = 30 min) — farther-out commands just keep the defence flag active (Feature 16)',
+    'village.zone_attack_eta_window_sec': 'Só conta um vizinho de zona como "sob ataque" para a evacuação preventiva se o ataque dele chegar dentro deste prazo (padrão 14400 = 4h). Sem isso, um fake com dias de viagem numa vizinha fazia esta aldeia despachar nobre e bárbaro por dias (Feature 12)',
+    'village.support_lead_time_sec': 'Antecedência máxima para enviar apoio, somada ao tempo de viagem: o apoio sai quando viagem < ETA <= viagem + este valor (padrão 7200 = 2h). Não reutiliza evacuate_urgency_threshold_sec porque apoio precisa CHEGAR antes do impacto e ele mesmo leva horas viajando. Mantenha maior que o intervalo entre dois ciclos da mesma aldeia, senão o bot pula a janela',
     'hunter': 'Agendamento de ataques coordenados com chegada simultânea (Feature 10) — gerencie pela página /hunter',
     'hunter.enabled': 'Ativar o Hunter — quando true, o bot verifica e dispara os schedules a cada ciclo',
     'zones': 'Agrupamento geográfico de aldeias em zonas por proximidade (Feature 11)',

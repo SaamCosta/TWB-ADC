@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.7",
+    "version": "3.8",
     "author": "stefan2200"
   },
   "server": {
@@ -109,9 +109,11 @@
     "evacuate_on_zone_attack": false,
     "zone_attack_threshold": 1,
     "evacuate_urgency_threshold_sec": 1800,
+    "zone_attack_eta_window_sec": 14400,
     "support_others": false,
     "support_others_factor": 0.25,
     "support_others_max_villages": 2,
+    "support_lead_time_sec": 7200,
     "request_support_on_attack": false
   },
   "conquest": {

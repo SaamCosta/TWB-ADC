@@ -603,6 +603,11 @@ class TWB:
                 # removidas do config), que seguiam sendo anunciadas como
                 # "sob ataque" para as demais aldeias para sempre (P2-20).
                 defense_states = {}
+                # ETA (segundos) do comando mais próximo de cada aldeia, para o
+                # gate de urgência do suporte. Espelha defense_states: sem ele
+                # as doadoras só sabem "está sob ataque", não "chega quando" --
+                # e mandavam 25% da defesa por um fake de dias de viagem.
+                defense_etas = {}
 
                 for village in processing_order:
                     if village.village_id not in self.found_villages:
@@ -656,6 +661,11 @@ class TWB:
                             if village.def_man.allow_support_recv
                             else False
                         )
+                        defense_etas[village.village_id] = (
+                            village.def_man.incoming_eta
+                            if village.def_man.allow_support_recv
+                            else None
+                        )
 
                 if len(defense_states) and config["farms"]["farm"]:
                     print("Syncing attack states")
@@ -668,6 +678,7 @@ class TWB:
                         if not village.def_man:
                             continue
                         village.def_man.my_other_villages = defense_states
+                        village.def_man.my_other_villages_eta = defense_etas
 
                 # Feature 11: rebuild geographic zones from managed village cache
                 ZoneManager.build_from_cache(config)

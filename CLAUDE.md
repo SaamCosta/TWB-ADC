@@ -63,7 +63,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   (`tests/test_builder_templates.py`) e a leitura dos comandos recebidos na
   visão geral (`Extractor.incoming_commands`, recorte verbatim de um trem de
   nobres real em 2026-08-22 — inclui um teste que roda o regex **antigo**
-  contra o markup real e exige zero casamentos, para o bug não voltar calado).
+  contra o markup real e exige zero casamentos, para o bug não voltar calado)
+  e o gate de urgência do apoio (`DefenceManager.support_timing`,
+  `WorldConfig.travel_seconds`, com as velocidades de quatro mundos que provam
+  que `get_unit_info` já publica min/campo **efetivo**).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -476,6 +479,44 @@ puxa o fio.**
   instrução no mesmo passo**, senão o próximo a ler cai igual. O mesmo vale
   para o oitavo padrão desta lista, que existe porque uma lição verdadeira
   estava escrita num arquivo que ninguém lê.
+- ⚠️ **Décimo sétimo padrão, achado em 2026-08-22: valor lido do servidor que
+  já vem transformado — e o mundo onde você mediu não consegue te contar.** As
+  velocidades de `interface.php?func=get_unit_info` **já são** os min/campo
+  efetivos, com `speed` e `unit_speed` do mundo embutidos. Eu ia dividir por
+  eles de novo. No br143 o erro seria **invisível para sempre**, porque lá os
+  dois fatores valem 1 e as duas hipóteses dão o mesmo número; num mundo de
+  velocidade 4 o tempo de viagem sairia 4× menor. O que separou as hipóteses
+  foi comparar mundos: o br139 (`speed=1.4`, `unit_speed=0.75`) publica
+  `17,142857` para o lanceiro, que é exatamente `18/(1,4×0,75)`.
+  A quinta metade do padrão acima manda ir ler o servidor; esta acrescenta que
+  **ler o valor não é o mesmo que saber o que ele significa**. Ao consumir um
+  número de API, perguntar "isto já inclui o fator X?" — e reparar que a
+  pergunta é *inrespondível* se o seu ambiente tem X=1. Regra prática: quando
+  um valor deveria escalar com um parâmetro do mundo, buscar uma instância onde
+  esse parâmetro **não** seja neutro. São dois `Invoke-WebRequest` e a lista de
+  mundos sai de `backend/get_servers.php`, como já registrado acima.
+- ⚠️ **Décimo oitavo padrão, mesma sessão: reaproveitar um limiar existente
+  para uma reação que parece igual e tem física diferente.** O gate de urgência
+  da defesa tinha `evacuate_urgency_threshold_sec = 1800`, e o caminho óbvio era
+  aplicar os mesmos 30 min ao envio de apoio. Estaria errado, e na direção que
+  não aparece em teste: **esconder tropa é instantâneo e quanto mais tarde
+  melhor; apoio precisa *chegar* antes do impacto e ele mesmo leva horas
+  viajando.** Apoio despachado 30 min antes de um ataque a 3h40 de viagem pousa
+  3h depois da batalha — tropa gasta, zero defesa, e nenhum erro no log.
+  A regra: dois efeitos disparados pelo **mesmo gatilho** não compartilham
+  necessariamente o mesmo prazo. Antes de reusar um limiar, perguntar "o que
+  precisa acontecer até o prazo vencer?" — se a resposta envolve algo *chegar*,
+  o número tem que incluir o tempo de trânsito e vira função da distância, não
+  constante. Corolário achado ao escrever o gate: fechar só o lado "cedo
+  demais" teria deixado passar o lado "tarde demais", que já existia e ninguém
+  tinha notado, porque apoio que chega atrasado não gera erro nenhum — só some.
+  Segundo corolário, sobre o *default*: a janela de envio mede `lead` segundos
+  de largura, e se ela for menor que o intervalo entre dois ciclos da mesma
+  aldeia, o bot passa por cima e nunca envia. O default (2h) foi escolhido
+  contra o intervalo real medido nos logs (1h39 entre dois ciclos da mesma
+  aldeia em 2026-08-21), não por parecer razoável. **Limiar de tempo em sistema
+  que roda em ciclos precisa ser comparado com o período do ciclo** — senão a
+  condição é logicamente correta e nunca observada.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de

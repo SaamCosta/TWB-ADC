@@ -5,6 +5,7 @@ import re
 import time
 
 from core.extractors import INCOMING_ROW_RE, Extractor
+from core.world_config import WorldConfig
 
 # Mapeamento dos 8 tipos de bandeira do jogo (ver docs/bugs_flags.md).
 # O bot hoje só gerencia ativamente os tipos 1 (produção) e 4 (defesa) via
@@ -63,6 +64,25 @@ class DefenceManager:
     # linha nenhuma" -- ver o bloco de log em update().
     incoming_rows_seen = 0
 
+    # Janela de envio de suporte, em segundos ANTES do impacto, somada ao tempo
+    # de viagem. O suporte sai quando `viagem < eta <= viagem + lead`.
+    #
+    # Por que não dá para reusar urgency_threshold_sec (1800): esconder tropa é
+    # instantâneo e quanto mais tarde melhor, mas suporte precisa CHEGAR antes
+    # do impacto, e ele próprio leva horas viajando. Um limiar de 30 min faria
+    # o apoio sair tarde demais e pousar depois do ataque -- tropa gasta, zero
+    # defesa.
+    #
+    # O default é largo de propósito: a largura da janela é `lead`, e se ela
+    # for menor que o intervalo entre dois ciclos da mesma aldeia o bot pode
+    # pular por cima dela e nunca enviar. Nos logs de 2026-08-21 a mesma aldeia
+    # voltou a rodar depois de 1h39, então 2h é o mínimo defensável aqui.
+    support_lead_time_sec = 7200
+    # {unidade: min/campo} de WorldConfig.unit_speeds, injetado por
+    # Village.setup_defence_manager. None = tabela indisponível (rede fora no
+    # primeiro ciclo), e aí o tempo de viagem é desconhecido.
+    unit_speeds = None
+
     _can_change_flag = False
     # True once manage_flags() has confirmed the real flag state from the
     # server at least once. Distinguishes "no flag equipped" (current_flag
@@ -95,6 +115,82 @@ class DefenceManager:
         self.current_flag = []
         # list of village_id, attack_state
         self.my_other_villages = {}
+        # {village_id: eta_seconds ou None} espelhando my_other_villages. Dict
+        # por instância (não atributo de classe) pelo primeiro padrão do
+        # CLAUDE.md: mutável no corpo da classe é compartilhado entre aldeias.
+        self.my_other_villages_eta = {}
+
+    def _planned_support(self):
+        """
+        Que tropa esta aldeia mandaria de apoio agora. Extraído de
+        support_other() porque o gate de tempo precisa saber a composição
+        ANTES de enviar: a velocidade do comando é a da unidade mais lenta,
+        então o tempo de viagem depende do que vai dentro dele.
+        """
+        if not self.units:
+            return {}
+        send_support = {}
+        for u in self.defensive_units:
+            if u in self.units.troops and int(self.units.troops[u]) > 0:
+                amount = int(int(self.units.troops[u]) * self.support_factor)
+                if amount > 0:
+                    send_support[u] = amount
+        return send_support
+
+    def support_travel_seconds(self, vid, troops=None):
+        """
+        Segundos que o apoio desta aldeia levaria até `vid`, ou None quando não
+        dá para saber (sem mapa, sem posição do destino, sem tabela de
+        velocidades, ou sem tropa para mandar).
+        """
+        if not self.map or vid not in getattr(self.map, "map_pos", {}):
+            return None
+        try:
+            distance = self.map.get_dist(self.map.map_pos[vid])
+        except Exception:
+            return None
+        return WorldConfig.travel_seconds(
+            self.unit_speeds, distance, troops if troops is not None else self._planned_support()
+        )
+
+    def support_timing(self, vid):
+        """
+        Decide se AGORA é hora de mandar apoio para `vid`. Devolve
+        (enviar: bool, motivo: str) -- o motivo entra no log, porque "não
+        mandei" sem explicação é indistinguível de "não tentei".
+
+        As três respostas que importam:
+
+        - eta desconhecido -> envia. Preserva o comportamento anterior ao gate.
+          Errar mandando apoio a mais é mais barato que deixar uma aldeia real
+          sem defesa por causa de um parse que falhou -- mesma direção do
+          _is_urgent(None) = True.
+        - eta < viagem -> NÃO envia: o apoio pousaria depois do ataque. Isto
+          não é economia, é evitar desperdício puro; antes do gate o bot
+          mandava tropa que chegava atrasada e não defendia nada.
+        - eta > viagem + lead -> ainda não. É o caso do fake de 100h: sem esta
+          linha, quatro aldeias esvaziavam 25% da defesa por quatro dias no
+          instante em que o comando aparecia na tela.
+        """
+        eta = self.my_other_villages_eta.get(vid)
+        if eta is None:
+            return True, "eta desconhecido, enviando (comportamento seguro)"
+
+        travel = self.support_travel_seconds(vid)
+        if travel is None:
+            return True, f"eta {eta / 3600:.1f}h mas viagem desconhecida, enviando"
+
+        if eta < travel:
+            return False, (
+                f"apoio chegaria atrasado (viagem {travel / 3600:.1f}h > "
+                f"eta {eta / 3600:.1f}h)"
+            )
+        if eta > travel + self.support_lead_time_sec:
+            return False, (
+                f"cedo demais (eta {eta / 3600:.1f}h, viagem {travel / 3600:.1f}h, "
+                f"janela abre em {(eta - travel - self.support_lead_time_sec) / 3600:.1f}h)"
+            )
+        return True, f"na janela (eta {eta / 3600:.1f}h, viagem {travel / 3600:.1f}h)"
 
     def support_other(self, requesting_village):
 
@@ -102,10 +198,7 @@ class DefenceManager:
             return False
         if not self.units:
             return False
-        send_support = {}
-        for u in self.defensive_units:
-            if u in self.units.troops and int(self.units.troops[u]) > 0:
-                send_support[u] = int(int(self.units.troops[u]) * self.support_factor)
+        send_support = self._planned_support()
 
         self.logger.info(
             "Sending requested support to village %s: %s", requesting_village, str(send_support)
@@ -188,6 +281,20 @@ class DefenceManager:
                 ):
                     if vil in self.supported:
                         continue
+                    # Gate de urgência: `my_other_villages[vil]` só diz que há
+                    # ataque, não quando ele chega. Sem esta checagem um fake
+                    # com dias de viagem esvaziava 25% da defesa de cada
+                    # doadora no instante em que aparecia na tela.
+                    send, reason = self.support_timing(vil)
+                    if not send:
+                        self.logger.info(
+                            "Support %s -> %s adiado: %s",
+                            self.village_id, vil, reason
+                        )
+                        continue
+                    self.logger.info(
+                        "Support %s -> %s liberado: %s", self.village_id, vil, reason
+                    )
                     if self.support_other(vil):
                         self.supported.append(vil)
                     ok = False
