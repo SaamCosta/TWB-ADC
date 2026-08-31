@@ -151,6 +151,29 @@ a geometria não discrimina. Foi escolhida por ser a defensiva mais desenvolvida
 (2.032 pts). A BBM 001 seria mais rápida (30 dias contra 48) mas é o núcleo
 ofensivo; a mais central (BBM 006, 5,83) é a mais lenta (54 dias).
 
+### Estado medido em 2026-08-31
+
+Torre em **nível 8** (raio 2,88 campos), 3.255 pts, fazenda 19. Medido de
+`cache/managed/38409.json` → `buidling_levels.watchtower`. Cobertura atual:
+**4 das 18 aldeias** (BBM 002, 010, 001, 003 — todas a ≤ 1,4 campos).
+
+O império cresceu de 7 para 18 aldeias desde a escolha, e a mais distante está
+agora a **11,3 campos** (BBM 017) — ainda dentro do raio 15,0 do nível 20, ou
+seja **uma torre só continua cobrindo tudo**. Progressão da cobertura por
+nível, contra a distribuição real de hoje:
+
+| nível | raio | cobre |
+|---:|---:|---:|
+| 8 (atual) | 2,88 | 4/18 |
+| 10 | 3,79 | 5/18 |
+| 15 | 7,55 | 10/18 |
+| 17 | 9,94 | 14/18 |
+| **20** | **15,02** | **18/18** |
+
+Consequência para a Feature 31: enquanto o cluster couber num raio de 15, o
+planejamento de sítios não tem o que decidir — a ação é **terminar esta torre**,
+não escolher a próxima.
+
 ### Configuração-alvo
 
 | Edifício | Nível | Pop | Motivo |
@@ -333,5 +356,7 @@ Custo: ~4 torres num império de 67 aldeias = 46.428 pop e 19,4M de recursos,
   `get_config` nem em `/page/settings`, e a wiki não separa as duas fórmulas.
   Os tempos reais serão bem menores que os da tabela acima.
 - **O markup HTML das marcas** na tela de chegadas — o que a Feature 16
-  precisaria casar por regex. Exige sessão autenticada *e* uma torre construída;
-  nenhuma das duas condições existe hoje.
+  precisaria casar por regex. Exige sessão autenticada *e* uma torre construída.
+  ⚠️ **Atualizado em 2026-08-31:** a segunda condição **passou a existir** — a
+  BBM 002 está com torre **nível 8** (raio 2,88 campos). Falta só a sessão
+  autenticada e um ataque real entrando no raio para capturar o markup.

@@ -2,14 +2,21 @@
 
 Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27 → 25 (fase 1) → 32 (parte 1)` (✅ todas)
 
-Pendentes: **25 fase 2** (ativar boosts — o catálogo já é lido a cada ciclo,
-falta a política de uso e uma captura do POST de `consume`), **26** (envio em
-lote `train[N][unit]`, precisa de captura de rede), **28** (farm automático de
-aldeias de jogador), que precisa de desenho dos filtros, **29** (janela de
-bônus noturno do defensor, bloqueada por falta de premium), **31** (sítios de
-torre, fase 2), **32 parte 2** (bandeira por **fase** da aldeia — a escolha por
-**perfil** foi feita em 2026-08-31; falta só definir qual sinal marca a fase) e
-**33** (cunhagem automática nativa).
+Pendentes: **24 fase 2** (paladino: treino por XP e re-especialização por
+perfil — sem desenho, precisa de definição do usuário), **25 fase 2** (ativar
+boosts — o catálogo já é lido a cada ciclo, falta a política de uso e uma
+captura do POST de `consume`), **26** (envio em lote `train[N][unit]`, precisa
+de captura de rede), **28** (farm automático de aldeias de jogador), que
+precisa de desenho dos filtros, **29** (janela de bônus noturno do defensor,
+bloqueada por falta de premium), **31** (sítios de torre, fase 2), **32 parte
+2** (bandeira por **fase** da aldeia — a escolha por **perfil** foi feita em
+2026-08-31; falta só definir qual sinal marca a fase), **33** (cunhagem
+automática nativa) e **34 itens 4 e 6** (compra/arbitragem na bolsa premium e
+validação da venda em pt-BR — ver `docs/troca_premium.md`).
+
+⚠️ A **24 fase 2** e a **34** faltavam nesta lista embora as seções delas
+sempre tenham dito "pendente" — corrigido em 2026-08-31. Ao fechar uma fase 1,
+conferir se a fase 2 entrou aqui.
 
 **Não pertencem mais a esta lista** (fechados em 2026-08-31, ver
 `docs/features_log.md`): o alcance do fetch de mapa, os limiares de perfil de
@@ -1404,8 +1411,17 @@ depois ligar na seleção de alvos.
 >
 > Duas coisas mudaram a favor de quem for fazer: a infraestrutura de
 > preferência ordenada já existe (a fase só precisa produzir uma lista
-> diferente), e a fase "madura" continua não existindo em campo — a BBM 002
-> ainda não tem torre construída.
+> diferente), e a fase "madura" **deixou de ser hipotética** — ver a correção
+> abaixo.
+>
+> ⚠️ **Corrigido em 2026-08-31:** a versão anterior desta nota dizia que a
+> BBM 002 "ainda não tem torre construída" e usava isso para afirmar que a
+> fase "madura" não existe em campo. **Ela tem torre nível 8** (raio 2,88
+> campos), lido de `cache/managed/38409.json` → `buidling_levels.watchtower`.
+> A obra está em andamento, então a aldeia está justamente **na fase de
+> construção** — que é a primeira linha da tabela de fases, não a ausência
+> dela. O bloqueio real da parte 2 nunca foi "falta a fase madura": é
+> **qual sinal marca a fase**, que segue sendo o único item aberto.
 
 **Origem:** conversa de 2026-08-13, na esteira da decisão de `mint_coins` (ver
 `docs/features_log.md`). Formulação do usuário: *"as aldeias de torre só
@@ -1538,9 +1554,14 @@ três sem perguntar. Qualquer versão desta feature precisa decidir se respeita
 bandeira posta à mão.
 
 **Prioridade:** era baixa; sobe para média por causa das duas aldeias sem
-bandeira. A parte de "fase da aldeia" continua dependendo da Feature 31 (a
-BBM 002 ainda não tem torre construída, então a fase "madura" não existe em
-campo).
+bandeira.
+
+⚠️ **A parte de "fase da aldeia" NÃO depende da Feature 31** — a redação
+anterior aqui dizia que sim, com o argumento de que a BBM 002 não tinha torre.
+Duas coisas erradas: a BBM 002 **tem torre nível 8** (medido em 2026-08-31), e
+mesmo que não tivesse, a Feature 31 é sobre *onde colocar a próxima torre*, o
+que não tem relação com *qual bandeira uma aldeia usa em cada fase da vida
+dela*. As duas features foram amarradas por engano.
 
 ## Feature 33 — Cunhagem automática nativa (`start_auto_minting_session`)
 

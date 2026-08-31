@@ -1742,8 +1742,13 @@ que ela mexa exatamente em quem deve.
 **O que NÃO foi feito, e continua na Feature 32:** a bandeira por *fase da
 aldeia* (produção durante a construção → população no gargalo → recrutamento
 repondo tropa → cunhagem quando madura). Isso exige um sinal legível de "fase",
-que continua sem desenho, e a fase "madura" ainda não existe em campo (a
-BBM 002 não tem torre construída).
+que continua sem desenho.
+
+⚠️ **Correção de 2026-08-31:** esta nota terminava dizendo que "a fase madura
+ainda não existe em campo (a BBM 002 não tem torre construída)". **A BBM 002
+tem torre nível 8**, lido de `cache/managed/38409.json`. A frase foi escrita
+sem conferir o cache e virou justificativa para adiar a parte 2 — ela está em
+plena *fase de construção*, que é a primeira linha da tabela de fases.
 
 ## 2026-08-31 (d) — polimento do webmanager, com o bot rodando
 
