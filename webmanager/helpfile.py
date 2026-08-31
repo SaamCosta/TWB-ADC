@@ -6,8 +6,16 @@ help_file = {
     'reporting': 'Enable advanced reporting features',
     'reporting.enabled': 'Enable the reporting feature',
     'reporting.connection_string': 'Could be of type file://filename or mysql://user:password@host:port/database_name',
+    'notifications': 'Push notifications over Telegram for events that need a human '
+                     '(bot protection / captcha, village under attack, crashes)',
+    'notifications.enabled': 'Enable Telegram notifications. Requires the python-telegram-bot '
+                             'package plus a token and channel id below',
+    'notifications.token': 'Telegram bot token, from @BotFather. Treat it as a credential — it is '
+                           'why config.json must never be committed',
+    'notifications.channel_id': 'Telegram chat/channel id the notifications are sent to',
     'bot': 'Set global bot configuration variables',
     'bot.active_hours': 'The hours when the bot should be active, e.g. "6-23" (does not impact attack timings)',
+    'bot.check_update': 'Check GitHub for a newer version of the bot on start-up (does not install anything)',
     'bot.delay_factor': 'Delay factor to use — 5-7 seconds * delay factor (very low factors will probably cause ban)',
     'bot.active_delay': 'Delay in seconds to use during active hours',
     'bot.inactive_delay': 'Delay in seconds to use during inactive hours',
@@ -69,6 +77,10 @@ help_file = {
     'farms.attack_higher_points': 'If disabled, villages with higher points than the current one are ignored',
     'farms.force_scout_if_available': 'Only attack villages that have been attacked before or scouted first',
     'farms.farm_scout_amount': 'Number of spies used to scout a village before farming',
+    'farms.forced_peace_times': 'Windows during which the bot must not farm (national holidays, '
+                                'forced peace events). List of {"start": ..., "end": ...} with the '
+                                'format "dd.mm.yy HH:MM:SS" — a malformed entry is skipped with a '
+                                'warning instead of stopping the cycle',
     'market': 'Automatic management of public market trading (offer system)',
     'market.auto_trade': 'Enable automated public market trading',
     'market.max_trade_duration': 'Max duration of public trade offers (hours)',
@@ -129,6 +141,8 @@ help_file = {
     'world.knight_enabled': 'FALLBACK ONLY -- read from the world <game><knight> tag; used only if the world config cannot be fetched',
     'world.flags_enabled': 'Allows automatic management of flags (upgrading and defence). Still manual: the world config does not publish a flags tag',
     'world.quests_enabled': 'World has quests enabled (bot will automatically finish them)',
+    'world.boosters_enabled': 'World has resource boosters enabled. Auto-detected on the first run '
+                              'and written back here; a value set by hand always wins',
     'world.trade_for_premium': 'World has the premium market enabled (doing this too much could result in ban)',
     'world.archers_enabled': 'FALLBACK ONLY -- read from the world <game><archer> tag; used only if the world config cannot be fetched',
     'world.building_destruction_enabled': 'FALLBACK ONLY -- read from the world <build><destroy> tag; used only if the world config cannot be fetched',
@@ -162,6 +176,9 @@ help_file = {
     'village.support_lead_time_sec': 'Antecedência máxima para enviar apoio, somada ao tempo de viagem: o apoio sai quando viagem < ETA <= viagem + este valor (padrão 7200 = 2h). Não reutiliza evacuate_urgency_threshold_sec porque apoio precisa CHEGAR antes do impacto e ele mesmo leva horas viajando. Mantenha maior que o intervalo entre dois ciclos da mesma aldeia, senão o bot pula a janela',
     'hunter': 'Agendamento de ataques coordenados com chegada simultânea (Feature 10) — gerencie pela página /hunter',
     'hunter.enabled': 'Ativar o Hunter — quando true, o bot verifica e dispara os schedules a cada ciclo',
+    'hunter.schedules': 'Exemplo do formato de um agendamento. O estado real vive em '
+                        'cache/hunter/schedules.json e é gerenciado pela página /hunter — editar '
+                        'aqui não agenda nada',
     'zones': 'Agrupamento geográfico de aldeias em zonas por proximidade (Feature 11)',
     'zones.enabled': 'Ativar o sistema de zonas geográficas',
     'zones.radius': 'Raio em campos para agrupar aldeias na mesma zona (padrão: 10)',
