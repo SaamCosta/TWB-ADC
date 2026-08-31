@@ -12,13 +12,17 @@ torre, fase 2), **32** (bandeira por perfil e fase da aldeia) e **33**
 
 ## Fila da auditoria de código
 
-`docs/auditoria_codigo_2026-08-08.md` — **Lotes 1 a 6 concluídos**
-(Lote 6 em 2026-08-11). Todos os 19 itens P0/P1 corrigidos e 19 dos 20 P2.
-Resta um:
+`docs/auditoria_codigo_2026-08-08.md` — **Lotes 1 a 7 concluídos**.
+**Nenhum item aberto.** Todos os P0/P1 e os 20 P2 foram corrigidos.
 
-| Item | O quê | Por que ficou de fora |
-|---|---|---|
-| **P2-29** | Piso de moral em `estimate_moral()` — código usa `100 - loss_max` = 70, o diagnóstico diz que o piso real do TW é 30 | **Bloqueado por falta de dado.** O docstring afirma que `mood.loss_max` foi confirmado ao vivo; as duas afirmações se contradizem e não há `cache/world_config*` no repo para conferir o `<mood>` real do br143. Trocar 70 por 30 seria trocar um palpite por outro. **Próximo passo:** capturar o bloco `<mood>` do endpoint público do mundo e decidir com o dado na mão. Hoje é inerte (`pvp_conquest.dynamic_moral_night_bonus: false`). |
+O último foi o **P2-29** (piso de moral em `estimate_moral()`), fechado em
+2026-08-12 no Lote 7: o código derivava o piso de `mood.loss_max`, que **não é**
+a config de moral do TW — quem manda é a tag de topo `<moral>` (0/1/2/3), lida
+de `interface.php?func=get_config`, endpoint público e sem autenticação. A nota
+antiga desta tabela dizia "bloqueado por falta de dado" e procurava um arquivo
+`cache/world_config*` que existe com outro nome (`cache/world/config_br143.json`).
+Ver o Lote 7 do documento da auditoria para as tabelas de `<moral>` e
+`night.active` cruzadas contra ~30 mundos.
 
 ## Feature 14 — Templates de tropas editáveis no webmanager ✅ Implementado (2026-08-03)
 
@@ -1451,9 +1455,35 @@ tipos de gatilho, não de uma linha do tempo.
 Ligar mais tipos antes de confirmar que a troca não entra em loop é multiplicar
 um bug não confirmado por 4.
 
-**Prioridade:** baixa hoje, e a razão é concreta — a BBM 002 ainda não tem torre
-nenhuma construída, então a fase "madura" que esta feature otimiza não existe em
-campo. Ganha sentido junto com a Feature 31.
+### ⚠️ Medição de 2026-08-31: a feature deixou de ser só otimização
+
+O estado real das 18 aldeias (`cache/managed/*.json`, bloco `flags`) mostra que
+o hardcode `set_flag_not_under_attack = 1` já está custando alguma coisa hoje:
+
+- **O inventário da conta não tem nenhuma bandeira do tipo 1 sobrando** —
+  `{2: 7, 3: 7, 4: 6, 5: 7, 6: 7, 7: 4, 8: 7}`. As 13 que existem estão todas
+  equipadas.
+- Logo `get_highest_flag_possible(1)` devolve `None` e **`flag_logic()` não faz
+  nada em nenhuma aldeia, todo ciclo**.
+- **BBM 016 e BBM 017 estão sem bandeira nenhuma** e vão continuar assim, com
+  sete tipos disponíveis no inventário, porque o bot só sabe pedir o tipo 1.
+
+Ou seja: a Feature 32 não é mais só "otimizar por fase da aldeia" — o passo
+mínimo dela (**escolher outro tipo quando o preferido não está disponível**) já
+resolve duas aldeias sem bandeira. Isso não muda o desenho da feature, mas muda
+a prioridade e dá um caso de teste concreto.
+
+⚠️ **E há um risco a registrar antes de mexer:** BBM 001, 010 e 011 estão com o
+tipo 7 (custo de cunhagem), que o bot nunca equipa — foi escolha manual. Hoje
+ele não reverte **só porque não tem tipo 1 disponível**. Se uma bandeira de
+produção voltar ao inventário (por desequipar alguma), `flag_logic` troca as
+três sem perguntar. Qualquer versão desta feature precisa decidir se respeita
+bandeira posta à mão.
+
+**Prioridade:** era baixa; sobe para média por causa das duas aldeias sem
+bandeira. A parte de "fase da aldeia" continua dependendo da Feature 31 (a
+BBM 002 ainda não tem torre construída, então a fase "madura" não existe em
+campo).
 
 ## Feature 33 — Cunhagem automática nativa (`start_auto_minting_session`)
 

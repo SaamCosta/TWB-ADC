@@ -189,9 +189,13 @@ FLAG_TYPES = {
 }
 ```
 
-## Bug 3 — `supported` compartilhado entre todas as aldeias (não corrigido)
+## Bug 3 — `supported` compartilhado entre todas as aldeias
 
-**Status:** ativo, encontrado em 2026-08-02, não corrigido ainda.
+> ✅ **CORRIGIDO no Lote 1 da auditoria** (`self.supported` movido para
+> `__init__`). O texto abaixo é o diagnóstico original, mantido pelo histórico.
+> A tarefa em background citada no fim não é mais necessária.
+
+**Status original:** ativo, encontrado em 2026-08-02, não corrigido ainda.
 
 `DefenceManager` declara `supported = []` como atributo de **classe** (não é
 reatribuído em `__init__`). `game/village.py` instancia um `DefenceManager` por
@@ -219,19 +223,64 @@ reabrir a investigação do zero.
 
 ---
 
-## Estado atual e próximos passos
+## Estado medido em 2026-08-31
+
+Lido de `cache/managed/*.json` (bloco `flags` da Feature 19), que é estado real
+persistido pelo bot e **não depende de log**. As 18 aldeias:
+
+| sinal | resultado |
+|---|---|
+| `manage_flags_enabled` | **18/18** |
+| `flag_state_confirmed` | **18/18** |
+| bandeira equipada | 16/18 |
+| `upgrade_attempts` presas | **0/18** |
+
+**Inventário disponível (idêntico nas 18, é da conta):**
+`{2: 7, 3: 7, 4: 6, 5: 7, 6: 7, 7: 4, 8: 7}`.
+
+⚠️ **Não há bandeira do tipo 1 (produção) sobrando** — as 13 que existem estão
+todas equipadas. E `set_flag_not_under_attack = 1` é hardcoded. Consequência,
+calculada aldeia por aldeia contra o estado atual: `get_highest_flag_possible(1)`
+devolve `None` e **`flag_logic()` não faz nada, em todas as 18, todo ciclo**.
+
+Isso tem três desdobramentos:
+
+1. **O Bug 1 não pode se manifestar hoje** — mas por *dois* motivos
+   independentes, o guard `_flag_state_confirmed` e a ausência de tipo 1 no
+   inventário. Não dá para dizer qual dos dois está segurando.
+2. **BBM 016 e BBM 017 estão sem bandeira nenhuma e vão continuar assim.**
+   Há 7 tipos disponíveis no inventário e o bot não equipa nenhum, porque só
+   sabe pedir o tipo 1. É perda pura — qualquer bandeira rende mais que
+   nenhuma. **Qual equipar é decisão de jogo, não de código: é exatamente a
+   Feature 32.**
+3. **Três aldeias (BBM 001, 010, 011) estão com o tipo 7 (custo de cunhagem)**,
+   que o bot nunca equipa — foi escolha manual. Hoje ele não reverte, mas
+   **só porque não tem tipo 1 disponível**: se uma bandeira de produção voltar
+   ao inventário, `flag_logic` troca as três sem perguntar. Vale saber antes de
+   desequipar qualquer coisa.
+
+**O que ficou de evidência positiva:** a BBM 018 está com **tipo 4 (defesa)
+nível 7** equipado e `can_change_flag: False`. Ou seja o caminho
+`flag_logic(4)` executou `flag_set()` com sucesso em campo e o cooldown de 24h
+está sendo respeitado. É a única parte do sistema com execução confirmada.
+
+⚠️ **O que NÃO foi possível verificar, e por quê.** As mensagens de log do
+`DefenceManager` (`Managing flags`, `Setting flag`, `Upgraded flag`, os avisos
+de tentativa de upgrade) só existiam em `cache/logs/session_latest.log`. Esse
+arquivo foi **destruído em 2026-08-31 ao rodar a suíte de testes** — `twb.py`
+truncava o log no import (corrigido no mesmo dia, ver
+`tests/test_session_log_guard.py`). Os 238 `twb_*.log` sobreviveram mas são do
+*reporter* (eventos `TWB_*`), e não carregam nenhuma linha do `DefenceManager`.
+Portanto **a frequência de `Setting flag` continua não medida** — que é o sinal
+direto do Bug 1. Próxima sessão do bot já o registra de novo.
+
+## Próximos passos
 
 | Item | Status | Ação necessária |
 |------|--------|------------------|
-| Bug 1 — troca constante | ✅ Corrigido (código) | Aplicado guard `_flag_state_confirmed` + comparação `==` em `flag_logic()`. Aguardando validação em campo. |
-| Bug 2 — loop de upgrade | ✅ Corrigido (código) | Aplicado `sleep(2)` + limite de 2 tentativas por `(flag_type, level)` em `manage_flags()`. Aguardando validação em campo. |
-| Bug 3 — `supported` compartilhado entre aldeias | 🔴 Não corrigido | Mover `self.supported = []` para `__init__`; revisar reset por ciclo. Ver `task_82df90dc`. |
-| Mapeamento de 8 tipos | 📋 Documentado | Implementar `FLAG_TYPES` no código; ativar tipos 7/8 quando relevante |
-| Cooldown de 24h ativo | 🔴 Em curso | Aguardar expirar; monitorar logs após fix do Bug 1 |
-
-**Pré-requisito para fechar este item:**
-- Validação em campo dos fixes dos Bugs 1 e 2 (branch `master`, commits de correção
-  em `game/defence_manager.py`).
-- Corrigir Bug 3 (`supported` compartilhado) — impacta o mesmo arquivo, mas é
-  um problema distinto (suporte entre aldeias, não bandeiras).
-- Feature 8 (conquest) validada antes de ativar uso do tipo 7 (coin_cost).
+| Bug 1 — troca constante | ✅ Corrigido (código), **não validado** | Contar `Setting flag` por aldeia no próximo `session_latest.log`. Deve ser raro; hoje deve ser **zero**, porque não há tipo 1 no inventário. |
+| Bug 2 — loop de upgrade | ✅ Corrigido (código), **não exercitado** | `upgrade_attempts` vazio em 18/18, mas o caminho só roda com 3 bandeiras do mesmo tipo+nível. Sem evidência de que o limite de 2 tentativas já tenha segurado algo. |
+| Bug 3 — `supported` compartilhado | ✅ Corrigido no Lote 1 | Nada. |
+| Duas aldeias sem bandeira | 🔴 Aberto | BBM 016/017. Decidir que tipo equipar quando o preferido não está disponível — é a Feature 32. |
+| Mapeamento de 8 tipos | ✅ `FLAG_TYPES` existe no código | Falta quem *escolha* entre eles (Feature 32). Percentuais por nível já levantados, ver `docs/backlog.md`. |
+| Cooldown de 24h | ℹ️ Normal | BBM 018 em cooldown por ter trocado para defesa. Comportamento esperado. |
