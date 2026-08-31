@@ -78,7 +78,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `get_config`/`get_village_config` e exige que a chave exista em
   `config.example.json` / `village_template` e esteja documentada em
   `webmanager/helpfile.py`; é a verificação automática das três regras de
-  config deste arquivo).
+  config deste arquivo) e a política de bandeira por academia
+  (`tests/test_flag_policy.py`, que roda a política contra o snapshot real das
+  18 aldeias).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -590,8 +592,17 @@ puxa o fio.**
   que vale a mesma premissa (arquivo só nasce e morre, nunca muda de conteúdo
   sob o mesmo nome); se não valer, o índice serviria dado velho.
 - Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
-  constante de bandeira, loop de upgrade), aguardando validação em campo — ver
-  `docs/bugs_flags.md` para o diagnóstico original e o estado atual.
+  constante de bandeira, loop de upgrade), **ainda aguardando validação em
+  campo** — ver `docs/bugs_flags.md` para o diagnóstico original e o estado
+  atual. Em 2026-08-31 a escolha de bandeira deixou de ser um id fixo e passou
+  a ser uma **preferência ordenada por aldeia** (academia → cunhagem; senão
+  produção; preenchimento recrutamento › população › saque; ataque e sorte
+  nunca automáticos; defesa sobrepõe tudo). Isso torna o Bug 1 finalmente
+  testável: o caminho de `flag_set` voltou a ser exercitado, e o esperado no
+  primeiro ciclo são **exatamente 3 trocas** (BBM 003, 016, 017) e silêncio
+  depois. ⚠️ A validação **não pôde ser feita por log** porque o
+  `session_latest.log` foi destruído no mesmo dia (ver vigésimo padrão) — os
+  `twb_*.log` são do reporter e não têm linha do `DefenceManager`.
 - `game/defence_manager.py::DefenceManager.supported` (Bug 3 de
   `docs/bugs_flags.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
   A condição invertida do laço em `DefenceManager.update()`, que impedia

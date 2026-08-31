@@ -239,25 +239,29 @@ persistido pelo bot e **não depende de log**. As 18 aldeias:
 `{2: 7, 3: 7, 4: 6, 5: 7, 6: 7, 7: 4, 8: 7}`.
 
 ⚠️ **Não há bandeira do tipo 1 (produção) sobrando** — as 13 que existem estão
-todas equipadas. E `set_flag_not_under_attack = 1` é hardcoded. Consequência,
-calculada aldeia por aldeia contra o estado atual: `get_highest_flag_possible(1)`
-devolve `None` e **`flag_logic()` não faz nada, em todas as 18, todo ciclo**.
+todas equipadas. E `set_flag_not_under_attack = 1` **era** hardcoded (corrigido
+em 2026-08-31, ver abaixo). Consequência do estado antigo, calculada aldeia por
+aldeia: `get_highest_flag_possible(1)` devolvia `None` e **`flag_logic()` não
+fazia nada, em todas as 18, todo ciclo**.
 
-Isso tem três desdobramentos:
+Isso teve três desdobramentos:
 
 1. **O Bug 1 não pode se manifestar hoje** — mas por *dois* motivos
    independentes, o guard `_flag_state_confirmed` e a ausência de tipo 1 no
-   inventário. Não dá para dizer qual dos dois está segurando.
-2. **BBM 016 e BBM 017 estão sem bandeira nenhuma e vão continuar assim.**
-   Há 7 tipos disponíveis no inventário e o bot não equipa nenhum, porque só
-   sabe pedir o tipo 1. É perda pura — qualquer bandeira rende mais que
-   nenhuma. **Qual equipar é decisão de jogo, não de código: é exatamente a
-   Feature 32.**
-3. **Três aldeias (BBM 001, 010, 011) estão com o tipo 7 (custo de cunhagem)**,
-   que o bot nunca equipa — foi escolha manual. Hoje ele não reverte, mas
-   **só porque não tem tipo 1 disponível**: se uma bandeira de produção voltar
-   ao inventário, `flag_logic` troca as três sem perguntar. Vale saber antes de
-   desequipar qualquer coisa.
+   inventário. Não dá para dizer qual dos dois está segurando. ⚠️ **Isso muda
+   com a política nova**: agora o bot tem tipos disponíveis para equipar, então
+   o caminho de `flag_set` volta a ser exercitado — e a contagem de
+   `Setting flag` no próximo log passa a ser um teste real do Bug 1.
+2. ~~**BBM 016 e BBM 017 estão sem bandeira nenhuma e vão continuar assim.**~~
+   ✅ **RESOLVIDO em 2026-08-31** pela política de preferência ordenada — as
+   duas passam a receber recrutamento nível 7. Ver `docs/features_log.md`,
+   seção "2026-08-31 (c)".
+3. ~~**Três aldeias com o tipo 7 correm risco de serem revertidas.**~~
+   ✅ **RESOLVIDO na mesma mudança**, e melhor do que "não reverter": BBM 001,
+   010 e 011 têm academia, então a política agora **prefere** cunhagem nelas —
+   o bot concorda com a escolha manual em vez de apenas não interferir. A
+   guarda de `has_academy = None` impede que um restart as rebaixe antes de os
+   níveis de construção serem lidos.
 
 **O que ficou de evidência positiva:** a BBM 018 está com **tipo 4 (defesa)
 nível 7** equipado e `can_change_flag: False`. Ou seja o caminho
@@ -278,9 +282,24 @@ direto do Bug 1. Próxima sessão do bot já o registra de novo.
 
 | Item | Status | Ação necessária |
 |------|--------|------------------|
-| Bug 1 — troca constante | ✅ Corrigido (código), **não validado** | Contar `Setting flag` por aldeia no próximo `session_latest.log`. Deve ser raro; hoje deve ser **zero**, porque não há tipo 1 no inventário. |
+| Bug 1 — troca constante | ✅ Corrigido (código), **não validado** | Contar `Setting flag` por aldeia no próximo `session_latest.log`. **Agora é um teste de verdade**: com a política nova o bot volta a equipar bandeira, então o caminho é exercitado. Esperado: **3 trocas no primeiro ciclo** (BBM 003, 016, 017) e depois silêncio. Mais que isso é o Bug 1 de volta. |
 | Bug 2 — loop de upgrade | ✅ Corrigido (código), **não exercitado** | `upgrade_attempts` vazio em 18/18, mas o caminho só roda com 3 bandeiras do mesmo tipo+nível. Sem evidência de que o limite de 2 tentativas já tenha segurado algo. |
 | Bug 3 — `supported` compartilhado | ✅ Corrigido no Lote 1 | Nada. |
-| Duas aldeias sem bandeira | 🔴 Aberto | BBM 016/017. Decidir que tipo equipar quando o preferido não está disponível — é a Feature 32. |
-| Mapeamento de 8 tipos | ✅ `FLAG_TYPES` existe no código | Falta quem *escolha* entre eles (Feature 32). Percentuais por nível já levantados, ver `docs/backlog.md`. |
+| Duas aldeias sem bandeira | ✅ **Corrigido em 2026-08-31** | Política de preferência ordenada. BBM 016/017 recebem recrutamento nível 7. |
+| Mapeamento de 8 tipos | ✅ Completo | `FLAG_TYPES` no código, percentuais por nível levantados, e agora **existe quem escolhe entre eles**. Falta só a variação por *fase* da aldeia (Feature 32, parte 2). |
 | Cooldown de 24h | ℹ️ Normal | BBM 018 em cooldown por ter trocado para defesa. Comportamento esperado. |
+
+## Política de bandeira em vigor (2026-08-31)
+
+Implementada em `DefenceManager.preferred_flags()` / `flag_logic()`. Detalhe
+completo e o efeito medido em `docs/features_log.md`, seção "2026-08-31 (c)".
+
+| Situação | Bandeira |
+|---|---|
+| Aldeia com academia | 7 (cunhagem) › 1 › 2 › 6 › 8 |
+| Aldeia sem academia | 1 (produção) › 2 › 6 › 8 |
+| Sob ataque | 4 (defesa), sobrepõe tudo |
+| 3 (ataque) e 5 (sorte) | manuais — o bot nunca equipa nem remove |
+
+Configurável em `world.flag_priority`, `world.flag_priority_academy` e
+`world.flag_manual_types`.

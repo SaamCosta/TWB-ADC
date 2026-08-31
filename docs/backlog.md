@@ -1,14 +1,19 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27 → 25 (fase 1)` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27 → 25 (fase 1) → 32 (parte 1)` (✅ todas)
 
 Pendentes: **25 fase 2** (ativar boosts — o catálogo já é lido a cada ciclo,
 falta a política de uso e uma captura do POST de `consume`), **26** (envio em
 lote `train[N][unit]`, precisa de captura de rede), **28** (farm automático de
 aldeias de jogador), que precisa de desenho dos filtros, **29** (janela de
 bônus noturno do defensor, bloqueada por falta de premium), **31** (sítios de
-torre, fase 2), **32** (bandeira por perfil e fase da aldeia) e **33**
-(cunhagem automática nativa).
+torre, fase 2), **32 parte 2** (bandeira por **fase** da aldeia — a escolha por
+**perfil** foi feita em 2026-08-31; falta só definir qual sinal marca a fase) e
+**33** (cunhagem automática nativa).
+
+**Não pertencem mais a esta lista** (fechados em 2026-08-31, ver
+`docs/features_log.md`): o alcance do fetch de mapa, os limiares de perfil de
+farm e as duas aldeias sem bandeira.
 
 ## Fila da auditoria de código
 
@@ -1356,6 +1361,34 @@ depois ligar na seleção de alvos.
 
 ## Feature 32 — Bandeira escolhida por perfil e por fase da aldeia
 
+> ### ✅ Parte 1 IMPLEMENTADA em 2026-08-31 — a escolha por **perfil**
+>
+> `DefenceManager.preferred_flags()` / `flag_logic()` passaram a trabalhar com
+> **preferência ordenada** em vez de um id fixo. Política definida pelo usuário:
+> academia → cunhagem (7); sem academia → produção (1); preenchimento
+> recrutamento (2) › população (6) › saque (8); ataque (3) e sorte (5) são
+> manuais (o bot nunca equipa **nem remove**); defesa (4) sobrepõe tudo, mas só
+> pelo caminho de `under_attack`.
+>
+> Resolveu as duas aldeias sem bandeira e alinhou o bot com as três de cunhagem
+> que estavam manuais. Config: `world.flag_priority`,
+> `world.flag_priority_academy`, `world.flag_manual_types`. Detalhe completo em
+> `docs/features_log.md`, seção "2026-08-31 (c)"; cobertura em
+> `tests/test_flag_policy.py`.
+>
+> ### 🔴 Parte 2 EM ABERTO — a escolha por **fase**
+>
+> É o resto desta seção: a mesma aldeia querer coisas diferentes ao longo da
+> própria vida (produção durante a obra → população no gargalo → recrutamento
+> repondo tropa → cunhagem quando madura). Continua **sem desenho**, porque o
+> ponto difícil nunca foi a tabela de bandeiras e sim **qual sinal marca a
+> fase** — ver "O que precisa ser desenhado" abaixo, que segue válido.
+>
+> Duas coisas mudaram a favor de quem for fazer: a infraestrutura de
+> preferência ordenada já existe (a fase só precisa produzir uma lista
+> diferente), e a fase "madura" continua não existindo em campo — a BBM 002
+> ainda não tem torre construída.
+
 **Origem:** conversa de 2026-08-13, na esteira da decisão de `mint_coins` (ver
 `docs/features_log.md`). Formulação do usuário: *"as aldeias de torre só
 precisam de produção de recursos extra durante o processo de construção; no
@@ -1363,12 +1396,13 @@ final, ela pode se beneficiar de um sistema de seleção de bandeiras diferentes
 talvez velocidade de recrutamento, população extra e até a de redução de custo
 de moedas"*.
 
-**O que existe hoje.** `DefenceManager.flag_logic()` funciona e é chamada todo
-ciclo, mas escolhe entre **dois** ids fixos, declarados como atributo de classe
-em `game/defence_manager.py:65-67`: `set_flag_not_under_attack = 1` (produção) e
-`set_flag_under_attack = 4` (defesa). Não são config, não são por aldeia, não
-são por perfil. `FLAG_TYPES` (mesmo arquivo, linha 13) **já mapeia os 8 tipos**
-— o mapeamento não é o que falta; falta quem escolha entre eles.
+**O que existia antes da parte 1** (mantido pelo histórico):
+`DefenceManager.flag_logic()` funcionava e era chamada todo ciclo, mas escolhia
+entre **dois** ids fixos, declarados como atributo de classe:
+`set_flag_not_under_attack = 1` (produção) e `set_flag_under_attack = 4`
+(defesa). Não eram config, não eram por aldeia, não eram por perfil.
+`FLAG_TYPES` **já mapeava os 8 tipos** — o mapeamento não era o que faltava;
+faltava quem escolhesse entre eles. **Isso foi feito na parte 1.**
 
 Os 8 tipos, com os que interessam a esta feature em negrito (tabela completa em
 `docs/bugs_flags.md`): 1 produção, **2 recrutamento**, 3 ataque, 4 defesa,
@@ -1405,19 +1439,24 @@ recrutamento **não é uma fase do ciclo de vida** (construção → madura), é
 tipos de gatilho, não de uma linha do tempo.
 
 **O que precisa ser desenhado (não está resolvido):**
-- **Qual sinal marca a fase.** Candidatos que já existem: fila de construção
-  vazia/estável (`BuildingManager`), `resman.requested["building"]` (mesmo sinal
-  que `SnobManager.builder_is_short()` usa), nível da torre igual ao do template,
-  `pop` no limite. Escolher um sinal **legível e verificável**, não um heurístico
-  composto.
-- **Precedência contra a defesa.** Bandeira sob ataque (4) tem que continuar
-  vencendo qualquer preferência de fase — a humanização/otimização não pode
-  degradar reação defensiva (mesma regra da Feature 23).
-- **Custo da troca.** Existe cooldown de troca de bandeira (`_can_change_flag`,
-  e um cooldown de 24h observado em campo, ver `docs/bugs_flags.md`). Uma
-  política que oscile entre duas bandeiras gasta o cooldown e chega atrasada na
-  defesa. Trocar por fase é raro por natureza — mas a política tem que ser
-  escrita para ser rara, não só esperar que seja.
+- **Qual sinal marca a fase.** ⚠️ **É o único item realmente aberto desta
+  lista.** Candidatos que já existem: fila de construção vazia/estável
+  (`BuildingManager`), `resman.requested["building"]` (mesmo sinal que
+  `SnobManager.builder_is_short()` usa), nível da torre igual ao do template,
+  `pop` no limite. Escolher um sinal **legível e verificável**, não um
+  heurístico composto.
+- ~~**Precedência contra a defesa.**~~ ✅ Resolvido na parte 1: o caminho de
+  `under_attack` passa um id único e escapa de todas as guardas da política de
+  paz, inclusive da que respeita bandeira manual. Coberto por
+  `test_defence_overrides_even_a_manual_flag`.
+- ~~**Custo da troca.**~~ ✅ Endereçado na parte 1 com duas guardas, as duas
+  por causa do cooldown de 24h: **não rebaixa** (se a bandeira atual está mais
+  alta na preferência que a disponível, mantém — a mesma classe do incidente de
+  2026-08-02, agora entre tipos) e **não age sem saber** (`has_academy = None`
+  faz a política se abster, porque `setup_defence_manager` roda antes de
+  `run_builder` e um restart rebaixaria as aldeias de cunhagem). Uma política
+  de *fase* precisa da mesma disciplina: ser rara por construção, não por
+  esperança.
 - **Quanto cada bandeira vale de fato.** Os percentuais por nível não estão
   levantados. Antes de otimizar, ler os números reais (a tela de bandeiras os
   publica) em vez de assumir que "produção" e "custo de cunhagem" são

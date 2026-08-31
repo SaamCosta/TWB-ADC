@@ -1668,6 +1668,83 @@ sem rede). Um deles nasceu errado e o próprio teste pegou: eu tinha usado 640
 como "pacote pequeno que a regra antiga não marcaria", e 640 já passa de 500 —
 a capacidade real que prova o ponto é 480.
 
+## 2026-08-31 (c) — Feature 32 (parte 1): política de bandeira por academia
+
+Fecha o item "duas aldeias sem bandeira" e implementa o passo que o backlog
+descrevia como o mínimo da Feature 32. **A parte de "fase da aldeia"
+(construção → madura) continua aberta** — ver o que ficou de fora, no fim.
+
+**O problema, medido antes de mexer.** `set_flag_not_under_attack = 1` era um
+id fixo. O inventário da conta **não tem nenhuma bandeira do tipo 1 sobrando**
+(as 13 existentes estão todas equipadas), então `get_highest_flag_possible(1)`
+devolvia `None` e `flag_logic()` não fazia nada em nenhuma das 18 aldeias.
+BBM 016 e BBM 017 ficaram **sem bandeira**, com sete tipos disponíveis no
+inventário — e sem nenhum erro no log, porque não havia erro.
+
+**A política, definida pelo usuário:**
+
+| Situação | Bandeira |
+|---|---|
+| Aldeia **com academia** | **7 (custo de cunhagem)** — a moeda é da conta inteira e a produção é local, então o desconto vale mais onde se cunha |
+| Aldeia **sem academia** | **1 (produção)**, a prioritária geral |
+| Preenchimento, quando o preferido acabou | **2 (recrutamento) › 6 (população) › 8 (saque)** |
+| **3 (ataque)** e **5 (sorte)** | Manuais. O bot nunca equipa **e nunca remove** |
+| **4 (defesa)** | Automática, mas só pelo caminho de `under_attack` — e sobrepõe qualquer preferência, inclusive manual |
+
+Recrutamento lidera o preenchimento porque tem o maior efeito da tabela: **+20%
+no nível 9**, contra +10% de população e saque (tabela completa levantada em
+2026-08-16, ver `docs/backlog.md`).
+
+**Duas guardas, as duas por causa do cooldown de 24 h:**
+
+1. **Não rebaixa.** Se a bandeira atual está *mais alta* na preferência do que a
+   disponível, mantém. É a mesma classe do incidente de 2026-08-02 (produção
+   16% → 12%, sem reversão possível), agora **entre tipos** em vez de dentro de
+   um.
+2. **Não age sem saber.** `has_academy = None` significa "níveis de construção
+   ainda não lidos" e a política **se abstém**. Cair na lista sem academia
+   seria pior que não agir: ela não contém o tipo 7, então as três aldeias de
+   cunhagem seriam rebaixadas para produção — e o cooldown tornaria isso
+   irreversível no mesmo dia. Mesmo princípio do `_flag_state_confirmed`.
+
+⚠️ A guarda 2 não é hipotética: `setup_defence_manager()` roda **antes** de
+`run_builder()`, então no primeiro ciclo depois de um restart `builder.levels`
+está vazio. Sem ela, todo restart do bot arriscava rebaixar as três aldeias de
+cunhagem.
+
+**`has_academy` vem dos níveis reais do jogo, não da config** — aldeia
+recém-conquistada pode ter academia herdada, e o perfil `watchtower` tem
+`snobs: 0` mas cunha via `mint_coins`. Duas fontes em cascata
+(`builder.levels`, depois `game_data`) pela ordem de execução acima.
+
+**Efeito no estado atual**, conferido aldeia por aldeia contra o cache real —
+a política mexe em **3 das 18**:
+
+| aldeia | antes | depois | porquê |
+|---|---|---|---|
+| BBM 003 | produção nível 7 | **cunhagem nível 4** | tem academia |
+| BBM 016 | **nenhuma** | recrutamento nível 7 | produção esgotada |
+| BBM 017 | **nenhuma** | recrutamento nível 7 | produção esgotada |
+
+As outras 15 ficam quietas, inclusive BBM 001/010/011, que já estavam com
+cunhagem por escolha manual — a política concorda com elas.
+
+**Webmanager `/flags`** passou a mostrar a política em vigor e a preferência
+ordenada, com aviso *"fora da política"* para bandeira manual ou de defesa.
+Renderização conferida isoladamente contra o cache real, sem colisão de
+chave/método no Jinja2 (oitavo padrão).
+
+Config nova em `world`: `flag_priority`, `flag_priority_academy`,
+`flag_manual_types`. Cobertura em `tests/test_flag_policy.py` (19 testes),
+incluindo um que roda a política contra o snapshot real das 18 aldeias e exige
+que ela mexa exatamente em quem deve.
+
+**O que NÃO foi feito, e continua na Feature 32:** a bandeira por *fase da
+aldeia* (produção durante a construção → população no gargalo → recrutamento
+repondo tropa → cunhagem quando madura). Isso exige um sinal legível de "fase",
+que continua sem desenho, e a fase "madura" ainda não existe em campo (a
+BBM 002 não tem torre construída).
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`
