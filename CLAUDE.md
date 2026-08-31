@@ -68,7 +68,17 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `WorldConfig.travel_seconds`, com as velocidades de quatro mundos que provam
   que `get_unit_info` já publica min/campo **efetivo**) e o bônus do "Sinal da
   Aflição" (`Extractor.incoming_support_speed_bonus`, com a fórmula
-  `duração / 1,3` medida contra um envio real em vez de deduzida do texto).
+  `duração / 1,3` medida contra um envio real em vez de deduzida do texto),
+  o alcance do mapa (`Map.sector_grid`/`merge_sectors`/`fetch_sectors`, com
+  recorte verbatim de `map.php?v=2`), a classificação de perfil de farm por
+  lotação e aproveitamento (`tests/test_farm_profiles.py`), a guarda de que
+  importar `twb.py` não trunca o log de sessão
+  (`tests/test_session_log_guard.py`) e a integridade da config
+  (`tests/test_config_integrity.py` — varre por AST toda chamada a
+  `get_config`/`get_village_config` e exige que a chave exista em
+  `config.example.json` / `village_template` e esteja documentada em
+  `webmanager/helpfile.py`; é a verificação automática das três regras de
+  config deste arquivo).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -539,6 +549,30 @@ puxa o fio.**
   plausível também precisa ser medida antes de virar comentário no código** —
   eu já tinha escrito a justificativa errada em `extractors.py`, e foi o teste
   que me pegou.
+- ⚠️ **Vigésimo padrão, achado em 2026-08-31: efeito colateral destrutivo no
+  corpo do módulo, que dispara no `import`.** O topo do `twb.py` abria
+  `cache/logs/session_latest.log` com `open(..., "w")` fora de qualquer guard.
+  Como `tests/test_village_purge_guard.py` importa `purge_refusal_reason` de
+  lá, **rodar a suíte de testes truncava o log da última sessão real do bot** —
+  467 KB de histórico de produção. E a análise que eu ia fazer em seguida era
+  justamente ler esse log para validar os fixes de bandeira; encontrei nele a
+  saída de um teste.
+  A regra: **código no corpo do módulo roda em todo `import`, inclusive nos que
+  ninguém previu** — teste, ferramenta auxiliar, REPL, webmanager. Se ele
+  escreve, apaga, abre conexão ou muda estado global, precisa estar sob
+  `if __name__ == "__main__":` ou ser preguiçoso. O sintoma é cruel porque
+  truncar arquivo **não levanta nada**: some em silêncio e só aparece quando
+  alguém vai ler o que não existe mais. Neste repo isso é mais caro do que
+  parece, porque `cache/` é estado real e não regenerável 1:1 — antes de rodar
+  qualquer coisa que importe `twb.py`, perguntar o que aquele import faz *antes*
+  de definir a primeira função. Corolário de método: é o terceiro padrão virado
+  do avesso — lá o perigo era código que nunca roda, aqui é código que roda
+  onde não devia. Guarda em `tests/test_session_log_guard.py`.
+  **Corolário sobre o que sobrou:** os `cache/logs/twb_*.log` NÃO substituem o
+  `session_latest.log`. Eles são do *reporter* (eventos `TWB_*`: farm, build,
+  recruit, market) e não carregam uma linha sequer dos loggers — nada de
+  `DefenceManager`, `Attacks` ou `Village`. Ao planejar uma análise sobre log,
+  conferir qual das duas fontes tem o dado antes de contar com ela.
 - `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
   tenta indexar um `int` como dict; parece código não exercitado/quebrado.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
