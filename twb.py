@@ -27,39 +27,47 @@ TWB - an open source Tribal Wars bot
 # import that could fail, so even startup crashes are captured. ANSI color
 # codes (from coloredlogs) are kept in the console but stripped from the file
 # copy to keep it plain text.
+#
+# SO QUANDO twb.py E O SCRIPT PRINCIPAL. O open(..., "w") trunca o arquivo, e
+# ele rodava no import: qualquer `import twb` apagava o log da ultima sessao
+# real do bot. Aconteceu em 2026-08-31 -- tests/test_village_purge_guard.py
+# importa `purge_refusal_reason` daqui, entao rodar a suite destruia 467 KB de
+# log de producao, em silencio e sem relacao aparente com o que se estava
+# fazendo. O guard nao enfraquece a captura: quando o bot roda de verdade
+# `__name__` e "__main__", e o tee continua sendo instalado antes de todos os
+# imports de projeto abaixo.
 import os as _os
 import sys as _sys
 import re as _re
 
-_LOG_DIR = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "cache", "logs")
-_os.makedirs(_LOG_DIR, exist_ok=True)
-_session_log_file = open(
-    _os.path.join(_LOG_DIR, "session_latest.log"), "w", encoding="utf-8", buffering=1
-)
-_ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
+if __name__ == "__main__":
+    _LOG_DIR = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "cache", "logs")
+    _os.makedirs(_LOG_DIR, exist_ok=True)
+    _session_log_file = open(
+        _os.path.join(_LOG_DIR, "session_latest.log"), "w", encoding="utf-8", buffering=1
+    )
+    _ANSI_RE = _re.compile(r"\x1b\[[0-9;]*m")
 
+    class _TeeStream:
+        """Writes to the original console stream and a plain-text log file."""
 
-class _TeeStream:
-    """Writes to the original console stream and a plain-text log file."""
+        def __init__(self, console_stream, file_stream):
+            self._console = console_stream
+            self._file = file_stream
 
-    def __init__(self, console_stream, file_stream):
-        self._console = console_stream
-        self._file = file_stream
+        def write(self, data):
+            self._console.write(data)
+            self._file.write(_ANSI_RE.sub("", data))
 
-    def write(self, data):
-        self._console.write(data)
-        self._file.write(_ANSI_RE.sub("", data))
+        def flush(self):
+            self._console.flush()
+            self._file.flush()
 
-    def flush(self):
-        self._console.flush()
-        self._file.flush()
+        def isatty(self):
+            return self._console.isatty()
 
-    def isatty(self):
-        return self._console.isatty()
-
-
-_sys.stdout = _TeeStream(_sys.stdout, _session_log_file)
-_sys.stderr = _TeeStream(_sys.stderr, _session_log_file)
+    _sys.stdout = _TeeStream(_sys.stdout, _session_log_file)
+    _sys.stderr = _TeeStream(_sys.stderr, _session_log_file)
 # --- End session log capture ------------------------------------------------
 
 import collections
