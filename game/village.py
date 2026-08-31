@@ -857,7 +857,18 @@ class Village:
         Map instance without duplicating the HTTP request.
         """
         if not self.area:
-            self.area = Map(wrapper=self.wrapper, village_id=self.village_id)
+            self.area = Map(
+                wrapper=self.wrapper,
+                village_id=self.village_id,
+                sector_radius=self.get_config(
+                    section="farms", parameter="map_sector_radius", default=0
+                ),
+            )
+        # Reaplica todo ciclo: a instancia de Map sobrevive entre ciclos, entao
+        # sem isto uma mudanca de config so valeria depois de reiniciar o bot.
+        self.area.sector_radius = int(
+            self.get_config(section="farms", parameter="map_sector_radius", default=0) or 0
+        )
         self.area.get_map()
 
     def ensure_attack_manager(self):

@@ -1495,12 +1495,94 @@ o tempo de revisita. Com a escada nova ficaram desalinhados — mas convém medi
 alguns ciclos antes de mexer, porque os dados de saque vão parar de ser capados
 em 8.000 e o quadro real deve mudar.
 
-Vale também investigar por que o fetch do mapa devolve tão poucas aldeias por
+~~Vale também investigar por que o fetch do mapa devolve tão poucas aldeias por
 aldeia (93 para a BBM 001, das quais 36 farmáveis), já que é isso, e não
-`max_farms`, que limita o alcance do farm.
+`max_farms`, que limita o alcance do farm.~~ ✅ **Resolvido em 2026-08-31** —
+era o prefetch da tela de mapa entregando 2 setores não centrados na aldeia.
+Ver a seção de 2026-08-31 no fim deste documento.
 
 E **as métricas de farm anteriores a `7c85a22` não são confiáveis** — qualquer
 comparação "antes x depois" precisa começar do primeiro ciclo pós-correção.
+
+## 2026-08-31 — o farm enxergava 2 setores de mapa sorteados, não a vizinhança
+
+Fecha o item "investigar por que o fetch do mapa devolve tão poucas aldeias"
+deixado aberto em 2026-08-19 (seção acima).
+
+**O sintoma, do log de 30/08.** As 18 aldeias gerenciadas cabem num quadrado de
+17 campos (571–588, 304–316) e mesmo assim enxergavam mundos diferentes:
+
+| aldeia | posição | aldeias vistas | alvos de farm após todos os filtros |
+|---|---|---|---|
+| BBM 007 | 571\|308 | **36** | **11** |
+| BBM 001 | 577\|306 | 93 | 19 |
+| BBM 003 | 579\|304 | 220 | 81 |
+
+Com `max_farms: 45`, a BBM 007 operava a **24% da própria configuração** — e
+nada no log dizia isso, porque não havia erro nenhum.
+
+**A causa.** `Map.get_map()` tinha uma fonte só: `TWMap.sectorPrefech`, que é o
+que a tela de mapa desenha de cara. Medido: **2 setores**, e não centrados na
+aldeia. Para a BBM 001 o prefetch cobria y 300..319 com a aldeia em y=306 —
+**nada ao norte dela**. Qual metade do mapa cada aldeia via era sorteio de onde
+o setor de 20×20 calhava de cair.
+
+⚠️ **O `search_radius` (100) nunca mordeu.** No log inteiro não há uma única
+linha `too far away`. Era natural culpar o raio ou o `max_farms` — os dois
+parâmetros que *parecem* governar alcance — e ambos eram inertes. O limite real
+não estava em config nenhuma.
+
+**A correção.** O jogo carrega setores sob demanda quando o jogador arrasta o
+mapa, por um endpoint que o bot nunca tinha usado. Lido do bundle público
+`merged/map.6e385c.js`, função `loadSectors`:
+
+    /map.php?v=2&locale=<locale>&e=<ts>&<sx>_<sy>=<r>&...
+
+`<sx>_<sy>` são múltiplos de 20 (`getSectorIdByTile` faz `e - e % 20`), e `r` é
+1 quando os tiles de terreno também são pedidos, 0 quando bastam os dados de
+aldeia. **O bot manda 0** — nunca usou tiles, e medido são 83 KB contra 91 KB
+para as mesmas 471 aldeias.
+
+A integração é a parte barata: a resposta tem **exatamente a mesma estrutura**
+do prefetch (`{x, y, tiles, data:{x,y,villages,players,allies}}`), então os
+setores extras entram na mesma lista e são consumidos pelo parser que já
+existia. Nenhuma linha de `build_cache_entry` mudou.
+
+**Ganho medido ao vivo** (`sector_radius: 1`, bloco 3×3 = 60×60 campos):
+
+| aldeia | vistas | alvos de farm |
+|---|---|---|
+| BBM 001 | 93 → **470** | 19 → **126** |
+| BBM 003 | 220 → **470** | 81 → **126** |
+| BBM 007 | 36 → **470** | 11 → **126** |
+
+Os números com `radius=0` reproduzem 93/220/36 exatamente como o log de
+produção registrava — é o mesmo caminho de código, não uma simulação.
+
+**Ressalva honesta, no espírito do décimo primeiro padrão:** o ganho em *alvos*
+não é ganho em saque na mesma proporção. `max_farms: 45` capa o uso em 45 dos
+126, e a mediana de distância dos alvos sobe (14,1 → 23,1 campos para a
+BBM 001), ou seja a tropa passa mais tempo viajando. O que a mudança garante é
+que os 45 escolhidos passam a ser os 45 melhores de 126 em vez de *todos* os 19
+que existiam. Medir saque/hora antes e depois é o que decide o `max_farms` final.
+
+**Desligado por padrão** (`farms.map_sector_radius: 0`), pela mesma razão que
+`statue.enabled` e `inventory.enabled` nasceram desligados: é uma requisição
+HTTP nova, a uma tela que o bot nunca tinha acessado, e ainda não rodou dentro
+do loop real. `1` = bloco 3×3, `2` = 5×5.
+
+**Degradação:** qualquer falha (`get_url` devolvendo `None`, 200 que não é JSON,
+JSON que não é lista, `game_state` sem coordenada) devolve `[]` e o farm segue
+com o prefetch — o comportamento de antes, com WARNING no log. Nunca levanta.
+
+Arquivos: `game/map.py` (`SECTOR_SIZE`, `sector_grid`, `merge_sectors`,
+`fetch_sectors`), `game/village.py` (lê a config todo ciclo, para não exigir
+restart), `config.example.json` + `webmanager/helpfile.py`. `build.version`
+3.8 → 3.9 **só no `config.example.json`**; conferido antes que o merge não
+descartaria nenhuma chave do `config.json` vivo. Cobertura em
+`tests/test_map_sectors.py` (13 testes, sem rede, com recorte verbatim do
+`map.php` real), mais smoke de ponta a ponta contra o servidor com o próprio
+`WebWrapper`.
 
 ## Ambiente de referência
 

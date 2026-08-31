@@ -44,6 +44,11 @@ help_file = {
     'farms.min_points': 'Minimum points of villages to attack',
     'farms.max_points': 'Maximum points of villages to attack',
     'farms.search_radius': 'Max radius of villages to attack (fields)',
+    'farms.map_sector_radius': 'Extra map sectors (20x20 fields each) fetched around every village '
+                               'via map.php. 0 = only what the map screen preloads, which is 2 '
+                               'sectors and is not centered on the village. 1 = a 3x3 sector block '
+                               '(60x60 fields), 2 = 5x5. More sectors means more farm targets, at '
+                               'the cost of one bigger map request per village every 8 hours.',
     'farms.default_away_time': 'Default cooldown in seconds before attacking a village again',
     'farms.full_loot_away_time': 'Cooldown for villages with high resource gain',
     'farms.low_loot_away_time': 'Cooldown for villages with low resource gain',

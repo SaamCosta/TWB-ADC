@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.8",
+    "version": "3.9",
     "author": "stefan2200"
   },
   "server": {
@@ -148,6 +148,7 @@
     "min_points": 0,
     "max_points": 50,
     "search_radius": 100,
+    "map_sector_radius": 0,
     "default_away_time": 3600,
     "full_loot_away_time": 1800,
     "low_loot_away_time": 7200,
