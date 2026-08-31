@@ -1745,6 +1745,83 @@ repondo tropa → cunhagem quando madura). Isso exige um sinal legível de "fase
 que continua sem desenho, e a fase "madura" ainda não existe em campo (a
 BBM 002 não tem torre construída).
 
+## 2026-08-31 (d) — polimento do webmanager, com o bot rodando
+
+Sessão feita **com o bot em execução** (PID 5564, iniciado 10:17), então o
+escopo foi deliberadamente limitado ao que não disputa estado com ele: nada de
+`config.json` (o bot reescreve o arquivo inteiro a partir da cópia em memória —
+`twb.py:593`, `:377`, `:415`), nada de escrita em `cache/`. Só webmanager
+(processo separado), código morto e testes.
+
+### `core/twstats.py::buildings_to_farm_pop()` removida
+
+Estava no débito técnico como "parece código não exercitado/quebrado". É pior
+que isso, e o que revelou foi abrir o cache antes de "consertar" a indexação:
+a tabela do twstats é `prédio → nível → população consumida por aquele prédio`
+(`main` nível 2 = 1 pop) e **`max_levels` não inclui `farm`** — a fonte é
+estruturalmente incapaz de dar capacidade de fazenda, que é o que o nome e o
+docstring prometiam. Zero chamadores. Removida, com a substituta nomeada no
+formato do quarto padrão: quem precisa de população usa
+`game_state["village"]["pop"]`/`pop_max`, ao vivo, como `BuildingManager` e
+`ResourceManager` já fazem.
+
+Sobrou no docstring da classe uma armadilha de procedência: a chave de nível é
+`int` vinda da rede e `str` depois do round-trip pelo cache JSON — `output["main"][2]`
+funciona no ciclo do sync e levanta `KeyError` em todos os seguintes.
+
+### Feature 21 (relatórios) — os cinco itens de polimento
+
+Detalhe na seção da Feature 21 em `docs/backlog.md`. O que vale destacar:
+
+- **O ganho de I/O era maior do que o registrado:** 8,3 s por request com 1.056
+  relatórios, contra ~3 ms indexado. A página inteira dependia disso.
+- **O bug de nome não era falta de cruzamento de cache.** Cruzar `cache/villages`
+  resolvia **1 de 100** linhas, porque o jogo manda `name = 0` (int) para
+  bárbara e o `Map` guarda verbatim. 184/734 aldeias nesse estado, todas com
+  `owner == "0"` — regra exata, não heurística. Agora 100/100.
+- **O dropdown de tipo fixo escondia 15 dos 18 tipos reais**, incluindo
+  `ReportTrade` com 170 relatórios.
+- **Uma afirmação do backlog caiu ao ser medida:** `safe_to_engage()` não olha
+  o relatório mais recente, olha o primeiro na ordem de `os.listdir`. Medido
+  nos 63 alvos com múltiplos relatórios: **zero divergências**. Erro de
+  documentação, não bug — e por isso **não** mexi na semântica do
+  `AttackManager`.
+
+### Feature 17 (império) — os três itens, mais um bug da mesma classe
+
+Grade de cards para tropas, `<tfoot>` de totais e legenda de escala do heatmap
+(pintada pela mesma `heatColor()` do canvas, para não divergir). O bug: o
+tooltip do mapa de calor mostrava id cru em **todo** alvo bárbaro, mesma causa
+do item acima — varri a classe inteira em vez de consertar só onde tropecei
+(corolário do décimo segundo padrão) e extraí a regra para
+`village_display_name`.
+
+### O teste-guarda que destruía o que protegia (vigésimo primeiro padrão)
+
+`tests/test_session_log_guard.py`, escrito no dia anterior, **truncava o
+`session_latest.log` real** para gravar uma sentinela e restaurava no `finally`.
+Com o bot rodando isso é destrutivo: ele tem handle aberto, continua escrevendo
+no offset dele, e o truncate deixou **133 bytes NUL** (medidos) no meio do log
+de produção, além de perder o que o bot logou na janela do teste. Pior: o teste
+falhou com diagnóstico **errado** — acusou o `import` de alterar o arquivo
+quando quem alterou foi o bot escrevendo normal.
+
+Trocado por observação passiva: truncar faz o arquivo **encolher** e o bot só
+faz **crescer**, então comparar tamanho + cabeçalho detecta a regressão sem
+tocar em nada. E, porque guarda que não pode falhar é inútil, reproduzi o
+`twb.py` bugado num diretório temporário para provar que os dois sinais ainda
+disparam.
+
+### Validação da Feature 32 parte 1 — parcial, 1 de 18
+
+Primeira evidência real desde o commit da política: a BBM 001 logou
+`Current village flag: -22% nos custos de moedas` (tipo 7, nível 7) e o bot
+**não trocou** — exatamente o previsto para as três aldeias de cunhagem
+manuais, com as quais a política concorda. As outras 17 não rodaram dentro da
+sessão (o ciclo da primeira aldeia levou ~25 min só de farm). **Continua
+pendente** o número que importa: exatamente 3 trocas (BBM 003, 016, 017) e
+silêncio depois.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

@@ -13,7 +13,9 @@ torre, fase 2), **32 parte 2** (bandeira por **fase** da aldeia — a escolha po
 
 **Não pertencem mais a esta lista** (fechados em 2026-08-31, ver
 `docs/features_log.md`): o alcance do fetch de mapa, os limiares de perfil de
-farm e as duas aldeias sem bandeira.
+farm e as duas aldeias sem bandeira. Também fechados no mesmo dia, na sessão
+com o bot rodando: **todo o polimento pendente das Features 17 e 21** e a
+função morta `buildings_to_farm_pop()` do débito técnico.
 
 ## Fila da auditoria de código
 
@@ -466,24 +468,34 @@ disso para qualquer chave futura que colida com métodos de `dict`
 (`items`, `keys`, `values`, `update`, `get`, `copy`, etc.) — nenhuma outra
 ocorrência encontrada em `empire.html` nesta revisão.
 
-**Polimento pendente (funcional, mas com lacunas conhecidas — anotado,
-não implementado):**
-- **Ícones de tropas pequenos/pouco legíveis.** O card "Tropas totais do
-  império" lista ícone+número em uma única linha corrida (`d-flex
-  flex-wrap`); com poucos tipos de unidade (caso atual, só 1 aldeia) fica
-  compacto demais visualmente. Vale revisar espaçamento/tamanho dos ícones
-  (ou usar um layout em grade/cards por unidade) quando houver mais dados
-  reais para julgar o resultado.
-- **Sem linha de total agregado em "Recursos por aldeia".** Com várias
-  aldeias gerenciadas, seria útil uma linha de rodapé somando
-  madeira/argila/ferro/pop do império inteiro, além dos totais por aldeia
-  já mostrados.
-- **Heatmap sem números visíveis nos pontos.** A intensidade (cor/raio do
-  círculo) só é lida via hover (tooltip); poderia ganhar uma legenda de
-  escala de cor (frio→quente) fixa no card, sem depender do usuário passar
-  o mouse em cada ponto.
-- Nenhum desses itens bloqueia o uso da página — todos são melhorias de
-  UX, não bugs funcionais.
+### ✅ Polimento fechado em 2026-08-31
+
+Os três itens que estavam anotados aqui (ícones de tropa numa linha corrida
+apertada, falta de linha de total em "Recursos por aldeia", heatmap sem
+legenda de escala) foram implementados. Detalhe:
+
+- **Tropas totais** viraram grade de cards (`row-cols-2/3/4`) com ícone 28px e
+  número em corpo maior, no lugar do `d-flex flex-wrap` colado.
+- **Linha de total** (`<tfoot>` sticky) somando madeira/argila/ferro/pop/pontos
+  do império. Somada em Python (`EmpireReader.resource_totals`) e **não** com
+  `{{ resources | sum(attribute='pop') }}`: o filtro `sum` do Jinja2 resolve
+  `attribute` por `getattr` antes de `getitem`, então pegaria `dict.pop`, o
+  método — é o oitavo padrão do `CLAUDE.md`, que já tinha mordido exatamente
+  esta tabela e obrigado o `{{ r['pop'] }}`.
+- **Legenda de escala** de cor fixa no card, com os swatches pintados pela
+  **mesma** função `heatColor()` que o canvas usa, para legenda e mapa não
+  poderem divergir.
+
+**Bug real corrigido junto, da mesma classe do `name` de bárbara achado na
+Feature 21:** `farm_heatmap()` fazia `vdata.get("name") or target_id`, e como
+alvo de farm é majoritariamente bárbara, **todo tooltip do mapa de calor
+mostrava id cru**. O jogo manda `name = 0` (int) para aldeia sem nome próprio e
+`Map.build_cache_entry()` guarda esse 0 verbatim (`map.py:259`); quem renderiza
+"Aldeia de bárbaros" é o cliente do jogo. Agora resolve 130/130 alvos. A regra
+mora num helper único (`village_display_name`, `webmanager/utils.py`) usado
+pelas duas páginas — medida no cache real: 184 das 734 aldeias estão nesse
+estado e **todas as 184** têm `owner == "0"`, zero exceções, então o mapeamento
+é exato e não heurístico.
 
 ## Feature 18 — Moral e night bonus dinâmicos no simulador de PvP conquest ✅ Implementado (2026-08-02)
 
@@ -582,44 +594,50 @@ regenerável 1:1 — o jogo pode auto-deletar relatórios antigos da lista antes
 que o bot os releia). Só leitura nesta feature, nenhuma escrita/limpeza nesse
 diretório pelo webmanager.
 
-**Polimento pendente (funcional, mas com lacunas conhecidas):**
-- **Nomes de aldeia inimiga não resolvidos.** A tabela mostra `origin`/`dest`
-  como ID cru. `village_options` (dropdown de filtro) só cobre aldeias
-  *próprias* (`cache/managed/*.json`); aldeias-alvo de farm/ataque (a maioria
-  dos relatórios) não têm nome resolvido porque `ReportReader.load()` não
-  cruza com `cache/villages/*.json` (dados de mapa, já usados por
-  `MapBuilder`/`ZoneReader`). Devia enriquecer `origin`/`dest` com nome via
-  esse cache antes de exibir.
-- **Filtro de tipo hardcoded.** O dropdown em `reports.html` só lista
-  `attack`/`scout`/`support` fixos. Tipos reais no cache incluem outros
-  vistos em `bot.html` (ex: `ReportFoundCrew`) que ficam de fora do filtro
-  (ainda aparecem na tabela, só não são selecionáveis). Devia construir as
-  opções dinamicamente a partir dos tipos presentes no cache, como `/logs`
-  já faz com `event_types`.
-- **`safe_to_engage` não é o mesmo valor que o `AttackManager` usa.** O pedido
-  original citava `safe_to_engage` — o que foi implementado é um veredito
-  *por relatório individual* (`ReportReader._outcome`), não o agregado
-  *por aldeia-alvo* que `ReportManager.safe_to_engage()` realmente calcula
-  (que olha o relatório mais recente contra aquele alvo para decidir se vale
-  atacar de novo). Seria mais fiel adicionar uma view agregada por aldeia
-  usando a mesma lógica de `safe_to_engage()`, já que é isso que
-  efetivamente influencia as decisões do bot.
-- **Sem paginação real.** `ReportReader.load(limit=150)` corta silenciosamente
-  nos 150 relatórios mais recentes (ordenados por `extra.when`, quando
-  presente) — não há como navegar para relatórios mais antigos pela UI.
-- **I/O por request, sem cache.** `ReportReader.load()` varre e abre todo
-  arquivo em `cache/reports/*.json` a cada carregamento da página (não só os
-  150 exibidos — as estatísticas agregadas somam sobre a pasta inteira).
-  Mesma classe de gargalo já registrada em `CLAUDE.md` ("Débito técnico") para
-  `Hunter`/`PvpConquestManager`/`ZoneManager`/`ConquestManager` — com a pasta
-  crescendo (500+ arquivos já observados em campo), pode ficar perceptível.
-  Candidato a um índice incremental ou cache em memória por ciclo, em vez de
-  releitura completa a cada acesso. **Há precedente agora:**
-  `PvpConquestManager._scout_report_index()` (P2-35, 2026-08-11) resolveu
-  exatamente isso para `cache/reports` invalidando por conjunto de nomes de
-  arquivo — correto porque relatório em cache nunca é reescrito. O mesmo
-  truque serve aqui, com a diferença de que o webmanager é outro processo e
-  precisaria do índice preso ao request, não ao ciclo.
+### ✅ Polimento fechado em 2026-08-31 — os cinco itens
+
+Cobertura em `tests/test_report_reader.py` (12 testes, 43 checks, sem rede e
+sem depender do `cache/` real — as duas funções que tocam disco são
+substituídas por fixtures), mais um smoke contra o cache real e render
+standalone das duas abas no Jinja2.
+
+1. **Nomes de aldeia resolvidos.** `origin`/`dest` agora cruzam
+   `cache/villages` + `cache/managed`. **O bug de verdade não era a falta do
+   cruzamento** — era que o jogo manda `name = 0` (int, não string) para aldeia
+   sem nome próprio e `Map.build_cache_entry()` guarda esse 0 verbatim
+   (`map.py:259`); quem renderiza "Aldeia de bárbaros" é o cliente do jogo, não
+   o dado. Com o cruzamento ingênuo a página resolvia **1 de 100** linhas.
+   Medido no cache real: 184 das 734 aldeias nesse estado, **todas** com
+   `owner == "0"` (zero exceções), então mapear para "Bárbara" é exato. Agora
+   resolve 100/100. Regra num helper único, `village_display_name`.
+2. **Filtro de tipo dinâmico** (`types_present()`), com contagem por tipo. O
+   dropdown fixo oferecia 3 opções; o cache real tem **18 tipos**, e o segundo
+   mais frequente (`ReportTrade`, 170 relatórios) era inalcançável.
+3. **View agregada por alvo** (`aggregate_by_target()`), replicando
+   `ReportManager.safe_to_engage()` — o valor que de fato move o
+   `AttackManager` — como aba separada do veredito por relatório.
+4. **Paginação real** (100/página, 11 páginas hoje) no lugar do corte mudo em
+   150.
+5. **I/O indexado**: `8,3 s → ~3 ms` por request (1.056 relatórios, medido a
+   frio). Chave `(frozenset de nomes, maior mtime)`. Ver a nota de débito
+   técnico no `CLAUDE.md` sobre por que `cache/reports` e `cache/villages`
+   exigem chaves diferentes.
+
+⚠️ **Correção de uma afirmação deste documento, medida em vez de suposta.** O
+item 3 acima dizia que `safe_to_engage()` "olha o relatório **mais recente**
+contra aquele alvo". **O código não faz isso**: ele itera `self.last_reports`,
+cuja ordem é a de `os.listdir` sobre `cache/reports` — alfabética por nome de
+arquivo, que para ids numéricos de comprimentos diferentes não é nem
+cronológica nem numérica; e retorna no **primeiro** relatório que decide.
+Rodado contra os 1.040 relatórios reais: dos **63** alvos com mais de um
+relatório, o veredito pela ordem real e o veredito pelo mais recente divergem
+em **zero** casos — alvo de farm tende a ser consistentemente seguro ou
+consistentemente perigoso. Ou seja: **erro de documentação, não bug ativo.**
+Não mexi na semântica do `AttackManager` por isso (o `CLAUDE.md` pede cautela
+extra ali e não há sintoma), mas a coluna agregada marca a divergência com um
+badge se ela algum dia aparecer, e `test_primeiro_relatorio_decide_nao_o_mais_recente`
+fixa o comportamento atual para que uma futura mudança para ordem cronológica
+seja decisão consciente e não acidente.
 
 ## Feature 22 — Detecção de conta premium para fila de construção dinâmica ✅ Implementado (2026-08-02)
 

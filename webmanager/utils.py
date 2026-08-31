@@ -8,6 +8,32 @@ import subprocess
 import psutil
 
 
+def village_display_name(entry, vid, fallback=None):
+    """
+    Nome exibivel de uma aldeia lida do cache de mapa (cache/villages) ou de
+    cache/managed.
+
+    Existe porque o jogo manda `name` = 0 (int, nao string) para aldeia sem
+    nome proprio, e `Map.build_cache_entry()` guarda esse 0 verbatim
+    (`name = entry[2]`, game/map.py:259) -- quem renderiza "Aldeia de
+    barbaros" a partir dele e o cliente do jogo, nao o dado. Medido no cache
+    real em 2026-08-31: 184 das 734 aldeias estao nesse estado e TODAS as 184
+    tem `owner == "0"`, zero excecoes, entao mapear para "Barbara" e exato e
+    nao heuristico.
+
+    Sem isso, qualquer tabela de alvo de farm mostra id cru: na /reports eram
+    99 de 100 linhas, e no mapa de calor da /empire todo tooltip de barbara.
+    """
+    entry = entry or {}
+    name = entry.get("name")
+    if not name:
+        pub = entry.get("public") or {}
+        name = pub.get("name")
+        if not name and str(entry.get("owner", pub.get("owner"))) == "0":
+            name = "Bárbara"
+    return name or fallback or ("#%s" % vid)
+
+
 class DataReader:
     @staticmethod
     def cache_grab(cache_location):
@@ -1176,6 +1202,28 @@ class EmpireReader:
         return rows
 
     @staticmethod
+    def resource_totals(rows):
+        """
+        Linha de rodape somando o imperio inteiro para a tabela "Recursos por
+        aldeia" (polimento pendente da Feature 17).
+
+        Somado em Python de proposito, e nao com `{{ rows | sum(attribute=..) }}`
+        no Jinja2: o campo se chama `pop`, e o filtro `sum` com `attribute`
+        resolve por getattr antes de getitem -- pegaria `dict.pop`, o metodo,
+        que e exatamente o oitavo padrao do CLAUDE.md (o mesmo bug que ja
+        apareceu nesta tabela e obrigou o `{{ r['pop'] }}` do template).
+        """
+        totals = {"wood": 0, "stone": 0, "iron": 0, "pop": 0, "points": 0, "villages": 0}
+        for r in rows or []:
+            totals["villages"] += 1
+            for key in ("wood", "stone", "iron", "pop", "points"):
+                try:
+                    totals[key] += int(r.get(key) or 0)
+                except (TypeError, ValueError):
+                    continue
+        return totals
+
+    @staticmethod
     def farm_heatmap(attacks, villages, managed):
         """
         Cruza cache/attacks/*.json (contagem de ataques por alvo, mantida
@@ -1201,7 +1249,8 @@ class EmpireReader:
             max_count = max(max_count, count)
             points.append({
                 "target_id": target_id,
-                "name": vdata.get("name") or target_id,
+                # name=0 vindo do jogo para barbara -- ver village_display_name
+                "name": village_display_name(vdata, target_id),
                 "x": vdata["location"][0],
                 "y": vdata["location"][1],
                 "attack_count": count,
@@ -1963,6 +2012,142 @@ class ReportReader:
         "attack": "Ataque", "scout": "Scout", "support": "Apoio",
     }
 
+    # Caches de processo, deliberadamente atributos de classe mutaveis: o
+    # ReportReader nunca e instanciado (so @staticmethod) e o objetivo aqui e
+    # justamente compartilhar entre requests. Nao e o "primeiro padrao" do
+    # CLAUDE.md (estado vazando entre instancias) porque instancia nao existe.
+    _reports_cache = {"sig": None, "data": None}
+    _labels_cache = {"sig": None, "data": None}
+
+    @staticmethod
+    def _dir_signature(path):
+        """
+        (conjunto de nomes, maior mtime) via os.scandir -- sem abrir arquivo.
+
+        Para `cache/reports` o conjunto de nomes sozinho ja seria exato:
+        `ReportManager.read()` pula id que ja esta em cache (`reports.py:174`),
+        entao um relatorio nasce e morre mas nunca e reescrito sob o mesmo nome
+        -- mesma premissa que `PvpConquestManager._scout_report_index()` (P2-35)
+        verificou antes de usar a tecnica. O mtime entra junto porque sai de
+        graca do scandir e tira a dependencia dessa premissa continuar valendo.
+
+        Para `cache/villages` o mtime NAO e opcional: o scan de mapa reescreve
+        esses arquivos in-place (dono, pontos), entao chavear so por nome
+        serviria nome/coordenada velhos para sempre.
+        """
+        names, newest = [], 0.0
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    if not entry.name.endswith(".json"):
+                        continue
+                    names.append(entry.name)
+                    try:
+                        newest = max(newest, entry.stat().st_mtime)
+                    except OSError:
+                        pass
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        return frozenset(names), newest
+
+    @staticmethod
+    def _all_reports():
+        """
+        Todo cache/reports/*.json, relido so quando o diretorio muda.
+
+        Sem isto, cada carregamento de /reports abria os 1000+ arquivos da
+        pasta (nao so os exibidos -- as stats agregadas varrem tudo), que e o
+        gargalo registrado no backlog da Feature 21.
+        """
+        reports_dir = os.path.join(os.path.dirname(__file__), "..", "cache", "reports")
+        sig = ReportReader._dir_signature(reports_dir)
+        if sig is None:
+            return {}
+        if ReportReader._reports_cache["sig"] == sig:
+            return ReportReader._reports_cache["data"]
+
+        data = {}
+        for fname in sig[0]:
+            try:
+                with open(os.path.join(reports_dir, fname), "r") as f:
+                    data[fname[:-5]] = json.load(f)
+            except Exception:
+                continue
+        ReportReader._reports_cache = {"sig": sig, "data": data}
+        return data
+
+    @staticmethod
+    def _entry_label(vid, entry, own):
+        """
+        Normaliza uma entrada de cache/villages ou cache/managed em
+        {"name", "coords", "own", "label"}.
+
+        `cache/managed` guarda name/x/y no topo e repete o formato de mapa em
+        `public`; `cache/villages` so tem o formato de mapa. Le os dois.
+        """
+        pub = entry.get("public") or {}
+        loc = entry.get("location") or pub.get("location")
+        if not loc and entry.get("x") is not None:
+            loc = [entry.get("x"), entry.get("y")]
+        coords = ""
+        if loc and len(loc) == 2 and loc[0] is not None:
+            coords = "%s|%s" % (loc[0], loc[1])
+
+        # A regra do name=0 (barbara) mora em village_display_name -- ver la
+        # a medicao que a justifica.
+        name = village_display_name(entry, vid, fallback="#" + vid)
+        return {
+            "name": name if not name.startswith("#") else "",
+            "coords": coords,
+            "own": own,
+            "label": name + ((" (%s)" % coords) if coords else ""),
+        }
+
+    @staticmethod
+    def _village_labels():
+        """
+        id -> {"name", "coords", "label"} cruzando cache/managed (aldeias
+        proprias) e cache/villages (o que o scan de mapa ja viu).
+
+        Sem isto a tabela mostrava `origin`/`dest` como id cru, e a maioria dos
+        relatorios e contra alvo de farm, que nunca esta em cache/managed.
+        """
+        base = os.path.join(os.path.dirname(__file__), "..", "cache")
+        v_dir = os.path.join(base, "villages")
+        m_dir = os.path.join(base, "managed")
+        sig = (ReportReader._dir_signature(v_dir), ReportReader._dir_signature(m_dir))
+        if ReportReader._labels_cache["sig"] == sig:
+            return ReportReader._labels_cache["data"]
+
+        labels = {}
+
+        def _absorb(directory, signature, own):
+            if signature is None:
+                return
+            for fname in signature[0]:
+                try:
+                    with open(os.path.join(directory, fname), "r") as f:
+                        entry = json.load(f)
+                except Exception:
+                    continue
+                labels[fname[:-5]] = ReportReader._entry_label(fname[:-5], entry, own)
+
+        # villages primeiro, managed por cima: aldeia propria tem o nome mais
+        # confiavel (o bot renomeia) e o dado de mapa pode estar defasado.
+        _absorb(v_dir, sig[0], False)
+        _absorb(m_dir, sig[1], True)
+        ReportReader._labels_cache = {"sig": sig, "data": labels}
+        return labels
+
+    @staticmethod
+    def _label_for(vid, labels):
+        if not vid:
+            return "—", False
+        info = labels.get(str(vid))
+        if not info:
+            return "#%s" % vid, False
+        return info["label"], info["own"]
+
     @staticmethod
     def _outcome(report):
         """
@@ -1998,25 +2183,34 @@ class ReportReader:
         return "Perdas parciais", "warning"
 
     @staticmethod
-    def load(dest_filter=None, type_filter=None, limit=150):
-        reports_dir = os.path.join(os.path.dirname(__file__), "..", "cache", "reports")
-        if not os.path.exists(reports_dir):
-            return [], {}
+    def types_present():
+        """
+        Tipos realmente presentes no cache, para o dropdown de filtro -- em vez
+        da lista fixa attack/scout/support, que deixava de fora tipos reais
+        (ex: ReportFoundCrew) que apareciam na tabela mas nao eram
+        selecionaveis. Mesmo padrao que /logs ja usa com event_types.
+        """
+        seen = {}
+        for data in ReportReader._all_reports().values():
+            r_type = data.get("type", "?")
+            seen[r_type] = seen.get(r_type, 0) + 1
+        return [
+            {"value": t, "label": ReportReader.TYPE_LABELS.get(t, t), "count": n}
+            for t, n in sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+
+    @staticmethod
+    def load(dest_filter=None, type_filter=None, page=0, per_page=100):
+        all_reports = ReportReader._all_reports()
+        if not all_reports:
+            return [], {}, {"page": 0, "pages": 0, "total": 0, "per_page": per_page}
+        labels = ReportReader._village_labels()
 
         entries = []
         stats = {"total": 0, "attacks": 0, "scouts": 0, "clean": 0, "with_losses": 0,
                   "loot": {"wood": 0, "stone": 0, "iron": 0}}
 
-        for fname in os.listdir(reports_dir):
-            if not fname.endswith(".json"):
-                continue
-            report_id = fname.replace(".json", "")
-            try:
-                with open(os.path.join(reports_dir, fname), "r") as f:
-                    data = json.load(f)
-            except Exception:
-                continue
-
+        for report_id, data in all_reports.items():
             r_type = data.get("type", "?")
             dest = data.get("dest")
             origin = data.get("origin")
@@ -2038,6 +2232,8 @@ class ReportReader:
 
             outcome_label, outcome_color = ReportReader._outcome(data)
             loot = extra.get("loot") or {}
+            origin_label, origin_own = ReportReader._label_for(origin, labels)
+            dest_label, dest_own = ReportReader._label_for(dest, labels)
 
             entries.append({
                 "report_id": report_id,
@@ -2045,6 +2241,10 @@ class ReportReader:
                 "type_label": ReportReader.TYPE_LABELS.get(r_type, r_type),
                 "origin": origin,
                 "dest": dest,
+                "origin_label": origin_label,
+                "dest_label": dest_label,
+                "origin_own": origin_own,
+                "dest_own": dest_own,
                 "when": when,
                 "when_fmt": when_fmt,
                 "loot": loot,
@@ -2055,28 +2255,144 @@ class ReportReader:
                 "outcome_color": outcome_color,
             })
 
-            # Stats agregadas sobre TODOS os relatorios (nao so os filtrados na pagina),
-            # respeitando apenas o type_filter para nao misturar contextos.
-            if type_filter and r_type != type_filter:
-                pass
+            # Stats sobre o conjunto FILTRADO inteiro (todas as paginas), nao so
+            # sobre a pagina exibida. O comentario anterior aqui dizia "sobre
+            # TODOS os relatorios, respeitando apenas o type_filter", e era
+            # falso nas duas metades: os dois `continue` acima ja tinham
+            # descartado o que nao casa com dest_filter/type_filter antes de
+            # chegar nesta linha, entao o ramo `if type_filter ...: pass` era
+            # morto por construcao.
+            stats["total"] += 1
+            if r_type == "attack":
+                stats["attacks"] += 1
+            elif r_type == "scout":
+                stats["scouts"] += 1
+            if losses:
+                stats["with_losses"] += 1
             else:
-                stats["total"] += 1
-                if r_type == "attack":
-                    stats["attacks"] += 1
-                elif r_type == "scout":
-                    stats["scouts"] += 1
-                if losses:
-                    stats["with_losses"] += 1
-                else:
-                    stats["clean"] += 1
-                for res in ("wood", "stone", "iron"):
-                    try:
-                        stats["loot"][res] += int(loot.get(res, 0) or 0)
-                    except (TypeError, ValueError):
-                        pass
+                stats["clean"] += 1
+            for res in ("wood", "stone", "iron"):
+                try:
+                    stats["loot"][res] += int(loot.get(res, 0) or 0)
+                except (TypeError, ValueError):
+                    pass
 
         entries.sort(key=lambda e: (int(e["when"] or 0), e["report_id"]), reverse=True)
-        return entries[:limit], stats
+
+        total = len(entries)
+        per_page = max(1, int(per_page or 100))
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = min(max(0, int(page or 0)), pages - 1)
+        start = page * per_page
+        pagination = {
+            "page": page, "pages": pages, "total": total, "per_page": per_page,
+            "start": start + 1 if total else 0,
+            "end": min(start + per_page, total),
+            "has_prev": page > 0, "has_next": page < pages - 1,
+        }
+        return entries[start:start + per_page], stats, pagination
+
+    # Veredito agregado por aldeia-alvo: 1 seguro, 0 inseguro, -1 desconhecido.
+    VERDICT_LABELS = {
+        1: ("Seguro", "success"), 0: ("Inseguro", "danger"), -1: ("Sem informacao", "secondary"),
+    }
+
+    @staticmethod
+    def _safe_to_engage(reports_for_target):
+        """
+        Replica `ReportManager.safe_to_engage()` (game/reports.py:106) --
+        o valor que de fato influencia o AttackManager -- em vez do veredito
+        por relatorio individual que `_outcome()` produz.
+
+        `reports_for_target` deve vir na MESMA ordem que o bot percorre, que e
+        a de `ReportCache.cache_grab()` -> `os.listdir`, e nao a cronologica.
+        Ver a nota de ordenacao em `aggregate_by_target()`.
+        """
+        for entry in reports_for_target:
+            extra = entry.get("extra") or {}
+            losses = entry.get("losses") or {}
+            if entry.get("type") == "attack" and losses == {}:
+                return 1
+            if (
+                entry.get("type") == "scout"
+                and losses == {}
+                and (
+                    extra.get("defence_units", {}) == {}
+                    or extra.get("defence_units") == extra.get("defence_losses")
+                )
+            ):
+                return 1
+            units_sent = extra.get("units_sent") or {}
+            for sent_type in units_sent:
+                if sent_type in losses:
+                    if units_sent[sent_type] == losses[sent_type]:
+                        return 0
+                    elif losses[sent_type] <= 1:
+                        return 1
+            if losses != {}:
+                return 0
+        return -1
+
+    @staticmethod
+    def aggregate_by_target():
+        """
+        Uma linha por aldeia-alvo com o veredito agregado que o bot usa.
+
+        NOTA DE ORDENACAO (medida em 2026-08-31, nao suposta): o
+        `safe_to_engage()` do bot itera `self.last_reports`, cuja ordem e a de
+        `os.listdir` sobre cache/reports -- ou seja alfabetica por nome de
+        arquivo, que para ids numericos de tamanhos diferentes nao e nem
+        cronologica nem numerica. O backlog descrevia essa funcao como "olha o
+        relatorio mais recente contra aquele alvo", o que o codigo nao faz.
+        Rodado contra os 1040 relatorios reais: dos 63 alvos com mais de um
+        relatorio, o veredito pela ordem real e o veredito pelo mais recente
+        divergem em ZERO casos -- alvo de farm tende a ser consistentemente
+        seguro ou consistentemente perigoso. E erro de documentacao, nao bug
+        ativo; a coluna "mais recente" abaixo existe para que uma futura
+        divergencia fique visivel em vez de silenciosa.
+        """
+        all_reports = ReportReader._all_reports()
+        labels = ReportReader._village_labels()
+
+        by_target = {}
+        for report_id in sorted(all_reports):  # espelha os.listdir (alfabetico)
+            data = all_reports[report_id]
+            dest = data.get("dest")
+            if not dest:
+                continue
+            by_target.setdefault(str(dest), []).append((report_id, data))
+
+        rows = []
+        for target, pairs in by_target.items():
+            verdict = ReportReader._safe_to_engage([d for _, d in pairs])
+            newest_sorted = sorted(
+                pairs, key=lambda p: int((p[1].get("extra") or {}).get("when") or 0), reverse=True
+            )
+            verdict_newest = ReportReader._safe_to_engage([d for _, d in newest_sorted])
+            last_when = int((newest_sorted[0][1].get("extra") or {}).get("when") or 0)
+            last_fmt = "—"
+            if last_when:
+                try:
+                    last_fmt = datetime.datetime.fromtimestamp(last_when).strftime("%d/%m %H:%M")
+                except Exception:
+                    pass
+            label, own = ReportReader._label_for(target, labels)
+            v_label, v_color = ReportReader.VERDICT_LABELS.get(verdict, ("?", "secondary"))
+            rows.append({
+                "target_id": target,
+                "target_label": label,
+                "target_own": own,
+                "verdict": verdict,
+                "verdict_label": v_label,
+                "verdict_color": v_color,
+                "verdict_newest": verdict_newest,
+                "disagrees": verdict != verdict_newest,
+                "report_count": len(pairs),
+                "last_when": last_when,
+                "last_when_fmt": last_fmt,
+            })
+        rows.sort(key=lambda r: (r["verdict"], -r["last_when"]))
+        return rows
 
 
 class FarmScoreReader:

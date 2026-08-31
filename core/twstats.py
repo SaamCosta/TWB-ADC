@@ -15,7 +15,21 @@ from core.filemanager import FileManager
 
 class TwStats:
     """
-    Default max building levels
+    Baixa de twstats.com a tabela `predio -> nivel -> populacao consumida`.
+
+    ATENCAO ao consumir `self.output`: o tipo da chave de nivel depende da
+    PROCEDENCIA do dado. `get_building_data()` monta o dict com chave `int`
+    (`int(tds[0])`); depois de passar pelo JSON do cache
+    (`cache/world/buildings_<mundo>.json`) a mesma chave volta como `str`.
+    Ou seja, `output["main"][2]` funciona no primeiro ciclo apos um sync e
+    levanta `KeyError` em todos os ciclos seguintes -- normalizar antes de
+    indexar. Foi metade do que quebrava o `buildings_to_farm_pop()` removido
+    em 2026-08-31 (ver o commit e o CLAUDE.md).
+
+    A tabela cobre so os predios de `max_levels`, e `farm` NAO esta entre
+    eles: nao da para derivar capacidade de fazenda daqui. Quem precisa de
+    populacao usa o dado ao vivo `game_state["village"]["pop"]` / `pop_max`,
+    que o bot ja le todo ciclo.
     """
     max_levels = {
         'main': 30,
@@ -33,16 +47,6 @@ class TwStats:
 
     output = {}
     logger = logging.getLogger("TwStats")
-
-    def buildings_to_farm_pop(self, buildings):
-        """
-        Detect max farm population per level
-        """
-        total = 0
-        for b in buildings:
-            if b in self.max_levels:
-                total += self.max_levels[b][buildings[str(b)]]
-        return total
 
     def get_building_data(self, world):
         """

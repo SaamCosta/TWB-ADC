@@ -80,7 +80,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `webmanager/helpfile.py`; é a verificação automática das três regras de
   config deste arquivo) e a política de bandeira por academia
   (`tests/test_flag_policy.py`, que roda a política contra o snapshot real das
-  18 aldeias).
+  18 aldeias) e o `ReportReader` do webmanager
+  (`tests/test_report_reader.py` — veredito agregado por alvo espelhando
+  `ReportManager.safe_to_engage`, rótulo de aldeia com o `name=0` de bárbara,
+  filtro de tipo dinâmico e paginação; substitui as duas funções que tocam
+  disco por fixtures, então não depende do `cache/` real).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -575,8 +579,44 @@ puxa o fio.**
   recruit, market) e não carregam uma linha sequer dos loggers — nada de
   `DefenceManager`, `Attacks` ou `Village`. Ao planejar uma análise sobre log,
   conferir qual das duas fontes tem o dado antes de contar com ela.
-- `core/twstats.py::buildings_to_farm_pop()` — `self.max_levels[b][buildings[str(b)]]`
-  tenta indexar um `int` como dict; parece código não exercitado/quebrado.
+- ⚠️ **Vigésimo primeiro padrão, achado em 2026-08-31: a guarda que protege um
+  recurso escrevia nesse recurso — e virou a coisa contra a qual ela existe.**
+  `tests/test_session_log_guard.py` (escrito no dia anterior para impedir que
+  um `import` truncasse `session_latest.log`) validava assim: salvava o log em
+  memória, **truncava o arquivo real** para gravar uma sentinela, importava
+  `twb`, conferia a sentinela e restaurava no `finally`. Com o bot **rodando**,
+  isso é destrutivo e racy: o processo do bot tem um handle aberto e continua
+  escrevendo no offset dele, então o truncate abre um buraco de bytes NUL no
+  meio do log (133 bytes, medidos) e tudo que o bot logou durante a janela do
+  teste morre no restore. De quebra o teste **falhou com diagnóstico errado** —
+  "o import alterou o arquivo" — quando quem tinha alterado era o bot,
+  escrevendo normalmente; a mensagem acusava a regressão que o teste vigia,
+  então quase me fez procurar um bug em `twb.py` que não existia.
+  A regra: **um teste que verifica uma propriedade sobre um artefato de
+  produção não pode obter essa verificação escrevendo no artefato.** Antes de
+  fazer setup destrutivo, perguntar "quem mais tem esse arquivo aberto agora?"
+  — neste repo a resposta é quase sempre "o bot". Quando existir uma
+  propriedade **observável** que separe as hipóteses, ela vence o setup: aqui,
+  truncar faz o arquivo *encolher* e o bot só faz *crescer*, então comparar
+  tamanho + cabeçalho detecta a regressão sem tocar em nada. Corolário que vale
+  o passo extra: depois de trocar a guarda por uma observação passiva, **provar
+  que ela ainda falha** — reproduzi o `twb.py` bugado num diretório temporário
+  e confirmei que os dois sinais disparam. Guarda que não pode falhar é o
+  décimo quinto padrão de cabeça para baixo, e passa despercebida para sempre.
+- ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
+  Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
+  nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do
+  twstats é `prédio → nível → população consumida por aquele prédio` (`main`
+  nível 2 = 1 pop), e `max_levels` **não inclui `farm`** — não há como derivar
+  capacidade de fazenda dali. No formato do quarto padrão: *`buildings_to_farm_pop()`
+  não existe e não funciona — mas `game_state["village"]["pop"]`/`pop_max`
+  funciona, vem ao vivo do jogo todo ciclo, e é o que `BuildingManager`
+  (`buildingmanager.py:251`) e `ResourceManager` (`resources.py:183`) já usam.*
+  Ficou documentada no docstring da classe uma armadilha de procedência (o
+  segundo padrão com outra máscara): a chave de nível é `int` quando vem da rede
+  e `str` depois do round-trip pelo cache JSON, então `output["main"][2]`
+  funciona no ciclo do sync e levanta `KeyError` em todos os seguintes. Nada
+  mais lê `TwStats.output` hoje.
 - `game/attack.py` — `AttackManager` e `ConquestManager` duplicam bastante lógica de
   montagem/envio de ataque (`attack_form`, `map_pos`, `post_url` de confirmação).
   Candidato a extrair um helper comum.
@@ -591,6 +631,17 @@ puxa o fio.**
   nunca é reescrito — antes de reusar a técnica em outro diretório, conferir
   que vale a mesma premissa (arquivo só nasce e morre, nunca muda de conteúdo
   sob o mesmo nome); se não valer, o índice serviria dado velho.
+  **Segundo caso, 2026-08-31: `ReportReader` (webmanager) ✅ indexado.** A
+  varredura custava **8,3 s por request** com 1.056 relatórios (medido a frio;
+  a página inteira dependia disso), contra ~3 ms com o índice. Confirmada a
+  premissa acima relendo `reports.py:174` — `read()` pula id já cacheado, então
+  vale. Mesmo assim a chave é `(frozenset de nomes, maior mtime)` e não só o
+  conjunto de nomes: o mtime sai de graça do `os.scandir` e dispensa a premissa
+  continuar valendo. **E a premissa NÃO vale para `cache/villages`**, usado no
+  mesmo método para resolver nome de aldeia — `Map.build_cache_entry()`
+  reescreve esses arquivos in-place quando dono/pontos mudam (`map.py:285`),
+  então ali o mtime é obrigatório, não opcional. Dois diretórios, duas
+  respostas, no mesmo pedaço de código.
 - Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
   constante de bandeira, loop de upgrade), **ainda aguardando validação em
   campo** — ver `docs/bugs_flags.md` para o diagnóstico original e o estado

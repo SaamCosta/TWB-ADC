@@ -34,15 +34,27 @@
         <div class="card-body">
           <h6 class="card-title mb-3">Tropas totais do império</h6>
           {% if troop_totals %}
-          <div class="d-flex flex-wrap gap-3">
+          {# Grade de cards em vez da linha corrida anterior (d-flex flex-wrap
+             com ícone+número colados): com poucos tipos de unidade ficava
+             compacto demais para ler. Polimento pendente da Feature 17. #}
+          <div class="row row-cols-2 row-cols-md-3 row-cols-xl-4 g-2">
             {% for unit, qty in troop_totals %}
             {% if qty and qty > 0 %}
-            <span class="d-flex align-items-center" title="{{ unit }}">
-              <img src="/static/images/unit_{{ unit }}.png" class="res-icon me-1" alt="{{ unit }}"
-                   onerror="this.style.display='none'">
-              <strong>{{ '{:,}'.format(qty).replace(',', '.') }}</strong>
-              <span class="text-muted ms-1 small">{{ unit }}</span>
-            </span>
+            <div class="col">
+              <div class="d-flex align-items-center p-2 h-100"
+                   style="background:#f8f0d8;border:1px solid #c8a96e;border-radius:4px;"
+                   title="{{ unit }}: {{ '{:,}'.format(qty).replace(',', '.') }}">
+                <img src="/static/images/unit_{{ unit }}.png" alt="{{ unit }}"
+                     width="28" height="28" class="me-2" style="flex:0 0 28px;"
+                     onerror="this.style.display='none'">
+                <div class="lh-1">
+                  <div style="font-size:1.05rem;font-weight:600;color:#2c1810;">
+                    {{ '{:,}'.format(qty).replace(',', '.') }}
+                  </div>
+                  <div class="text-muted" style="font-size:.75rem;">{{ unit }}</div>
+                </div>
+              </div>
+            </div>
             {% endif %}
             {% endfor %}
           </div>
@@ -93,6 +105,20 @@
                 </tr>
                 {% endfor %}
               </tbody>
+              {# Totais somados em Python (EmpireReader.resource_totals): o
+                 filtro `sum(attribute='pop')` do Jinja2 pegaria o método
+                 dict.pop, não a chave — mesmo motivo do r['pop'] acima. #}
+              <tfoot style="position:sticky;bottom:0;background:#f8f0d8;border-top:2px solid #2c1810;">
+                <tr style="font-weight:600;color:#2c1810;">
+                  <td>Total ({{ resource_totals.villages }} aldeias)</td>
+                  <td>{{ '{:,}'.format(resource_totals.wood).replace(',', '.') }}</td>
+                  <td>{{ '{:,}'.format(resource_totals.stone).replace(',', '.') }}</td>
+                  <td>{{ '{:,}'.format(resource_totals.iron).replace(',', '.') }}</td>
+                  <td>{{ '{:,}'.format(resource_totals['pop']).replace(',', '.') }}</td>
+                  <td>{{ '{:,}'.format(resource_totals.points).replace(',', '.') }}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
           {% else %}
@@ -115,10 +141,22 @@
             border-radius:6px;padding:6px 10px;font-size:0.8rem;border:1px solid #555;
             display:none;z-index:9999;max-width:220px;"></div>
           <canvas id="empire-heatmap-canvas" style="border-radius:8px;background:#1a2233;display:block;width:100%;"></canvas>
-          <small class="text-muted d-block mt-2">
-            🟢 aldeias próprias &nbsp;|&nbsp; pontos frios → quentes conforme o número de ataques
-            (<code>cache/attacks/*.json</code>). Alvos sem coordenada conhecida em
-            <code>cache/villages/</code> não aparecem.
+          {# Legenda de escala fixa: antes a intensidade só era legível passando
+             o mouse ponto a ponto. Os swatches são pintados pela MESMA função
+             heatColor() do canvas, então a legenda não pode divergir do mapa. #}
+          <div class="d-flex align-items-center mt-2" style="gap:8px;">
+            <span class="text-muted" style="font-size:.75rem;">Ataques:</span>
+            <span class="text-muted" style="font-size:.75rem;">0</span>
+            <span id="empire-heatmap-legend" class="d-flex" style="flex:0 0 160px;height:12px;border:1px solid #555;border-radius:3px;overflow:hidden;"></span>
+            <span class="text-muted" style="font-size:.75rem;">{{ heatmap.max_count | default(0) }}</span>
+            <span class="ms-2" style="font-size:.75rem;">
+              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#27ae60;"></span>
+              <span class="text-muted">aldeias próprias</span>
+            </span>
+          </div>
+          <small class="text-muted d-block mt-1">
+            Intensidade = número de ataques registrados em <code>cache/attacks/*.json</code>.
+            Alvos sem coordenada conhecida em <code>cache/villages/</code> não aparecem.
           </small>
           {% else %}
           <small class="text-muted">
@@ -218,6 +256,19 @@
     var b = Math.round(230 - ratio * 200);
     return 'rgba(' + r + ',' + g + ',' + b + ',0.85)';
   }
+
+  // Legenda: usa heatColor() para não poder divergir do canvas.
+  (function buildLegend() {
+    var bar = document.getElementById('empire-heatmap-legend');
+    if (!bar) return;
+    var STEPS = 24;
+    for (var i = 0; i < STEPS; i++) {
+      var sw = document.createElement('span');
+      sw.style.flex = '1 1 auto';
+      sw.style.background = heatColor((i / (STEPS - 1)) * (maxCount || 1));
+      bar.appendChild(sw);
+    }
+  })();
 
   function draw() {
     ctx.fillStyle = '#1a2233';

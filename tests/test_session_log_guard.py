@@ -35,41 +35,67 @@ def test_importing_twb_does_not_truncate_the_session_log():
     """
     Roda num subprocesso porque o efeito e no import, e o import de twb ja
     pode ter acontecido neste processo por outro teste.
+
+    NAO ESCREVE NO LOG REAL -- e a versao anterior deste teste escrevia, o que
+    o transformava na propria coisa que ele existe para impedir. Ela salvava o
+    conteudo, truncava o arquivo para gravar uma sentinela, e restaurava no
+    finally. Com o BOT RODANDO isso e destrutivo e racy: o processo do bot tem
+    um handle aberto e continua escrevendo no offset dele, entao o truncate
+    deixa um buraco de bytes NUL no meio do log e tudo que o bot logou durante
+    a janela do teste e perdido no restore. Aconteceu em 2026-08-31 (133 bytes
+    NUL, medidos) e o teste ainda reportou falha enganosa -- "o import alterou
+    o arquivo" -- quando quem tinha alterado era o bot, escrevendo normalmente.
+
+    A observacao que torna o teste seguro: truncar FAZ O ARQUIVO ENCOLHER, e o
+    bot so faz crescer. Entao comparar tamanho e cabecalho detecta a regressao
+    sem tocar em nada. Quando o log nao existe nao ha o que perder, e ai a
+    assercao forte com sentinela e usada.
     """
     log_dir = os.path.join(ROOT, "cache", "logs")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "session_latest.log")
 
-    saved = None
-    if os.path.exists(log_path):
-        with open(log_path, "rb") as fh:
-            saved = fh.read()
-
-    sentinel = b"SENTINELA test_session_log_guard -- nao deveria ser apagada\n"
-    try:
-        with open(log_path, "wb") as fh:
-            fh.write(sentinel)
-
-        proc = subprocess.run(
-            [sys.executable, "-c", "import twb"],
-            cwd=ROOT, capture_output=True, timeout=120,
-        )
-        check(proc.returncode == 0,
-              f"`import twb` falhou: {proc.stderr.decode('utf-8', 'replace')[:400]}")
-
-        with open(log_path, "rb") as fh:
-            after = fh.read()
-        check(after == sentinel,
-              "importar twb.py alterou cache/logs/session_latest.log "
-              f"({len(sentinel)} bytes antes, {len(after)} depois) -- o open(...,'w') "
-              "voltou a rodar no import e vai apagar log de producao")
-    finally:
-        # Restaura o que existia, inclusive se o teste falhou.
-        if saved is not None:
+    if not os.path.exists(log_path):
+        # Sem log de producao em risco: da para ser exato.
+        sentinel = b"SENTINELA test_session_log_guard -- nao deveria ser apagada\n"
+        try:
             with open(log_path, "wb") as fh:
-                fh.write(saved)
-        elif os.path.exists(log_path):
-            os.remove(log_path)
+                fh.write(sentinel)
+            proc = subprocess.run([sys.executable, "-c", "import twb"],
+                                  cwd=ROOT, capture_output=True, timeout=120)
+            check(proc.returncode == 0,
+                  f"`import twb` falhou: {proc.stderr.decode('utf-8', 'replace')[:400]}")
+            with open(log_path, "rb") as fh:
+                after = fh.read()
+            check(after == sentinel,
+                  "importar twb.py alterou cache/logs/session_latest.log -- o "
+                  "open(...,'w') voltou a rodar no import")
+        finally:
+            if os.path.exists(log_path):
+                os.remove(log_path)
+        return
+
+    # Log de producao presente (bot pode estar rodando): so observa.
+    size_before = os.path.getsize(log_path)
+    with open(log_path, "rb") as fh:
+        head_before = fh.read(512)
+
+    proc = subprocess.run([sys.executable, "-c", "import twb"],
+                          cwd=ROOT, capture_output=True, timeout=120)
+    check(proc.returncode == 0,
+          f"`import twb` falhou: {proc.stderr.decode('utf-8', 'replace')[:400]}")
+
+    size_after = os.path.getsize(log_path)
+    with open(log_path, "rb") as fh:
+        head_after = fh.read(512)
+
+    check(size_after >= size_before,
+          f"cache/logs/session_latest.log ENCOLHEU no import ({size_before} -> "
+          f"{size_after} bytes). O bot so faz o arquivo crescer, entao encolher "
+          "significa que o open(...,'w') voltou a rodar no import de twb.py")
+    check(head_after == head_before,
+          "o inicio de cache/logs/session_latest.log mudou durante `import twb` "
+          "-- o arquivo foi reaberto em modo de escrita no import")
 
 
 def test_tee_still_installs_when_run_as_main():

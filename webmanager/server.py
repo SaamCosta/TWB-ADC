@@ -435,13 +435,24 @@ def get_resource_sharing():
 def get_reports():
     dest_filter = request.args.get("dest", "").strip() or None
     type_filter = request.args.get("type", "").strip() or None
-    entries, stats = ReportReader.load(dest_filter=dest_filter, type_filter=type_filter)
+    view = request.args.get("view", "").strip() or "list"
+    try:
+        page = int(request.args.get("page", 0))
+    except ValueError:
+        page = 0
+    entries, stats, pagination = ReportReader.load(
+        dest_filter=dest_filter, type_filter=type_filter, page=page
+    )
     managed = sync()["bot"]
     village_options = {vid: (managed[vid].get("public") or {}).get("name", "") for vid in managed}
     return render_template(
         'reports.html',
         entries=entries,
         stats=stats,
+        pagination=pagination,
+        view=view,
+        type_options=ReportReader.types_present(),
+        targets=ReportReader.aggregate_by_target() if view == "targets" else [],
         village_options=village_options,
         dest_filter=dest_filter,
         type_filter=type_filter,
@@ -546,12 +557,14 @@ def get_empire():
     # disabled) -- see EmpireReader.conquest_timeline() docstring.
     pvp_targets = PvpConquestReader.load()
 
+    resources = EmpireReader.resources_by_village(managed)
     return render_template(
         'empire.html',
         data=data,
         totals=totals,
         troop_totals=EmpireReader.troop_totals(managed),
-        resources=EmpireReader.resources_by_village(managed),
+        resources=resources,
+        resource_totals=EmpireReader.resource_totals(resources),
         heatmap=EmpireReader.farm_heatmap(data["attacks"], data["villages"], managed),
         timeline=EmpireReader.conquest_timeline(conquest_targets, pvp_targets, data["villages"]),
     )
