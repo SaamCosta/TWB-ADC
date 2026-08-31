@@ -651,9 +651,19 @@ puxa o fio.**
   nunca automáticos; defesa sobrepõe tudo). Isso torna o Bug 1 finalmente
   testável: o caminho de `flag_set` voltou a ser exercitado, e o esperado no
   primeiro ciclo são **exatamente 3 trocas** (BBM 003, 016, 017) e silêncio
-  depois. ⚠️ A validação **não pôde ser feita por log** porque o
-  `session_latest.log` foi destruído no mesmo dia (ver vigésimo padrão) — os
-  `twb_*.log` são do reporter e não têm linha do `DefenceManager`.
+  depois.
+  **Validação iniciada em 2026-08-31 na sessão que começou às 10:17, e está
+  1 de 18.** A nota anterior aqui dizia que a validação por log era impossível
+  porque o `session_latest.log` tinha sido destruído; isso valia para a sessão
+  antiga e deixou de valer assim que o bot subiu de novo — o arquivo é
+  reescrito a cada run. Resultado até agora: a **BBM 001** logou
+  `Current village flag: -22% nos custos de moedas` (tipo 7, nível 7) e o bot
+  **não trocou**, que é exatamente o previsto para as três aldeias de cunhagem
+  manuais com as quais a política concorda. As outras 17 não rodaram: o ciclo
+  da primeira aldeia levou mais de 30 min só de farm, então a conta fecha em
+  horas, não em minutos. **O número que importa continua não medido** — as 3
+  trocas e o silêncio depois. Ao retomar, `grep -a` (o log tem bytes NUL, ver
+  vigésimo primeiro padrão) por `Current village flag` e `Setting flag`.
 - `game/defence_manager.py::DefenceManager.supported` (Bug 3 de
   `docs/bugs_flags.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
   A condição invertida do laço em `DefenceManager.update()`, que impedia

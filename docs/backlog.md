@@ -1705,21 +1705,22 @@ na aldeia vendedora, e criar a entrada de perfil em `profile_templates`.
 
 ## Pendências transversais (não são features novas, mas trabalho aberto)
 
-- **Auditar `village_template` contra tudo que o código lê por aldeia**
-  (levantado pelo usuário em 2026-08-11, **próxima tarefa**). A regra está agora
-  nas convenções do `CLAUDE.md`: se algum lugar faz
-  `config["villages"][vid].get("x")`, então `x` tem que existir em
-  `village_template` no `config.example.json`, nem que seja com valor
-  neutro. Hoje isso não é garantido — `keep_resources` só entrou lá porque foi
-  lembrado no commit; nada verifica.
-  **Como fazer:** `grep` por `villages"\]\[` / `village_cfg.get(` /
-  `self.config["villages"]` nos módulos de `game/` e comparar o conjunto de
-  chaves lidas com as presentes em `village_template`. Cuidado com as lidas
-  indiretamente (ex: `Village` copia campos para atributos no início do ciclo).
-  Toda chave que faltar entra no template **e** no `webmanager/helpfile.py`,
-  com bump de `build.version` para o merge propagar às aldeias existentes.
-  Vale conferir também se `profile_templates.offensive/defensive` deveriam
-  declarar alguma delas — é o que sobrescreve a herança de aldeia conquistada.
+- ~~**Auditar `village_template` contra tudo que o código lê por aldeia**~~
+  (levantado pelo usuário em 2026-08-11) — ✅ **fechado**, e não como auditoria
+  manual de uma vez: virou verificação automática em
+  `tests/test_config_integrity.py` (commit `3c2f77e`), que varre por **AST**
+  toda chamada a `get_config`/`get_village_config` e exige que a chave exista
+  em `config.example.json` / `village_template` **e** esteja documentada em
+  `webmanager/helpfile.py`. Cobre as três regras de config do `CLAUDE.md` de
+  uma vez. Estado em 2026-08-31: **51 chaves globais e 23 por aldeia**, todas
+  declaradas, lidas e documentadas de acordo. O parser é AST e não `grep`
+  justamente porque as chamadas reais quebram em várias linhas — o plano
+  original desta entrada, que era gregar três padrões, perderia a maioria
+  delas.
+  Segue **não coberto** o último parágrafo do plano original: se
+  `profile_templates.offensive/defensive` deveriam declarar alguma dessas
+  chaves. Isso é decisão de produto (o que uma aldeia conquistada herda), não
+  integridade de config, então nenhum teste vai responder sozinho.
 
 - **Feature 9 (resource sharing) reformulada e validada em campo em
   2026-08-11.** Detalhe em `docs/features_log.md`. Duas regras (transbordo e
