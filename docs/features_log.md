@@ -1489,11 +1489,14 @@ ancoramento de `INCOMING_RE`.
 
 ### Ficou aberto
 
-Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em
+~~Os limiares de `high_profile`/`low_profile` (500 e 100 de saque médio, em
 `manager.py`) foram calibrados quando os pacotes eram pequenos e hoje só governam
 o tempo de revisita. Com a escada nova ficaram desalinhados — mas convém medir
 alguns ciclos antes de mexer, porque os dados de saque vão parar de ser capados
-em 8.000 e o quadro real deve mudar.
+em 8.000 e o quadro real deve mudar.~~ ✅ **Resolvido em 2026-08-31** — medidos
+os 693 ataques, o problema não era o valor do limiar e sim a **dimensão** da
+métrica (saque absoluto é capado pelo próprio pacote). Ver a seção
+"2026-08-31 (b)" no fim deste documento.
 
 ~~Vale também investigar por que o fetch do mapa devolve tão poucas aldeias por
 aldeia (93 para a BBM 001, das quais 36 farmáveis), já que é isso, e não
@@ -1583,6 +1586,87 @@ descartaria nenhuma chave do `config.json` vivo. Cobertura em
 `tests/test_map_sectors.py` (13 testes, sem rede, com recorte verbatim do
 `map.php` real), mais smoke de ponta a ponta contra o servidor com o próprio
 `WebWrapper`.
+
+## 2026-08-31 (b) — perfil de farm: a métrica media o nosso pacote, não o alvo
+
+Fecha o "ficou aberto" de 2026-08-19 sobre os limiares `high_profile` (>500 de
+saque médio) e `low_profile` (<100). A nota dizia para **medir alguns ciclos
+antes de mexer**; 12 dias depois há 693 ataques com saque e tropa enviada
+registrados, e eles mostram que o problema não era o valor do limiar.
+
+**O limiar estava censurado pela própria escada de pacotes.** Saque não pode
+passar da capacidade enviada, então "saque médio" mede o nosso pacote tanto
+quanto o alvo:
+
+| capacidade do pacote | ataques | voltaram lotados |
+|---|---|---|
+| 480 | 27 | 33% |
+| 1.600 | 118 | 36% |
+| 4.800 | 87 | **64%** |
+| 12.000 | 18 | **83%** |
+
+Nos 12.000, 83% das observações estão **no teto** — o valor real daqueles alvos
+é desconhecido acima disso. E como o limiar é absoluto, ele **expirou sozinho**
+quando a escada de pacotes cresceu em `7c85a22`: 35 de 62 alvos (56%) viraram
+"high profile". Um rótulo que vale para a maioria não prioriza nada — décimo
+quinto padrão, com outra roupa.
+
+**Dois bugs que a medição revelou e o backlog não previa:**
+
+1. **Os flags só ligavam, nunca desligavam.** Nada no projeto limpava
+   `high_profile`/`low_profile`. Oito alvos reais estavam com **os dois ao
+   mesmo tempo** — e como `_should_attack` testa `low` por último, o alvo
+   `41318`, que rende 4.517 por viagem, era tratado como pobre e revisitado a
+   cada 2 h em vez de 30 min.
+2. **Alvo rico aparente que nunca enche.** `37755` tinha score 683 (acima de
+   500, logo HIGH) com lotação de **4%**. O saque alto vinha do pacote grande,
+   não do alvo.
+
+**A métrica nova é a taxa de lotação, e a escolha é sobre dimensão, não sobre
+calibragem.** Um alvo que lota 480 e um que lota 12.000 estão dizendo a *mesma*
+coisa — "tem mais do que eu consigo carregar" — que é exatamente a condição em
+que vale voltar cedo. Lotação é adimensional, então **não expira quando os
+pacotes mudarem de novo** (décimo quarto padrão: número em arquivo é foto de
+uma relação).
+
+Para o outro lado, lotação não serve: `37755` lota 4% mas devolve 55% do que
+recebe, e isso não é pobreza, é pacote grande demais. Então `low_profile` usa
+**aproveitamento** (saque ÷ capacidade enviada). O caso que separa os dois é
+`44674`: lotação 0% e aproveitamento 22% — pobre de verdade.
+
+    high_profile  <-  lotação        >= farms.high_profile_fill_rate   (0,75)
+    low_profile   <-  aproveitamento <= farms.low_profile_utilization  (0,35)
+
+Os dois são recalculados do zero a cada ciclo e são mutuamente exclusivos.
+
+**Dry run contra o cache real** (`farm_manager` de verdade, com
+`AttackCache.set_cache` interceptado, sem escrever nada):
+
+| | antes | depois |
+|---|---|---|
+| HIGH | 40 | **18** |
+| LOW | 16 | 15 |
+| default | 74 | 97 |
+| HIGH **e** LOW ao mesmo tempo | 8 | **0** |
+
+Nenhum alvo *ganhou* prioridade — a regra nova é estritamente mais seletiva.
+
+**Duas ressalvas honestas.** (a) Ataque sem `units_sent` utilizável dá
+capacidade 0 e é **ignorado**, não contado como lotação 0% — contá-lo
+empurraria o alvo para `low_profile` por falta de dado, que é o segundo padrão
+com outra máscara. (b) Alvos com menos de `profile_min_attacks` (4) ataques não
+são reclassificados e seguem com o flag herdado da métrica antiga até
+acumularem amostra.
+
+`percentage_lost > 20` continua sendo regra de **segurança** e tem a última
+palavra; o bloco de perfil se abstém nesse caso, senão os dois brigariam todo
+ciclo regravando o cache.
+
+Config nova em `farms`: `high_profile_fill_rate`, `low_profile_utilization`,
+`profile_min_attacks`. Cobertura em `tests/test_farm_profiles.py` (11 testes,
+sem rede). Um deles nasceu errado e o próprio teste pegou: eu tinha usado 640
+como "pacote pequeno que a regra antiga não marcaria", e 640 já passa de 500 —
+a capacidade real que prova o ponto é 480.
 
 ## Ambiente de referência
 

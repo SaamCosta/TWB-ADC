@@ -52,6 +52,19 @@ help_file = {
     'farms.default_away_time': 'Default cooldown in seconds before attacking a village again',
     'farms.full_loot_away_time': 'Cooldown for villages with high resource gain',
     'farms.low_loot_away_time': 'Cooldown for villages with low resource gain',
+    'farms.high_profile_fill_rate': 'A farm is marked high profile (revisited on the shorter '
+                                    'full_loot_away_time) when this fraction of its attacks came '
+                                    'back with the pack completely full. Fill rate is used instead '
+                                    'of average loot because loot is capped by the pack you send, '
+                                    'so an absolute threshold silently drifts whenever the troop '
+                                    'templates change.',
+    'farms.low_profile_utilization': 'A farm is marked low profile (revisited on the longer '
+                                     'low_loot_away_time) when it returns on average less than this '
+                                     'fraction of the capacity sent to it. A farm that rarely fills '
+                                     'a large pack but still returns most of it is not poor, so '
+                                     'this uses utilization rather than fill rate.',
+    'farms.profile_min_attacks': 'Minimum number of attacks on a farm before it can be classified '
+                                 'as high or low profile',
     'farms.max_farms': 'Number of nearby villages to check for farming',
     'farms.attack_higher_points': 'If disabled, villages with higher points than the current one are ignored',
     'farms.force_scout_if_available': 'Only attack villages that have been attacked before or scouted first',
