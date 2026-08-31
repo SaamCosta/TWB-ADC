@@ -140,6 +140,19 @@ help_file = {
     'world': 'World-specific feature flags. archers_enabled, building_destruction_enabled and knight_enabled are now read from the world itself (interface.php?func=get_config) -- the values here are only a fallback for when that fetch fails',
     'world.knight_enabled': 'FALLBACK ONLY -- read from the world <game><knight> tag; used only if the world config cannot be fetched',
     'world.flags_enabled': 'Allows automatic management of flags (upgrading and defence). Still manual: the world config does not publish a flags tag',
+    'world.flag_priority': 'Ordered flag preference for villages WITHOUT an academy, out of combat. '
+                           'The bot equips the first type that is actually in the inventory, so the '
+                           'tail exists to stop a village ending up with no flag at all. '
+                           'Types: 1 production, 2 recruitment, 6 population, 8 loot',
+    'world.flag_priority_academy': 'Same, for villages that have an academy (snob building level '
+                                   '>= 1). Coin cost (7) comes first because coins are account-wide '
+                                   'while production is local, so the discount is worth more where '
+                                   'minting actually happens',
+    'world.flag_manual_types': 'Flag types the bot never equips on its own and never removes from a '
+                               'village that already has one — tactical picks left to the player '
+                               '(3 attack, 5 luck). Defence (4) is deliberately NOT here: it is '
+                               'automatic, but only through the under-attack path, and it overrides '
+                               'even a manual flag',
     'world.quests_enabled': 'World has quests enabled (bot will automatically finish them)',
     'world.boosters_enabled': 'World has resource boosters enabled. Auto-detected on the first run '
                               'and written back here; a value set by hand always wins',

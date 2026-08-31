@@ -229,6 +229,38 @@ class Village:
         self.def_man.manage_flags_enabled = self.get_config(
             section="world", parameter="flags_enabled", default=False
         )
+        # Política de bandeira fora de combate. A academia decide qual das duas
+        # preferências vale: a moeda é da conta inteira, então reduzir o custo
+        # de cunhagem onde se cunha rende mais que produção local.
+        #
+        # Os níveis vêm do estado real do jogo, não da config -- uma aldeia
+        # recém-conquistada pode ter academia herdada, e uma aldeia com
+        # `snobs: 0` pode ter o prédio mesmo assim (é o caso do perfil
+        # watchtower, que cunha via `mint_coins` sem nunca recrutar nobre).
+        #
+        # ⚠️ Duas fontes porque esta função roda ANTES de run_builder(): no
+        # primeiro ciclo depois de um restart `builder.levels` ainda está
+        # vazio. `has_academy = None` significa "não sei", e a política se
+        # abstém nesse caso -- ela NÃO cai na lista sem academia. Cair seria
+        # pior que não agir: a lista sem academia não contém o tipo 7, então o
+        # bot rebaixaria as aldeias de cunhagem para produção, e o cooldown de
+        # 24 h tornaria isso irreversível no mesmo dia. Mesmo princípio do
+        # `_flag_state_confirmed`: não decidir sobre estado não confirmado.
+        levels = getattr(self.builder, "levels", None) or {}
+        if not levels:
+            levels = (self.game_data or {}).get("village", {}).get("buildings") or {}
+        self.def_man.has_academy = (
+            int(levels.get("snob", 0) or 0) > 0 if levels else None
+        )
+        self.def_man.flag_priority = self.get_config(
+            section="world", parameter="flag_priority", default=[1, 2, 6, 8]
+        )
+        self.def_man.flag_priority_academy = self.get_config(
+            section="world", parameter="flag_priority_academy", default=[7, 1, 2, 6, 8]
+        )
+        self.def_man.flag_manual_types = self.get_config(
+            section="world", parameter="flag_manual_types", default=[3, 5]
+        )
         self.def_man.support_factor = self.get_village_config(
             self.village_id, "support_others_factor", default=0.25
         )
@@ -1505,6 +1537,11 @@ class Village:
             "can_change_flag": self.def_man._can_change_flag,
             "manage_flags_enabled": self.def_man.manage_flags_enabled,
             "available_flags": self.def_man.flags,
+            # Política em vigor nesta aldeia, para o /flags mostrar POR QUE ela
+            # está com a bandeira que está. has_academy None = ainda não lido,
+            # e nesse caso a política se abstém (preferred_flags devolve []).
+            "has_academy": self.def_man.has_academy,
+            "preferred_flags": self.def_man.preferred_flags(),
             "upgrade_attempts": {
                 f"{flag_type}:{level}": count
                 for (flag_type, level), count in self.def_man._upgrade_attempts.items()

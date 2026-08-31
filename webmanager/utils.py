@@ -1536,6 +1536,30 @@ class FlagReader:
                     "exhausted": count >= 2,
                 })
 
+            # Politica em vigor (2026-08-31): explica POR QUE a aldeia esta com
+            # a bandeira que esta, em vez de so mostrar qual e.
+            has_academy = flags.get("has_academy")
+            preferred = flags.get("preferred_flags") or []
+            preferred_fmt = [
+                FlagReader.FLAG_TYPE_NAMES.get(int(t), "Tipo %s" % t) for t in preferred
+            ]
+            if has_academy is None:
+                policy_label = "Aguardando leitura dos edifícios"
+                policy_color = "secondary"
+            elif has_academy:
+                policy_label = "Com academia — prioriza custo de cunhagem"
+                policy_color = "info"
+            else:
+                policy_label = "Sem academia — prioriza produção"
+                policy_color = "light"
+
+            # A bandeira atual esta fora da preferencia? Duas causas legitimas:
+            # e uma escolha manual (ataque/sorte) ou e a de defesa, sob ataque.
+            off_policy = bool(
+                confirmed and current_type is not None
+                and preferred and current_type not in preferred
+            )
+
             out.append({
                 "village_id": vid,
                 "village_name": pub.get("name", vdata.get("name", "Aldeia %s" % vid)),
@@ -1548,6 +1572,11 @@ class FlagReader:
                 "available_flags": available_fmt,
                 "upgrade_attempts": attempts_fmt,
                 "last_run": vdata.get("last_run", 0),
+                "has_academy": has_academy,
+                "policy_label": policy_label,
+                "policy_color": policy_color,
+                "preferred_flags": preferred_fmt,
+                "off_policy": off_policy,
             })
 
         out.sort(key=lambda v: v["village_name"])

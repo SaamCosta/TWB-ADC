@@ -98,6 +98,29 @@ class DefenceManager:
     # increased defence
     set_flag_under_attack = 4
 
+    # Política de bandeira fora de combate (2026-08-31). Antes era um único id
+    # fixo (1, produção) e, quando ele não estava disponível no inventário,
+    # `get_highest_flag_possible` devolvia None e a aldeia ficava SEM bandeira
+    # nenhuma -- o que era o estado real de BBM 016 e BBM 017, com sete tipos
+    # sobrando no inventário. Agora é uma preferência ORDENADA e o bot equipa
+    # o primeiro tipo que existir.
+    #
+    # A ordem vem da decisão do usuário: academia sempre cunhagem, produção
+    # como prioritária geral, e recrutamento > população > saque no
+    # preenchimento (recrutamento tem o maior efeito da tabela, +20% no nível 9
+    # contra +10% dos outros dois).
+    flag_priority = [1, 2, 6, 8]
+    flag_priority_academy = [7, 1, 2, 6, 8]
+    # Tipos que o bot NUNCA equipa sozinho e nunca remove de uma aldeia que já
+    # os tenha: são escolha tática manual do jogador (ataque e sorte). A de
+    # defesa fica de fora desta lista de propósito -- ela É automática, mas só
+    # pelo caminho de `under_attack`, e nunca entra na preferência de paz.
+    flag_manual_types = [3, 5]
+    # Setado por Village.setup_defence_manager a partir dos níveis reais de
+    # construção. None = ainda não sabido (primeiro ciclo), e nesse caso a
+    # política cai na lista sem academia, que é a conservadora.
+    has_academy = None
+
     _sf_logged = False
 
     def __init__(self, village_id=None, wrapper=None):
@@ -283,7 +306,7 @@ class DefenceManager:
             self.incoming_command_id = None
             self.incoming_origin = None
             self.incoming_rows_seen = 0
-            self.flag_logic(self.set_flag_not_under_attack)
+            self.flag_logic(self.preferred_flags())
             if not with_defence:
                 self.under_attack = False
                 return False
@@ -401,7 +424,35 @@ class DefenceManager:
         )
         return bool(self.support(vid, troops=to_hide))
 
+    def preferred_flags(self):
+        """
+        Preferência ordenada de bandeira para esta aldeia fora de combate.
+
+        Academia primeiro: a moeda é da conta inteira, então reduzir o custo de
+        cunhagem onde se cunha vale mais que produção local. Quem não tem
+        academia fica com produção, que é a prioritária geral, e o resto da
+        lista existe para a aldeia não ficar SEM bandeira quando o tipo
+        preferido acabou no inventário.
+
+        ⚠️ `has_academy is None` significa "ainda não sei" (os níveis de
+        construção não foram lidos neste processo) e devolve lista VAZIA, que
+        faz a política se abster. Cair na lista sem academia seria pior que não
+        agir: ela não contém o tipo 7, então uma aldeia de cunhagem seria
+        rebaixada para produção -- e o cooldown de 24 h torna isso
+        irreversível no mesmo dia.
+        """
+        if self.has_academy is None:
+            return []
+        if self.has_academy:
+            return list(self.flag_priority_academy)
+        return list(self.flag_priority)
+
     def flag_logic(self, set_flag):
+        """
+        `set_flag` pode ser um id único (o caminho de defesa, que não negocia)
+        ou uma lista ordenada de ids (a política de paz). O primeiro tipo com
+        bandeira disponível no inventário vence.
+        """
         if not self.manage_flags_enabled:
             return
 
@@ -412,13 +463,49 @@ class DefenceManager:
         if not self._flag_state_confirmed:
             return
 
-        highest_flag_possible = self.get_highest_flag_possible(flag_id=set_flag)
-        if not highest_flag_possible:
+        wanted = [set_flag] if isinstance(set_flag, int) else list(set_flag)
+        if not wanted:
+            # Preferência vazia = "não sei o suficiente para decidir"
+            # (ver preferred_flags). Abster é o comportamento correto.
+            return
+
+        # Bandeira tática posta à mão (ataque, sorte) não é tocada pelo caminho
+        # de paz. O caminho de defesa passa um id único e por isso escapa desta
+        # guarda de propósito: reagir a ataque tem precedência sobre qualquer
+        # preferência, inclusive uma escolha manual.
+        if (
+            len(wanted) > 1
+            and self.current_flag
+            and self.current_flag[0] in self.flag_manual_types
+        ):
+            self.logger.debug(
+                "Village %s está com a bandeira manual tipo %s, não mexendo",
+                self.village_id, self.current_flag[0]
+            )
+            return
+
+        # Primeiro tipo da preferência que existe no inventário. Se o preferido
+        # acabou, cai para o próximo em vez de ficar sem bandeira nenhuma.
+        chosen = chosen_level = None
+        for flag_id in wanted:
+            level = self.get_highest_flag_possible(flag_id=flag_id)
+            if level:
+                chosen, chosen_level = flag_id, level
+                break
+
+        if not chosen:
+            # Nada disponível. Só vale avisar se a aldeia está sem bandeira --
+            # com uma equipada, isto é o caso normal de "o inventário acabou".
+            if not self.current_flag:
+                self.logger.info(
+                    "Village %s está sem bandeira e nenhum tipo da preferência "
+                    "%s está disponível no inventário", self.village_id, wanted
+                )
             return
 
         if self.current_flag:
-            already_correct = self.current_flag[0] == set_flag
-            already_best = self.current_flag[1] >= highest_flag_possible
+            already_correct = self.current_flag[0] == chosen
+            already_best = self.current_flag[1] >= chosen_level
         else:
             # Estado confirmado: nenhuma bandeira equipada no momento.
             already_correct = False
@@ -426,6 +513,20 @@ class DefenceManager:
 
         if already_correct and already_best:
             return
+
+        # A aldeia já tem uma bandeira MELHOR COLOCADA na preferência do que a
+        # que está disponível agora -- trocar seria um rebaixamento. Foi o que
+        # causou o incidente de 2026-08-02 (produção 16% -> 12%, com cooldown
+        # de 24h e sem reversão): naquele caso dentro do mesmo tipo, aqui
+        # também entre tipos.
+        if self.current_flag and self.current_flag[0] in wanted:
+            if wanted.index(self.current_flag[0]) < wanted.index(chosen):
+                self.logger.debug(
+                    "Village %s mantém a bandeira tipo %s: a disponível (tipo "
+                    "%s) está mais abaixo na preferência",
+                    self.village_id, self.current_flag[0], chosen
+                )
+                return
 
         if not self._can_change_flag:
             if not self._sf_logged:
@@ -435,13 +536,13 @@ class DefenceManager:
                 self._sf_logged = True
             return
         self._sf_logged = False
-        self.flag_set(set_flag, level=highest_flag_possible)
+        self.flag_set(chosen, level=chosen_level)
         # Atualiza o estado local imediatamente para não re-disparar
         # flag_set() nos ciclos seguintes antes da próxima confirmação.
-        self.current_flag = [set_flag, highest_flag_possible]
+        self.current_flag = [chosen, chosen_level]
         self.logger.info(
             "Setting flag %d level %d for village %s",
-            set_flag, highest_flag_possible, self.village_id
+            chosen, chosen_level, self.village_id
         )
 
     def flag_upgrade(self, flag, level):

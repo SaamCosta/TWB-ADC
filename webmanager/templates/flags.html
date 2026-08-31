@@ -50,6 +50,22 @@
               <td class="text-muted">Cooldown de troca</td>
               <td><span class="badge badge-{{ e.cooldown_color }}">{{ e.cooldown_label }}</span></td>
             </tr>
+            <tr>
+              <td class="text-muted">Política</td>
+              <td>
+                <span class="badge badge-{{ e.policy_color }} border">{{ e.policy_label }}</span>
+                {% if e.off_policy %}
+                  <span class="badge badge-warning text-dark ml-1"
+                        title="A bandeira atual não está na preferência automática. Normal para bandeira manual (ataque/sorte) ou para a de defesa enquanto a aldeia está sob ataque.">fora da política</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% if e.preferred_flags %}
+            <tr>
+              <td class="text-muted">Preferência</td>
+              <td><small>{% for p in e.preferred_flags %}{% if not loop.first %} <span class="text-muted">&rsaquo;</span> {% endif %}{{ p }}{% endfor %}</small></td>
+            </tr>
+            {% endif %}
           </tbody>
         </table>
 
