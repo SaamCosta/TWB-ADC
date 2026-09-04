@@ -1,12 +1,11 @@
 # Backlog — Features pendentes
 
-Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27 → 25 (fase 1) → 32 (parte 1)` (✅ todas)
+Ordem de implementação até agora: `4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 18 → 19 → 20 → 21 → 22 → 23 → 24 (fase 1) → 14 → 15 → 16 → 17 → 27 → 25 (fase 1) → 32 (parte 1) → 26` (✅ todas)
 
 Pendentes: **24 fase 2** (paladino: treino por XP e re-especialização por
 perfil — sem desenho, precisa de definição do usuário), **25 fase 2** (ativar
 boosts — o catálogo já é lido a cada ciclo, falta a política de uso e uma
-captura do POST de `consume`), **26** (envio em lote `train[N][unit]`, precisa
-de captura de rede), **28** (farm automático de aldeias de jogador), que
+captura do POST de `consume`), **28** (farm automático de aldeias de jogador), que
 precisa de desenho dos filtros, **29** (janela de bônus noturno do defensor,
 bloqueada por falta de premium), **31** (sítios de torre, fase 2), **32 parte
 2** (bandeira por **fase** da aldeia — a escolha por **perfil** foi feita em
@@ -1058,7 +1057,7 @@ a política de uso não.
 **Prioridade:** fase 1 feita; fase 2 (ativação) precisa do desenho da política
 e de uma captura controlada do POST de `consume` antes de virar tarefa.
 
-## Feature 26 — Envio de ataques múltiplos em lote (train[N][unit])
+## Feature 26 — Envio de ataques múltiplos em lote (train[N][unit]) ✅ Implementado e validado em campo (2026-09-04)
 
 Descoberto em 2026-08-07 investigando por que o trem de 4 nobres do PvP
 Conquest (Feature 13), embora todos enviados com sucesso, chegou **espalhado
@@ -1074,7 +1073,7 @@ porque cada envio bloqueia o próximo até terminar.
 real do bot (JS `game.cb1e4b.js`, objeto `Place.confirmScreen`): o botão
 "Adicionar ataque adicional" (`#troop_confirm_train`,
 `addAdditionalAttack()`) adiciona linhas de tropa nomeadas
-`train[1][unit]`, `train[2][unit]`, etc. **dentro do mesmo
+`train[N][unit]` **dentro do mesmo
 `#command-data-form`** que já tem os campos do ataque principal
 (`spear`, `sword`, `axe`...). Como tudo vive no mesmo formulário, o envio
 final é um único POST contendo o ataque principal **e** todos os
@@ -1082,7 +1081,7 @@ final é um único POST contendo o ataque principal **e** todos os
 verdade. Isso resolveria o espalhamento de chegada de qualquer trem com mais
 de 1 ataque simultâneo (clear + nobres, ou múltiplos nobres).
 
-**Por que não foi implementado ainda:** o formato exato do POST final (tokens
+**Bloqueio original:** o formato exato do POST final (tokens
 ocultos tipo `ch=`, se cada linha `train[N]` aceita coordenada própria ou
 usa sempre a mesma `x`/`y` do form, etc.) não pôde ser confirmado com
 segurança só lendo o JS minificado — só o `#command-data-form` "atacar por
@@ -1091,16 +1090,51 @@ mapa" (`comandopelomapa.txt`) e os dois botões "Adicionar ataque adicional"
 pelo usuário, sem captura de rede do envio final de verdade. Implementar às
 cegas arrisca desperdiçar tropa real ou mandar ataque pro lugar errado.
 
-**Proposta:** antes de implementar, fazer um teste controlado (ex: 2 ataques
+**Proposta original:** antes de implementar, fazer um teste controlado (ex: 2 ataques
 pequenos e descartáveis contra um alvo seguro) capturando a requisição de
 rede real do envio final, pra confirmar o formato exato dos campos —
 só então adaptar `Hunter._send_attack()` (`game/hunter.py`) e
 `AttackManager.attack()` (`game/attack.py`) para aceitar múltiplos ataques
 por chamada e montar o POST em lote em vez de N chamadas sequenciais.
 
-**Prioridade:** depois da Feature 25. Ganho real só aparece quando há mais
-de 1 ataque simultâneo agendado pro mesmo `arrival_time` (hoje, só o trem de
-nobres do PvP Conquest se beneficia) — não bloqueia nada em uso hoje.
+### Fechamento em 2026-09-04
+
+A captura controlada foi feita no br143, pela BBM 001 (`41123`), contra a
+aldeia-bônus bárbara `42248` (`578|297`). Foram enviados dois ataques de 98
+bárbaros cada, sem nobre nem outra unidade. O resultado foram dois comandos
+com chegada em `18:14:06.428` e `18:14:06.543`: **115 ms de diferença**, contra
+os ~2min19s do trem antigo.
+
+A captura corrigiu duas premissas do levantamento preliminar:
+
+1. o ataque principal não usa prefixo e o **primeiro adicional começa em
+   `train[2][unit]`**, não `train[1]`;
+2. todas as linhas usam o mesmo destino `x`/`y` do formulário — não existem
+   coordenadas por `train[N]`.
+
+O POST final nativo vai para
+`game.php?village={origem}&screen=place&action=command`. Os tokens ocultos
+(`ch`, `cb`, `h`, `source_village`, `village`) continuam vindo do próprio
+formulário de confirmação; o bot não fabrica nenhum deles. Cada linha adicional
+manda uma chave `train[N][unit]` para cada unidade habilitada no mundo, com zero
+nas ausentes. Registro detalhado em `docs/feature26_batch_capture.md`.
+
+Implementação:
+
+- `AttackManager.attack(..., additional_attacks=[...])` preserva o caminho AJAX
+  antigo para ataques únicos e usa o endpoint nativo capturado apenas no lote;
+- antes do envio, soma todas as linhas e recusa localmente o lote se a aldeia
+  não tiver as tropas totais;
+- `Hunter.run()` agrupa ataques pendentes somente quando têm **mesma origem,
+  mesmo alvo e mesmo `send_time`**. Composições com velocidade diferente e
+  ataques vindos de outras aldeias continuam separados, pois não podem ocupar
+  o mesmo formulário sem destruir a sincronização de chegada;
+- a dedução do `TroopManager` soma o lote inteiro e só acontece depois de o
+  servidor aceitar o POST.
+
+Cobertura em `tests/test_attack_batch.py`: payload/números `train[2..N]`, rota
+antiga para comando único, sobrecomprometimento, agrupamento, sucesso e falha.
+Em 2026-09-04, os **30 arquivos de teste** do projeto passaram.
 
 ## Feature 28 — Farm automático de aldeias de jogador ao alcance
 
@@ -1938,3 +1972,20 @@ na aldeia vendedora, e criar a entrada de perfil em `profile_templates`.
   sessão, por exemplo, já registrou os achados diretamente nas seções acima em
   vez de um arquivo à parte — o ganho do documento estruturado seria do lado
   do *pedido*, antes da coleta, não da entrega).
+
+- ~~**Conquista PvP não suspendia o farm ao cadastrar um alvo**~~ —
+  **corrigido em 2026-09-04.** A reserva exata de tropas só era criada depois
+  do scout e da simulação; até lá, as aldeias que acabariam fornecendo clear ou
+  nobres continuavam disponíveis para farm. As fontes agora são escolhidas e
+  persistidas no primeiro ciclo do registro e ficam integralmente suspensas
+  para farm, coleta e conquista bárbara até o Hunter enviar/falhar. A aba
+  Conquista PvP exibe os IDs protegidos. Detalhe e testes em
+  `docs/features_log.md` e `tests/test_pvp_farm_suspension.py`.
+
+- ~~**Conquista PvP aguardava scout além do deadline e Hunter enviava
+  atrasado**~~ — **corrigido em 2026-09-04.** Scout válido por 24h; deadlines
+  sondados antecipadamente no servidor; falha sem schedule se a primeira saída
+  vencer; override humano “Ignorar scout” disponível no Webmanager sem liberar
+  atrasos. Hunter recusa `send_time` vencido, ordena globalmente pela próxima
+  saída e ganhou checkpoints cooperativos durante o ciclo de aldeia/farm.
+  Detalhe em `docs/features_log.md`.

@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "3.9",
+    "version": "4.0",
     "author": "stefan2200"
   },
   "server": {
@@ -230,6 +230,7 @@
     "nobles_per_target": 4,
     "arrival_buffer_seconds": 2,
     "scout_amount": 5,
+    "scout_max_age_hours": 24,
     "dynamic_moral_night_bonus": false
   },
   "statue": {

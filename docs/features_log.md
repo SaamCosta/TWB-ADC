@@ -1827,6 +1827,111 @@ sessão (o ciclo da primeira aldeia levou ~25 min só de farm). **Continua
 pendente** o número que importa: exatamente 3 trocas (BBM 003, 016, 017) e
 silêncio depois.
 
+## 2026-09-04 — Feature 26: trem nativo, dois ataques em 115 ms
+
+Fechada a pendência aberta desde 2026-08-07. O trem de quatro nobres da
+primeira conquista PvP havia sido disparado pelo `Hunter` como quatro fluxos
+HTTP completos e chegou espalhado por ~2min19s. Faltava observar o POST real
+do botão “Adicionar ataque adicional”; implementar a partir do JS minificado
+sem essa evidência arriscaria nobres reais.
+
+### Captura em campo
+
+Na sessão autenticada do br143, a BBM 001 (`41123`) enviou dois ataques
+descartáveis de 98 bárbaros contra a aldeia-bônus bárbara `42248` (`578|297`).
+Um único POST para `screen=place&action=command` criou os dois comandos, com
+chegadas `18:14:06.428` e `18:14:06.543`: **115 ms de diferença**. Nenhum
+nobre foi enviado.
+
+O dado que faltava: ataque #1 usa os campos normais (`axe`, `snob`, ...), e o
+primeiro adicional começa em **`train[2][unit]`**. Todas as linhas compartilham
+o `x`/`y` e os tokens `ch`/`cb`/`h` do `#command-data-form`. A interface ainda
+tem uma armadilha: ao criar a linha adicional, preenche automaticamente todas
+as tropas restantes — inclusive nobre. O teste zerou cada campo não solicitado;
+o bot faz o mesmo por construção. Captura sanitizada em
+`docs/feature26_batch_capture.md`.
+
+### Código e guardas
+
+`AttackManager.attack()` ganhou `additional_attacks`, valida o total disponível
+e monta `train[2..N][unit]`. Ataque único continua no endpoint AJAX antigo;
+somente o lote usa o endpoint normal que foi capturado e exercitado. O
+`Hunter.run()` agrupa apenas entradas com mesma origem e mesmo `send_time` —
+destino já é comum ao schedule. Origens diferentes ou velocidades diferentes
+continuam separadas, porque não cabem no mesmo formulário sem perder a hora de
+chegada. O `TroopManager` só é debitado depois do aceite e pelo total de todas
+as linhas.
+
+`tests/test_attack_batch.py` cobre payload e numeração, compatibilidade do
+ataque único, recusa por tropas insuficientes, agrupamento e contabilização em
+sucesso/falha. **30/30 arquivos de teste passaram**, sem rede.
+
+## 2026-09-04 — Conquista PvP protege as fontes antes do scout
+
+Corrigida a janela em que um alvo recém-cadastrado ainda não tinha reserva de
+tropas. A reserva quantitativa `pvp:{target_id}` só nasce em
+`_step_simulate()`, quando existem tropas exatas e schedules para registrar;
+durante `pending_scout` e `pending_sim`, portanto, farm e coleta ainda podiam
+consumir o exército que seria escolhido mais tarde. Foi esse comportamento que
+fez um agendamento real precisar ser removido pelo usuário.
+
+Agora `PvpConquestManager` escolhe e persiste no primeiro ciclo do registro a
+aldeia de limpeza e o plano de origens dos nobres. O mesmo conjunto fica
+visível em `farm_suspended_villages` e é bloqueado integralmente para os três
+consumidores rotineiros de tropas: farm, coleta e conquista bárbara. A ordem de
+`Village.run()` também passou a executar PvP antes da conquista bárbara, para a
+trava existir antes de qualquer gasto naquele ciclo.
+
+A suspensão permanece em `pending_scout`, `pending_sim` e `scheduled`; termina
+quando o Hunter resolve os schedules (enviados ou falhos), quando o alvo falha
+ou conclui, quando o registro é removido, ou quando a feature é desativada. A
+reserva quantitativa existente continua protegendo as tropas exatas entre a
+simulação e o envio; a nova trava cobre o período anterior, em que ainda não é
+seguro prometer quantidades específicas.
+
+O Webmanager mostra um alerta “Uso de tropas suspenso” com os IDs protegidos.
+`tests/test_pvp_farm_suspension.py` cobre seleção automática e manual,
+bloqueio dos três consumidores e liberação nos estados terminais/removidos.
+
+## 2026-09-04 — Scout válido, deadline e preempção do Hunter
+
+Operações com chegada fixa tinham três falhas encadeadas. Um relatório de
+scout de qualquer idade era aceito; sem relatório, o PvP voltava de
+`pending_sim` para `pending_scout` a cada duas horas e tentava para sempre; se
+o relatório só aparecesse depois da saída necessária, o schedule ainda era
+criado e o Hunter enviava imediatamente, produzindo um ataque real atrasado.
+
+O limite agora é `pvp_conquest.scout_max_age_hours: 24`. Depois de escolher as
+fontes, o PvP monta as mesmas composições previstas para clear e nobres e usa a
+sonda de confirmação do Hunter (sem enviar) para obter do servidor a duração de
+cada comando. Grava `departure_deadlines` e `first_send_time`; se a primeira
+saída chegar sem scout válido, o alvo falha como `scout_deadline_missed` e não
+cria schedule. Mesmo com scout ou autorização manual, uma saída já vencida
+falha como `departure_deadline_missed`.
+
+A aba Conquista PvP ganhou “Ignorar scout e autorizar agendamento”. É uma
+decisão humana explícita para operações cuja inteligência vem da tribo: sem
+relatório válido, o bot não inventa defesa nem muralha e registra a simulação
+como `overridden`. O override nunca permite horário vencido.
+
+No Hunter, `send_time <= agora` virou recusa categórica
+(`send_time_missed`), propagada imediatamente ao alvo PvP. Os schedules e os
+ataques dentro deles agora são processados pela saída mais próxima, não pela
+ordem do JSON.
+
+Por fim, a suposição de que o Hunter “interrompia o ciclo” estava errada: ele
+só encurtava o sono entre ciclos e rodava depois dele. `TWB` agora instala
+checkpoints cooperativos no começo e entre as etapas pesadas de cada aldeia e
+dentro de cada iteração do farm. O mesmo thread/sessão HTTP é preservado; ao
+entrar na janela de 120 segundos, o Hunter toma prioridade, espera o instante
+exato e envia antes de devolver o controle ao ciclo normal. O piso antigo de
+60 segundos no sono encurtado foi removido porque ele próprio podia ultrapassar
+um `send_time` válido.
+
+Config `build.version` 3.9 → 4.0 para propagar a validade de 24 horas.
+Cobertura em `tests/test_pvp_farm_suspension.py` e
+`tests/test_attack_batch.py`.
+
 ## Ambiente de referência
 
 Python 3.13, Windows 10. Bot: `python twb.py`. Webmanager: `python server.py`

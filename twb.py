@@ -663,9 +663,25 @@ class TWB:
                         config=config,
                     )
 
+                # Hunter used to run only after the complete village loop and
+                # its inter-cycle sleep. A long village could therefore cross
+                # an operation's send_time. Install one shared cooperative
+                # callback before processing starts; Village and AttackManager
+                # invoke it at safe checkpoints using the same HTTP session.
+                hunter_callback = None
+                if config.get("hunter", {}).get("enabled", False):
+                    if not self.hunter:
+                        self.hunter = Hunter(wrapper=self.wrapper)
+                    self.hunter.villages = managed_villages_dict
+                    self.hunter.build_schedules_from_config(config)
+
+                    def hunter_callback():
+                        self.hunter.run(config)
+
                 for _v in self.villages:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
+                    _v.hunter_service_callback = hunter_callback
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
@@ -810,26 +826,21 @@ class TWB:
                     )
 
                 # Feature 10: Hunter — coordinated attack scheduling
-                if config.get("hunter", {}).get("enabled", False):
-                    if not self.hunter:
-                        self.hunter = Hunter(wrapper=self.wrapper)
-                    self.hunter.villages = {
-                        v.village_id: v
-                        for v in self.villages
-                        if v.village_id in self.found_villages
-                    }
-                    self.hunter.build_schedules_from_config(config)
+                if config.get("hunter", {}).get("enabled", False) and self.hunter:
+                    # Service once before sleeping. If a command is already
+                    # inside Hunter.window, Hunter waits for the exact instant
+                    # and sends it now instead of oversleeping it.
+                    self.hunter.run(config)
                     nearest = self.hunter.nearest_send_time()
                     if nearest:
                         # Wake up in time to enter the send window
                         time_to_window = nearest - time.time() - self.hunter.window
                         if time_to_window < sleep:
-                            # P2-36: era max(0, ...). Com um send_time ja
-                            # passado o sleep zerava e o bot emendava ciclos
-                            # completos sem pausa nenhuma, martelando o
-                            # servidor. Piso de 60s: ainda entra na janela,
-                            # sem virar loop apertado.
-                            sleep = max(60, time_to_window)
+                            # Late commands are now failed inside Hunter.run(),
+                            # so a zero/negative value cannot create the old
+                            # tight loop. Never impose a 60s floor here: that
+                            # floor could itself cross a valid send_time.
+                            sleep = max(0, time_to_window)
                             logging.info(
                                 "Hunter: shortened sleep to %.0fs to catch upcoming send_time",
                                 sleep

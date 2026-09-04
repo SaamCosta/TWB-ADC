@@ -40,6 +40,7 @@ class Hunter:
 
     # Seconds before send_time to enter priority mode and start monitoring
     window = 120
+    PROBE_RETRY_SECONDS = 60
 
     def __init__(self, wrapper=None):
         self.wrapper = wrapper
@@ -197,7 +198,46 @@ class Hunter:
         now = time.time()
         changed = False
 
+        # Resolve travel times for every schedule before choosing what to
+        # service. Dict/file order is not chronological: PvP conquest writes
+        # the clear schedule before the nobles schedule even though nobles
+        # normally depart first. Sleeping on the first dict entry could miss a
+        # more urgent command in a later entry.
         for sched_key, sched in schedules.items():
+            if sched.get("status") != "pending":
+                continue
+            if sched.get("arrival_time", 0) < now:
+                sched["status"] = "failed"
+                changed = True
+                continue
+            target_id = sched["target_id"]
+            for atk in sched.get("attacks", []):
+                if atk.get("status") != "pending" or atk.get("send_time") is not None:
+                    continue
+                last_probe = float(atk.get("last_probe_attempt", 0) or 0)
+                if time.time() - last_probe < self.PROBE_RETRY_SECONDS:
+                    continue
+                atk["last_probe_attempt"] = time.time()
+                changed = True
+                duration = self._probe_duration(
+                    atk["source_village_id"], target_id, atk["troops"]
+                )
+                if duration is not None:
+                    atk["send_time"] = sched["arrival_time"] - duration
+                    changed = True
+
+        def next_departure(item):
+            _key, sched = item
+            departures = [
+                float(atk["send_time"])
+                for atk in sched.get("attacks", [])
+                if atk.get("status") == "pending" and atk.get("send_time") is not None
+            ]
+            return min(departures) if departures else float("inf")
+
+        ordered_schedules = sorted(schedules.items(), key=next_departure)
+
+        for sched_key, sched in ordered_schedules:
             if sched.get("status") != "pending":
                 continue
 
@@ -213,59 +253,100 @@ class Hunter:
                 changed = True
                 continue
 
-            for atk in sched["attacks"]:
+            for atk in sorted(
+                    sched["attacks"],
+                    key=lambda item: (
+                        float(item["send_time"])
+                        if item.get("send_time") is not None else float("inf")
+                    )):
                 if atk["status"] != "pending":
                     continue
 
                 send_time = atk.get("send_time")
-
-                # Retry probe if we didn't get a duration during build
                 if send_time is None:
-                    duration = self._probe_duration(
-                        atk["source_village_id"], target_id, atk["troops"]
-                    )
-                    if duration is not None:
-                        send_time = arrival_ts - duration
-                        atk["send_time"] = send_time
-                        changed = True
-                    else:
-                        continue  # still can't probe, try next cycle
+                    continue  # still can't probe, try next cycle
 
                 time_to_send = send_time - time.time()
+
+                # A coordinated operation is defined by its arrival time.
+                # Sending after the computed departure cannot recover that
+                # promise; it only creates a real, late attack.  This path is
+                # deliberately strict -- even the explicit PvP scout override
+                # never authorizes an expired departure.
+                if time_to_send <= 0:
+                    atk["status"] = "failed"
+                    atk["fail_reason"] = "send_time_missed"
+                    atk["missed_by_seconds"] = abs(float(time_to_send))
+                    changed = True
+                    self.logger.error(
+                        "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
+                        atk["source_village_id"], target_id, abs(float(time_to_send))
+                    )
+                    continue
 
                 if time_to_send > self.window:
                     continue  # not our cycle yet
 
                 # --- Within the send window ---
+                if hasattr(self.wrapper, "priority_mode"):
+                    self.wrapper.priority_mode = True
                 if time_to_send > 0:
                     label = "FAKE" if atk.get("is_fake") else "REAL"
                     self.logger.info(
                         "Hunter: [%s] %s -> %s — sleeping %.1fs to hit send_time",
                         label, atk["source_village_id"], target_id, time_to_send
                     )
-                    if hasattr(self.wrapper, "priority_mode"):
-                        self.wrapper.priority_mode = True
                     time.sleep(time_to_send)
 
-                result = self._send_attack(atk, target_id)
-                atk["status"] = "sent" if result else "failed"
-                atk["sent_at"] = int(time.time())
+                # Feature 26: commands with the same source, target and send
+                # time can use the game's native train form.  Different troop
+                # compositions often have different travel durations; those
+                # intentionally remain separate so they still converge on the
+                # requested arrival time.
+                batch = [
+                    candidate for candidate in sched["attacks"]
+                    if candidate.get("status") == "pending"
+                    and str(candidate.get("source_village_id"))
+                    == str(atk.get("source_village_id"))
+                    and candidate.get("send_time") is not None
+                    and abs(float(candidate["send_time"]) - float(send_time)) < 0.5
+                ]
+
+                if len(batch) > 1:
+                    self.logger.info(
+                        "Hunter: batching %d attacks %s -> %s at one send time",
+                        len(batch), atk["source_village_id"], target_id
+                    )
+
+                result = self._send_attack_batch(batch, target_id)
+                sent_at = int(time.time())
+                for batch_atk in batch:
+                    batch_atk["status"] = "sent" if result else "failed"
+                    batch_atk["sent_at"] = sent_at
+                    if len(batch) > 1:
+                        batch_atk["batch_size"] = len(batch)
                 changed = True
 
-                label = "FAKE" if atk.get("is_fake") else "REAL"
-                self.logger.info(
-                    "Hunter: [%s] %s -> %s — %s",
-                    label, atk["source_village_id"], target_id,
-                    "OK" if result else "FAILED"
-                )
+                for batch_atk in batch:
+                    label = "FAKE" if batch_atk.get("is_fake") else "REAL"
+                    self.logger.info(
+                        "Hunter: [%s] %s -> %s — %s%s",
+                        label, batch_atk["source_village_id"], target_id,
+                        "OK" if result else "FAILED",
+                        " (batch)" if len(batch) > 1 else "",
+                    )
 
             if hasattr(self.wrapper, "priority_mode"):
                 self.wrapper.priority_mode = False
 
             pending = [a for a in sched["attacks"] if a["status"] == "pending"]
             if not pending:
-                sched["status"] = "complete"
-                self.logger.info("Hunter: schedule %s complete", sched_key)
+                failed = any(a.get("status") == "failed" for a in sched["attacks"])
+                sched["status"] = "failed" if failed else "complete"
+                self.logger.info(
+                    "Hunter: schedule %s %s",
+                    sched_key, "failed" if failed else "complete"
+                )
                 changed = True
 
         if changed:
@@ -362,8 +443,26 @@ class Hunter:
         Fires a single attack via the source village's AttackManager.
         Deducts sent troops from TroopManager immediately.
         """
-        source_id = str(atk["source_village_id"])
-        troops = atk["troops"]
+        return self._send_attack_batch([atk], target_id)
+
+    def _send_attack_batch(self, attacks, target_id):
+        """
+        Fires one or more simultaneous attacks from the same source village.
+
+        A one-item list preserves the old single-command path.  With multiple
+        items, AttackManager sends the first command normally and the rest as
+        the native ``train[2..N]`` fields captured on br143.  Troops are only
+        deducted after the server accepts the whole request.
+        """
+        if not attacks:
+            return False
+
+        source_id = str(attacks[0]["source_village_id"])
+        if any(str(atk["source_village_id"]) != source_id for atk in attacks):
+            self.logger.error(
+                "Hunter: refusing mixed-source batch for target %s", target_id
+            )
+            return False
 
         village = self.villages.get(source_id)
         if not village:
@@ -373,11 +472,26 @@ class Hunter:
             self.logger.error("Hunter: village %s has no attack manager initialised", source_id)
             return False
 
-        result = village.attack.attack(target_id, troops=troops)
+        primary_troops = attacks[0]["troops"]
+        additional = [atk["troops"] for atk in attacks[1:]]
+        if additional:
+            result = village.attack.attack(
+                target_id,
+                troops=primary_troops,
+                additional_attacks=additional,
+            )
+        else:
+            # Keep the old call shape for ordinary attacks and for lightweight
+            # AttackManager substitutes used by integrations/tests.
+            result = village.attack.attack(target_id, troops=primary_troops)
         if result and result != "forced_peace":
             # Keep TroopManager in sync so farming doesn't over-commit
             if village.units:
-                for unit, qty in troops.items():
+                sent = {}
+                for atk in attacks:
+                    for unit, qty in atk["troops"].items():
+                        sent[unit] = sent.get(unit, 0) + int(qty)
+                for unit, qty in sent.items():
                     current = int(village.units.troops.get(unit, 0))
                     village.units.troops[unit] = str(max(0, current - int(qty)))
             return True

@@ -81,6 +81,9 @@ class Village:
     # reassigned, never mutated in place. None means "build a throwaway one"
     # (see run_pvp_conquest), which keeps Village.run() usable standalone.
     pvp_conquest_manager = None
+    # Cooperative callback installed by TWB. Hunter runs at these safe
+    # checkpoints instead of sharing the HTTP session from a second thread.
+    hunter_service_callback = None
 
     twp = TwStats()
 
@@ -810,6 +813,14 @@ class Village:
         if not self.config.get("conquest", {}).get("enabled", False):
             return
 
+        if self._pvp_troop_spending_suspended():
+            self.logger.info(
+                "PvpConquest: barbarian conquest suspended in village %s "
+                "while it is a clear/noble source",
+                self.village_id,
+            )
+            return
+
         village_cfg = self.config.get("villages", {}).get(self.village_id, {})
         if not village_cfg.get("conquest_enabled", True):
             self.logger.debug(
@@ -882,6 +893,26 @@ class Village:
             )
         pvp.run()
 
+    def _pvp_troop_spending_suspended(self):
+        """
+        Whether this village is an assigned source for an active PvP target.
+
+        The shared PvpConquestManager chooses those sources before waiting for
+        scout/simulation, then releases them after Hunter sends/fails.  Keep
+        this query side-effect free so every troop-spending module can use the
+        same decision.
+        """
+        pvp = self.pvp_conquest_manager
+        return bool(
+            pvp is not None
+            and pvp.is_troop_spending_suspended(self.village_id)
+        )
+
+    def _service_hunter(self):
+        """Give a due coordinated attack priority at this safe checkpoint."""
+        if callable(self.hunter_service_callback):
+            self.hunter_service_callback()
+
     def ensure_map_loaded(self):
         """
         Ensures self.area (Map) is initialised and populated before conquest
@@ -932,12 +963,21 @@ class Village:
         self.attack.forced_peace_time = (
             self.forced_peace_today_start if self.forced_peace_today else None
         )
+        self.attack.hunter_service_callback = self.hunter_service_callback
         return self.attack
 
     def run_farming(self):
         """
         Runs the farming logic
         """
+        if self._pvp_troop_spending_suspended():
+            self.logger.info(
+                "PvpConquest: farm suspended in village %s while it is a "
+                "clear/noble source",
+                self.village_id,
+            )
+            return
+
         if not self.forced_peace and self.units.can_attack:
             # Map already loaded by ensure_map_loaded() earlier in the cycle.
             # Re-calling get_map() here is safe (it uses cache), but area is
@@ -974,6 +1014,14 @@ class Village:
         """
         Runs gathering if unlocked and active
         """
+        if self._pvp_troop_spending_suspended():
+            self.logger.info(
+                "PvpConquest: gathering suspended in village %s while it is "
+                "a clear/noble source",
+                self.village_id,
+            )
+            return
+
         self.units.can_gather = self.get_village_config(
             self.village_id, parameter="gather_enabled", default=False
         )
@@ -1050,6 +1098,7 @@ class Village:
     def run(self, config=None, first_run=False):
         # setup and check if village still exists / is accessible
         self.config = config
+        self._service_hunter()
         # Feature 23: allow a per-village delay_factor override (bigger/smaller
         # request jitter for specific villages), same override pattern already
         # used for active_hours. null (default) falls back to the global
@@ -1093,6 +1142,7 @@ class Village:
         self.run_quest_actions(config=config)
 
         self.run_builder()
+        self._service_hunter()
         self.units_get_template()
         self.set_unit_wanted_levels()
 
@@ -1102,6 +1152,7 @@ class Village:
         self.do_recruit()
         self.manage_local_resources()
         self.run_resource_sharing()
+        self._service_hunter()
 
         # check_forced_peace() estava definido mas nunca era chamado de lugar
         # nenhum (achado alem do diagnostico do P1-7, que so corrigiu o `self.`
@@ -1114,11 +1165,16 @@ class Village:
         # P1-17: precisa vir antes de run_pvp_conquest()/Hunter, que consomem
         # self.attack independentemente da config de farm.
         self.ensure_attack_manager()
-        self.run_conquest()
         self.run_pvp_conquest()
+        self._service_hunter()
+        # PvP runs first so it can choose and lock its clear/noble sources
+        # before any lower-priority barbarian conquest or farm spends troops.
+        self.run_conquest()
         self.run_farming()
+        self._service_hunter()
 
         self.do_gather()
+        self._service_hunter()
         self.go_manage_market()
 
         self.set_cache_vars()

@@ -60,6 +60,9 @@
           {% if t.target_name %}<small class="text-muted ml-2">{{ t.target_name }}</small>{% endif %}
         </h6>
         <small class="text-muted">Chegada: {{ t.arrival_str }}</small>
+        {% if t.first_send_str %}
+          <small class="text-danger ml-2">— primeira saída: {{ t.first_send_str }}</small>
+        {% endif %}
         {% if t.time_to_arrival is not none %}
           {% if t.time_to_arrival > 0 %}
             <small class="text-muted ml-2">— em {{ t.time_to_arrival_fmt }}</small>
@@ -112,6 +115,31 @@
     {% if t.status == 'failed' and t.fail_reason %}
     <div class="alert alert-danger py-2 px-3 mb-3 small">
       <strong>Falhou:</strong> {{ t.fail_reason_label }}
+      {% if t.hunter_fail_reason %}
+        <span class="ml-1">({{ t.hunter_fail_reason }})</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if t.farm_suspended_villages %}
+    <div class="alert alert-warning py-2 px-3 mb-3 small">
+      <strong>Uso de tropas suspenso:</strong>
+      {% for vid in t.farm_suspended_villages %}
+        <span class="unit-chip">{{ vid }}</span>
+      {% endfor %}
+      <div class="mt-1">
+        Farm, coleta e conquista bárbara ficam pausados nessas aldeias até o
+        Hunter enviar os ataques ou registrar uma falha.
+      </div>
+    </div>
+    {% endif %}
+
+    {% if t.scout_override %}
+    <div class="alert alert-danger py-2 px-3 mb-3 small">
+      <strong>Autorização para seguir sem scout ativada.</strong>
+      Se houver relatório válido, ele ainda será simulado; caso contrário, o
+      bot agendará sem validar defesa ou muralha. O horário de saída continua
+      obrigatório e ataques atrasados nunca serão enviados.
     </div>
     {% endif %}
 
@@ -156,6 +184,12 @@
       <div class="col-md-7">
         {% if t.last_simulation %}
         <div class="sim-block">
+          {% if t.last_simulation.overridden %}
+          <div class="text-danger small">
+            <strong>Simulação ignorada.</strong> Agendamento autorizado manualmente
+            sem relatório de scout válido.
+          </div>
+          {% else %}
           <div class="d-flex justify-content-between mb-1">
             <strong class="small">Última simulação</strong>
             <span class="badge badge-{% if t.last_simulation.viable %}success{% else %}danger{% endif %}">
@@ -186,6 +220,7 @@
               </span>
             </div>
           </div>
+          {% endif %}
         </div>
         {% elif t.status in ['pending_scout','pending_sim'] %}
         <div class="text-muted small mt-1">
@@ -211,6 +246,19 @@
       </select>
       <button type="submit" class="btn btn-outline-secondary btn-sm">Definir</button>
     </form>
+    {% if not t.scout_override %}
+    <form method="post" action="/pvp_conquest/scout_override" class="mt-2">
+      <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
+      <button type="submit" class="btn btn-outline-danger btn-sm"
+              {% if t.time_to_first_send is not none and t.time_to_first_send <= 0 %}disabled{% endif %}
+              onclick="return confirm('Agendar SEM relatório de scout válido? A defesa e a muralha não serão simuladas. Esta decisão não pode autorizar um envio atrasado.')">
+        Ignorar scout e autorizar agendamento
+      </button>
+      <small class="text-muted ml-2">
+        Use somente quando a inteligência da operação vier por fora do bot.
+      </small>
+    </form>
+    {% endif %}
     {% endif %}
 
   </div>
@@ -259,8 +307,12 @@
           </div>
 
           <div class="alert alert-info small mb-0">
-            <strong>Noble villages:</strong> o bot seleciona automaticamente todas as aldeias gerenciadas com noble disponível.
-            Você pode sobrescrever isso editando <code>cache/pvp_conquest/{id}.json</code> diretamente.
+            <strong>Proteção das tropas:</strong> no primeiro ciclo após o cadastro,
+            o bot escolhe as fontes de limpeza e de nobles e suspende nelas o
+            farm, a coleta e a conquista bárbara. A proteção termina depois que
+            o Hunter envia os ataques ou registra uma falha.
+            Relatórios de scout valem por até
+            {{ pvp_cfg.scout_max_age_hours | default(24) }} horas.
           </div>
 
         </div>

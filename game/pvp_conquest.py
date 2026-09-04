@@ -19,6 +19,7 @@ import time
 from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.world_config import WorldConfig
+from game.hunter import Hunter
 from game.simulator import Simulator
 
 logger = logging.getLogger("PvpConquest")
@@ -88,6 +89,13 @@ class PvpConquestManager:
         self._reports_index = None
         self._reports_files = None
         self._player_id = None
+        self._deadline_hunter = None
+        self._deadline_probe_attempts = {}
+        # Village ids whose routine troop spending must stop while a PvP
+        # conquest is preparing/scheduling its clear and noble train.  This is
+        # rebuilt from the target cache on every run, so deleting/failing a
+        # target releases the lock without leaving process-local stale state.
+        self.farm_suspended_villages = set()
 
     # ------------------------------------------------------------------
     # Entry point
@@ -97,8 +105,13 @@ class PvpConquestManager:
     # the completion check once scheduled. 4 gives headroom without risking
     # a runaway loop if a future step is added carelessly.
     MAX_STEPS_PER_CALL = 4
+    FARM_SUSPEND_STATUSES = {"pending_scout", "pending_sim", "scheduled"}
 
     def run(self):
+        # Always rebuild this process-local view.  In particular, disabling
+        # PvP conquest between two Village.run() calls must not keep locks
+        # published by an earlier call in the same bot cycle.
+        self.farm_suspended_villages = set()
         cfg = self.config.get("pvp_conquest", {})
         if not cfg.get("enabled", False):
             return
@@ -109,6 +122,20 @@ class PvpConquestManager:
 
         for target_id, data in targets.items():
             try:
+                # Assign the future clear/noble sources before the state
+                # machine waits for a scout report.  Previously these choices
+                # only happened in _step_simulate(), leaving pending_scout and
+                # pending_sim free to farm away the army the later schedule
+                # expected to use.
+                self._prepare_source_locks(target_id, data)
+                self._prepare_departure_deadlines(target_id, data)
+
+                # A fixed operation time is no longer useful after its first
+                # required departure.  Do not keep re-scouting forever and do
+                # not create a Hunter schedule that can only arrive late.
+                if self._fail_if_scout_deadline_missed(target_id, data):
+                    continue
+
                 # Bugfix (2026-08-07): this used to do at most one step per
                 # target per call (e.g. pending_scout -> pending_sim), so a
                 # target that became ready to advance further *within this
@@ -139,6 +166,188 @@ class PvpConquestManager:
                         break  # no progress this step -- wait for next call
             except Exception as e:
                 logger.error("PvpConquest: error processing target %s: %s", target_id, e)
+            finally:
+                # Re-evaluate after transitions: a failed/complete target (or
+                # a scheduled target whose Hunter commands already resolved)
+                # must release immediately, while an exception errs safe and
+                # preserves the lock for an active target.
+                self._sync_source_locks(target_id, data)
+
+    def is_troop_spending_suspended(self, village_id):
+        """True while ``village_id`` is committed to an active PvP target."""
+        return str(village_id) in self.farm_suspended_villages
+
+    def _prepare_source_locks(self, target_id, data):
+        """
+        Choose and persist source villages before scout/simulation completes.
+
+        Freezing the automatic choices early turns "could be selected later"
+        into an exact, visible set that Village can protect now.  The existing
+        scheduling step consumes these same ``clear_village_id`` and
+        ``noble_villages`` fields, so the lock cannot drift from the eventual
+        commands.
+        """
+        if data.get("status", "pending_scout") not in (
+                "pending_scout", "pending_sim"):
+            return
+
+        changed = False
+        clear_vid = data.get("clear_village_id")
+        if clear_vid:
+            clear_vid = str(clear_vid)
+            if data.get("clear_village_id") != clear_vid:
+                data["clear_village_id"] = clear_vid
+                changed = True
+        else:
+            clear_vid = self._select_clear_village()
+            if clear_vid:
+                data["clear_village_id"] = str(clear_vid)
+                changed = True
+
+        noble_villages = data.get("noble_villages") or []
+        if not noble_villages:
+            max_count = self.config.get("pvp_conquest", {}).get(
+                "nobles_per_target", 4
+            )
+            noble_villages = self._select_noble_attack_plan(max_count)
+            if noble_villages:
+                data["noble_villages"] = [str(vid) for vid in noble_villages]
+                changed = True
+
+        if changed:
+            PvpConquestCache.set(target_id, data)
+
+    def _sync_source_locks(self, target_id, data):
+        """Publish this target's current source locks and persist them for UI."""
+        active = (
+            data.get("status", "pending_scout") in self.FARM_SUSPEND_STATUSES
+            and not data.get("reserve_released", False)
+        )
+        source_ids = set()
+        if active:
+            if data.get("clear_village_id"):
+                source_ids.add(str(data["clear_village_id"]))
+            source_ids.update(str(vid) for vid in (data.get("noble_villages") or []))
+
+        visible_ids = sorted(source_ids)
+        if data.get("farm_suspended_villages", []) != visible_ids:
+            data["farm_suspended_villages"] = visible_ids
+            PvpConquestCache.set(target_id, data)
+
+        self.farm_suspended_villages.update(source_ids)
+
+    def _scout_max_age_seconds(self):
+        hours = self.config.get("pvp_conquest", {}).get(
+            "scout_max_age_hours", 24
+        )
+        return max(0, float(hours)) * 3600
+
+    def _prepare_departure_deadlines(self, target_id, data):
+        """Probe and persist the first exact departure required by this target."""
+        if data.get("status", "pending_scout") not in (
+                "pending_scout", "pending_sim"):
+            return
+        if data.get("departure_deadlines"):
+            return
+
+        arrival_ts = data.get("arrival_time")
+        clear_vid = data.get("clear_village_id")
+        noble_villages = data.get("noble_villages") or []
+        if not arrival_ts or not clear_vid or not noble_villages:
+            return
+
+        source_ids = {str(clear_vid)} | {str(vid) for vid in noble_villages}
+        for source_id in source_ids:
+            source = self.villages.get(source_id)
+            if (
+                    not source or not source.units or not source.area
+                    or str(target_id) not in source.area.map_pos):
+                return
+
+        clear_village = self.villages.get(str(clear_vid))
+        if not clear_village or not clear_village.units:
+            return
+        attacker_units = self._build_clear_units(clear_village)
+        noble_attacks = self._build_noble_attacks(
+            str(clear_vid), attacker_units, noble_villages
+        )
+        if not attacker_units or len(noble_attacks) != len(noble_villages):
+            return
+
+        attempts = getattr(self, "_deadline_probe_attempts", {})
+        last_attempt = float(attempts.get(str(target_id), 0) or 0)
+        if time.time() - last_attempt < Hunter.PROBE_RETRY_SECONDS:
+            return
+        attempts[str(target_id)] = time.time()
+        self._deadline_probe_attempts = attempts
+
+        if getattr(self, "_deadline_hunter", None) is None:
+            self._deadline_hunter = Hunter(wrapper=self.wrapper)
+        self._deadline_hunter.villages = self.villages
+
+        cfg = self.config.get("pvp_conquest", {})
+        clear_arrival = float(arrival_ts) - float(
+            cfg.get("arrival_buffer_seconds", 2)
+        )
+        probes = [("clear", str(clear_vid), attacker_units, clear_arrival)]
+        probes.extend(
+            ("noble", str(atk["source_village_id"]), atk["troops"], float(arrival_ts))
+            for atk in noble_attacks
+        )
+
+        # Repeated nobles from one village have the same composition and use
+        # one native batch.  Probe each distinct command shape only once.
+        duration_cache = {}
+        deadlines = []
+        for label, source_id, troops, wave_arrival in probes:
+            probe_key = (source_id, tuple(sorted(troops.items())))
+            if probe_key not in duration_cache:
+                duration_cache[probe_key] = self._deadline_hunter._probe_duration(
+                    source_id, str(target_id), troops
+                )
+            duration = duration_cache[probe_key]
+            if duration is None or duration <= 0:
+                return
+            deadlines.append({
+                "label": label,
+                "source_village_id": source_id,
+                "duration_seconds": float(duration),
+                "send_time": wave_arrival - float(duration),
+            })
+
+        first_send = min(item["send_time"] for item in deadlines)
+        data["departure_deadlines"] = deadlines
+        data["first_send_time"] = first_send
+        PvpConquestCache.set(target_id, data)
+        logger.info(
+            "PvpConquest: first departure deadline for %s is %s",
+            target_id,
+            datetime.datetime.fromtimestamp(first_send).strftime(DATETIME_FMT),
+        )
+
+    def _fail_if_scout_deadline_missed(self, target_id, data):
+        """Fail safely when valid intel did not arrive before first departure."""
+        if data.get("status", "pending_scout") not in (
+                "pending_scout", "pending_sim"):
+            return False
+        first_send = data.get("first_send_time")
+        if not first_send or time.time() < float(first_send):
+            return False
+        if not data.get("scout_override") and not self._find_scout_report(target_id):
+            data["status"] = "failed"
+            data["fail_reason"] = "scout_deadline_missed"
+        else:
+            # Valid intel (or a human override) cannot rescue an operation the
+            # bot did not schedule before its first required departure.
+            data["status"] = "failed"
+            data["fail_reason"] = "departure_deadline_missed"
+        data["failed_at"] = int(time.time())
+        PvpConquestCache.set(target_id, data)
+        logger.warning(
+            "PvpConquest: target %s failed because its first departure deadline passed",
+            target_id,
+        )
+        return True
 
     # ------------------------------------------------------------------
     # Step 1 — Scout
@@ -150,6 +359,15 @@ class PvpConquestManager:
         Marks status → pending_sim once the scout is sent.
         If a recent scout report already exists, skip straight to simulation.
         """
+        if data.get("scout_override"):
+            logger.warning(
+                "PvpConquest: operator authorized target %s without a valid scout",
+                target_id,
+            )
+            data["status"] = "pending_sim"
+            PvpConquestCache.set(target_id, data)
+            return
+
         # Check if there's already a usable scout report
         if self._find_scout_report(target_id):
             logger.info("PvpConquest: scout report already available for %s, skipping to sim", target_id)
@@ -193,7 +411,8 @@ class PvpConquestManager:
         a Hunter schedule (clear + nobles).
         """
         scout_report = self._find_scout_report(target_id)
-        if not scout_report:
+        scout_override = bool(data.get("scout_override"))
+        if not scout_report and not scout_override:
             # Scout report not yet available — wait next cycle
             age = time.time() - data.get("scout_sent_at", time.time())
             if age > 7200:
@@ -205,10 +424,7 @@ class PvpConquestManager:
                 PvpConquestCache.set(target_id, data)
             return
 
-        defender_units = scout_report.get("extra", {}).get("defence_units", {})
-
         cfg = self.config.get("pvp_conquest", {})
-        clear_ratio = cfg.get("clear_ratio", 0.8)
         min_attack_power = cfg.get("min_attack_power", 50000)
         nobles_per_target = cfg.get("nobles_per_target", 4)
         arrival_buffer = cfg.get("arrival_buffer_seconds", 2)
@@ -248,102 +464,94 @@ class PvpConquestManager:
         # automatic troop-selection has no way to judge. Leave it out of
         # every auto-built attack here; sending it is a manual decision,
         # not something PvpConquestManager should do on its own.
-        attacker_units = {
-            unit: int(int(qty) * clear_ratio)
-            for unit, qty in clear_village.units.troops.items()
-            if int(qty) > 0 and unit not in ("spy", "snob", "knight")
-        }
+        attacker_units = self._build_clear_units(clear_village)
 
-        # Run simulator
-        wall_level = scout_report.get("extra", {}).get("buildings", {}).get("wall", 0)
+        if scout_report:
+            defender_units = scout_report.get("extra", {}).get("defence_units", {})
+            wall_level = scout_report.get("extra", {}).get("buildings", {}).get("wall", 0)
 
-        # Feature 18: moral/night bonus were previously hardcoded to neutral
-        # values (moral=100, nightbonus=False), which could make the bot
-        # recommend conquests that fail in practice against much smaller
-        # targets or during the world's night bonus window. Opt-in via
-        # config (pvp_conquest.dynamic_moral_night_bonus) since the moral
-        # estimate is a best-effort approximation (see
-        # core/world_config.py::estimate_moral docstring) -- validate
-        # against the in-game simulator before relying on it.
-        nightbonus = False
-        moral = 100
-        if cfg.get("dynamic_moral_night_bonus", False):
-            nightbonus = WorldConfig.is_night_bonus_active(self.world_config)
-            if nightbonus is None:
-                # World gives every player their own 8h night bonus window
-                # (br143), so the world config can't say whether this
-                # defender is covered -- see WorldConfig.NIGHT_PER_PLAYER.
-                # Assume it applies: doubling the defender is the only
-                # direction that can't lose a noble train to a wrong guess.
-                nightbonus = True
-                logger.warning(
-                    "PvpConquest: world uses per-player night bonus windows -- "
-                    "assuming the bonus applies to %s (defender window unknown)",
-                    target_id
+            # Feature 18: moral/night bonus were previously hardcoded to neutral
+            # values (moral=100, nightbonus=False), which could make the bot
+            # recommend conquests that fail in practice against much smaller
+            # targets or during the world's night bonus window.
+            nightbonus = False
+            moral = 100
+            if cfg.get("dynamic_moral_night_bonus", False):
+                nightbonus = WorldConfig.is_night_bonus_active(self.world_config)
+                if nightbonus is None:
+                    nightbonus = True
+                    logger.warning(
+                        "PvpConquest: world uses per-player night bonus windows -- "
+                        "assuming the bonus applies to %s (defender window unknown)",
+                        target_id
+                    )
+                target_points = self._target_points(target_id)
+                attacker_points = getattr(clear_village, "points", 0)
+                if target_points is not None and attacker_points:
+                    moral = WorldConfig.estimate_moral(
+                        self.world_config, attacker_points, target_points
+                    )
+                else:
+                    logger.warning(
+                        "PvpConquest: missing points data for %s "
+                        "(attacker=%s, defender=%s) -- falling back to moral=100",
+                        target_id, attacker_points, target_points
+                    )
+
+            try:
+                sim_result = self.sim.simulate(
+                    attackerUnits=dict(attacker_units),
+                    defenderUnits={u: int(q) for u, q in defender_units.items()},
+                    wall=wall_level,
+                    nightbonus=nightbonus,
+                    moral=moral,
+                    luck=0,
                 )
-            target_points = self._target_points(target_id)
-            attacker_points = getattr(clear_village, "points", 0)
-            if target_points is not None and attacker_points:
-                moral = WorldConfig.estimate_moral(self.world_config, attacker_points, target_points)
-            else:
-                logger.warning(
-                    "PvpConquest: missing points data for %s (attacker=%s, defender=%s) "
-                    "-- falling back to moral=100 for this simulation",
-                    target_id, attacker_points, target_points
-                )
-            logger.info(
-                "PvpConquest: dynamic sim inputs for %s -- moral=%d%%, nightbonus=%s",
-                target_id, moral, nightbonus
-            )
+            except Exception as e:
+                logger.error("PvpConquest: simulator error for %s: %s", target_id, e)
+                return
 
-        try:
-            sim_result = self.sim.simulate(
-                attackerUnits=dict(attacker_units),
-                defenderUnits=dict({u: int(q) for u, q in defender_units.items()}),
-                wall=wall_level,
-                nightbonus=nightbonus,
-                moral=moral,
-                luck=0,
-            )
-        except Exception as e:
-            logger.error("PvpConquest: simulator error for %s: %s", target_id, e)
-            return
-
-        # Evaluate result
-        att_losses = sum(sim_result["attacker"]["losses"].values())
-        att_total = sum(sim_result["attacker"]["quantity"].values())
-        def_losses = sum(sim_result["defender"]["losses"].values())
-        def_total = sum(sim_result["defender"]["quantity"].values())
-
-        attack_power = self.sim.get_sum(self.sim.attack_sum(attacker_units))
-        defender_wiped = def_losses >= def_total * 0.9
-        acceptable_losses = att_losses <= att_total * 0.5
-
-        logger.info(
-            "PvpConquest: sim result for %s — att_power=%d, def_wiped=%s, att_losses=%d/%d",
-            target_id, attack_power, defender_wiped, att_losses, att_total
-        )
-
-        data["last_simulation"] = {
-            "att_power": attack_power,
-            "att_losses": att_losses,
-            "att_total": att_total,
-            "def_losses": def_losses,
-            "def_total": def_total,
-            "wall_before": sim_result["wall_before"],
-            "wall_after": sim_result["wall_after"],
-            "viable": defender_wiped and acceptable_losses and attack_power >= min_attack_power,
-        }
-
-        if not data["last_simulation"]["viable"]:
-            logger.warning(
-                "PvpConquest: attack on %s deemed not viable (def_wiped=%s, acceptable_losses=%s, power=%d)",
-                target_id, defender_wiped, acceptable_losses, attack_power
-            )
-            data["status"] = "failed"
-            data["fail_reason"] = "simulation_failed"
-            PvpConquestCache.set(target_id, data)
-            return
+            att_losses = sum(sim_result["attacker"]["losses"].values())
+            att_total = sum(sim_result["attacker"]["quantity"].values())
+            def_losses = sum(sim_result["defender"]["losses"].values())
+            def_total = sum(sim_result["defender"]["quantity"].values())
+            attack_power = self.sim.get_sum(self.sim.attack_sum(attacker_units))
+            defender_wiped = def_losses >= def_total * 0.9
+            acceptable_losses = att_losses <= att_total * 0.5
+            data["last_simulation"] = {
+                "att_power": attack_power,
+                "att_losses": att_losses,
+                "att_total": att_total,
+                "def_losses": def_losses,
+                "def_total": def_total,
+                "wall_before": sim_result["wall_before"],
+                "wall_after": sim_result["wall_after"],
+                "viable": (
+                    defender_wiped and acceptable_losses
+                    and attack_power >= min_attack_power
+                ),
+            }
+            if not data["last_simulation"]["viable"]:
+                logger.warning("PvpConquest: attack on %s deemed not viable", target_id)
+                data["status"] = "failed"
+                data["fail_reason"] = "simulation_failed"
+                PvpConquestCache.set(target_id, data)
+                return
+        else:
+            # Explicit human authorization for coordinated tribe operations.
+            # No invented defender data: record clearly that viability was not
+            # evaluated and let the operator own that tactical decision.
+            data["last_simulation"] = {
+                "att_power": self.sim.get_sum(self.sim.attack_sum(attacker_units)),
+                "att_losses": 0,
+                "att_total": sum(attacker_units.values()),
+                "def_losses": 0,
+                "def_total": 0,
+                "wall_before": None,
+                "wall_after": None,
+                "viable": True,
+                "overridden": True,
+            }
 
         # Select the noble attack plan (Feature 11b — bugfix 2026-08-07: one
         # entry per available noble, up to nobles_per_target, not one entry
@@ -421,38 +629,10 @@ class PvpConquestManager:
         # full total. Doesn't (yet) account for a village being shared
         # across *multiple different* pvp_conquest targets scheduled at once
         # -- only one target is in play in this environment today.
-        noble_attacks = []
-        for nvid in noble_villages:
-            nv = self.villages.get(nvid)
-            if not nv or not nv.units:
-                continue
-
-            available_troops = dict(nv.units.troops)
-            if str(nvid) == str(clear_vid):
-                for unit, qty in attacker_units.items():
-                    if unit in available_troops:
-                        available_troops[unit] = max(0, int(available_troops[unit]) - int(qty))
-
-            # "knight" (Paladino) excluded -- see attacker_units above, same
-            # rule applies to escort: never sent automatically.
-            escort_units = {
-                unit: max(1, int(int(qty) * escort_ratio) // noble_count)
-                for unit, qty in available_troops.items()
-                if int(qty) > 0 and unit not in ("spy", "snob", "knight")
-            }
-            troops = dict(escort_units)
-            # Always exactly 1 -- never stack multiple nobles into the same
-            # attack, loyalty only drops once per battle regardless of how
-            # many ride along, so extras would just be wasted. Additional
-            # nobles from the same village show up here as additional
-            # separate entries in noble_villages instead (see
-            # _select_noble_attack_plan()).
-            troops["snob"] = 1
-            noble_attacks.append({
-                "source_village_id": nvid,
-                "troops": troops,
-                "is_fake": False,
-            })
+        noble_attacks = self._build_noble_attacks(
+            clear_vid, attacker_units, noble_villages,
+            escort_ratio=escort_ratio, noble_count=noble_count,
+        )
 
         if noble_attacks:
             self._hunter_add_schedule(
@@ -497,6 +677,21 @@ class PvpConquestManager:
         off to _maybe_mark_failed() -- see its docstring for why "scheduled"
         used to be a dead end.
         """
+        hunter_failure = self._hunter_schedule_failure(target_id)
+        if hunter_failure:
+            self._release_reserve(target_id, data)
+            data["reserve_released"] = True
+            data["status"] = "failed"
+            data["fail_reason"] = "hunter_schedule_failed"
+            data["hunter_fail_reason"] = hunter_failure
+            data["failed_at"] = int(time.time())
+            PvpConquestCache.set(target_id, data)
+            logger.error(
+                "PvpConquest: Hunter schedule failed for target %s (%s)",
+                target_id, hunter_failure,
+            )
+            return
+
         self._maybe_release_reserve(target_id, data)
 
         village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
@@ -675,22 +870,86 @@ class PvpConquestManager:
         return index
 
     def _find_scout_report(self, target_id):
-        """Returns the most recent scout report against target_id, or None."""
+        """Most recent report within the configured validity window, or None."""
         best = self._scout_report_index().get(str(target_id))
-        return best[1] if best else None
+        if not best:
+            return None
+        when, report = best
+        try:
+            age = time.time() - float(when)
+        except (TypeError, ValueError):
+            return None
+        if age < 0:
+            # Small clock skew is harmless; a report far in the future is not.
+            if age < -300:
+                return None
+        elif age > self._scout_max_age_seconds():
+            return None
+        return report
+
+    def _build_clear_units(self, clear_village):
+        """Build the exact clear composition used by preflight and scheduling."""
+        clear_ratio = self.config.get("pvp_conquest", {}).get("clear_ratio", 0.8)
+        return {
+            unit: int(int(qty) * clear_ratio)
+            for unit, qty in clear_village.units.troops.items()
+            if int(qty) > 0 and unit not in ("spy", "snob", "knight")
+            and int(int(qty) * clear_ratio) > 0
+        }
+
+    def _build_noble_attacks(
+            self, clear_vid, attacker_units, noble_villages,
+            escort_ratio=None, noble_count=None):
+        """Build the same per-noble command list for preflight and schedule."""
+        if escort_ratio is None:
+            escort_ratio = self.config.get("conquest", {}).get("escort_ratio", 0.5)
+        if noble_count is None:
+            noble_count = max(len(noble_villages), 1)
+
+        attacks = []
+        for raw_nvid in noble_villages:
+            nvid = str(raw_nvid)
+            nv = self.villages.get(nvid)
+            if not nv or not nv.units:
+                continue
+            available_troops = dict(nv.units.troops)
+            if nvid == str(clear_vid):
+                for unit, qty in attacker_units.items():
+                    if unit in available_troops:
+                        available_troops[unit] = max(
+                            0, int(available_troops[unit]) - int(qty)
+                        )
+            escort_units = {
+                unit: max(1, int(int(qty) * escort_ratio) // noble_count)
+                for unit, qty in available_troops.items()
+                if int(qty) > 0 and unit not in ("spy", "snob", "knight")
+            }
+            troops = dict(escort_units)
+            troops["snob"] = 1
+            attacks.append({
+                "source_village_id": nvid,
+                "troops": troops,
+                "is_fake": False,
+            })
+        return attacks
 
     def _select_clear_village(self):
         """
         Returns the village_id with the highest offensive attack power
         (profile == 'offensive' preferred, otherwise highest axe count).
+
+        On the first cycle after a bot restart, only the village currently
+        running has a live TroopManager.  Use the last managed-cache snapshot
+        for the others so an early source lock is not biased toward whichever
+        village happened to run first.
         """
         best_vid = None
         best_power = 0
         for vid, village in self.villages.items():
-            if not village.units or not village.units.troops:
+            troops = self._source_troops(vid, village)
+            if not troops:
                 continue
             profile = self.config.get("villages", {}).get(vid, {}).get("profile", "")
-            troops = village.units.troops
 
             # Attack power proxy: axes × 40 + light × 130
             power = int(troops.get("axe", 0)) * 40 + int(troops.get("light", 0)) * 130
@@ -701,6 +960,14 @@ class PvpConquestManager:
                 best_power = power
                 best_vid = vid
         return best_vid
+
+    @staticmethod
+    def _source_troops(vid, village):
+        """Live home troops, falling back to the last managed-cache snapshot."""
+        if village.units and village.units.troops:
+            return village.units.troops
+        cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+        return cached.get("available_troops") or {}
 
     def _select_noble_attack_plan(self, max_count):
         """
@@ -731,9 +998,10 @@ class PvpConquestManager:
         """
         plan = []
         for vid, village in self.villages.items():
-            if not village.units:
+            troops = self._source_troops(vid, village)
+            if not troops:
                 continue
-            available = int(village.units.troops.get("snob", 0))
+            available = int(troops.get("snob", 0))
             for _ in range(available):
                 if len(plan) >= max_count:
                     return plan
@@ -880,6 +1148,21 @@ class PvpConquestManager:
             ):
                 return False
         return True
+
+    def _hunter_schedule_failure(self, target_id):
+        """Return the first failure reason from this target's Hunter schedules."""
+        schedules = FileManager.load_json_file("cache/hunter/schedules.json") or {}
+        for sched in schedules.values():
+            if (
+                    str(sched.get("target_id")) != str(target_id)
+                    or sched.get("label") not in ("clear", "nobles")):
+                continue
+            if sched.get("status") == "failed":
+                for attack in sched.get("attacks", []):
+                    if attack.get("status") == "failed":
+                        return attack.get("fail_reason") or "send_failed"
+                return "schedule_failed"
+        return None
 
     def _maybe_release_reserve(self, target_id, data):
         """

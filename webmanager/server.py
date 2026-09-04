@@ -537,6 +537,14 @@ def pvp_conquest_set_clear():
     return redirect(url_for("get_pvp_conquest"))
 
 
+@app.route('/pvp_conquest/scout_override', methods=['POST'])
+def pvp_conquest_scout_override():
+    target_id = request.form.get("target_id", "")
+    if target_id:
+        PvpConquestReader.set_scout_override(target_id)
+    return redirect(url_for("get_pvp_conquest"))
+
+
 @app.route('/empire', methods=['GET'])
 def get_empire():
     # Feature 17: dashboard agregado do imperio -- so leitura, reaproveita

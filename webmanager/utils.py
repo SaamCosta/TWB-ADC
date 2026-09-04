@@ -1383,6 +1383,18 @@ class PvpConquestReader:
         "no_clear_village":  "Nenhuma aldeia ofensiva disponível para limpeza.",
         "simulation_failed": "Simulação indicou ataque inviável (tropas insuficientes).",
         "no_nobles":         "Nenhuma aldeia com noble disponível.",
+        "scout_deadline_missed": (
+            "Nenhum relatório de scout válido chegou antes do primeiro horário "
+            "de saída. Nenhum ataque foi agendado."
+        ),
+        "departure_deadline_missed": (
+            "O primeiro horário de saída já passou. Nem a autorização sem scout "
+            "permite enviar um ataque atrasado."
+        ),
+        "hunter_schedule_failed": (
+            "O Hunter recusou ou não conseguiu enviar um dos comandos. Confira a "
+            "aba Hunter; ataques com horário de saída vencido nunca são enviados."
+        ),
         "train_arrived_no_conquest": (
             "O train chegou mas a aldeia continua com o dono antigo — a lealdade não "
             "zerou, ou os nobles morreram (clear insuficiente/falhou). Não haverá nova "
@@ -1446,6 +1458,15 @@ class PvpConquestReader:
 
             status = data.get("status", "pending_scout")
             sim    = data.get("last_simulation")
+            first_send_time = data.get("first_send_time")
+            time_to_first_send = (
+                round(float(first_send_time) - now) if first_send_time else None
+            )
+            first_send_str = (
+                datetime.datetime.fromtimestamp(float(first_send_time)).strftime(
+                    "%d/%m %H:%M:%S"
+                ) if first_send_time else ""
+            )
 
             out.append({
                 "target_id":           tid,
@@ -1460,9 +1481,19 @@ class PvpConquestReader:
                 "clear_village_id":    data.get("clear_village_id"),
                 "clear_village_name":  data.get("clear_village_name", ""),
                 "noble_villages":      data.get("noble_villages", []),
+                "farm_suspended_villages": data.get(
+                    "farm_suspended_villages", []
+                ),
+                "first_send_time":      first_send_time,
+                "first_send_str":       first_send_str,
+                "time_to_first_send":   time_to_first_send,
+                "departure_deadlines":  data.get("departure_deadlines", []),
+                "scout_override":       bool(data.get("scout_override")),
+                "scout_override_at":    data.get("scout_override_at"),
                 "scout_village_id":    data.get("scout_village_id"),
                 "last_simulation":     sim,
                 "fail_reason":         data.get("fail_reason"),
+                "hunter_fail_reason":  data.get("hunter_fail_reason"),
                 "fail_reason_label":   PvpConquestReader.FAIL_REASON_LABELS.get(
                                            data.get("fail_reason", ""), data.get("fail_reason", "")
                                        ),
@@ -1493,6 +1524,8 @@ class PvpConquestReader:
             "arrival_str":      arrival_str,
             "status":           "pending_scout",
             "clear_village_id": str(clear_village_id) if clear_village_id else None,
+            "created_at":        int(datetime.datetime.now().timestamp()),
+            "scout_override":    False,
         }
         PvpConquestReader._save(str(target_id), data)
         return True
@@ -1512,8 +1545,31 @@ class PvpConquestReader:
         with open(path) as f:
             data = json.load(f)
         data["clear_village_id"] = str(clear_village_id) if clear_village_id else None
+        # Source changed: the server-derived travel-time preflight must be
+        # repeated for the new command composition/source.
+        data.pop("departure_deadlines", None)
+        data.pop("first_send_time", None)
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
+        return True
+
+    @staticmethod
+    def set_scout_override(target_id):
+        """Explicitly authorize scheduling without a currently valid scout."""
+        path = os.path.join(PvpConquestReader._dir(), f"{target_id}.json")
+        if not os.path.exists(path):
+            return False
+        with open(path) as f:
+            data = json.load(f)
+        if data.get("status", "pending_scout") not in (
+                "pending_scout", "pending_sim"):
+            return False
+        first_send = data.get("first_send_time")
+        if first_send and datetime.datetime.now().timestamp() >= float(first_send):
+            return False
+        data["scout_override"] = True
+        data["scout_override_at"] = int(datetime.datetime.now().timestamp())
+        PvpConquestReader._save(str(target_id), data)
         return True
 
 

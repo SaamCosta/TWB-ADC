@@ -122,6 +122,10 @@ class AttackManager:
         # sentinel string pioraria isso; o atributo mantem attack() devolvendo
         # falsy em toda recusa.
         self.last_refusal = None
+        # Set by TWB/Village. It gives long farm loops a cooperative checkpoint
+        # where Hunter can take priority without a second thread touching the
+        # shared HTTP session concurrently.
+        self.hunter_service_callback = None
 
     def _refused_for_pack_reason(self):
         """
@@ -188,6 +192,8 @@ class AttackManager:
         ignored = []
         # Limits the amount of villages that are farmed from the current village
         for target in self.targets[0: self.max_farms]:
+            if callable(self.hunter_service_callback):
+                self.hunter_service_callback()
             village, *_ = target
             packs = self._ordered_templates(village["id"])
             sent = False
@@ -649,9 +655,21 @@ class AttackManager:
                 return False
         return True
 
-    def attack(self, vid, troops=None):
+    def attack(self, vid, troops=None, additional_attacks=None):
         """
-        Send a TW attack
+        Send one TW attack, optionally with more attacks in the same request.
+
+        ``additional_attacks`` is the native rally-point train: the primary
+        attack keeps the ordinary unit fields and every extra command is sent
+        as ``train[2][unit]``, ``train[3][unit]``, ... .  The numbering was
+        captured and validated live on br143 on 2026-09-04; attack #1 is the
+        unprefixed command, so the first additional row really starts at 2.
+
+        The batch uses the form's normal ``action=command`` endpoint.  That is
+        the exact endpoint used by the game's own "Adicionar ataque adicional"
+        form and was validated with two real commands landing 115 ms apart.
+        Single attacks deliberately keep the long-standing
+        ``ajaxaction=popup_command`` path.
         """
         # P1-17: o AttackManager passou a ser criado sempre (village.py::
         # ensure_attack_manager), inclusive durante paz forcada. Antes o
@@ -661,6 +679,7 @@ class AttackManager:
         # ataque anterior como se fosse a deste (ver last_attack_duration).
         self.last_attack_duration = None
         self.last_refusal = None
+        additional_attacks = [dict(atk) for atk in (additional_attacks or [])]
 
         if self.in_forced_peace:
             self.logger.info("[Attack] %s -> %s: forced peace active, not sending", self.village_id, vid)
@@ -730,12 +749,70 @@ class AttackManager:
         if "x" not in confirm_data:
             confirm_data["x"] = x
 
-        result = self.wrapper.get_api_action(
-            village_id=self.village_id,
-            action="popup_command",
-            params={"screen": "place"},
-            data=confirm_data,
-        )
+        if additional_attacks:
+            primary_troops = troops or self.troopmanager.troops
+            batch = [primary_troops] + additional_attacks
+            requested = {}
+            for attack_troops in batch:
+                for unit, qty in attack_troops.items():
+                    requested[unit] = requested.get(unit, 0) + int(qty)
+
+            if not self.has_troops_available(requested):
+                self.last_refusal = "batch requires more units than are available"
+                self.logger.warning(
+                    "[Attack] %s -> %s: %s",
+                    self.village_id, vid, self.last_refusal
+                )
+                return False
+
+            # The native form posts every enabled unit for every added row,
+            # including zeroes.  Use the troop manager as the world-specific
+            # unit list (it includes archer/marcher only on worlds that have
+            # them), plus any explicit keys so tests and callers stay robust.
+            unit_names = set(self.troopmanager.troops)
+            for attack_troops in batch:
+                unit_names.update(attack_troops)
+
+            for train_index, attack_troops in enumerate(additional_attacks, start=2):
+                for unit in sorted(unit_names):
+                    confirm_data[f"train[{train_index}][{unit}]"] = int(
+                        attack_troops.get(unit, 0)
+                    )
+
+            batch_url = (
+                f"game.php?village={self.village_id}"
+                "&screen=place&action=command"
+            )
+            result = self.wrapper.post_url(url=batch_url, data=confirm_data)
+            if result is None:
+                self.logger.warning(
+                    "[Attack] %s -> %s: batch request timed out, aborting",
+                    self.village_id, vid
+                )
+                return False
+            if getattr(result, "status_code", 200) != 200:
+                self.last_refusal = "batch request returned HTTP %s" % getattr(
+                    result, "status_code", "unknown"
+                )
+                self.logger.warning(
+                    "[Attack] batch %s -> %s failed: %s",
+                    self.village_id, vid, self.last_refusal
+                )
+                return False
+            if '<div class="error_box">' in result.text:
+                self.last_refusal = Extractor.error_box_text(result)
+                self.logger.warning(
+                    "[Attack] batch %s -> %s refused by game: %s",
+                    self.village_id, vid, self.last_refusal
+                )
+                return False
+        else:
+            result = self.wrapper.get_api_action(
+                village_id=self.village_id,
+                action="popup_command",
+                params={"screen": "place"},
+                data=confirm_data,
+            )
 
         return result
 
