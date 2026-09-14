@@ -116,7 +116,7 @@ class ResourceManager:
     village_id = None
     do_premium_trade = False
     # Vender so quando a bolsa pedir no maximo este tanto de recurso por PP.
-    # E a regra central da estrategia (docs/troca_premium.md secao 3): espera-se
+    # E a regra central da estrategia (docs/backend.md, secao 4.5): espera-se
     # a taxa cair em vez de despejar recurso. Numero baixo = mais exigente.
     premium_max_rate = 90
     # Lote de venda, em recursos. Vender muito de uma vez afunda a propria taxa
@@ -125,7 +125,7 @@ class ResourceManager:
     # Piso do lote. Um mercador carrega MERCHANT_CAPACITY e leva 2h de ida e
     # volta; despachar 200 nele desperdiça 80% do recurso que a própria
     # estratégia identifica como gargalo ("o gargalo é o mercador, não a
-    # produção", docs/troca_premium.md). Melhor esperar juntar o lote.
+    # produção", docs/backend.md). Melhor esperar juntar o lote.
     premium_min_batch = 1000
     premium_max_batches = 2
     premium_min_free_merchants = 1
@@ -146,7 +146,7 @@ class ResourceManager:
         # e, como atributos de classe, os quatro compartilhavam o mesmo dict.
         # `requested` é gravado em required_resources (cache/managed/*.json) e
         # lido pelo ResourceSharingManager, que decidia com dados cruzados.
-        # Ver P0-2 em docs/auditoria_codigo_2026-08-08.md
+        # Ver P0-2 em docs/backend.md
         self.actual = {}
         self.requested = {}
         # Tempo de viagem da última remessa enviada (segundos), lido da tela de

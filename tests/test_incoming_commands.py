@@ -7,7 +7,7 @@ Por que este teste existe: o regex original procurava `data-command-id` no
 proprio `<tr>`. Nao casava nada. O atributo mora em spans aninhados seis
 niveis abaixo, e o `<tr>` se identifica pela CLASSE `no_ignored_command`. O
 padrao antigo tinha sido inferido de outras telas e nunca conferido contra um
-ataque real -- docs/backlog.md registrava isso como limitacao conhecida, e em
+ataque real -- docs/backend.md registrava isso como limitacao conhecida, e em
 2026-08-22 a limitacao se confirmou em campo com quatro nobres a caminho da
 BBM 008.
 
@@ -67,6 +67,21 @@ REAL_ROW = (
     '                                    </tr>'
 )
 
+# Estrutura real e sanitizada da BBM 023, capturada via Chrome em 2026-09-05.
+# O servidor nao usa title nem widget-command-timer neste apoio: o tipo vem em
+# data-title="Suporte" e no icone support.webp; o ETA continua em data-endtime.
+SUPPORT_ROW = (
+    '<tr class="command-row no_ignored_command">'
+    '<td><span class="quickedit" data-id="147584881">'
+    '<span class="quickedit-content"><a><span class="icon-container">'
+    '<span class="" data-command-id="147584881" data-title="Suporte">'
+    '<img src="/graphic/command/support.webp" alt=""></span></span>'
+    '<span class="quickedit-label">FireHouse 1</span></a></span></span></td>'
+    '<td>hoje às 23:32:27:<span class="grey small">779</span></td>'
+    '<td><span class="" data-endtime="1788661947">0:24:43</span></td>'
+    '</tr>'
+)
+
 # Chegada real do fixture: 1787415189 == 2026-08-22 13:13:09.
 ENDTIME = 1787415189
 
@@ -102,6 +117,49 @@ def test_real_markup_parses():
     # A linha nao traz o dono da aldeia, so o nome dela. Se algum dia trouxer,
     # este assert quebra e a mudanca fica visivel em vez de passar batida.
     _check("attacker (ausente nesta tela)", got[0]["attacker"], None)
+    _check("tipo do comando", got[0]["command_type"], "attack")
+
+
+def test_apoio_recebido_nao_vira_ataque():
+    """Regressao do falso ataque visto em BBM 023 em 2026-09-05."""
+    print("test_apoio_recebido_nao_vira_ataque")
+    with _FrozenTime(1788661947 - 2912):
+        got = Extractor.incoming_commands(SUPPORT_ROW)
+    _check("tipo apoio", got[0]["command_type"], "support")
+    _check("origem", got[0]["origin"], "FireHouse 1")
+
+    from game.defence_manager import DefenceManager
+
+    dm = DefenceManager(village_id="38412")
+    dm.manage_flags = lambda: None
+    dm.flag_logic = lambda *_: None
+    with _FrozenTime(1788661947 - 2912):
+        dm.update(SUPPORT_ROW, with_defence=False)
+    _check("nao fica sob ataque", dm.under_attack, False)
+    _check("linhas de apoio", dm.incoming_support_rows_seen, 1)
+    _check("linhas de ataque", dm.incoming_attack_rows_seen, 0)
+
+    # Cada um dos dois sinais reais deve bastar sozinho: temas do jogo podem
+    # omitir um deles sem transformar apoio em ataque.
+    sem_icone = SUPPORT_ROW.replace("support.webp", "unknown.webp")
+    _check("data-title basta", Extractor.incoming_command_type(sem_icone), "support")
+    sem_data_title = SUPPORT_ROW.replace(' data-title="Suporte"', "")
+    _check("icone basta", Extractor.incoming_command_type(sem_data_title), "support")
+
+
+def test_misto_escolhe_ataque_e_ignora_eta_do_apoio():
+    """Um apoio mais proximo nao pode esconder um ataque real mais distante."""
+    print("test_misto_escolhe_ataque_e_ignora_eta_do_apoio")
+    support = SUPPORT_ROW.replace(f'data-endtime="{ENDTIME}"', 'data-duration="60"')
+    attack = REAL_ROW.replace(f'data-endtime="{ENDTIME}"', 'data-duration="900"')
+    from game.defence_manager import DefenceManager
+
+    dm = DefenceManager(village_id="38412")
+    dm._parse_incoming_urgency(support + attack)
+    _check("um apoio", dm.incoming_support_rows_seen, 1)
+    _check("um ataque", dm.incoming_attack_rows_seen, 1)
+    _check("ETA vem do ataque", dm.incoming_eta, 900)
+    _check("id vem do ataque", dm.incoming_command_id, "421560489")
 
 
 def test_old_regex_would_have_missed_it():
@@ -267,6 +325,8 @@ def test_endtime_in_the_past_is_clamped():
 
 if __name__ == "__main__":
     test_real_markup_parses()
+    test_apoio_recebido_nao_vira_ataque()
+    test_misto_escolhe_ataque_e_ignora_eta_do_apoio()
     test_old_regex_would_have_missed_it()
     test_urgency_gate_uses_real_eta()
     test_eta_fallbacks()

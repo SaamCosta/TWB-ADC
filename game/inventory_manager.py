@@ -1,7 +1,7 @@
 """
 Feature 25 (fase 1) — leitura periódica do inventário, sem nenhuma ativação
 de item (a política de "qual boost usar e quando" é a fase 2 e ainda não tem
-desenho — ver docs/backlog.md Feature 25).
+desenho — ver docs/backend.md Feature 25).
 
 Roda uma vez por ciclo completo do bot (não por aldeia — o inventário é do
 jogador, compartilhado por toda a conta), a partir da primeira aldeia

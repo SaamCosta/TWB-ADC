@@ -174,7 +174,7 @@ def test_limiar_de_espacamento():
     """
     Com a BBM 002 designada, o limiar e exatamente min_spacing. 16 fica logo
     acima do raio de 15,0 do nivel 20: 'aldeia que nenhuma torre enxerga vira
-    torre'. Ver a secao 7 de docs/watchtower.md para a simulacao que fixou 16.
+    torre'. Ver a secao 4.4 de docs/backend.md para a simulacao que fixou 16.
     """
     cfg = _cfg_torre(com_torre=True)
     casos = [(0, False), (10, False), (15.9, False), (16, True), (16.1, True), (40, True)]

@@ -65,7 +65,7 @@ class DataReader:
                 # escrita -- não corrupção real. Apagar custava o histórico de
                 # farm (cache/attacks -> last_attack, fazendo o bot re-atacar
                 # fora do cooldown) ou o estado da aldeia (cache/managed).
-                # Ver P0-4 em docs/auditoria_codigo_2026-08-08.md
+                # Ver P0-4 em docs/backend.md
                 print("Cache read error for %s: %s. Skipping entry (file left untouched)" % (t_path, str(e)))
                 continue
         return output
@@ -1969,7 +1969,7 @@ class StatueReader:
 
     Somente leitura: esta feature nao automatiza treino por XP nem
     re-especializacao, so exibe o estado coletado no ultimo ciclo em que
-    config["statue"]["enabled"] esteve ligado. Ver docs/backlog.md Feature 24.
+    config["statue"]["enabled"] esteve ligado. Ver docs/backend.md Feature 24.
     """
 
     # Mapeamento dos 12 skills do Paladino, coletado de
@@ -2129,7 +2129,7 @@ class InventoryReader:
     repositorio ja pagou caro no par hits/hits_done da Feature 15.
 
     Somente leitura: esta feature nao ativa, consome nem presenteia item
-    nenhum. Ver docs/backlog.md Feature 25.
+    nenhum. Ver docs/backend.md Feature 25.
     """
 
     @staticmethod
@@ -2187,7 +2187,7 @@ class InventoryReader:
         # A chave e "entries", nao "items": no Jinja2, `group.items` resolve
         # para o METODO dict.items antes de tentar a chave, e o template
         # renderiza um <built-in method> em vez da lista. Foi o bug da coluna
-        # "Pop" da Feature 17 (ver docs/backlog.md) -- ali a saida foi trocar
+        # "Pop" da Feature 17 (ver docs/backend.md) -- ali a saida foi trocar
         # por acesso por chave; aqui o nome muda, para a armadilha nao voltar
         # na proxima edicao do template.
         groups = [

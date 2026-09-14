@@ -135,7 +135,7 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
 
 ## Bugs conhecidos / débito técnico
 
-**Auditoria completa em `docs/auditoria_codigo_2026-08-08.md`** — leitura integral
+**Auditoria completa na seção 5 de `docs/backend.md`** — leitura integral
 dos 34 `.py`, com 5 achados P0, 14 P1, 20 P2 e dívida técnica, cada um com nível
 de confiança e correção sugerida. **Lotes 1 a 7 corrigidos** (estado compartilhado,
 integridade de dados, features ressuscitadas, crashes de caminho quente, no
@@ -256,7 +256,7 @@ puxa o fio.**
   `Invoke-WebRequest` cada e transforma palpite em tabela; foi assim que
   `night.active` (0 = off, 1 = janela fixa do mundo, 2 = janela escolhida por
   cada jogador) e o `<duration>` constante saíram do "desconhecido". Tabelas
-  completas no Lote 7 de `docs/auditoria_codigo_2026-08-08.md`.
+  completas na seção 4.3 de `docs/backend.md`.
   **Quarta metade, cometida em 2026-08-13 — a nota acima já existia e mesmo
   assim não me salvou.** Procurei a regeneração de lealdade
   (`conquest.loyalty_regen_per_hour`, que valia 1.5), não achei campo
@@ -351,7 +351,8 @@ puxa o fio.**
   próxima edição do template, porque nada no nome avisa que ela existe.
   **A metade que importa desta entrada é onde ela está escrita.** O bug já
   tinha acontecido na Feature 17 (coluna "Pop") e estava documentado — em
-  `docs/backlog.md`, que não entra em contexto. Repeti o mesmo erro em
+  `docs/backlog.md` (hoje consolidado em `docs/backend.md`), que não entra em
+  contexto. Repeti o mesmo erro em
   2026-08-16 com a lição a um `grep` de distância e nunca lida. **Lição que
   vale para uma classe de erro, e não só para o arquivo onde ela apareceu,
   mora aqui**; o registro por feature guarda o caso, não a regra.
@@ -640,6 +641,27 @@ puxa o fio.**
   perguntar quem mais pode criá-lo — se a resposta inclui o usuário, a
   detecção tem que ser por **varredura do estado real do SO** (aqui
   `psutil.process_iter` + cwd do repo, 5 ms), não por registro próprio.
+- ⚠️ **Vigésimo terceiro padrão, cometido em 2026-09-14, e com dano real: tratar
+  "está no repositório" como "está versionado".** Ao consolidar a documentação em
+  dois arquivos, apaguei doze documentos confiando em que o git guardaria o
+  original — cheguei a escrever `git show 85fbbcb:docs/<arquivo>` dentro dos
+  documentos novos como se fosse a rede de proteção. Sete estavam rastreados e de
+  fato sobreviveram. **Os outros nove nunca tinham sido commitados** (os quatro
+  relatórios de `docs/benchmarks/`, os cinco de `docs/interface/` e o
+  `roteiro_benchmark_bots.md`), e `rm` no Windows não passa pela lixeira: ~280 KB
+  de pesquisa que o usuário tinha acabado de destacar como importante sumiram de
+  vez. A informação que me teria salvado estava no `git status` que eu **li no
+  começo da sessão** — `M` e `??` estão lá lado a lado, e eu processei a lista
+  inteira como "arquivos do projeto".
+  A regra: **antes de apagar, `git ls-files --error-unmatch <arquivo>` ou
+  `git status --short` no alvo específico.** `??` significa que não existe cópia
+  em lugar nenhum — e aí o passo obrigatório é commitar (ou copiar para fora)
+  *antes* de remover, não depois. Corolário sobre linguagem, que é a parte que
+  mais incomoda: escrever "nada foi perdido, foi comprimido" é uma afirmação
+  sobre um fato que eu não tinha verificado, e ela soa mais forte justamente
+  porque cita um mecanismo concreto (o hash do commit). Promessa de
+  recuperabilidade só vale depois de tentar recuperar — um `git show` de teste
+  custava cinco segundos e teria falhado na hora.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do
@@ -681,7 +703,7 @@ puxa o fio.**
   respostas, no mesmo pedaço de código.
 - Sistema de bandeiras (`DefenceManager`): dois bugs corrigidos no código (troca
   constante de bandeira, loop de upgrade), **ainda aguardando validação em
-  campo** — ver `docs/bugs_flags.md` para o diagnóstico original e o estado
+  campo** — ver `docs/backend.md` §4.6 e §6.3 para a política e o estado
   atual. Em 2026-08-31 a escolha de bandeira deixou de ser um id fixo e passou
   a ser uma **preferência ordenada por aldeia** (academia → cunhagem; senão
   produção; preenchimento recrutamento › população › saque; ataque e sorte
@@ -702,7 +724,7 @@ puxa o fio.**
   trocas e o silêncio depois. Ao retomar, `grep -a` (o log tem bytes NUL, ver
   vigésimo primeiro padrão) por `Current village flag` e `Setting flag`.
 - `game/defence_manager.py::DefenceManager.supported` (Bug 3 de
-  `docs/bugs_flags.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
+  `docs/backend.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
   A condição invertida do laço em `DefenceManager.update()`, que impedia
   `support_other()` de ser chamado, foi corrigida no Lote 3 (P1-6) — junto com
   a leitura de `support_others_max_villages` do config. O suporte deixou de ser
@@ -710,7 +732,7 @@ puxa o fio.**
   real jamais aconteceu e o payload `"support": "Ondersteunen"` nunca foi
   validado em pt-BR. Ligar em uma aldeia só, observando.
 - **Feature 9 (resource sharing) desligada no `config.json` local** desde
-  2026-08-08, e **reformulada em 2026-08-11** (ver `docs/features_log.md`).
+  2026-08-08, e **reformulada em 2026-08-11** (ver `docs/backend.md` §3.1).
   A versão anterior tinha uma regra só — doadora era quem passasse de
   `threshold_pct` da **própria** capacidade — e contra os dados reais da conta
   ela não movia nada: as duas aldeias de armazém grande precisariam de 8× mais
@@ -733,20 +755,29 @@ puxa o fio.**
   quando a aldeia já juntou o suficiente — ou seja, some exatamente quando
   proteger importa.
 
-## Backlog de features pendentes
+## Documentação
 
-Ver `docs/backlog.md` para a lista priorizada (Features 14–22 e seguintes).
-Features 18–22 vieram de uma comparação entre as mecânicas reais do jogo e o
-que o bot cobre hoje — ver `docs/game_comparison.md` para o raciocínio
-completo por trás delas.
+Desde 2026-09-14 existem **dois** documentos, e só dois:
 
-**Feature 34 (Troca Premium) tem documento próprio: `docs/troca_premium.md`** —
-mecânica medida no servidor, economia da bolsa por continente, a estratégia de
-fazer PP no início de mundo e o gap do `do_premium_stuff()`. Parada de propósito
-até abrir mundo novo (no K35 a bolsa está cheia e a venda está bloqueada).
+- **[`docs/backend.md`](docs/backend.md)** — arquitetura, estado das Features
+  4 a 34, mecânicas do mundo medidas no servidor (moral, bônus noturno, torre de
+  vigia, bolsa premium, bandeiras), o índice da auditoria de código, o que está
+  aberto hoje, e o roteiro de evolução derivado do benchmark de Nexus, PS
+  Evolution e ACID (backlog `FND`/`TIM`/`DEF`/`ECO`…).
+- **[`docs/frontend.md`](docs/frontend.md)** — webmanager: estado da migração
+  visual, auditoria da interface, arquitetura de informação, tokens, catálogo de
+  componentes e os contratos que o backend ainda não publica.
 
-## Features já implementadas (referência rápida)
+Os doze documentos anteriores (`backlog.md`, `features_log.md`,
+`auditoria_codigo_2026-08-08.md`, `bugs_flags.md`, `watchtower.md`,
+`troca_premium.md`, `game_comparison.md`, `roteiro_benchmark_bots.md`, os quatro
+relatórios de `benchmarks/` e os cinco de `interface/`) foram consolidados nesses
+dois. O conteúdo integral continua em `git show 85fbbcb:docs/<arquivo>` — se
+precisar do detalhe de uma sessão específica, é lá.
 
-Features 4 a 13 implementadas e (majoritariamente) validadas em campo — ver
-histórico completo em `docs/features_log.md` se precisar do detalhe de cada uma
-(arquivos tocados, config associada, notas de validação).
+⚠️ **Ao registrar trabalho novo, escrever num dos dois** — não criar documento
+por feature. Foi essa proliferação que fez uma lição verdadeira ficar enterrada
+num arquivo que ninguém lia (ver o oitavo padrão acima).
+
+**Feature 34 (Troca Premium)** está parada de propósito até abrir mundo novo: no
+K35 a bolsa está cheia e a venda está bloqueada — `docs/backend.md` §4.5.

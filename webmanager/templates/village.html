@@ -1,105 +1,215 @@
 {% extends "main.html" %}
+{% block title %}Configuração da aldeia{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-lg-8">
-        {{ config | safe }}
-    </div>
-    <div class="col-lg-4">
-        <h4>Villages</h4>
-        <ul class="list-group">
-                {% for village in data.bot %}
-                <li class="list-group-item {% if current_select == village %} active {% endif %} ">
-                    <a class="list-group-item-action" href="/village?id={{data.bot[village].public.id}}">{{data.bot[village].public.name}} ({{data.bot[village].public.location}})</a>
-                    {% if current_select == village %}
-                        <button id="save_config" class="btn btn-success btn-sm float-right disabled">Save</button>
-                    {% endif %}
-                </li>
-                {% endfor %}
+{% set cfg = data.get('config') or {} %}
+{% set cfg_villages = cfg.get('villages') or {} %}
+{% set village_cfg = cfg_villages.get(current_select) if current_select else none %}
+{% set snapshot = (data.get('bot') or {}).get(current_select) if current_select else none %}
+{% set public = (snapshot.get('public') or {}) if snapshot else {} %}
+{% set village_name = (snapshot.get('name') or public.get('name')) if snapshot else none %}
+{% set bot_cfg = cfg.get('bot') or {} %}
+{% set building_cfg = cfg.get('building') or {} %}
+{% set units_cfg = cfg.get('units') or {} %}
+{% set farms_cfg = cfg.get('farms') or {} %}
+{% set conquest_cfg = cfg.get('conquest') or {} %}
+{% set sharing_cfg = cfg.get('resource_sharing') or {} %}
+{% set world_cfg = cfg.get('world') or {} %}
+{% set pvp_cfg = cfg.get('pvp_conquest') or {} %}
 
-        </ul>
-    </div>
+<header class="twb-page-header">
+  <div>
+    <p class="twb-eyebrow">Operação · Aldeia</p>
+    <h1 class="twb-page-title">{% if current_select %}{{ village_name or ('Aldeia #' ~ current_select) }}{% else %}Configuração por aldeia{% endif %}</h1>
+    <p class="twb-page-summary">Estado observado e configuração persistida aparecem separados. Alterar um campo não comprova que o bot já executou ou reconciliou o efeito.</p>
+  </div>
+  <div class="twb-page-actions">
+    <a class="btn btn-outline-secondary" href="/villages">Comparar aldeias</a>
+    <a class="btn btn-outline-secondary" href="/config">Configuração global</a>
+  </div>
+</header>
 
-</div>
+<section class="twb-health-strip twb-health-strip--village" aria-label="Contexto operacional da aldeia">
+  <div class="twb-health-item">
+    <span class="twb-health-label">Identidade</span>
+    {% if current_select %}
+    <span class="twb-health-value">{{ village_name or 'Nome não exposto' }}</span>
+    <span class="twb-health-meta"><span class="twb-technical-id">#{{ current_select }}</span>{% if snapshot and snapshot.get('x') is not none and snapshot.get('y') is not none %} · <span class="twb-coordinate">{{ snapshot.get('x') }}|{{ snapshot.get('y') }}</span>{% elif public.get('location') is sequence and public.get('location')|length >= 2 %} · <span class="twb-coordinate">{{ public.get('location')[0] }}|{{ public.get('location')[1] }}</span>{% else %} · coordenada desconhecida{% endif %}</span>
+    <span class="twb-health-meta">Perfil {{ (snapshot.get('profile') if snapshot else none) or (village_cfg.get('profile') if village_cfg is mapping else none) or 'desconhecido' }} · {{ snapshot.get('points') if snapshot and snapshot.get('points') is not none else 'pontos desconhecidos' }} · zona {{ (snapshot.get('zone') if snapshot else none) or 'desconhecida' }}</span>
+    {% else %}<span class="twb-health-value">Nenhuma aldeia selecionada</span><span class="twb-health-meta">Escolha uma aldeia na lista.</span>{% endif %}
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Configuração persistida</span>
+    {% if village_cfg is mapping %}
+      {% if village_cfg.get('managed', false) %}<span class="twb-health-value"><span class="twb-status twb-status--info">Gerenciada no config</span></span>{% else %}<span class="twb-health-value"><span class="twb-status twb-status--warning">Desabilitada no config</span></span>{% endif %}
+      <span class="twb-health-meta">Persistência conhecida; execução depende de outro ciclo.</span>
+    {% else %}<span class="twb-health-value"><span class="twb-status twb-status--unknown">Não localizada</span></span><span class="twb-health-meta">Nenhum registro específico para este ID.</span>{% endif %}
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Última observação</span>
+    {% if snapshot and snapshot.get('last_run') %}<span class="twb-health-value twb-time" data-observed-at="{{ snapshot.get('last_run') }}">Timestamp disponível</span><span class="twb-health-meta"><code>cache/managed</code> · sem SLA de frescor.</span>
+    {% else %}<span class="twb-health-value"><span class="twb-status twb-status--unknown">Sem timestamp</span></span><span class="twb-health-meta">Frescor e último ciclo desconhecidos.</span>{% endif %}
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Ameaça observada</span>
+    {% if snapshot and snapshot.get('under_attack') is sameas true %}<span class="twb-health-value"><span class="twb-status twb-status--danger">Sob ataque no snapshot</span></span><span class="twb-health-meta">Consulte visão geral e logs antes de intervir.</span>
+    {% elif snapshot and snapshot.get('under_attack') is sameas false %}<span class="twb-health-value"><span class="twb-status twb-status--muted">Nenhum ataque marcado</span></span><span class="twb-health-meta">Não garante segurança atual.</span>
+    {% else %}<span class="twb-health-value"><span class="twb-status twb-status--unknown">Desconhecida</span></span><span class="twb-health-meta">O campo não foi exposto.</span>{% endif %}
+  </div>
+</section>
+
+{% if not current_select %}
+<section class="twb-panel twb-panel--unknown" aria-labelledby="selection-title"><div class="twb-panel-header"><h2 class="twb-panel-title" id="selection-title">Selecione uma aldeia</h2></div><div class="twb-panel-body"><div class="twb-empty twb-empty--unknown"><strong>Nenhuma configuração aberta.</strong> A lista abaixo indica também quando o snapshot operacional não existe.</div></div></section>
+{% elif village_cfg is not mapping %}
+<section class="twb-panel twb-panel--exception" aria-labelledby="missing-title"><div class="twb-panel-header"><h2 class="twb-panel-title" id="missing-title">Configuração não localizada</h2><span class="twb-status twb-status--danger">Edição bloqueada</span></div><div class="twb-panel-body"><p class="mb-0">O ID <span class="twb-technical-id">#{{ current_select }}</span> não existe em <code>config.villages</code>. O backend montaria silenciosamente os controles da primeira aldeia e ignoraria a gravação; esse fallback não é apresentado como se fosse do alvo.</p></div></section>
+{% else %}
+{% set resources = snapshot.get('resources') if snapshot else none %}
+{% set troops = snapshot.get('troops') if snapshot else none %}
+{% set queue = snapshot.get('building_queue') if snapshot else none %}
+{% set required = snapshot.get('required_resources') if snapshot else none %}
+{% set keep = village_cfg.get('keep_resources') %}
+
+{% if not snapshot or not snapshot.get('last_run') or snapshot.get('under_attack') or not village_cfg.get('managed', false) %}
+<section class="twb-panel {% if snapshot and snapshot.get('under_attack') %}twb-panel--exception{% else %}twb-panel--unknown{% endif %}" aria-labelledby="attention-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="attention-title">Atenção operacional</h2></div>
+  <div class="twb-panel-body"><ul class="twb-exception-list">
+    {% if not village_cfg.get('managed', false) %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Gerenciamento desabilitado</strong><span>O bot retorna antes das automações quando outro ciclo ler esta configuração.</span></div><span class="twb-status twb-status--warning">Configurado</span></li>{% endif %}
+    {% if not snapshot %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Snapshot operacional não exposto</strong><span>Recursos, tropas, filas, ameaça e último ciclo são desconhecidos.</span></div><a class="btn btn-outline-secondary btn-sm" href="/logs">Investigar</a></li>{% endif %}
+    {% if snapshot and not snapshot.get('last_run') %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Snapshot sem timestamp</strong><span>Não é possível avaliar idade ou relacionar uma alteração ao ciclo do bot.</span></div><span class="twb-status twb-status--unknown">Frescor desconhecido</span></li>{% endif %}
+    {% if snapshot and snapshot.get('under_attack') %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Ataque marcado no último snapshot</strong><span>Defesa, farm e coleta podem estar condicionados por esse estado.</span></div><a class="btn btn-outline-danger btn-sm" href="/villages">Ver contexto</a></li>{% endif %}
+  </ul></div>
+</section>
+{% endif %}
+
+<section class="twb-panel" aria-labelledby="automation-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="automation-title">Precedência e disponibilidade das automações</h2><span class="twb-status twb-status--unknown">Efeito não reconciliado</span></div>
+  <div class="twb-panel-body">
+    <p class="twb-section-intro">“Global” abre ou fecha o sistema inteiro; “aldeia” mostra o override persistido. Isto descreve configuração, não saúde nem execução recente.</p>
+    <div class="twb-table-scroll"><table class="table twb-operational-table twb-automation-table">
+      <caption class="sr-only">Configuração global, específica e leitura efetiva por automação</caption>
+      <thead><tr><th scope="col">Automação</th><th scope="col">Global</th><th scope="col">Nesta aldeia</th><th scope="col">Leitura efetiva</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Construção</th><td>{{ 'habilitada' if building_cfg.get('manage_buildings', true) else 'desabilitada' }}</td><td>{% if village_cfg.get('building') is sameas false %}desabilitada{% elif village_cfg.get('building') %}<span class="twb-technical-id">{{ village_cfg.get('building') }}</span>{% else %}padrão global{% endif %}</td><td>{% if not building_cfg.get('manage_buildings', true) or village_cfg.get('building') is sameas false %}<span class="twb-status twb-status--warning">Desabilitada</span>{% else %}<span class="twb-status twb-status--info">Configurada</span><span class="twb-state-reason">Template {{ village_cfg.get('building') or building_cfg.get('default') or 'desconhecido' }}; execução não observada.</span>{% endif %}</td></tr>
+        <tr><th scope="row">Recrutamento</th><td>{{ 'habilitado' if units_cfg.get('recruit', false) else 'desabilitado' }}</td><td>template <span class="twb-technical-id">{{ village_cfg.get('units') or units_cfg.get('default') or 'desconhecido' }}</span></td><td>{% if units_cfg.get('recruit', false) %}<span class="twb-status twb-status--info">Configurado</span>{% else %}<span class="twb-status twb-status--warning">Indisponível pelo global</span>{% endif %}<span class="twb-state-reason">Valor específico ausente/falsy cai em <code>units.default</code>.</span></td></tr>
+        <tr><th scope="row">Farm</th><td>{{ 'habilitado' if farms_cfg.get('farm', false) else 'desabilitado' }}</td><td>{{ (village_cfg.get('additional_farms') or [])|length }} alvo(s) adicional(is)</td><td>{% if farms_cfg.get('farm', false) %}<span class="twb-status twb-status--info">Configurado</span>{% else %}<span class="twb-status twb-status--warning">Indisponível pelo global</span>{% endif %}<span class="twb-state-reason">Não roda sob ataque; despacho não é exposto aqui.</span></td></tr>
+        <tr><th scope="row">Coleta</th><td>sem toggle global</td><td>{{ 'habilitada' if village_cfg.get('gather_enabled', false) else 'desabilitada' }}</td><td><span class="twb-status {% if village_cfg.get('gather_enabled', false) %}twb-status--info{% else %}twb-status--muted{% endif %}">{{ 'Configurada' if village_cfg.get('gather_enabled', false) else 'Desabilitada' }}</span><span class="twb-state-reason">Não roda sob ataque e pode ser suspensa por PvP.</span></td></tr>
+        <tr><th scope="row">Conquista bárbara</th><td>{{ 'habilitada' if conquest_cfg.get('enabled', false) else 'desabilitada' }}</td><td>{{ 'permitida' if village_cfg.get('conquest_enabled', true) else 'bloqueada' }}</td><td><span class="twb-status {% if conquest_cfg.get('enabled', false) and village_cfg.get('conquest_enabled', true) %}twb-status--info{% else %}twb-status--warning{% endif %}">{{ 'Configurada' if conquest_cfg.get('enabled', false) and village_cfg.get('conquest_enabled', true) else 'Desabilitada' }}</span><span class="twb-state-reason">PvP processa e bloqueia origens antes dela.</span></td></tr>
+        <tr><th scope="row">Apoio automático</th><td>{{ 'defesa gerenciada' if units_cfg.get('manage_defence', false) else 'defesa desabilitada' }}</td><td>{{ 'envia' if village_cfg.get('support_others', false) else 'não envia' }} · {{ 'recebe' if village_cfg.get('request_support_on_attack', false) else 'não recebe' }}</td><td>{% if units_cfg.get('manage_defence', false) and (village_cfg.get('support_others', false) or village_cfg.get('request_support_on_attack', false)) %}<span class="twb-status twb-status--info">Configurado</span>{% elif not units_cfg.get('manage_defence', false) %}<span class="twb-status twb-status--warning">Indisponível pelo global</span>{% else %}<span class="twb-status twb-status--muted">Desabilitado</span>{% endif %}<span class="twb-state-reason">Envio, chegada e efeito não são publicados aqui.</span></td></tr>
+        <tr><th scope="row">Compartilhamento</th><td>{{ 'habilitado para todas' if sharing_cfg.get('enabled', false) else 'desabilitado' }}</td><td>{{ 'reserva declarada' if keep is mapping and keep else 'sem reserva declarada' }}</td><td><span class="twb-status {% if sharing_cfg.get('enabled', false) %}twb-status--info{% else %}twb-status--warning{% endif %}">{{ 'Globalmente configurado' if sharing_cfg.get('enabled', false) else 'Indisponível pelo global' }}</span><span class="twb-state-reason">Não existe gate por aldeia; a reserva vale só para necessidade.</span></td></tr>
+        <tr><th scope="row">Troca premium</th><td>{{ 'mercado habilitado' if world_cfg.get('trade_for_premium', false) else 'indisponível/desabilitado' }}</td><td>{{ 'permitida' if village_cfg.get('trade_for_premium', false) else 'desabilitada' }}</td><td><span class="twb-status {% if world_cfg.get('trade_for_premium', false) and village_cfg.get('trade_for_premium', false) %}twb-status--info{% else %}twb-status--warning{% endif %}">{{ 'Configurada' if world_cfg.get('trade_for_premium', false) and village_cfg.get('trade_for_premium', false) else 'Desabilitada' }}</span><span class="twb-state-reason">Venda ou aceite não são expostos neste snapshot.</span></td></tr>
+        <tr><th scope="row">Conquista PvP</th><td>{{ 'habilitada' if pvp_cfg.get('enabled', false) else 'desabilitada' }}</td><td>sem toggle por aldeia</td><td><span class="twb-status {% if pvp_cfg.get('enabled', false) %}twb-status--info{% else %}twb-status--warning{% endif %}">{{ 'Pode selecionar esta origem' if pvp_cfg.get('enabled', false) else 'Indisponível pelo global' }}</span><span class="twb-state-reason">Reservas/bloqueios vivem no manager e não são expostos aqui.</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="observed-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="observed-title">Recursos, tropas e trabalho observado</h2><span class="twb-status twb-status--unknown">Snapshot sem SLA</span></div>
+  <div class="twb-panel-body">
+  {% if snapshot %}<div class="twb-observed-grid">
+    <section class="twb-evidence-card" aria-labelledby="resources-title"><h3 class="twb-subsection-title" id="resources-title">Recursos</h3>
+      {% if resources is mapping and resources %}<dl class="twb-compact-meta">{% for key, label in [('wood','Madeira'),('stone','Argila'),('iron','Ferro'),('pop','População usada')] %}<div><dt>{{ label }}</dt><dd>{% if key in resources %}<span class="twb-number">{{ resources[key] }}</span>{% else %}<span class="twb-status twb-status--unknown">Não exposto</span>{% endif %}</dd></div>{% endfor %}<div><dt>Capacidade</dt><dd>{% if snapshot.get('storage') is not none %}<span class="twb-number">{{ snapshot.get('storage') }}</span>{% else %}<span class="twb-status twb-status--unknown">Não exposta</span>{% endif %}</dd></div></dl>
+      {% else %}<div class="twb-empty twb-empty--unknown"><strong>Recursos não disponíveis.</strong> Objeto vazio/ausente não prova saldo zero.</div>{% endif %}
+    </section>
+    <section class="twb-evidence-card" aria-labelledby="troops-title"><h3 class="twb-subsection-title" id="troops-title">Tropas totais</h3>
+      {% if troops is mapping and troops %}<div class="twb-troop-snapshot">{% for unit, amount in troops.items() %}<span><strong class="twb-technical-id">{{ unit }}</strong><span class="twb-number">{{ amount }}</span></span>{% endfor %}</div><p class="twb-card-note">Tipos ausentes permanecem desconhecidos; o total não reconcilia reservas militares.</p>
+      {% else %}<div class="twb-empty twb-empty--unknown"><strong>Tropas não disponíveis.</strong> Objeto vazio/ausente não prova zero.</div>{% endif %}
+    </section>
+    <section class="twb-evidence-card" aria-labelledby="queue-title"><h3 class="twb-subsection-title" id="queue-title">Fila de construção</h3>
+      {% if queue is sequence and queue is not string %}{% if queue %}<ol class="twb-queue-list">{% for item in queue %}<li><span class="twb-technical-id">{{ item }}</span></li>{% endfor %}</ol>{% else %}<div class="twb-empty"><strong>Fila observada vazia.</strong> Não confirma a próxima decisão do builder.</div>{% endif %}{% else %}<div class="twb-empty twb-empty--unknown"><strong>Fila não exposta.</strong> Próximo item e bloqueio desconhecidos.</div>{% endif %}
+    </section>
+    <section class="twb-evidence-card" aria-labelledby="needs-title"><h3 class="twb-subsection-title" id="needs-title">Faltas e reservas</h3>
+      {% if required is mapping and required %}<ul class="twb-data-stack">{% for reason, amounts in required.items() %}<li><strong class="twb-technical-id">{{ reason }}</strong><span>{{ amounts }}</span></li>{% endfor %}</ul><p class="twb-card-note"><code>required_resources</code> registra faltas momentâneas, não reserva persistente.</p>{% else %}<p class="twb-card-note">Nenhuma falta foi publicada. Ausência não prova recursos livres.</p>{% endif %}
+      <p><strong>Reserva declarada:</strong> <span class="twb-technical-id">{% if keep is mapping %}{{ keep|tojson }}{% else %}desconhecida{% endif %}</span></p><p class="twb-card-note">Reservas de Hunter, Conquista Bárbara e PvP não são expostas.</p>
+    </section>
+  </div>{% else %}<div class="twb-empty twb-empty--unknown"><strong>Nenhum snapshot operacional.</strong> Recursos, tropas, filas, faltas, reservas e próximas ações não estão expostos.</div>{% endif %}
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="config-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="config-title">Configuração específica</h2><span class="twb-status twb-status--warning">Gravação imediata</span></div>
+  <div class="twb-panel-body">
+    <div class="twb-inline-alert twb-inline-alert--warning" id="config-warning">Toggles e seletores pedem confirmação e gravam imediatamente. Textos, números e listas ficam pendentes até “Salvar alterações”. Persistência e efeito operacional são estados diferentes.</div>
+    <noscript><div class="twb-inline-alert twb-inline-alert--danger">JavaScript é necessário para associar labels aos controles gerados pelo backend e impedir gravações sem confirmação.</div></noscript>
+    <div class="twb-generated-config" data-generated-config aria-describedby="config-warning">{{ config | safe }}</div>
+    <div class="twb-config-omissions"><h3 class="twb-subsection-title">Campos fora do editor gerado</h3><p><code>keep_resources</code> = <span class="twb-technical-id">{% if keep is mapping %}{{ keep|tojson }}{% else %}desconhecido{% endif %}</span>. O backend omite dicionários; a página não finge que consegue editá-los.</p>{% if 'scout_first' in village_cfg %}<p><code>scout_first</code> ainda está persistido e aparece como legado, mas nenhum manager atual lê essa chave.</p>{% endif %}</div>
+    <div class="twb-form-actions twb-config-actions"><button id="save_config" class="btn btn-primary" type="button" disabled>Salvar alterações</button><button id="discard_config" class="btn btn-outline-secondary" type="button" disabled>Descartar pendências</button><p class="twb-sr-live" id="config-save-status" role="status" aria-live="polite">Nenhuma alteração pendente.</p></div>
+  </div>
+</section>
+{% endif %}
+
+<section class="twb-panel" aria-labelledby="list-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="list-title">Aldeias na configuração</h2><span class="twb-status twb-status--muted">{{ cfg_villages|length }} registro(s)</span></div>
+  <div class="twb-panel-body">{% if cfg_villages %}<ul class="twb-village-selector">{% for village_id, item_cfg in cfg_villages.items() %}{% set item_snapshot = (data.get('bot') or {}).get(village_id) %}{% set item_public = (item_snapshot.get('public') or {}) if item_snapshot else {} %}<li><a href="/village?id={{ village_id }}" {% if current_select == village_id %}aria-current="page"{% endif %}><span><strong>{{ (item_snapshot.get('name') or item_public.get('name')) if item_snapshot else ('Aldeia #' ~ village_id) }}</strong><small class="twb-technical-id">#{{ village_id }}{% if item_snapshot and item_snapshot.get('x') is not none and item_snapshot.get('y') is not none %} · {{ item_snapshot.get('x') }}|{{ item_snapshot.get('y') }}{% endif %}</small></span>{% if not item_snapshot %}<span class="twb-status twb-status--unknown">Sem snapshot</span>{% elif not item_cfg.get('managed', false) %}<span class="twb-status twb-status--warning">Desabilitada</span>{% else %}<span class="twb-status twb-status--muted">Config presente</span>{% endif %}</a></li>{% endfor %}</ul>{% else %}<div class="twb-empty twb-empty--unknown"><strong>Nenhuma aldeia na configuração.</strong> Não há ação segura de inclusão nesta página.</div>{% endif %}</div>
+</section>
+
+{% if village_cfg is mapping %}<dialog class="twb-confirm-dialog" id="village-config-dialog" aria-labelledby="config-dialog-title" aria-describedby="config-dialog-description"><div class="twb-confirm-dialog-body"><span class="twb-status twb-status--warning">Alteração de configuração</span><h2 id="config-dialog-title">Confirmar gravação imediata?</h2><p id="config-dialog-description">A configuração será persistida agora. O bot pode lê-la em outro ciclo; execução, aceite e efeito não serão confirmados por esta resposta.</p><dl class="twb-compact-meta"><div><dt>Aldeia</dt><dd>{{ village_name or ('#' ~ current_select) }}</dd></div><div><dt>Alteração</dt><dd id="config-dialog-change">Não definida</dd></div></dl></div><div class="twb-confirm-dialog-actions"><button class="btn btn-outline-secondary" type="button" data-config-cancel>Cancelar</button><button class="btn btn-danger" type="button" data-config-confirm>Persistir configuração</button></div></dialog>{% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-    var set_values = {};
-	function set_config(parameter, value) {
-		$.post("/app/config/set?village_id={{current_select}}&parameter="+encodeURIComponent(parameter)+"&value="+encodeURIComponent(value), function(data){
-			console.log("Set values", parameter, value);
-		});
-	}
+(function () {
+  'use strict';
+  var villageId = {{ current_select|tojson }};
+  var editor = document.querySelector('[data-generated-config]');
+  var saveButton = document.getElementById('save_config');
+  var discardButton = document.getElementById('discard_config');
+  var status = document.getElementById('config-save-status');
+  var dialog = document.getElementById('village-config-dialog');
+  var dialogChange = document.getElementById('config-dialog-change');
+  var pending = {};
+  var pendingAction = null;
+  var actionTrigger = null;
+  if (!editor || !saveButton || !discardButton || !status || !dialog || !dialogChange) return;
+  var meta = {
+    inherit_on_first_run:['Herança no primeiro ciclo','Controle','O bot pode substituir esta configuração no primeiro ciclo conforme o modo global de herança.'], profile:['Perfil da aldeia','Identidade e templates','Trocar o perfil não reaplica profile_templates a uma aldeia existente.'], building:['Template de construção','Identidade e templates','Vazio/null usa building.default; false desabilita o builder local.'], units:['Template de tropas','Identidade e templates','Vazio/null usa units.default; units.recruit ainda controla o recrutamento.'], managed:['Gerenciada pelo bot','Controle','False encerra o ciclo antes das automações quando o valor for lido.'], active_hours:['Horário ativo específico','Controle','Vazio/null usa bot.active_hours. Formato: início-fim, como 8-22.'], delay_factor:['Fator de atraso específico','Controle','Vazio/null usa bot.delay_factor.'], conquest_enabled:['Permitir conquista bárbara','Conquista','Também depende de conquest.enabled; PvP tem precedência.'], additional_farms:['Farms adicionais','Farm e coleta','Lista de IDs separada por vírgulas.'], prioritize_building:['Priorizar construção','Economia','Impede recrutamento enquanto faltarem recursos para o builder.'], prioritize_snob:['Priorizar academia','Economia','Impede recrutamento enquanto o nobre ainda depender de recursos.'], trade_for_premium:['Permitir troca premium','Economia','Também depende de world.trade_for_premium.'], gather_enabled:['Habilitar coleta','Farm e coleta','Não roda sob ataque e pode ser suspensa por PvP.'], gather_selection:['Seleção de coleta','Farm e coleta','A opção precisa estar desbloqueada no jogo.'], advanced_gather:['Coleta avançada','Farm e coleta','Campo lido pelo manager; execução não é confirmada aqui.'], snobs:['Nobres a manter','Economia','Zero combinado com mint_coins mantém apenas a cunhagem.'], mint_coins:['Cunhar sem recrutar nobre','Economia','Só com snobs zero e academia; usa sobra após construção e tropas.'], evacuate_fragile_units_on_attack:['Evacuar unidades frágeis','Defesa','Pode despachar machados e nobres quando o ataque for urgente.'], evacuate_on_zone_attack:['Evacuar por ataque na zona','Defesa','Também exige evacuação local e usa os limites de zona.'], zone_attack_threshold:['Vizinhos sob ataque necessários','Defesa','Mínimo de vizinhos para o gatilho preventivo.'], evacuate_urgency_threshold_sec:['Urgência de evacuação (s)','Defesa','Janela máxima até a chegada do comando.'], zone_attack_eta_window_sec:['Janela de ataque da zona (s)','Defesa','Ataques além dela não contam no gatilho.'], support_others:['Enviar apoio automático','Defesa','Também depende de units.manage_defence e tempo de viagem elegível.'], support_others_factor:['Fração de apoio','Defesa','Fração das unidades defensivas considerada.'], support_others_max_villages:['Máximo de destinos de apoio','Defesa','Limite de aldeias apoiadas nesta decisão.'], support_lead_time_sec:['Antecedência do apoio (s)','Defesa','Somada à viagem; janela menor que o ciclo pode ser pulada.'], request_support_on_attack:['Solicitar apoio sob ataque','Defesa','Também depende de units.manage_defence.'], scout_first:['Scout primeiro (legado)','Legado','Persistido em configs antigas, mas sem leitor atual; efeito conhecido: nenhum.']
+  };
+  var groupOrder = ['Controle','Identidade e templates','Economia','Farm e coleta','Defesa','Conquista','Legado','Outros'];
 
-	function set_toggle_value(target, value) {
-		if(!value) {
-			target.removeClass("btn-success");
-			target.addClass("btn-danger");
-			target.text("Disabled");
-		} else {
-			target.addClass("btn-success");
-			target.removeClass("btn-danger");
-			target.text("Enabled");
-		}
-	}
+  function announce(message) { status.textContent = message; }
+  function key(control) { return (control.getAttribute('data-type-option') || '').replace(/^village\./, ''); }
+  function valueOf(control) {
+    var type = control.getAttribute('data-type');
+    if (type === 'toggle') return control.classList.contains('btn-success');
+    if (type === 'number') return control.value.trim() === '' ? NaN : Number(control.value);
+    if (type === 'list') return control.value.split(',').map(function (v) { return v.trim(); }).filter(Boolean);
+    if (control.getAttribute('data-original-null') === 'true' && control.value === '') return null;
+    return control.value;
+  }
+  function wire(control, value) { return control.getAttribute('data-type') === 'list' ? JSON.stringify(value) : (value === null ? 'null' : String(value)); }
+  function same(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function show(value) { if (value === null) return 'herdar global (null)'; if (Array.isArray(value)) return value.length ? value.join(', ') : 'lista vazia'; if (value === true) return 'habilitar'; if (value === false) return 'desabilitar'; return String(value); }
+  function updateToggle(control, value) { control.classList.toggle('btn-success', value === true); control.classList.toggle('btn-danger', value !== true); control.textContent = value === true ? 'Habilitada' : 'Desabilitada'; control.setAttribute('aria-pressed', value === true ? 'true' : 'false'); }
+  function setValue(control, value) {
+    var type = control.getAttribute('data-type');
+    if (type === 'toggle') updateToggle(control, value === true); else if (type === 'list') control.value = Array.isArray(value) ? value.join(', ') : (value || ''); else control.value = value === null || value === undefined ? '' : value;
+    control.setAttribute('data-original-null', value === null ? 'true' : 'false'); control.setAttribute('data-persisted-value', JSON.stringify(value));
+  }
+  function persisted(control) { try { return JSON.parse(control.getAttribute('data-persisted-value')); } catch (e) { return valueOf(control); } }
+  function updateActions(message) { var count = Object.keys(pending).length; saveButton.disabled = !count; discardButton.disabled = !count; announce(message || (count ? count + ' alteração(ões) pendente(s); ainda não persistida(s).' : 'Nenhuma alteração pendente.')); }
 
-	function toggle_event(event) {
-		var target = $(event.target);
-		var name = target.attr("data-type-option");
-		if(name == undefined) alert("Error setting target");
-		var current_value = target.hasClass("btn-success");
-		var next_value = !current_value;
-		set_config(name, next_value);
-		set_toggle_value(target, next_value);
-	}
+  function enhance() {
+    var controls = Array.prototype.slice.call(editor.querySelectorAll('[data-type-option]')); var groups = {}; var fragment = document.createDocumentFragment();
+    groupOrder.forEach(function (name) { var fs=document.createElement('fieldset'), legend=document.createElement('legend'), body=document.createElement('div'); fs.className='twb-config-group'; legend.textContent=name; body.className='twb-config-grid'; fs.appendChild(legend); fs.appendChild(body); groups[name]={fieldset:fs,body:body,count:0}; });
+    controls.forEach(function (control, index) { var fieldMeta=meta[key(control)] || [key(control).replace(/_/g,' '),'Outros','Sem descrição específica no contrato atual.']; var id='village-config-field-'+index, helpId=id+'-help', field=document.createElement('div'), label=document.createElement('label'), help=document.createElement('p'), original=(control.getAttribute('placeholder')==='null'&&control.value==='')?null:valueOf(control); field.className='twb-config-field'; if(fieldMeta[1]==='Legado')field.classList.add('twb-config-field--legacy'); label.htmlFor=id; label.textContent=fieldMeta[0]; help.id=helpId; help.className='twb-config-help'; help.textContent=fieldMeta[2]; control.id=id; control.setAttribute('aria-describedby',helpId); control.setAttribute('data-persisted-value',JSON.stringify(original)); control.setAttribute('data-original-null',original===null?'true':'false'); if(control.tagName==='BUTTON'){control.type='button';updateToggle(control,original===true);} if(control.getAttribute('data-type')==='number')control.required=true; field.appendChild(label); field.appendChild(help); field.appendChild(control); groups[fieldMeta[1]].body.appendChild(field); groups[fieldMeta[1]].count++; });
+    groupOrder.forEach(function(name){if(groups[name].count)fragment.appendChild(groups[name].fieldset);}); editor.replaceChildren(fragment);
+  }
+  function responseValue(data, control) { var villages=data && data.config && data.config.villages, village=villages && villages[villageId], k=key(control); return village && Object.prototype.hasOwnProperty.call(village,k) ? {found:true,value:village[k]} : {found:false}; }
+  function persist(control, value) {
+    var parameter=control.getAttribute('data-type-option'), url='/app/config/set?village_id='+encodeURIComponent(villageId)+'&parameter='+encodeURIComponent(parameter)+'&value='+encodeURIComponent(wire(control,value)); control.disabled=true; announce('Solicitação enviada para '+key(control)+'; persistência ainda não confirmada.');
+    return fetch(url,{method:'POST',headers:{Accept:'application/json'}}).then(function(response){if(!response.ok)throw new Error('HTTP '+response.status);return response.json();}).then(function(data){var observed=responseValue(data,control);if(!observed.found||!same(observed.value,value)){if(observed.found)setValue(control,observed.value);throw new Error('valor não confirmado');}setValue(control,observed.value);delete pending[parameter];updateActions('Persistência confirmada para '+key(control)+'. Efeito operacional ainda não observado.');return data;}).catch(function(error){announce('Resultado desconhecido para '+key(control)+'. Confira a configuração antes de repetir.');throw error;}).finally(function(){control.disabled=false;});
+  }
+  function closeDialog(){if(dialog&&dialog.open)dialog.close();if(actionTrigger)actionTrigger.focus();pendingAction=null;actionTrigger=null;}
+  function confirmWrite(trigger, description, action){actionTrigger=trigger;pendingAction=action;dialogChange.textContent=description;if(dialog&&typeof dialog.showModal==='function'){dialog.showModal();dialog.querySelector('[data-config-cancel]').focus();}else if(window.confirm('Persistir agora: '+description+'? O efeito continuará desconhecido.'))action();}
 
-	function select_event(event) {
-	  var target = $(event.target);
-		var name = target.attr("data-type-option");
-		if(name == undefined) alert("Error setting target");
-		set_config(name, target.val());
-	}
-
-	function num_event() {
-      var target = $(event.target);
-      var name = target.attr("data-type-option");
-      if(name == undefined) alert("Error setting target");
-      set_values[name] = parseInt(target.val());
-      $('#save_config').removeClass('disabled');
-	}
-
-	function text_event() {
-      var target = $(event.target);
-      var name = target.attr("data-type-option");
-      if(name == undefined) alert("Error setting target");
-      set_values[name] = target.val();
-      $('#save_config').removeClass('disabled');
-	}
-
-	$( document ).ready(function() {
-		$( "[data-type=toggle]" ).click(function(e) {
-		  toggle_event(e);
-		});
-
-		$( "[data-type=select]" ).change(function(e) {
-		  select_event(e);
-		});
-
-		$( "[data-type=number]" ).change(function(e) {
-		  num_event(e);
-		});
-
-		$( "[data-type=text]" ).change(function(e) {
-		  text_event(e);
-		});
-
-		$('#save_config').click(function(){
-		  $.each(set_values, function(set_key, set_value){
-		    set_config(set_key, set_value);
-		  });
-		  setTimeout(function(){location.reload()}, 500);
-		});
-	});
+  enhance();
+  editor.addEventListener('click',function(event){var control=event.target.closest('[data-type="toggle"]');if(!control)return;event.preventDefault();var next=!valueOf(control);confirmWrite(control,key(control)+': '+show(next),function(){closeDialog();persist(control,next).catch(function(){setValue(control,persisted(control));});});});
+  editor.addEventListener('input',function(event){var control=event.target.closest('[data-type-option]');if(!control||['number','text','list'].indexOf(control.getAttribute('data-type'))===-1)return;pending[control.getAttribute('data-type-option')]={control:control,value:valueOf(control)};updateActions();});
+  editor.addEventListener('change',function(event){var control=event.target.closest('[data-type-option]');if(!control||control.getAttribute('data-type')==='toggle')return;var type=control.getAttribute('data-type'), value=valueOf(control);if(type==='select'){var previous=persisted(control);setValue(control,previous);confirmWrite(control,key(control)+': '+show(value),function(){closeDialog();persist(control,value).catch(function(){setValue(control,previous);});});return;}pending[control.getAttribute('data-type-option')]={control:control,value:value};updateActions();});
+  saveButton.addEventListener('click',function(){var entries=Object.keys(pending).map(function(k){return pending[k];});if(!entries.length)return;var invalid=entries.find(function(entry){return entry.control.getAttribute('data-type')==='number'&&!Number.isFinite(entry.value);});if(invalid){invalid.control.focus();announce('Informe um número válido antes de salvar.');return;}confirmWrite(saveButton,entries.length+' campo(s) pendente(s)',function(){closeDialog();saveButton.disabled=true;discardButton.disabled=true;var chain=Promise.resolve();entries.forEach(function(entry){chain=chain.then(function(){return persist(entry.control,entry.value);});});chain.then(function(){updateActions('Persistência confirmada. Efeito operacional ainda não observado.');}).catch(function(){updateActions('Sequência interrompida: alguns campos podem ter sido persistidos. Confira antes de repetir.');});});});
+  discardButton.addEventListener('click',function(){Object.keys(pending).forEach(function(k){var control=pending[k].control;setValue(control,persisted(control));});pending={};updateActions();});
+  dialog.querySelector('[data-config-cancel]').addEventListener('click',closeDialog);dialog.querySelector('[data-config-confirm]').addEventListener('click',function(){var action=pendingAction;if(action)action();});dialog.addEventListener('cancel',function(event){event.preventDefault();closeDialog();});
+  document.addEventListener('keydown',function(event){if(event.key==='Escape'&&dialog.open){event.preventDefault();closeDialog();}});
+})();
 </script>
 {% endblock %}

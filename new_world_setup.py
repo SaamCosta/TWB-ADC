@@ -43,7 +43,7 @@ CACHE_DIRS = [
 # maquina/do jogador, nao estado do mundo.
 KEEP_SECTIONS = ["bot", "reporting", "notifications"]
 
-# Perfil de venda premium (docs/troca_premium.md). Aplicado so com --seller.
+# Perfil de venda premium (docs/backend.md). Aplicado so com --seller.
 SELLER_OVERRIDES = {
     ("world", "trade_for_premium"): True,
     ("farms", "farm"): False,

@@ -1,62 +1,91 @@
 <!doctype html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
-    <style>
-      body { background: #f0f0e8; font-family: 'Segoe UI', sans-serif; }
-      .navbar { background: #2c1810 !important; border-bottom: 2px solid #8b6914; }
-      .navbar-brand { color: #d4a843 !important; font-weight: bold; font-size: 1.1rem; letter-spacing: 1px; }
-      .nav-link { color: #c8b882 !important; font-size: 0.9rem; }
-      .nav-link:hover { color: #fff !important; }
-      .card { border: 1px solid #c8b882; border-radius: 4px; }
-      .card-title { color: #2c1810; font-weight: 600; border-bottom: 1px solid #e8d9a0; padding-bottom: 0.4rem; }
-      .border-left-success { border-left: 4px solid #28a745 !important; }
-      .border-left-danger  { border-left: 4px solid #dc3545 !important; }
-      .res-icon { width: 14px; height: 14px; vertical-align: middle; }
-      .badge-danger  { background-color: #c0392b; }
-      .badge-primary { background-color: #2471a3; }
-      .nav-tabs .nav-link { color: #5d4e3a; }
-      .nav-tabs .nav-link.active { color: #2c1810; font-weight: 600; border-bottom: 2px solid #8b6914; }
-      .table thead.thead-dark th { background: #2c1810; color: #d4a843; border-color: #8b6914; }
-      .table-striped tbody tr:nth-of-type(odd) { background-color: rgba(212,168,67,.06); }
-      .report-item { background: #fff; font-size: 0.85rem; }
-      .report-item:hover { background: #fdf8ec; }
-      .progress { background-color: #e8d9a0; }
-    </style>
-    <title>TWB — Management Interface</title>
-  </head>
-  <body>
-  <nav class="navbar navbar-expand-sm">
-    <a class="navbar-brand" href="/">⚔ TWB</a>
-    <ul class="navbar-nav ml-2">
-      <li class="nav-item"><a class="nav-link" href="/">Status</a></li>
-      <li class="nav-item"><a class="nav-link" href="/config">Configuração</a></li>
-      <li class="nav-item"><a class="nav-link" href="/villages">Aldeias</a></li>
-      <li class="nav-item"><a class="nav-link" href="/map">Mapa</a></li>
-      <li class="nav-item"><a class="nav-link" href="/building_templates">Templates</a></li>
-      <li class="nav-item"><a class="nav-link" href="/unit_templates">Templates de tropas</a></li>
-      <li class="nav-item"><a class="nav-link" href="/logs">Logs</a></li>
-      <li class="nav-item"><a class="nav-link" href="/farmscores">Farm Score</a></li>
-      <li class="nav-item"><a class="nav-link" href="/conquest">Conquistas</a></li>
-      <li class="nav-item"><a class="nav-link" href="/hunter">Hunter</a></li>
-      <li class="nav-item"><a class="nav-link" href="/zones">Zonas</a></li>
-      <li class="nav-item"><a class="nav-link" href="/pvp_conquest">Conquista PvP</a></li>
-      <li class="nav-item"><a class="nav-link" href="/flags">Bandeiras</a></li>
-      <li class="nav-item"><a class="nav-link" href="/resource_sharing">Recursos</a></li>
-      <li class="nav-item"><a class="nav-link" href="/reports">Relatórios</a></li>
-      <li class="nav-item"><a class="nav-link" href="/statue">Paladino</a></li>
-      <li class="nav-item"><a class="nav-link" href="/inventory">Inventário</a></li>
-      <li class="nav-item"><a class="nav-link" href="/empire">Império</a></li>
-    </ul>
-  </nav>
-  <div class="container-fluid mt-3">
-    {% block content %}{% endblock %}
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <link rel="icon" href="{{ url_for('static', filename='images/favicon32.gif') }}">
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" crossorigin="anonymous">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/twb-interface.v1.css') }}">
+  <title>{% block title %}Central operacional{% endblock %} · TWB-ADC</title>
+</head>
+<body>
+<a class="twb-skip-link" href="#conteudo-principal">Ir para o conteúdo principal</a>
+<div class="twb-shell" data-nav-open="false">
+  <aside class="twb-sidebar" id="navegacao-principal" aria-label="Navegação principal">
+    <a class="twb-brand" href="/">
+      <span class="twb-brand-mark" aria-hidden="true">T</span>
+      <span><span class="twb-brand-name">TWB-ADC</span><span class="twb-brand-subtitle">Central operacional</span></span>
+    </a>
+    <nav class="twb-nav" aria-label="Áreas operacionais">
+      <section class="twb-nav-group" aria-labelledby="nav-operacao">
+        <h2 class="twb-nav-label" id="nav-operacao">Operação</h2>
+        <ul class="twb-nav-list">
+          <li><a class="twb-nav-link" href="/" {% if request.path == '/' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">◉</span>Visão geral</a></li>
+          <li><a class="twb-nav-link" href="/villages" {% if request.path in ['/villages', '/village'] %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">⌂</span>Aldeias</a></li>
+          <li><a class="twb-nav-link" href="/reports" {% if request.path == '/reports' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">≡</span>Atividade e relatórios</a></li>
+        </ul>
+      </section>
+      <section class="twb-nav-group" aria-labelledby="nav-defesa">
+        <h2 class="twb-nav-label" id="nav-defesa">Defesa</h2>
+        <ul class="twb-nav-list">
+          <li><span class="twb-nav-future" aria-disabled="true"><span class="twb-nav-icon" aria-hidden="true">!</span>Ameaças <span class="twb-nav-note">futuro</span></span></li>
+          <li><span class="twb-nav-future" aria-disabled="true"><span class="twb-nav-icon" aria-hidden="true">↔</span>Apoios <span class="twb-nav-note">futuro</span></span></li>
+          <li><span class="twb-nav-future" aria-disabled="true"><span class="twb-nav-icon" aria-hidden="true">⌖</span>Mapa defensivo <span class="twb-nav-note">futuro</span></span></li>
+        </ul>
+      </section>
+      <section class="twb-nav-group" aria-labelledby="nav-operacoes">
+        <h2 class="twb-nav-label" id="nav-operacoes">Operações</h2>
+        <ul class="twb-nav-list">
+          <li><a class="twb-nav-link" href="/hunter" {% if request.path.startswith('/hunter') %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">⌁</span>Hunter</a></li>
+          <li><a class="twb-nav-link" href="/conquest" {% if request.path == '/conquest' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">◆</span>Conquistas</a></li>
+          <li><a class="twb-nav-link" href="/pvp_conquest" {% if request.path.startswith('/pvp_conquest') %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">◇</span>Conquista PvP</a></li>
+          <li><a class="twb-nav-link" href="/zones" {% if request.path == '/zones' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">◎</span>Zonas</a></li>
+        </ul>
+      </section>
+      <section class="twb-nav-group" aria-labelledby="nav-economia">
+        <h2 class="twb-nav-label" id="nav-economia">Economia</h2>
+        <ul class="twb-nav-list">
+          <li><a class="twb-nav-link" href="/resource_sharing" {% if request.path == '/resource_sharing' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">⇄</span>Recursos</a></li>
+          <li><a class="twb-nav-link" href="/building_templates" {% if request.path == '/building_templates' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">▤</span>Construção e templates</a></li>
+          <li><a class="twb-nav-link" href="/unit_templates" {% if request.path == '/unit_templates' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">♟</span>Tropas e templates</a></li>
+          <li><a class="twb-nav-link" href="/flags" {% if request.path == '/flags' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">⚑</span>Bandeiras</a></li>
+          <li><a class="twb-nav-link" href="/statue" {% if request.path == '/statue' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">♜</span>Paladino</a></li>
+          <li><a class="twb-nav-link" href="/inventory" {% if request.path == '/inventory' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">□</span>Inventário</a></li>
+        </ul>
+      </section>
+      <section class="twb-nav-group" aria-labelledby="nav-territorio">
+        <h2 class="twb-nav-label" id="nav-territorio">Território</h2>
+        <ul class="twb-nav-list">
+          <li><a class="twb-nav-link" href="/map" {% if request.path == '/map' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">⌗</span>Mapa</a></li>
+          <li><a class="twb-nav-link" href="/empire" {% if request.path == '/empire' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">▦</span>Império</a></li>
+          <li><a class="twb-nav-link" href="/farmscores" {% if request.path == '/farmscores' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">↗</span>Farm Score</a></li>
+        </ul>
+      </section>
+      <section class="twb-nav-group" aria-labelledby="nav-sistema">
+        <h2 class="twb-nav-label" id="nav-sistema">Sistema</h2>
+        <ul class="twb-nav-list">
+          <li><a class="twb-nav-link" href="/config" {% if request.path == '/config' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">⚙</span>Configuração</a></li>
+          <li><a class="twb-nav-link" href="/logs" {% if request.path == '/logs' %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">☷</span>Logs</a></li>
+          <li><a class="twb-nav-link" href="/#controle-do-processo"><span class="twb-nav-icon" aria-hidden="true">◌</span>Estado do bot</a></li>
+        </ul>
+      </section>
+    </nav>
+    <div class="twb-sidebar-footer">Dados locais · estado observado, não presumido</div>
+  </aside>
+  <button class="twb-backdrop" type="button" data-nav-dismiss aria-label="Fechar navegação"></button>
+  <div class="twb-main">
+    <header class="twb-topbar">
+      <button class="twb-menu-button" type="button" data-nav-toggle aria-controls="navegacao-principal" aria-expanded="false" aria-label="Abrir navegação">☰</button>
+      <div class="twb-topbar-context"><strong>Operação local</strong> <span aria-hidden="true">·</span> Flask + snapshots do bot</div>
+      <a class="btn btn-outline-secondary btn-sm" href="/logs">Ver atividade</a>
+    </header>
+    <main class="twb-content" id="conteudo-principal" tabindex="-1">{% block content %}{% endblock %}</main>
   </div>
-  <script src="https://code.jquery.com/jquery-3.3.1.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
-  <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
-  {% block scripts %}{% endblock %}
-  </body>
+</div>
+<script src="https://code.jquery.com/jquery-3.3.1.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js" integrity="sha384-UO2eT0CpHqdSJQ6hJty5KVphtPhzWj9WO1clHTMGa3JDZwrnQq4sF86dIHNDz0W1" crossorigin="anonymous"></script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js" integrity="sha384-JjSmVgyd0p3pXB1rRibZUAYoIIy6OrQ6VrjIEaFf/nJGzIxFDsf4x0xIM+B07jRM" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='js/twb-shell.v1.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
 </html>

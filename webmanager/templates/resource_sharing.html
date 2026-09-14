@@ -1,108 +1,67 @@
 {% extends "main.html" %}
-{% block title %}Resource Sharing{% endblock %}
+{% block title %}Compartilhamento de recursos{% endblock %}
 
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h4 class="mb-0" style="color:#2c1810;">📦 Transferência de Recursos entre Aldeias</h4>
-  <div class="d-flex align-items-center">
-    <span class="badge {% if enabled %}badge-success{% else %}badge-danger{% endif %} mr-2">
-      {% if enabled %}Ativado{% else %}Desativado{% endif %}
-    </span>
-    <span class="badge {% if sharing_cfg.get('overflow_enabled', True) %}badge-info{% else %}badge-secondary{% endif %} mr-2"
-          title="Resgata recurso de uma aldeia prestes a estourar o armazém">
-      Transbordo: {{ sharing_cfg.get('overflow_trigger_pct', 85) }}% → {{ sharing_cfg.get('overflow_target_pct', 60) }}%
-    </span>
-    <span class="badge {% if sharing_cfg.get('need_enabled', True) %}badge-info{% else %}badge-secondary{% endif %} mr-2"
-          title="Abastece aldeias travadas, doando só o que passa da reserva própria">
-      Necessidade: reserva {{ "{:,}".format(sharing_cfg.get('need_donor_floor', 20000)).replace(',', '.') }}
-    </span>
-    <span class="badge badge-secondary">Prioridade: {{ sharing_cfg.get('priority', 'new_villages') }}</span>
+<header class="twb-page-header">
+  <div>
+    <p class="twb-eyebrow">Economia · confirmação</p>
+    <h1 class="twb-page-title">Compartilhamento de recursos</h1>
+    <p class="twb-page-summary">Regras automáticas e histórico de tentativas. O contrato confirma aceitação da submissão pelo jogo, mas não reconcilia chegada ou efeito no destino.</p>
   </div>
-</div>
+  <div class="twb-page-actions"><a class="btn btn-outline-secondary" href="/reports">Voltar às evidências</a><a class="btn btn-primary" href="/config">Abrir configuração</a></div>
+</header>
 
-{% if not enabled %}
-<div class="alert alert-warning mb-3">
-  <strong>Resource Sharing desativado.</strong> Ative <code>resource_sharing.enabled</code> em
-  <a href="/config">/config</a> para o bot transferir recursos automaticamente entre aldeias.
-</div>
-{% endif %}
+<section class="twb-health-strip" aria-label="Estado do compartilhamento de recursos">
+  <div class="twb-health-item"><span class="twb-health-label">Sistema</span><span class="twb-health-value"><span class="twb-status {% if enabled %}twb-status--info{% else %}twb-status--muted{% endif %}">{% if enabled %}Habilitado{% else %}Desabilitado{% endif %}</span></span><span class="twb-health-meta">Configuração global para aldeias gerenciadas.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Regra de overflow</span><span class="twb-health-value"><span class="twb-status {% if sharing_cfg.get('overflow_enabled', True) %}twb-status--warning{% else %}twb-status--muted{% endif %}">{% if sharing_cfg.get('overflow_enabled', True) %}Habilitada{% else %}Desabilitada{% endif %}</span></span><span class="twb-health-meta">Dispara em {{ sharing_cfg.get('overflow_trigger_pct', 85) }}%; busca reduzir a {{ sharing_cfg.get('overflow_target_pct', 60) }}%.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Regra de necessidade</span><span class="twb-health-value"><span class="twb-status {% if sharing_cfg.get('need_enabled', True) %}twb-status--info{% else %}twb-status--muted{% endif %}">{% if sharing_cfg.get('need_enabled', True) %}Habilitada{% else %}Desabilitada{% endif %}</span></span><span class="twb-health-meta">Doador preserva piso de {{ "{:,}".format(sharing_cfg.get('need_donor_floor', 20000)).replace(',', '.') }} por recurso.</span></div>
+</section>
 
-<div class="row mb-3">
-  <div class="col-lg-12">
-    <div class="card" style="border-color:#c8a96e;">
-      <div class="card-body">
-        <h6 class="card-title">Total transferido (histórico registrado)</h6>
-        {% if not totals %}
-          <p class="text-muted small mb-0">Nenhuma transferência bem-sucedida registrada ainda.</p>
-        {% else %}
-          {% for res, amt in totals.items() %}
-            <span class="badge badge-light border mr-2" style="font-size:0.85rem;">
-              {{ res }}: {{ "{:,}".format(amt).replace(',', '.') }}
-            </span>
-          {% endfor %}
-        {% endif %}
-      </div>
-    </div>
+{% if not enabled %}<div class="twb-inline-alert twb-inline-alert--warning mb-3"><strong>Sistema desabilitado.</strong> O histórico permanece disponível, mas novas tentativas automáticas não são esperadas enquanto <code>resource_sharing.enabled</code> estiver desativado.</div>{% endif %}
+
+<section class="twb-panel" aria-labelledby="titulo-contrato-confirmacao">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-contrato-confirmacao">O que este histórico consegue confirmar</h2><span class="twb-status twb-status--unknown">Efeito não reconciliado</span></div>
+  <div class="twb-panel-body">
+    <dl class="twb-confirmation-model">
+      <div><dt>Tentativa registrada</dt><dd>Existe uma entrada persistida com origem, destino, recursos e horário disponíveis.</dd></div>
+      <div><dt>Envio aceito</dt><dd>A segunda submissão ao jogo retornou sem <code>error_box</code>. É o significado real de <code>success=true</code>.</dd></div>
+      <div><dt>Falha registrada</dt><dd>O envio não chegou ao retorno positivo do contrato e pode trazer um motivo conhecido.</dd></div>
+      <div><dt>Resultado no destino</dt><dd>Chegada, quantidade recebida e efeito sobre a necessidade não são reconciliados por este histórico.</dd></div>
+    </dl>
   </div>
-</div>
+</section>
 
-<div class="card" style="border-color:#c8a96e;">
-  <div class="card-body p-2">
-    <h6 class="card-title px-2 pt-1">Histórico recente</h6>
-    {% if not entries %}
-    <div class="alert mb-0" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
-      <strong>Nenhuma transferência registrada ainda.</strong>
-      Os dados ficam em <code>cache/resource_sharing/history.json</code>, escritos
-      pelo bot a cada tentativa de envio (sucesso ou falha).
-    </div>
-    {% else %}
-    <table class="table table-sm table-striped mb-0">
-      <thead class="thead-dark">
-        <tr>
-          <th>Quando</th>
-          <th>Regra</th>
-          <th>Origem</th>
-          <th>Destino</th>
-          <th>Recursos</th>
-          <th>Status</th>
-        </tr>
-      </thead>
+<section class="twb-panel" aria-labelledby="titulo-total-aceito">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-total-aceito">Volume com envio aceito pelo jogo</h2><span class="small text-muted">Soma de entradas <code>success=true</code></span></div>
+  <div class="twb-panel-body">
+    {% if totals %}<div class="twb-metric-grid">{% for res, amt in totals.items() %}<div class="twb-metric"><span class="twb-metric-label">{{ res }}</span><span class="twb-metric-value">{{ "{:,}".format(amt).replace(',', '.') }}</span></div>{% endfor %}</div><p class="twb-evidence-detail mb-0 mt-3">Este total não prova que os recursos chegaram nem que resolveram a necessidade.</p>
+    {% else %}<div class="twb-empty"><strong>Nenhum envio aceito no histórico disponível</strong>Isso pode significar ausência de tentativas, somente falhas ou fonte vazia; consulte a tabela abaixo.</div>{% endif %}
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-historico-recursos">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-historico-recursos">Histórico recente de tentativas</h2><span class="small text-muted">{{ entries | length }} registros carregados</span></div>
+  {% if not entries %}
+  <div class="twb-panel-body"><div class="twb-empty twb-empty--unknown"><strong>Ausência de histórico</strong>Nenhuma tentativa está disponível em <code>cache/resource_sharing/history.json</code>. O leitor atual não distingue arquivo ausente, inválido e lista vazia.</div></div>
+  {% else %}
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Histórico de compartilhamento com rolagem horizontal">
+    <table class="table table-sm twb-operational-table twb-sharing-table">
+      <caption class="sr-only">Tentativas de compartilhamento com horário, regra, rota, recursos e níveis separados de confirmação</caption>
+      <thead><tr><th scope="col">Quando</th><th scope="col">Regra</th><th scope="col">Origem e destino</th><th scope="col">Recursos</th><th scope="col">Tentativa</th><th scope="col">Retorno e efeito</th></tr></thead>
       <tbody>
-        {% for e in entries %}
-        <tr>
-          <td class="small text-nowrap">{{ e.timestamp_fmt }}</td>
-          <td class="small">
-            {% if e.kind == 'overflow' %}
-              <span class="badge badge-warning">{{ e.kind_label }}</span>
-            {% elif e.kind == 'need' %}
-              <span class="badge badge-primary">{{ e.kind_label }}</span>
-            {% else %}
-              <span class="text-muted">{{ e.kind_label }}</span>
-            {% endif %}
-          </td>
-          <td class="small">{{ e.source_name }}</td>
-          <td class="small">{{ e.target_name }}</td>
-          <td class="small">
-            {% if e.resources %}
-              {% for res, amt in e.resources.items() %}
-                <span class="badge badge-light border mr-1">{{ res }}: {{ amt }}</span>
-              {% endfor %}
-            {% else %}
-              —
-            {% endif %}
-          </td>
-          <td>
-            {% if e.success %}
-              <span class="badge badge-success">Enviado</span>
-            {% else %}
-              <span class="badge badge-danger" title="{{ e.reason_label }}">Falhou — {{ e.reason_label }}</span>
-            {% endif %}
-          </td>
+      {% for e in entries %}
+        <tr class="{% if not e.success and e.reason %}twb-row--danger{% elif not e.success %}twb-row--unknown{% endif %}">
+          <td>{% if e.timestamp %}<time class="twb-time twb-time-cell">{{ e.timestamp_fmt }}</time>{% else %}<span class="twb-status twb-status--unknown">Horário indisponível</span>{% endif %}</td>
+          <td>{% if e.kind == 'overflow' %}<span class="twb-status twb-status--warning">Overflow</span>{% elif e.kind == 'need' %}<span class="twb-status twb-status--info">Necessidade</span>{% else %}<span class="twb-status twb-status--unknown">Regra não registrada</span>{% endif %}<span class="twb-derived-note">{{ e.kind_label }}</span></td>
+          <td class="twb-route"><span><span class="twb-route-label">Origem</span><strong>{{ e.source_name }}</strong>{% if e.source_id %}<span class="twb-technical-id">#{{ e.source_id }}</span>{% endif %}</span><span><span class="twb-route-label">Destino</span><strong>{{ e.target_name }}</strong>{% if e.target_id %}<span class="twb-technical-id">#{{ e.target_id }}</span>{% endif %}</span></td>
+          <td>{% if e.resources %}<div class="twb-data-list">{% for res, amt in e.resources.items() %}<span><code>{{ res }}</code> <strong class="twb-number">{{ "{:,}".format(amt).replace(',', '.') }}</strong></span>{% endfor %}</div>{% else %}<span class="twb-status twb-status--unknown">Não informados</span>{% endif %}</td>
+          <td><span class="twb-status twb-status--info">Tentativa registrada</span></td>
+          <td><div class="twb-state-stack">{% if e.success %}<span class="twb-status twb-status--success">Envio aceito pelo jogo</span><span class="twb-status twb-status--unknown">Efeito não confirmado</span>{% elif e.reason %}<span class="twb-status twb-status--danger">Falha registrada</span><span class="twb-state-reason">{{ e.reason_label }}</span>{% else %}<span class="twb-status twb-status--unknown">Resultado desconhecido</span><span class="twb-state-reason">Registro sem motivo de falha.</span>{% endif %}</div></td>
         </tr>
-        {% endfor %}
+      {% endfor %}
       </tbody>
     </table>
-    {% endif %}
   </div>
-</div>
+  {% endif %}
+</section>
 {% endblock %}

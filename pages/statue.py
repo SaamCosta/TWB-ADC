@@ -3,7 +3,7 @@ Feature 24 (fase 1) — leitura do estado do(s) Paladino(s) via screen=statue.
 
 Somente leitura: nenhuma automação ativa (treino por XP, re-especialização,
 recrutamento) acontece aqui — apenas extração de dados para exibição no
-webmanager. Ver docs/backlog.md (Feature 24) e docs/game_comparison.md item 4.
+webmanager. Ver docs/backend.md (Feature 24).
 """
 import json
 import re

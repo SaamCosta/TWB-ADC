@@ -17,6 +17,7 @@ Rodar: python tests/test_support_urgency_gate.py
 """
 import os
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -226,6 +227,94 @@ def test_desconhecido_preserva_comportamento_antigo():
     _check("sem velocidades envia", dm4.support_timing("viz")[0], True)
 
 
+def test_destino_novo_resolvido_pelo_cache_do_mapa():
+    """Regressao: map_pos obsoleto nao bloqueia aldeia recem-conquistada."""
+    print("test_destino_novo_resolvido_pelo_cache_do_mapa")
+
+    class _StaleMap:
+        map_pos = {}
+        my_location = [574, 317]
+
+        @staticmethod
+        def in_cache(vid):
+            return {"location": [553, 300]} if vid == "38412" else None
+
+        def get_dist(self, pos):
+            return ((self.my_location[0] - pos[0]) ** 2 + (self.my_location[1] - pos[1]) ** 2) ** 0.5
+
+    dm = _dm(speeds=WorldConfig._parse_unit_speeds(BR143_UNIT_INFO), etas={"38412": 8 * 3600})
+    dm.map = _StaleMap()
+    travel = dm.support_travel_seconds("38412")
+    assert travel is not None and travel > 0
+    _check("map_pos hidratado", dm.map.map_pos["38412"], [553, 300])
+    print(f"  ok  viagem calculada: {travel}s")
+
+
+def test_support_envia_e_confirma_com_destino_so_no_cache():
+    """O caminho completo deixa de retornar False antes da primeira requisicao."""
+    print("test_support_envia_e_confirma_com_destino_so_no_cache")
+
+    class _StaleMap:
+        map_pos = {}
+
+        @staticmethod
+        def in_cache(vid):
+            return {"location": [553, 300]} if vid == "38412" else None
+
+    class _Wrapper:
+        last_h = "csrf"
+
+        def __init__(self):
+            self.confirm_payload = None
+            self.final_payload = None
+
+        def get_url(self, url):
+            return SimpleNamespace(
+                text=(
+                    '<input name="template_id" value="">'
+                    '<input name="support" value="Apoio">'
+                )
+            )
+
+        def post_url(self, url, data):
+            self.confirm_payload = data
+            return SimpleNamespace(
+                text=(
+                    '<span class="relative_time" data-duration="1234"></span>'
+                    '<input name="x" value="553"><input name="y" value="300">'
+                    '<input name="support" value="Apoio">'
+                )
+            )
+
+        def get_api_action(self, village_id, action, params, data):
+            self.final_payload = data
+            return {"success": True}
+
+    dm = DefenceManager(village_id="32056", wrapper=_Wrapper())
+    dm.map = _StaleMap()
+    result = dm.support("38412", troops={"sword": 6, "spy": 6})
+    _check("envio confirmado", bool(result), True)
+    _check("x enviado", dm.wrapper.confirm_payload["x"], 553)
+    _check("y enviado", dm.wrapper.confirm_payload["y"], 300)
+    _check("acao localizada preservada", dm.wrapper.confirm_payload["support"], "Apoio")
+    assert dm.wrapper.final_payload is not None
+
+
+def test_support_other_nao_transforma_plano_vazio_em_todas_as_tropas():
+    """Um dict vazio nao pode cair no comportamento legado troops=None."""
+    print("test_support_other_nao_transforma_plano_vazio_em_todas_as_tropas")
+    dm = DefenceManager(village_id="32056")
+
+    class _Units:
+        troops = {"light": "80", "knight": "1"}
+
+    dm.units = _Units()
+    called = []
+    dm.support = lambda *args, **kwargs: called.append((args, kwargs))
+    _check("retorno", dm.support_other("38412"), False)
+    _check("support nao chamado", called, [])
+
+
 def test_eta_dict_e_por_instancia():
     """
     Primeiro padrao do CLAUDE.md: mutavel no corpo da classe vaza entre
@@ -246,5 +335,8 @@ if __name__ == "__main__":
     test_apoio_que_chegaria_atrasado_nao_sai()
     test_dentro_da_janela_envia()
     test_desconhecido_preserva_comportamento_antigo()
+    test_destino_novo_resolvido_pelo_cache_do_mapa()
+    test_support_envia_e_confirma_com_destino_so_no_cache()
+    test_support_other_nao_transforma_plano_vazio_em_todas_as_tropas()
     test_eta_dict_e_por_instancia()
     print("\nOK - todos os testes do gate de urgencia passaram")

@@ -927,7 +927,7 @@ class ConquestManager:
     # Units never used as escort filler.
     # knight (Paladino): there is only ever one per village and it must never
     # leave on its own -- same rule already enforced for the PvP conquest in
-    # 2026-08-07 (see docs/features_log.md). Without it here, the barbarian
+    # 2026-08-07 (see docs/backend.md). Without it here, the barbarian
     # train could ship the Paladino out as escort filler.
     # snob: it is the train's payload, not escort -- _send_train sets
     # troops["snob"] = 1 explicitly per attack, overwriting whatever the
@@ -1410,7 +1410,7 @@ class ConquestManager:
         troopmanager.troops raw, so the barbarian train could commit troops the
         PvP conquest had already earmarked for a scheduled clear or noble
         escort -- the same double-booking class of bug as the 38409 incident
-        (docs/features_log.md, 2026-08-07), but across two systems instead of
+        (docs/backend.md, 2026-08-07), but across two systems instead of
         within one.
 
         Our own "barbarian_conquest" key is deliberately NOT subtracted. run()

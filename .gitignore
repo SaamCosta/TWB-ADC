@@ -6,6 +6,12 @@ __pycache__/
 config.json
 cache/**
 config.bak
+# Copias de trabalho do config: sao o config.json inteiro (credenciais/sessao)
+# com outro nome, e as linhas acima nao as pegavam.
+config.bak.*
+config.json.*
+# Rascunho de mensagem de commit
+_commitmsg.txt
 # C extensions
 *.so
 # Distribution / packaging

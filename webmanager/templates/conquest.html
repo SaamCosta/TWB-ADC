@@ -1,312 +1,80 @@
 {% extends "main.html" %}
-{% block title %}Conquistas{% endblock %}
+{% block title %}Conquista Bárbara{% endblock %}
+
+{% macro identity(t) %}<div class="twb-operation-identity"><div><span class="twb-route-label">Alvo</span><strong>{{ t.target_name | default('Bárbara #' ~ t.target_id, true) }}</strong><span class="twb-technical-id">#{{ t.target_id }}</span></div><div><span class="twb-route-label">Coordenada</span>{% if t.location_str and t.location_str != '—' %}<span class="twb-coordinate">{{ t.location_str }}</span>{% else %}<span class="twb-status twb-status--unknown">Não disponível</span>{% endif %}</div><div><span class="twb-route-label">Pontos observados</span>{% if t.target_points is not none and t.target_points != '?' %}<strong class="twb-number">{{ t.target_points }}</strong>{% else %}<span class="twb-status twb-status--unknown">Não disponíveis</span>{% endif %}</div></div>{% endmacro %}
+
+{% macro sources(t) %}
+<dl class="twb-source-grid twb-conquest-source-grid">
+  <div><dt>Seleção do alvo</dt><dd>{% if t.status == 'manual' %}<span class="twb-status twb-status--info">Manual · aguardando origem</span>{% elif t.status == 'invalid' %}<span class="twb-status twb-status--danger">Manual invalidado</span>{% elif t.reserved_by and t.reserved_by != '—' %}<span class="twb-status twb-status--muted">Origem já atribuída</span><small>O contrato não preserva se a escolha original foi manual ou automática após a atribuição.</small>{% else %}<span class="twb-status twb-status--unknown">Origem da seleção desconhecida</span>{% endif %}</dd></div>
+  <div><dt>Aldeia de origem</dt><dd>{% if t.reserved_by and t.reserved_by != '—' %}<a href="/village?id={{ t.reserved_by }}"><strong class="twb-technical-id">#{{ t.reserved_by }}</strong></a><small><code>reserved_by</code> liga o acompanhamento à origem enquanto o estado é ativo; não prova tropas em casa.</small>{% else %}<span class="twb-status twb-status--unknown">Não atribuída</span><small>Nenhuma origem/reserva é comprovada por este registro.</small>{% endif %}</dd></div>
+  <div><dt>Escolta e reserva de tropas</dt><dd><span class="twb-status twb-status--unknown">Composição não exposta</span><small>A reserva de escolta existe apenas no manager em memória e termina ao disparar o trem ou quando a espera é liberada. Quantidades não chegam à página.</small></dd></div>
+</dl>
+{% endmacro %}
+
+{% macro evidence(t) %}
+<div class="twb-evidence-grid">
+  <section class="twb-evidence-card" aria-label="Evidência de lealdade"><span class="twb-route-label">Lealdade</span>
+    {% if t.status == 'conquered' and t.confirmed_by == 'noble_report' %}<span class="twb-status twb-status--success">Relatório provou troca de posse</span><p>Um relatório de nosso ataque com nobre registrou <code>loyalty_after ≤ 0</code>. O valor e o horário desse relatório não são expostos pelo leitor.</p>
+    {% elif t.loyalty_source == 'report' %}<span class="twb-status twb-status--info">Relatório usado pelo manager</span><p>O manager encontrou lealdade em um relatório. O valor abaixo ainda é uma estimativa recalculada pelo leitor; não é a leitura bruta do relatório.</p><div class="twb-loyalty-reading twb-loyalty-reading--estimated"><span>Estimativa atual</span><strong class="twb-number">{{ t.loyalty_now }}</strong></div>
+    {% elif t.status in ['manual', 'invalid'] %}<span class="twb-status twb-status--unknown">Sem evidência de lealdade</span><p>O alvo ainda não possui acompanhamento militar capaz de sustentar uma estimativa.</p>
+    {% elif t.loyalty_best is not none %}<span class="twb-status twb-status--unknown">Estimativa matemática</span><div class="twb-loyalty-reading twb-loyalty-reading--estimated"><span>Faixa estimada agora</span><strong class="twb-number">{{ t.loyalty_best }}–{{ t.loyalty_now }}</strong></div><p>Faixa calculada com as quedas configuradas por nobre e regeneração. Outro jogador, cache atrasado ou relatório ausente podem invalidá-la.</p>
+    {% else %}<span class="twb-status twb-status--unknown">Estimativa parcial</span><div class="twb-loyalty-reading twb-loyalty-reading--estimated"><span>Valor calculado</span><strong class="twb-number">{{ t.loyalty_now }}</strong></div><p>O leitor não recebeu os dois extremos da faixa; este valor não deve ser tratado como observação real.</p>{% endif %}
+    {% if t.loyalty_drop_range %}<dl class="twb-compact-meta"><div><dt>Queda configurada</dt><dd class="twb-number">{{ t.loyalty_drop_range[0] }}–{{ t.loyalty_drop_range[1] }} por nobre</dd></div><div><dt>Regeneração aplicada</dt><dd>Usada no cálculo, mas a taxa não é exposta ao template.</dd></div></dl>{% endif %}
+  </section>
+  <section class="twb-evidence-card" aria-label="Evidência de posse"><span class="twb-route-label">Posse e resultado</span>
+    {% if t.status == 'conquered' and t.confirmed_by == 'village_cache' %}<span class="twb-status twb-status--success">Posse confirmada no cache</span><p>O alvo foi observado em <code>cache/villages</code> com o mesmo proprietário da origem. Isso não identifica qual ataque causou a conquista.</p>
+    {% elif t.status == 'conquered' and t.confirmed_by == 'noble_report' %}<span class="twb-status twb-status--success">Posse confirmada por relatório</span><p>O relatório de nosso nobre registrou lealdade menor ou igual a zero; o cache de aldeias podia ainda estar atrasado.</p>
+    {% elif t.status == 'conquered' %}<span class="twb-status twb-status--unknown">Posse marcada; fonte desconhecida</span><p><code>confirmed_by</code> está ausente ou não é reconhecido. A interface não inventa a proveniência.</p>
+    {% elif t.status == 'assumed_done' %}<span class="twb-status twb-status--warning">Encerrado sem confirmação</span><p>{{ t.assumed_reason | default('A estimativa chegou a zero sem prova de posse.', true) }}. Verifique no jogo antes de concluir ou repetir.</p>
+    {% elif t.status == 'lost' %}<span class="twb-status twb-status--danger">Alvo observado com outro dono</span><p>{% if t.lost_to_owner %}O cache registrou o proprietário <span class="twb-technical-id">#{{ t.lost_to_owner }}</span>.{% else %}O registro não informa qual proprietário foi observado.{% endif %} Nobres já enviados não podem ser desfeitos.</p>
+    {% elif t.status == 'complete' %}<span class="twb-status twb-status--unknown">Registro antigo e ambíguo</span><p>Este estado antecede a separação entre prova de posse e estimativa. Não confirma conquista.</p>
+    {% else %}<span class="twb-status twb-status--unknown">Resultado ainda desconhecido</span><p>Ausência de voo conhecido, horário passado ou estimativa baixa não provam chegada, impacto, vitória ou posse.</p>{% endif %}
+  </section>
+</div>
+{% endmacro %}
+
+{% macro sequence(t) %}<ol class="twb-status-sequence twb-pvp-sequence twb-conquest-sequence"><li class="is-known">Alvo registrado</li><li class="{% if t.reserved_by and t.reserved_by != '—' %}is-known{% endif %}">{% if t.reserved_by and t.reserved_by != '—' %}Origem atribuída{% else %}Origem ainda não comprovada{% endif %}</li><li>Escolta preparada sem snapshot</li><li class="{% if t.hits_done %}is-known{% endif %}">{% if t.hits_done %}{{ t.hits_done }} tentativa(s) marcada(s){% else %}Despacho não registrado{% endif %}</li><li class="{% if t.last_hit_ts %}is-known{% endif %}">{% if t.last_hit_ts %}Chegada prevista registrada{% else %}Voo sem horário exposto{% endif %}</li><li class="{% if t.loyalty_source == 'report' or (t.status == 'conquered' and t.confirmed_by == 'noble_report') %}is-known{% endif %}">{% if t.loyalty_source == 'report' or (t.status == 'conquered' and t.confirmed_by == 'noble_report') %}Relatório de nobre usado{% else %}Relatório não comprovado{% endif %}</li><li class="{% if t.status == 'conquered' and t.confirmed_by in ['village_cache','noble_report'] %}is-known{% endif %}">{% if t.status == 'conquered' and t.confirmed_by in ['village_cache','noble_report'] %}Posse confirmada{% elif t.status == 'lost' %}Alvo perdido{% elif t.status == 'assumed_done' %}Encerrado por estimativa{% else %}Resultado aberto{% endif %}</li></ol>{% endmacro %}
 
 {% block content %}
-<div class="container-fluid mt-3">
+{% set ns = namespace(manual=0, active=0, terminal=0, attention=0, timed=0, next_arrival=none) %}
+{% for t in targets %}{% if t.status == 'manual' %}{% set ns.manual = ns.manual + 1 %}{% elif t.status in ['train_sent','extra_pending'] %}{% set ns.active = ns.active + 1 %}{% else %}{% set ns.terminal = ns.terminal + 1 %}{% endif %}{% if t.status in ['assumed_done','lost','invalid','complete'] or t.status not in ['manual','train_sent','extra_pending','conquered','assumed_done','lost','invalid','complete'] or (t.status in ['train_sent','extra_pending'] and (not t.reserved_by or t.reserved_by == '—')) %}{% set ns.attention = ns.attention + 1 %}{% endif %}{% if t.status in ['train_sent','extra_pending'] and t.last_hit_ts %}{% set ns.timed = ns.timed + 1 %}{% if ns.next_arrival is none or t.last_hit_ts < ns.next_arrival %}{% set ns.next_arrival = t.last_hit_ts %}{% endif %}{% endif %}{% endfor %}
 
-  <!-- Cabeçalho -->
-  <div class="d-flex align-items-center justify-content-between mb-3">
-    <h4 class="mb-0" style="color:#2c1810;">
-      <img src="/static/unit_noble.png" height="24" class="me-2" onerror="this.style.display='none'">
-      Painel de Conquistas
-    </h4>
-    <div>
-      <span class="badge bg-secondary me-1">Total: {{ targets|length }}</span>
-      <span class="badge bg-primary me-1">Manual pendente: {{ targets|selectattr('status','equalto','manual')|list|length }}</span>
-      <span class="badge bg-warning text-dark me-1">Em andamento: {{ targets|selectattr('status','in',['train_sent','extra_pending'])|list|length }}</span>
-      <span class="badge bg-success me-1">Conquistadas: {{ targets|selectattr('status','equalto','conquered')|list|length }}</span>
-      {# Contadores separados de proposito: juntar "confirmada" com "o bot
-         achou que acabou" foi o que fez a tela afirmar conquista que ninguem
-         tinha verificado. #}
-      {% set sem_conf = targets|selectattr('status','equalto','assumed_done')|list|length %}
-      {% if sem_conf %}
-      <span class="badge bg-warning text-dark me-1">Sem confirmação: {{ sem_conf }}</span>
-      {% endif %}
-      {% set perdidas = targets|selectattr('status','equalto','lost')|list|length %}
-      {% if perdidas %}
-      <span class="badge bg-danger me-1">Perdidas: {{ perdidas }}</span>
-      {% endif %}
-      {% set antigas = targets|selectattr('status','equalto','complete')|list|length %}
-      {% if antigas %}
-      <span class="badge bg-secondary">Registros antigos: {{ antigas }}</span>
-      {% endif %}
-    </div>
-  </div>
+<header class="twb-page-header"><div><p class="twb-eyebrow">Operações · seleção, trem e reconciliação</p><h1 class="twb-page-title">Conquista Bárbara</h1><p class="twb-page-summary">Acompanhe alvo, origem, tentativas de envio, voo previsto, relatório, lealdade e posse sem confundir cálculo com resultado militar.</p></div><div class="twb-page-actions"><a class="btn btn-outline-secondary" href="/reports">Examinar relatórios</a><a class="btn btn-primary" href="#definir-alvo-manual">Definir alvo manual</a></div></header>
+{% if error %}<div class="twb-inline-alert twb-inline-alert--danger mb-3" role="alert"><strong>A ação não foi aplicada.</strong> {{ error }}</div>{% endif %}
+<section class="twb-health-strip" aria-label="Estado global da Conquista Bárbara"><div class="twb-health-item"><span class="twb-health-label">Automação</span><span class="twb-health-value"><span class="twb-status {% if conquest_enabled %}twb-status--info{% else %}twb-status--muted{% endif %}">{% if conquest_enabled %}Habilitada{% else %}Desabilitada{% endif %}</span></span><span class="twb-health-meta">Configuração global; cada origem também pode desabilitar conquista.</span></div><div class="twb-health-item"><span class="twb-health-label">Operações disponíveis</span><span class="twb-health-value">{{ targets | length }}</span><span class="twb-health-meta">{{ ns.manual }} manuais · {{ ns.active }} ativas · {{ ns.terminal }} terminais/ambíguas</span></div><div class="twb-health-item"><span class="twb-health-label">Próxima chegada prevista</span><span class="twb-health-value">{% if ns.next_arrival %}<time class="twb-time" data-arrival-at="{{ ns.next_arrival }}">Calculando horário…</time>{% else %}<span class="twb-status twb-status--unknown">Não disponível</span>{% endif %}</span><span class="twb-health-meta">Menor última-chegada por registro ativo; não é impacto observado.</span></div></section>
+{% if not conquest_enabled %}<div class="twb-inline-alert twb-inline-alert--warning mb-3"><strong>Sistema desabilitado.</strong> Alvos manuais podem ser registrados, mas o manager não seleciona origem, reserva escolta nem tenta enviar nobres enquanto <code>conquest.enabled</code> estiver desativado.</div>{% endif %}
 
-  {% if error %}
-  <div class="alert alert-danger mb-3">{{ error }}</div>
-  {% endif %}
+<section class="twb-panel {% if ns.attention %}twb-panel--exception{% endif %}" aria-labelledby="titulo-atencao-conquest"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-atencao-conquest">Operações que exigem atenção</h2><span class="twb-status {% if ns.attention %}twb-status--danger{% else %}twb-status--muted{% endif %}">{% if ns.attention %}{{ ns.attention }} para revisar{% else %}Sem exceções conhecidas{% endif %}</span></div><div class="twb-panel-body">{% if not targets %}<div class="twb-empty twb-empty--unknown"><strong>Nenhum registro no leitor</strong>O leitor não distingue diretório vazio, JSON inválido ignorado e ausência real de operações.</div>{% elif not ns.attention %}<div class="twb-empty"><strong>Nenhuma exceção nos campos expostos</strong>Aceite do jogo, impacto, relatório bruto, composição da escolta e frescor do cache continuam sem contrato.</div>{% else %}<ul class="twb-exception-list">{% for t in targets %}{% if t.status in ['assumed_done','lost','invalid','complete'] or t.status not in ['manual','train_sent','extra_pending','conquered','assumed_done','lost','invalid','complete'] or (t.status in ['train_sent','extra_pending'] and (not t.reserved_by or t.reserved_by == '—')) %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>{{ t.target_name | default('Alvo #' ~ t.target_id, true) }}</strong><span>{% if t.status == 'assumed_done' %}Encerrado porque a estimativa chegou a zero, sem prova de posse.{% elif t.status == 'lost' %}Outro proprietário foi observado{% if t.lost_to_owner %}: #{{ t.lost_to_owner }}{% endif %}.{% elif t.status == 'invalid' %}Alvo manual invalidado: {{ t.invalid_reason | default('motivo não informado', true) }}.{% elif t.status == 'complete' %}Registro anterior à separação entre confirmação e estimativa.{% elif t.status not in ['manual','train_sent','extra_pending','conquered','assumed_done','lost','invalid','complete'] %}Status “{{ t.status }}” não pertence ao contrato atual.{% else %}Operação ativa sem aldeia de origem exposta.{% endif %}</span></div><a class="btn btn-outline-secondary btn-sm" href="/logs">Investigar</a></li>{% endif %}{% endfor %}</ul>{% endif %}</div></section>
 
-  {% if not conquest_enabled %}
-  <div class="alert mb-3" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
-    <code>conquest.enabled</code> está <strong>desligado</strong> em <code>config.json</code>.
-    Alvos manuais definidos abaixo ficam na fila, mas só serão processados
-    quando o sistema de conquista automática estiver habilitado.
-  </div>
-  {% endif %}
+<section class="twb-panel" aria-labelledby="titulo-voos-conquest"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-voos-conquest">Nobres em voo e horários previstos</h2><span class="small text-muted">{{ ns.timed }} registros ativos com horário</span></div><div class="twb-panel-body">{% if ns.active == 0 %}<div class="twb-empty"><strong>Nenhuma conquista ativa</strong>Não há registros em <code>train_sent</code> ou <code>extra_pending</code>.</div>{% else %}<div class="twb-deadline-grid">{% for t in targets if t.status in ['train_sent','extra_pending'] %}<article class="twb-deadline-card"><div><span class="twb-route-label">Origem → alvo</span><strong><span class="twb-technical-id">#{{ t.reserved_by | default('?', true) }}</span> → <span class="twb-technical-id">#{{ t.target_id }}</span></strong></div><div><span class="twb-route-label">Última chegada prevista</span>{% if t.last_hit_ts %}<time class="twb-time" data-arrival-at="{{ t.last_hit_ts }}">{{ t.last_hit_fmt }}</time><span class="twb-deadline-relative" data-flight-state="{{ t.last_hit_ts }}">Calculando relação com o relógio atual…</span>{% else %}<span class="twb-status twb-status--unknown">Horário não disponível</span><span class="twb-deadline-relative">O leitor não expõe <code>noble_arrivals</code>; um ETA desconhecido pode bloquear novos nobres indefinidamente.</span>{% endif %}</div><div><span class="twb-route-label">O que o horário prova</span><p class="twb-evidence-detail">Previsão calculada com a duração retornada na confirmação do jogo. Não prova aceite, chegada ou impacto.</p></div></article>{% endfor %}</div>{% endif %}</div></section>
 
-  <!-- Feature 15: alvo manual -->
-  <div class="card mb-3" style="border-color:#c8a96e;">
-    <div class="card-body py-2">
-      <h6 class="card-title mb-2">Definir alvo manual</h6>
-      <form method="post" class="form-inline row g-2 align-items-center">
-        <input type="hidden" name="action" value="manual_add">
-        <div class="col-auto">
-          <input type="text" name="identifier" class="form-control form-control-sm"
-                 placeholder="ID (ex: 12345) ou coordenadas (ex: 512|487)" style="min-width:280px;" required>
-        </div>
-        <div class="col-auto">
-          <button type="submit" class="btn btn-sm btn-primary">Enfileirar alvo</button>
-        </div>
-        <div class="col-auto text-muted small">
-          A aldeia bárbara precisa já estar no cache do mapa (<code>cache/villages/</code>).
-          O alvo é reivindicado pela primeira aldeia com noble train pronto,
-          sobrepondo a seleção automática.
-        </div>
-      </form>
-    </div>
-  </div>
+<section class="twb-panel" aria-labelledby="titulo-ativas-conquest"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-ativas-conquest">Conquistas ativas</h2><span class="small text-muted">{{ ns.active }} operações acompanhadas</span></div>{% if ns.active == 0 %}<div class="twb-panel-body"><div class="twb-empty"><strong>Sem operações ativas</strong>Uma fila manual não é um trem em andamento.</div></div>{% else %}<div class="twb-operation-list">{% for t in targets if t.status in ['train_sent','extra_pending'] %}<article class="twb-operation-card {% if not t.reserved_by or t.reserved_by == '—' %}twb-operation-card--unknown{% endif %}"><header class="twb-operation-card-header">{{ identity(t) }}<span class="twb-status {% if t.status == 'train_sent' %}twb-status--warning{% else %}twb-status--info{% endif %}">{% if t.status == 'train_sent' %}Trem marcado como enviado{% else %}Nobre extra pendente{% endif %}</span></header><div class="twb-operation-card-body"><div class="twb-inline-alert twb-inline-alert--unknown mb-3"><strong>Resultado aberto.</strong> O retorno truthy usado pelo produtor não distingue nesta página requisição, aceite do jogo, chegada e impacto. Repetir a operação pode duplicar trem ou nobre.</div>{{ sources(t) }}<div class="twb-conquest-metrics"><div><span class="twb-route-label">Tentativas registradas</span><strong class="twb-number">{{ t.hits_done }} / {{ t.hits_needed }}</strong><small><code>hits_done</code> conta despachos marcados no cache, não impactos confirmados.</small></div><div><span class="twb-route-label">Estado operacional</span><strong>{% if t.status == 'train_sent' %}Trem inicial marcado com {{ t.hits_done }} tentativa(s){% else %}Fluxo espera/reavalia nobre adicional{% endif %}</strong><small><code>extra_pending</code> também cobre trem inicial parcial; não prova impacto.</small></div></div>{{ evidence(t) }}<div class="twb-operation-flow">{{ sequence(t) }}</div><div class="twb-operation-actions"><a class="btn btn-outline-secondary" href="/reports?dest={{ t.target_id }}">Ver relatórios do alvo</a><form method="post" action="/conquest" data-clear-conquest data-target-id="{{ t.target_id }}" data-target-name="{{ t.target_name | default('Alvo', true) }}" data-source-id="{{ t.reserved_by }}" data-operation-state="{{ t.status }}"><input type="hidden" name="action" value="force_clear"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger">Limpar acompanhamento</button></form></div><div class="twb-sr-live" role="status" aria-live="polite"></div></div></article>{% endfor %}</div>{% endif %}</section>
 
-  <!-- Filtros -->
-  <div class="card mb-3" style="border-color:#c8a96e;">
-    <div class="card-body py-2">
-      <div class="row g-2 align-items-center">
-        <div class="col-auto">
-          <label class="form-label mb-0 small fw-bold">Status</label>
-          <select id="filter-status" class="form-select form-select-sm" style="min-width:160px;">
-            <option value="">Todos</option>
-            <option value="manual">Alvo Manual (na fila)</option>
-            <option value="train_sent">Train Enviado</option>
-            <option value="extra_pending">Extra Pendente</option>
-            <option value="conquered">Conquistada (confirmada)</option>
-            <option value="assumed_done">Sem confirmação</option>
-            <option value="lost">Perdida para outro jogador</option>
-            <option value="complete">Concluída (registro antigo)</option>
-            <option value="invalid">Alvo Manual Inválido</option>
-          </select>
-        </div>
-        <div class="col-auto">
-          <label class="form-label mb-0 small fw-bold">Aldeia reservante</label>
-          <select id="filter-village" class="form-select form-select-sm" style="min-width:160px;">
-            <option value="">Todas</option>
-            {% set villages_seen = [] %}
-            {% for t in targets %}
-              {% if t.reserved_by and t.reserved_by not in villages_seen %}
-                {% set _ = villages_seen.append(t.reserved_by) %}
-                <option value="{{ t.reserved_by }}">{{ t.reserved_by }}</option>
-              {% endif %}
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-auto ms-auto">
-          <button class="btn btn-sm btn-outline-secondary" onclick="location.reload()">
-            ↻ Atualizar
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
+<section class="twb-panel" id="definir-alvo-manual" aria-labelledby="titulo-alvo-manual"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-alvo-manual">Definir alvo manual</h2><span class="twb-status twb-status--warning">Ação preparatória</span></div><div class="twb-panel-body"><div class="twb-inline-alert twb-inline-alert--warning mb-3"><strong>Este POST registra uma prioridade, não envia tropas.</strong> A primeira origem com quatro nobres livres e escolta elegível pode reivindicar o alvo e tentar um trem em ciclo posterior. A seleção manual ignora filtros automáticos de raio e pontos, mas exige uma bárbara já no cache do mapa.</div><form method="post" action="/conquest" id="conquest-manual-form" novalidate><input type="hidden" name="action" value="manual_add"><fieldset class="twb-form-section"><legend>Identificação no cache do mapa</legend><div class="form-group twb-form-field"><label for="conquest-identifier">ID ou coordenadas da aldeia bárbara</label><input type="text" id="conquest-identifier" name="identifier" class="form-control" autocomplete="off" required aria-describedby="conquest-identifier-help"><small id="conquest-identifier-help" class="form-text text-muted">Formatos aceitos pelo servidor: ID numérico ou coordenadas como <code>512|487</code>, <code>512,487</code> ou <code>512 487</code>.</small></div></fieldset><div class="twb-form-actions"><button type="submit" class="btn btn-primary">Registrar alvo manual</button><span class="twb-sr-live" id="conquest-manual-message" role="status" aria-live="polite"></span></div></form></div></section>
 
-  <!-- Tabela vazia -->
-  {% if not targets %}
-  <div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
-    <strong>Nenhum alvo de conquista em cache.</strong>
-    Certifique-se de que <code>conquest.enabled: true</code> está configurado e que o bot já selecionou alvos.
-    Os arquivos de cache ficam em <code>cache/conquest/*.json</code>.
-  </div>
-  {% else %}
+{% if ns.manual %}<section class="twb-panel" aria-labelledby="titulo-fila-manual"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-fila-manual">Fila manual aguardando origem</h2><span class="small text-muted">{{ ns.manual }} alvos em ordem de <code>queued_at</code></span></div><div class="twb-operation-list">{% for t in targets if t.status == 'manual' %}<article class="twb-operation-card"><header class="twb-operation-card-header">{{ identity(t) }}<span class="twb-status twb-status--info">Alvo manual na fila</span></header><div class="twb-operation-card-body">{{ sources(t) }}<dl class="twb-meta"><div><dt>Registrado em</dt><dd>{% if t.queued_at %}<time class="twb-time" data-absolute-at="{{ t.queued_at }}">{{ t.queued_at_fmt }}</time>{% else %}<span class="twb-status twb-status--unknown">Horário não disponível</span>{% endif %}</dd></div><div><dt>Próxima mudança possível</dt><dd>Uma origem elegível pode reivindicar este alvo em ciclo posterior.</dd></div></dl><div class="twb-operation-actions"><form method="post" action="/conquest" data-cancel-manual data-target-id="{{ t.target_id }}" data-target-name="{{ t.target_name | default('Alvo', true) }}"><input type="hidden" name="action" value="manual_cancel"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger">Remover da fila manual</button></form></div><div class="twb-sr-live" role="status" aria-live="polite"></div></div></article>{% endfor %}</div></section>{% endif %}
 
-  <div class="table-responsive">
-    <table class="table table-hover align-middle" id="conquest-table">
-      <thead style="background:#2c1810;color:#d4a843;">
-        <tr>
-          <th>Alvo</th>
-          <th>Coord</th>
-          <th>Pts</th>
-          <th>Reservada por</th>
-          <th>Status</th>
-          <th style="min-width:140px;">Nobles ({{ '{' }}hits/total{{ '}' }})</th>
-          <th style="min-width:170px;">Lealdade</th>
-          <th>Último hit</th>
-          <th>Ações</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for t in targets %}
-        <tr class="conquest-row"
-            data-status="{{ t.status }}"
-            data-village="{{ t.reserved_by }}"
-            {# Esmaece o que esta resolvido. "assumed_done" e "lost" NAO entram:
-               os dois pedem olho humano. #}
-            style="{% if t.status in ('conquered', 'complete') %}opacity:0.65;{% endif %}">
+{% if ns.terminal %}<section class="twb-panel" aria-labelledby="titulo-historico-conquest"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-historico-conquest">Histórico e estados terminais</h2><span class="small text-muted">Confirmação, perda, estimativa ou legado</span></div><div class="twb-operation-list">{% for t in targets if t.status not in ['manual','train_sent','extra_pending'] %}<article class="twb-operation-card {% if t.status in ['lost','invalid'] %}twb-operation-card--danger{% elif not (t.status == 'conquered' and t.confirmed_by in ['village_cache','noble_report']) %}twb-operation-card--unknown{% endif %}"><header class="twb-operation-card-header">{{ identity(t) }}{% if t.status == 'conquered' and t.confirmed_by in ['village_cache','noble_report'] %}<span class="twb-status twb-status--success">Posse confirmada</span>{% elif t.status == 'lost' %}<span class="twb-status twb-status--danger">Alvo perdido</span>{% elif t.status == 'invalid' %}<span class="twb-status twb-status--danger">Alvo inválido</span>{% elif t.status == 'assumed_done' %}<span class="twb-status twb-status--warning">Sem confirmação</span>{% elif t.status == 'complete' %}<span class="twb-status twb-status--unknown">Registro antigo</span>{% else %}<span class="twb-status twb-status--unknown">Estado “{{ t.status }}”</span>{% endif %}</header><div class="twb-operation-card-body">{{ sources(t) }}{{ evidence(t) }}<div class="twb-operation-flow">{{ sequence(t) }}</div><div class="twb-operation-actions"><a class="btn btn-outline-secondary" href="/reports?dest={{ t.target_id }}">Ver evidências</a><form method="post" action="/conquest" data-clear-conquest data-target-id="{{ t.target_id }}" data-target-name="{{ t.target_name | default('Alvo', true) }}" data-source-id="{{ t.reserved_by }}" data-operation-state="{{ t.status }}"><input type="hidden" name="action" value="force_clear"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger">Excluir acompanhamento</button></form></div><div class="twb-sr-live" role="status" aria-live="polite"></div></div></article>{% endfor %}</div></section>{% endif %}
 
-          <!-- Alvo -->
-          <td>
-            <span class="fw-bold">{{ t.target_name }}</span>
-            <br><small class="text-muted font-monospace">#{{ t.target_id }}</small>
-          </td>
-
-          <!-- Coordenadas -->
-          <td>
-            <span class="font-monospace small">{{ t.location_str }}</span>
-          </td>
-
-          <!-- Pontos -->
-          <td>{{ t.target_points }}</td>
-
-          <!-- Reservada por -->
-          <td>
-            {% if t.reserved_by and t.reserved_by != '—' %}
-              <a href="/village?id={{ t.reserved_by }}" class="text-decoration-none" style="color:#2c1810;">
-                🏰 {{ t.reserved_by }}
-              </a>
-            {% else %}
-              <span class="text-muted">—</span>
-            {% endif %}
-          </td>
-
-          <!-- Status badge -->
-          <td>
-            <span class="badge bg-{{ t.status_color }}">{{ t.status_label }}</span>
-          </td>
-
-          <!-- Nobles progress -->
-          <td>
-            {% if t.status in ('manual', 'invalid') %}
-              <small class="text-muted">Aguardando aldeia com noble train pronto</small>
-            {% else %}
-            <div class="d-flex align-items-center gap-2">
-              <div class="progress flex-grow-1" style="height:8px;min-width:80px;">
-                <div class="progress-bar bg-{{ 'success' if t.status == 'conquered' else 'warning' }}"
-                     style="width:{{ t.hits_pct }}%"></div>
-              </div>
-              <small class="text-nowrap">{{ t.hits_done }}/{{ t.hits_needed }}</small>
-            </div>
-            {% endif %}
-          </td>
-
-          <!-- Lealdade -->
-          <td>
-            {% if t.status == 'conquered' %}
-              <span class="badge bg-success"
-                    title="{% if t.confirmed_by == 'noble_report' %}Confirmada pelo relatório do nosso nobre (lealdade chegou a zero){% else %}Confirmada pelo cache de aldeias: o dono é você{% endif %}">
-                Conquistada &#10003;
-              </span>
-            {% elif t.status == 'assumed_done' %}
-              {# Nao e conquista: e a aritmetica do bot tendo chegado a zero sem
-                 nenhuma prova. Ate 2026-08-13 caia no mesmo verde de cima. #}
-              <span class="badge bg-warning text-dark"
-                    title="{{ t.assumed_reason or 'Sem confirmação de posse' }}">
-                Sem confirmação
-              </span>
-              <small class="text-warning d-block mt-1">Verifique no jogo se a aldeia é sua</small>
-            {% elif t.status == 'lost' %}
-              <span class="badge bg-danger"
-                    title="Outro jogador conquistou esta bárbara antes de nós. Os nobres já enviados não voltam.">
-                Tomada pelo jogador {{ t.lost_to_owner or '?' }}
-              </span>
-            {% elif t.status == 'complete' %}
-              {# Registro anterior a separacao conquered/assumed_done: nao da
-                 para saber se foi prova ou palpite, entao nao leva verde. #}
-              <span class="badge bg-secondary" title="Registro antigo, anterior à separação entre conquista confirmada e estimativa">
-                Concluída (registro antigo)
-              </span>
-            {% elif t.status == 'manual' %}
-              <span class="badge bg-primary">Na fila desde {{ t.queued_at_fmt }}</span>
-            {% elif t.status == 'invalid' %}
-              <span class="badge bg-secondary" title="{{ t.invalid_reason }}">{{ t.invalid_reason or 'Inválido' }}</span>
-            {% else %}
-              <div class="d-flex align-items-center gap-2">
-                <div class="progress flex-grow-1" style="height:10px;min-width:90px;">
-                  <div class="progress-bar bg-{{ t.loyalty_color }}"
-                       style="width:{{ t.loyalty_now }}%"
-                       title="{{ t.loyalty_now }}%"></div>
-                </div>
-                <small class="fw-bold text-{{ t.loyalty_color }} text-nowrap">
-                  {{ t.loyalty_now }}
-                </small>
-                {% if t.loyalty_source == 'report' %}
-                  <span title="Lealdade confirmada por relatório de nobre" style="cursor:default;font-size:0.9rem;">&#128202;</span>
-                {% elif t.loyalty_source == 'ownership' %}
-                  <span title="Aldeia confirmada como sua" style="cursor:default;font-size:0.9rem;">&#127984;</span>
-                {% elif t.loyalty_best is not none %}
-                  {# Cada nobre remove um sorteio dentro da faixa do mundo, então
-                     um número único aqui sugeriria precisão que a mecânica não
-                     tem. O valor exibido é o pior caso. #}
-                  <small class="text-muted text-nowrap">a {{ t.loyalty_best }}</small>
-                  <span style="cursor:default;opacity:0.6;font-size:0.9rem;"
-                        title="Estimativa, sem relatório de nobre. Cada nobre remove entre {{ t.loyalty_drop_range[0] }} e {{ t.loyalty_drop_range[1] }} de lealdade (sorteio), então o real está entre {{ t.loyalty_now }} e {{ t.loyalty_best }}. O número em destaque é o pior caso.">&#8776;</span>
-                {% else %}
-                  <span title="Lealdade estimada (sem relatório de nobre)" style="cursor:default;opacity:0.5;font-size:0.9rem;">&#8776;</span>
-                {% endif %}
-              </div>
-              {% if t.loyalty_now <= 10 %}
-                <small class="text-danger d-block mt-1">⚠ Risco de regen alto!</small>
-              {% endif %}
-            {% endif %}
-          </td>
-
-          <!-- Último hit -->
-          <td>
-            <small class="text-muted">{{ t.last_hit_fmt }}</small>
-          </td>
-
-          <!-- Ações -->
-          <td>
-            {% if t.status in ('manual', 'invalid') %}
-            <form method="post" onsubmit="return confirm('Cancelar alvo manual {{ t.target_name }}?');" class="d-inline">
-              <input type="hidden" name="action" value="manual_cancel">
-              <input type="hidden" name="target_id" value="{{ t.target_id }}">
-              <button type="submit" class="btn btn-sm btn-outline-danger">Cancelar</button>
-            </form>
-            {% else %}
-            <form method="post" onsubmit="return confirm('Limpar o cache do alvo {{ t.target_name }}? Use apenas se você cancelou o noble train manualmente no jogo -- isso só apaga o acompanhamento do bot, não desfaz nada em jogo. O alvo volta a ficar disponível para seleção automática.');" class="d-inline">
-              <input type="hidden" name="action" value="force_clear">
-              <input type="hidden" name="target_id" value="{{ t.target_id }}">
-              <button type="submit" class="btn btn-sm btn-outline-secondary">Limpar</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Legenda de lealdade -->
-  <div class="mt-2 mb-4">
-    <small class="text-muted">
-      Lealdade: 
-      <span class="badge bg-success">Baixa (≤30%)</span>
-      <span class="badge bg-warning text-dark ms-1">Média (31–70%)</span>
-      <span class="badge bg-danger ms-1">Alta (&gt;70%)</span>
-      &nbsp;|
-      &#128202; real (relatório) &nbsp;
-      &#127984; posse confirmada &nbsp;
-      &#8776; estimada
-    </small>
-  </div>
-
-  {% endif %}
-</div>
-
-<script>
-(function () {
-  const statusSel  = document.getElementById('filter-status');
-  const villageSel = document.getElementById('filter-village');
-
-  function applyFilters() {
-    const statusVal  = statusSel.value;
-    const villageVal = villageSel.value;
-    document.querySelectorAll('.conquest-row').forEach(function (row) {
-      const matchStatus  = !statusVal  || row.dataset.status  === statusVal;
-      const matchVillage = !villageVal || row.dataset.village === villageVal;
-      row.style.display  = (matchStatus && matchVillage) ? '' : 'none';
-    });
-  }
-
-  statusSel.addEventListener('change', applyFilters);
-  villageSel.addEventListener('change', applyFilters);
-})();
-</script>
+<dialog class="twb-confirm-dialog" id="conquest-clear-dialog" aria-labelledby="conquest-clear-title" aria-describedby="conquest-clear-description"><form method="dialog"><div class="twb-confirm-dialog-body"><span class="twb-status twb-status--danger">Limpeza de acompanhamento</span><h2 id="conquest-clear-title">Excluir este registro?</h2><p id="conquest-clear-description">Você vai remover o acompanhamento de <strong id="conquest-clear-target">alvo não informado</strong>, com origem <strong id="conquest-clear-source">não informada</strong> e estado <strong id="conquest-clear-state">desconhecido</strong>.</p><div class="twb-inline-alert twb-inline-alert--danger"><strong>Isso não cancela comandos no jogo.</strong> Nobres e escoltas já enviados continuam em movimento. O alvo volta a ficar disponível para seleção automática; repetir pode duplicar trem ou nobre.</div></div><div class="twb-confirm-dialog-actions"><button type="submit" class="btn btn-outline-secondary" value="cancel">Cancelar</button><button type="button" class="btn btn-danger" id="conquest-clear-confirm">Excluir acompanhamento</button></div></form></dialog>
 {% endblock %}
+
+{% block scripts %}<script>
+(function () {
+  'use strict';
+  function absolute(ts) { return new Date(ts * 1000).toLocaleString('pt-BR'); }
+  function relative(ts) { var delta = Math.round(ts - Date.now() / 1000); var value = Math.abs(delta); var h = Math.floor(value / 3600); var m = Math.floor((value % 3600) / 60); return delta >= 0 ? 'em ' + h + 'h ' + m + 'min' : 'há ' + h + 'h ' + m + 'min'; }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-arrival-at], [data-absolute-at]'), function (el) { var ts = Number(el.getAttribute('data-arrival-at') || el.getAttribute('data-absolute-at')); if (!ts) return; el.textContent = absolute(ts); el.title = 'Timestamp Unix fornecido pelo backend · timezone não nomeado'; });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-flight-state]'), function (el) { var ts = Number(el.getAttribute('data-flight-state')); if (!ts) return; if (ts > Date.now() / 1000) el.textContent = 'Há ao menos uma chegada prevista no futuro (' + relative(ts) + '); o número de nobres em voo não é exposto.'; else el.textContent = 'A última previsão passou ' + relative(ts) + '; isso não prova chegada nem impacto.'; });
+  var manualForm = document.getElementById('conquest-manual-form'); var manualMessage = document.getElementById('conquest-manual-message'); if (manualForm) manualForm.addEventListener('submit', function (event) { if (!manualForm.checkValidity()) { event.preventDefault(); manualForm.reportValidity(); manualMessage.textContent = 'Informe um ID ou coordenada antes de registrar.'; return; } manualForm.querySelector('button[type="submit"]').disabled = true; manualMessage.textContent = 'Solicitação enviada. Nenhuma origem ou ataque está confirmado.'; });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-cancel-manual]'), function (form) { form.addEventListener('submit', function (event) { var target = form.getAttribute('data-target-name') || ('#' + form.getAttribute('data-target-id')); if (!window.confirm('Remover ' + target + ' da fila manual? Isto apaga apenas o registro ainda não reivindicado; nenhum comando no jogo é cancelado.')) { event.preventDefault(); return; } form.querySelector('button[type="submit"]').disabled = true; var live = form.closest('.twb-operation-card').querySelector('.twb-sr-live'); if (live) live.textContent = 'Solicitação de remoção enviada.'; }); });
+  var dialog = document.getElementById('conquest-clear-dialog'); var confirmButton = document.getElementById('conquest-clear-confirm'); var pending = null;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-clear-conquest]'), function (form) { form.addEventListener('submit', function (event) { if (form.getAttribute('data-confirmed') === 'true') { form.querySelector('button[type="submit"]').disabled = true; var live = form.closest('.twb-operation-card').querySelector('.twb-sr-live'); if (live) live.textContent = 'Solicitação de limpeza enviada. Efeitos militares continuam fora deste acompanhamento.'; return; } event.preventDefault(); pending = form; document.getElementById('conquest-clear-target').textContent = (form.getAttribute('data-target-name') || 'Alvo') + ' (#' + (form.getAttribute('data-target-id') || '?') + ')'; document.getElementById('conquest-clear-source').textContent = '#' + (form.getAttribute('data-source-id') || 'não informada'); document.getElementById('conquest-clear-state').textContent = form.getAttribute('data-operation-state') || 'desconhecido'; dialog.showModal(); }); });
+  if (confirmButton) confirmButton.addEventListener('click', function () { if (!pending) return; pending.setAttribute('data-confirmed', 'true'); dialog.close(); pending.requestSubmit(); });
+  if (dialog) {
+    dialog.addEventListener('keydown', function (event) { if (event.key === 'Escape') { event.preventDefault(); dialog.close('cancel'); pending = null; } });
+    dialog.addEventListener('cancel', function () { pending = null; });
+    dialog.addEventListener('close', function () { if (dialog.returnValue === 'cancel') pending = null; });
+  }
+})();
+</script>{% endblock %}

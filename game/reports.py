@@ -18,7 +18,7 @@ from core.filemanager import FileManager
 # (alvo ficava travado para sempre em "pending_scout"), a estimativa de
 # lealdade real via relatorio (game/attack.py::_get_real_loyalty) e o
 # "drenar recursos" do farm (game/reports.py::has_resources_left). Ver
-# docs/backlog.md para o registro completo do diagnostico.
+# docs/backend.md para o registro completo do diagnostico.
 PT_MONTH_ABBR = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
     "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,

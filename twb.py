@@ -137,7 +137,7 @@ class TWB:
         # main() instancia TWB até 3 vezes (retry após crash) e a lista de
         # classe sobreviveria entre as tentativas, fazendo cada aldeia real
         # ser processada em dobro por ciclo. Ver P0-1 em
-        # docs/auditoria_codigo_2026-08-08.md
+        # docs/backend.md
         self.villages = []
         self.found_villages = []
 
@@ -281,7 +281,7 @@ class TWB:
         Existe porque a limpeza e destrutiva e irreversivel no config, e seu
         unico insumo e um parse que devolve lista vazia em silencio quando a
         pagina nao e a esperada. Ver o incidente de 2026-08-22 em
-        docs/backlog.md.
+        docs/backend.md.
 
         Duas recusas, ambas baseadas no mesmo fato do jogo: uma conta ativa
         sempre tem pelo menos uma aldeia, senao o jogador foi eliminado e nao
@@ -638,7 +638,7 @@ class TWB:
                 # single cycle -- including the first one after startup.
                 # This used to be built only at the tail of this loop, after
                 # farm had already been sent and after the inter-cycle sleep;
-                # see docs/features_log.md for the full writeup.
+                # see docs/backend.md for the full writeup.
                 managed_villages_dict = {
                     v.village_id: v
                     for v in self.villages
@@ -916,7 +916,7 @@ def main():
             # erro em manual_config) deixava t.wrapper=None e o report abaixo
             # levantava AttributeError DENTRO do except -- derrubando o loop
             # de 3 tentativas e mascarando a exceção real.
-            # Ver P0-3 em docs/auditoria_codigo_2026-08-08.md
+            # Ver P0-3 em docs/backend.md
             try:
                 if t.wrapper is not None and getattr(t.wrapper, "reporter", None):
                     t.wrapper.reporter.report(0, "TWB_EXCEPTION", str(e))

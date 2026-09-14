@@ -4,7 +4,7 @@ Feature 25 (fase 1) — leitura do inventário (Perfil > Inventário).
 Somente leitura: nenhum item é ativado, consumido ou presenteado aqui — só
 extração do catálogo e das quantidades para exibição no webmanager. A política
 de "qual boost ativar e quando" é a fase 2 e ainda não tem desenho
-(ver docs/backlog.md, Feature 25).
+(ver docs/backend.md, Feature 25).
 
 ⚠️ De onde vem o dado, e por que são DUAS requisições.
 

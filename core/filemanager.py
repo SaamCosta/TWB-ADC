@@ -149,7 +149,7 @@ class FileManager:
         original via os.replace(). Antes, json.dump() truncava e reescrevia o
         arquivo in-place, deixando uma janela em que um leitor externo enxergava
         JSON parcial -- o webmanager roda como processo separado e relê o cache
-        inteiro a cada request. Ver P0-4 em docs/auditoria_codigo_2026-08-08.md
+        inteiro a cada request. Ver P0-4 em docs/backend.md
 
         O sufixo com PID evita que duas escritas simultâneas (bot + webmanager,
         ou duas instâncias do bot) colidam no mesmo temporário. O nome termina

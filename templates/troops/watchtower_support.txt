@@ -9,11 +9,11 @@
     "building": "smith",
     "level": 15,
     "upgrades": {
-      "heavy": 1
+      "spy": 1
     },
     "build": {
       "stable": {
-        "heavy": 150
+        "spy": 440
       }
     },
     "farm": []
@@ -22,11 +22,11 @@
     "building": "watchtower",
     "level": 10,
     "upgrades": {
-      "heavy": 1
+      "spy": 1
     },
     "build": {
       "stable": {
-        "heavy": 500
+        "spy": 1500
       }
     },
     "farm": []
@@ -35,11 +35,11 @@
     "building": "watchtower",
     "level": 20,
     "upgrades": {
-      "heavy": 1
+      "spy": 1
     },
     "build": {
       "stable": {
-        "heavy": 1350
+        "spy": 4000
       }
     },
     "farm": []

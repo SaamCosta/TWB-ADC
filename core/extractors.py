@@ -2,6 +2,7 @@
 File used for data extraction
 """
 
+import html
 import json
 import re
 import time
@@ -472,6 +473,46 @@ class Extractor:
         return None
 
     @staticmethod
+    def incoming_command_type(block):
+        """Classifica uma linha do widget de comandos recebidos.
+
+        O jogo usa a mesma classe ``no_ignored_command`` para ataques e
+        apoios.  O primeiro tooltip associado ao ``data-command-id`` traz o
+        tipo visivel (por exemplo ``Ataque`` ou ``Apoio``); alguns temas usam
+        tambem o nome do icone no ``src``.  Tipo desconhecido fica como
+        ``unknown`` para o DefenceManager manter o fallback conservador.
+        """
+        if not isinstance(block, str):
+            return "unknown"
+
+        candidates = []
+        for tag in re.findall(r"<(?:span|img)\b[^>]*>", block, re.I):
+            lowered = tag.lower()
+            if "data-command-id" in lowered or "graphic/command/" in lowered:
+                for attribute in ("data-title", "title"):
+                    title = re.search(
+                        rf'{attribute}=["\']([^"\']*)["\']', tag, re.I
+                    )
+                    if title and title.group(1).strip():
+                        candidates.append(title.group(1))
+                src = re.search(r'src=["\']([^"\']*)["\']', tag, re.I)
+                if src:
+                    candidates.append(src.group(1))
+
+        # O tooltip real e a fonte principal. O nome do arquivo e a alternativa
+        # independente de idioma para temas que nao incluem title.
+        normalized = " ".join(html.unescape(value).casefold() for value in candidates)
+        if re.search(
+                r"(?:^|[\s/_-])(apoio|suporte|support|supports|ondersteun|unterstutz|soutien)"
+                r"(?:[\s/_.-]|$)", normalized):
+            return "support"
+        if re.search(
+                r"(?:^|[\s/_-])(ataque|attack|aanval|angriff|attaque)"
+                r"(?:[\s/_.-]|$)", normalized):
+            return "attack"
+        return "unknown"
+
+    @staticmethod
     def incoming_commands(res):
         """
         Feature 16: extrai comandos recebidos (não ignorados) da página de
@@ -498,7 +539,7 @@ class Extractor:
         isso não casava linha nenhuma: o atributo mora em spans aninhados,
         seis níveis abaixo. O regex tinha sido inferido de padrões de outras
         telas e nunca conferido contra um ataque real -- limitação que estava
-        registrada em docs/backlog.md e se confirmou em campo. A falha era
+        registrada em docs/backend.md e se confirmou em campo. A falha era
         silenciosa e cara: lista vazia é lida por _is_urgent() como "urgente",
         então o bot evacuava em **todo** ataque, que é precisamente o que a
         Feature 16 existia para evitar.
@@ -514,7 +555,8 @@ class Extractor:
             caso do Paladino em StatuePage, **vem preenchido pelo servidor**
             no HTML cru -- conferido na captura de 2026-08-22.
 
-        Retorna lista de dicts {command_id, eta_seconds, origin, attacker}.
+        Retorna lista de dicts
+        {command_id, eta_seconds, origin, attacker, command_type}.
         `attacker` é o nome do jogador e vem None nesta tela: a linha traz o
         nome da *aldeia* de origem (devolvido em `origin`), não o do dono.
         Lista vazia se nada casou -- chamadores devem tratar isso como
@@ -560,6 +602,7 @@ class Extractor:
                 "eta_seconds": max(0, eta_seconds),
                 "origin": origin_match.group(1).strip() if origin_match else None,
                 "attacker": attacker_match.group(1).strip() if attacker_match else None,
+                "command_type": Extractor.incoming_command_type(block),
             })
         return commands
 

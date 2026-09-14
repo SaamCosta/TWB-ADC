@@ -232,6 +232,10 @@ class Village:
         self.def_man.manage_flags_enabled = self.get_config(
             section="world", parameter="flags_enabled", default=False
         )
+        self.def_man.village_position = (
+            self.game_data.get("village", {}).get("x"),
+            self.game_data.get("village", {}).get("y"),
+        )
         # Política de bandeira fora de combate. A academia decide qual das duas
         # preferências vale: a moeda é da conta inteira, então reduzir o custo
         # de cunhagem onde se cunha rende mais que produção local.
@@ -1328,7 +1332,7 @@ class Village:
         Returns (bool, reason) -- reason is a human string for the caller to log.
 
         On min_spacing: the default of 16 comes from simulating tower placement
-        against the real br143 map around the account (see docs/watchtower.md).
+        against the real br143 map around the account (see docs/backend.md).
         A tower's radius at level 20 is 15.0 fields, so spacing ~= radius means
         "a conquered village no tower can see becomes a tower itself". Larger
         spacing collapses the warning time at the seams: at 26 fields (the
@@ -1614,6 +1618,9 @@ class Village:
             "command_id": self.def_man.incoming_command_id,
             "urgency_threshold_sec": self.def_man.urgency_threshold_sec,
             "urgent": self.def_man._is_urgent(self.def_man.incoming_eta) if self.def_man.under_attack else False,
+            "rows_seen": self.def_man.incoming_rows_seen,
+            "attack_rows_seen": self.def_man.incoming_attack_rows_seen,
+            "support_rows_seen": self.def_man.incoming_support_rows_seen,
         }
 
         village_entry = {

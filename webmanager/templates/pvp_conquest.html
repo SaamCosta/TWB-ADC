@@ -1,343 +1,101 @@
 {% extends "main.html" %}
 {% block title %}Conquista PvP{% endblock %}
 
+{% macro identity(t) %}
+<div class="twb-operation-identity">
+  <div><span class="twb-route-label">Alvo</span><strong>{{ t.target_name | default('Aldeia-alvo', true) }}</strong><span class="twb-technical-id">#{{ t.target_id }}</span></div>
+  <div><span class="twb-route-label">Chegada desejada</span>{% if t.arrival_str %}<time class="twb-time">{{ t.arrival_str }}</time>{% else %}<span class="twb-status twb-status--unknown">Não disponível</span>{% endif %}</div>
+</div>
+{% endmacro %}
+
+{% macro sources(t) %}
+<dl class="twb-source-grid">
+  <div><dt>Origem de limpeza</dt><dd>{% if t.clear_village_id %}<strong class="twb-technical-id">#{{ t.clear_village_id }}</strong>{% if t.clear_village_name %} · {{ t.clear_village_name }}{% endif %}{% else %}<span class="twb-status twb-status--unknown">Ainda não selecionada</span>{% endif %}</dd></div>
+  <div><dt>Ataques de nobres</dt><dd>{% if t.noble_villages %}<div class="twb-participant-list">{% for vid in t.noble_villages %}<span><span class="twb-technical-id">#{{ vid }}</span><small>1 ataque com nobre</small></span>{% endfor %}</div>{% else %}<span class="twb-status twb-status--unknown">Origens ainda não selecionadas</span>{% endif %}</dd></div>
+  <div><dt>Reserva operacional</dt><dd>{% if t.farm_suspended_villages %}<span class="twb-status twb-status--warning">Gasto rotineiro suspenso</span><div class="twb-troop-composition">{% for vid in t.farm_suspended_villages %}<span>aldeia <strong class="twb-technical-id">#{{ vid }}</strong></span>{% endfor %}</div><small>Farm, coleta e conquista bárbara ficam suspensos enquanto estas fontes permanecem bloqueadas.</small>{% else %}<span class="twb-status twb-status--unknown">Reserva não exposta</span><small>Ausência desta lista não prova disponibilidade de tropas.</small>{% endif %}</dd></div>
+</dl>
+{% endmacro %}
+
+{% macro evidence(t) %}
+<div class="twb-evidence-grid">
+  <section class="twb-evidence-card" aria-label="Evidência de scout">
+    <span class="twb-route-label">Scout</span>
+    {% if t.last_simulation and not t.last_simulation.overridden %}<span class="twb-status twb-status--info">Relatório válido usado</span><p>A simulação registrada só é produzida com relatório dentro da janela configurada. Horário e idade do relatório não chegam à página.</p>
+    {% elif t.scout_override %}<span class="twb-status twb-status--danger">Autorizado sem scout válido</span><p>O override permite avançar sem inteligência atual; não confirma defesa, muralha ou segurança.</p>
+    {% elif t.status == 'pending_sim' %}<span class="twb-status twb-status--warning">Aguardando relatório ou simulação</span><p>{% if t.scout_village_id %}Uma tentativa de scout foi marcada a partir de <span class="twb-technical-id">#{{ t.scout_village_id }}</span>.{% else %}O cache não informa se o scout foi solicitado, reutilizado ou aceito pelo jogo.{% endif %} Ainda não há simulação registrada.</p>
+    {% else %}<span class="twb-status twb-status--unknown">Scout válido não comprovado</span><p>{% if t.scout_village_id %}Existe origem de scout registrada (<span class="twb-technical-id">#{{ t.scout_village_id }}</span>), mas não relatório reconciliado nesta leitura.{% else %}Nenhum relatório válido foi reconciliado em uma simulação exposta.{% endif %}</p>{% endif %}
+  </section>
+  <section class="twb-evidence-card" aria-label="Evidência de simulação">
+    <span class="twb-route-label">Simulação</span>
+    {% if t.last_simulation and t.last_simulation.overridden %}<span class="twb-status twb-status--unknown">Viabilidade não avaliada</span><p>Registro criado pelo caminho de override. Poder ofensivo pode estar presente, mas baixas, defesa e muralha não foram simuladas.</p>{% if t.last_simulation.att_power is defined %}<div class="twb-simulation-metrics"><span>Poder calculado <strong class="twb-number">{{ t.last_simulation.att_power }}</strong></span></div>{% endif %}
+    {% elif t.last_simulation %}<span class="twb-status {% if t.last_simulation.viable is defined and t.last_simulation.viable %}twb-status--info{% elif t.last_simulation.viable is defined %}twb-status--danger{% else %}twb-status--unknown{% endif %}">{% if t.last_simulation.viable is defined and t.last_simulation.viable %}Critérios do simulador atendidos{% elif t.last_simulation.viable is defined %}Critérios do simulador não atendidos{% else %}Resultado parcial{% endif %}</span><div class="twb-simulation-metrics"><span>Poder ofensivo <strong class="twb-number">{{ t.last_simulation.att_power | default('não disponível', true) }}</strong></span><span>Baixas do ataque <strong class="twb-number">{{ t.last_simulation.att_losses | default('?', true) }} / {{ t.last_simulation.att_total | default('?', true) }}</strong></span><span>Baixas da defesa <strong class="twb-number">{{ t.last_simulation.def_losses | default('?', true) }} / {{ t.last_simulation.def_total | default('?', true) }}</strong></span><span>Muralha <strong class="twb-number">{{ t.last_simulation.wall_before | default('?', true) }} → {{ t.last_simulation.wall_after | default('?', true) }}</strong></span></div><p>Avaliação dos dados disponíveis, não garantia militar. Inputs completos e timestamp não são expostos.</p>
+    {% else %}<span class="twb-status twb-status--unknown">Sem simulação registrada</span><p>Não há resultado, inputs nem timestamp disponíveis no contrato desta operação.</p>{% endif %}
+  </section>
+</div>
+{% endmacro %}
+
+{% macro sequence(t) %}
+<ol class="twb-status-sequence twb-pvp-sequence">
+  <li class="is-known">Operação PvP registrada</li>
+  <li class="{% if t.last_simulation and not t.last_simulation.overridden %}is-known{% endif %}">{% if t.last_simulation and not t.last_simulation.overridden %}Scout reconciliado por relatório{% elif t.scout_override %}Scout substituído por autorização{% else %}Scout sem evidência reconciliada{% endif %}</li>
+  <li class="{% if t.last_simulation and not t.last_simulation.overridden %}is-known{% endif %}">{% if t.last_simulation and not t.last_simulation.overridden %}Simulação registrada{% else %}Simulação não comprovada{% endif %}</li>
+  <li class="{% if t.status in ['scheduled','complete'] or (t.status == 'failed' and t.fail_reason in ['hunter_schedule_failed','train_arrived_no_conquest','train_outcome_unknown']) %}is-known{% endif %}">{% if t.status in ['scheduled','complete'] or (t.status == 'failed' and t.fail_reason in ['hunter_schedule_failed','train_arrived_no_conquest','train_outcome_unknown']) %}Schedules escritos no Hunter{% else %}Agendamento não comprovado{% endif %}</li>
+  <li>{% if t.status == 'complete' %}Detalhes de despacho não expostos{% else %}Despacho e aceitação não reconciliados{% endif %}</li>
+  <li class="{% if t.status == 'complete' %}is-known{% endif %}">{% if t.status == 'complete' %}Posse confirmada no cache{% else %}Impacto, posse e resultado desconhecidos{% endif %}</li>
+</ol>
+{% endmacro %}
+
 {% block content %}
-<style>
-  .sim-bar { height: 8px; border-radius: 4px; }
-  .unit-chip { display:inline-flex; align-items:center; gap:3px; background:#f8f0d8;
-               border:1px solid #c8a96e; border-radius:3px; padding:1px 5px;
-               font-size:0.75rem; margin:1px; }
-  .status-timeline { display:flex; gap:0; }
-  .status-step { flex:1; text-align:center; font-size:0.7rem; padding:3px 0;
-                 border-bottom:3px solid #dee2e6; color:#aaa; }
-  .status-step.done { border-color:#28a745; color:#28a745; font-weight:600; }
-  .status-step.active { border-color:#d4a843; color:#2c1810; font-weight:700; }
-  .status-step.failed { border-color:#dc3545; color:#dc3545; font-weight:600; }
-  .sim-block { background:#fdfaf3; border:1px solid #e8d9a0; border-radius:4px; padding:8px 12px; font-size:0.82rem; }
-</style>
+{% set ns = namespace(preparing=0, scheduled=0, failed=0, complete=0, unknown=0, partial=0) %}
+{% for t in targets %}{% if t.status in ['pending_scout','pending_sim'] %}{% set ns.preparing = ns.preparing + 1 %}{% elif t.status == 'scheduled' %}{% set ns.scheduled = ns.scheduled + 1 %}{% elif t.status == 'failed' %}{% set ns.failed = ns.failed + 1 %}{% elif t.status == 'complete' %}{% set ns.complete = ns.complete + 1 %}{% else %}{% set ns.unknown = ns.unknown + 1 %}{% endif %}{% if not t.target_id or not t.arrival_ts or (not t.clear_village_id and t.status != 'failed') %}{% set ns.partial = ns.partial + 1 %}{% endif %}{% endfor %}
 
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h4 class="mb-0" style="color:#2c1810;">⚔ Conquista PvP</h4>
-  <div class="d-flex align-items-center">
-    <button id="btn-toggle-pvp"
-            class="btn btn-sm {% if enabled %}btn-success{% else %}btn-danger{% endif %} mr-3"
-            onclick="togglePvp()">
-      {% if enabled %}Ativado{% else %}Desativado{% endif %}
-    </button>
-    <span class="badge bg-secondary mr-2">{{ targets | selectattr('status','equalto','pending_scout') | list | length }} aguardando scout</span>
-    <span class="badge bg-warning text-dark mr-2">{{ targets | selectattr('status','equalto','pending_sim') | list | length }} aguardando sim</span>
-    <span class="badge bg-primary mr-2">{{ targets | selectattr('status','equalto','scheduled') | list | length }} agendados</span>
-    <span class="badge bg-success mr-2">{{ targets | selectattr('status','equalto','complete') | list | length }} completos</span>
-    <button class="btn btn-primary btn-sm ml-2" data-toggle="modal" data-target="#modal-new-target">
-      + Novo Alvo
-    </button>
-  </div>
-</div>
+<header class="twb-page-header"><div><p class="twb-eyebrow">Operações · inteligência, autorização e agenda</p><h1 class="twb-page-title">Conquista PvP</h1><p class="twb-page-summary">Acompanhe a preparação de uma conquista contra jogador sem confundir scout solicitado, relatório disponível, simulação, schedule Hunter, despacho e posse.</p></div><div class="twb-page-actions"><a class="btn btn-outline-secondary" href="/hunter">Abrir Hunter</a><a class="btn btn-primary" href="#nova-operacao">Nova operação</a></div></header>
 
-{% if not enabled %}
-<div class="alert alert-warning mb-3">
-  <strong>PvP Conquest desativado.</strong> Ative acima para que o bot processe os alvos automaticamente.
-</div>
-{% endif %}
+<section class="twb-health-strip" aria-label="Estado global da Conquista PvP"><div class="twb-health-item"><span class="twb-health-label">Automação PvP</span><span class="twb-health-value"><span id="pvp-enabled-status" class="twb-status {% if enabled %}twb-status--info{% else %}twb-status--muted{% endif %}">{% if enabled %}Habilitada{% else %}Desabilitada{% endif %}</span></span><span class="twb-health-meta">Configuração global; não confirma que o bot esteja executando.</span></div><div class="twb-health-item"><span class="twb-health-label">Operações disponíveis</span><span class="twb-health-value">{{ targets | length }}</span><span class="twb-health-meta">{{ ns.preparing }} em preparação · {{ ns.scheduled }} no Hunter · {{ ns.failed + ns.complete }} terminais</span></div><div class="twb-health-item"><span class="twb-health-label">Próxima saída real</span><span class="twb-health-value" id="pvp-next-deadline"><span class="twb-status twb-status--unknown">Não disponível</span></span><span class="twb-health-meta">Menor timestamp Unix futuro do preflight; sem timezone nomeado.</span></div></section>
 
-{% if not targets %}
-<div class="alert" style="background:#f8f0d8;border-color:#c8a96e;color:#5a3e1b;">
-  <strong>Nenhum alvo registrado.</strong>
-  Clique em <strong>+ Novo Alvo</strong> para definir uma aldeia inimiga a conquistar.
-  Os dados ficam em <code>cache/pvp_conquest/*.json</code>.
-</div>
-{% else %}
+{% if not enabled %}<div class="twb-inline-alert twb-inline-alert--warning mb-3"><strong>Sistema desabilitado.</strong> Os registros continuam visíveis, mas o manager não avança scout, simulação, agendamento ou reconciliação.</div>{% endif %}
 
-{% for t in targets %}
-<div class="card mb-3" style="border-color:{% if t.status == 'complete' %}#28a745{% elif t.status == 'failed' %}#dc3545{% elif t.status == 'scheduled' %}#2471a3{% else %}#c8a96e{% endif %};">
-  <div class="card-body pb-2">
+<section class="twb-panel {% if ns.failed %}twb-panel--exception{% elif ns.unknown or ns.partial %}twb-panel--unknown{% endif %}" aria-labelledby="titulo-atencao-pvp"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-atencao-pvp">Operações que exigem atenção</h2><span class="twb-status {% if ns.failed %}twb-status--danger{% elif ns.unknown or ns.partial %}twb-status--unknown{% else %}twb-status--muted{% endif %}">{% if ns.failed %}Falha registrada{% elif ns.unknown or ns.partial %}Dados incompletos{% else %}Sem exceções conhecidas{% endif %}</span></div><div class="twb-panel-body">
+{% if not targets %}<div class="twb-empty"><strong>Nenhuma operação disponível</strong>O leitor não distingue diretório vazio, arquivos inválidos ignorados e ausência de registros. Isso não confirma ausência de atividade no jogo.</div>{% else %}{% set attention = namespace(count=0) %}<ul class="twb-exception-list">{% for t in targets %}{% if t.status == 'failed' or t.status not in ['pending_scout','pending_sim','scheduled','complete'] or not t.arrival_ts or (not t.clear_village_id and t.status != 'failed') %}{% set attention.count = attention.count + 1 %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Alvo #{{ t.target_id | default('não informado', true) }}</strong><span>{% if t.status == 'failed' %}{{ t.fail_reason_label | default('Falha registrada sem motivo exposto.', true) }}{% if t.hunter_fail_reason %} Integração Hunter: {{ t.hunter_fail_reason }}.{% endif %}{% elif t.status not in ['pending_scout','pending_sim','scheduled','complete'] %}Status “{{ t.status }}” não pertence ao fluxo atual; trate como legado ou ambíguo.{% else %}Registro parcial: chegada ou origem de limpeza não está disponível.{% endif %}</span></div><a class="btn btn-outline-secondary btn-sm" href="/logs">Investigar</a></li>{% endif %}{% endfor %}</ul>{% if attention.count == 0 %}<div class="twb-empty"><strong>Nenhuma exceção nos campos expostos</strong>Frescor, aceite de comandos, impacto e resultado militar não chegam ao template.</div>{% endif %}{% endif %}</div></section>
 
-    <!-- Cabeçalho -->
-    <div class="d-flex justify-content-between align-items-start mb-2">
-      <div>
-        <h6 class="mb-0">
-          Alvo <span class="font-monospace">#{{ t.target_id }}</span>
-          {% if t.target_name %}<small class="text-muted ml-2">{{ t.target_name }}</small>{% endif %}
-        </h6>
-        <small class="text-muted">Chegada: {{ t.arrival_str }}</small>
-        {% if t.first_send_str %}
-          <small class="text-danger ml-2">— primeira saída: {{ t.first_send_str }}</small>
-        {% endif %}
-        {% if t.time_to_arrival is not none %}
-          {% if t.time_to_arrival > 0 %}
-            <small class="text-muted ml-2">— em {{ t.time_to_arrival_fmt }}</small>
-          {% else %}
-            <small class="text-danger ml-2">— passado</small>
-          {% endif %}
-        {% endif %}
-      </div>
-      <div class="d-flex align-items-center">
-        <span class="badge badge-{{ t.status_color }} mr-2">{{ t.status_label }}</span>
-        {% if t.status in ['pending_scout','pending_sim','failed'] %}
-        <form method="post" action="/pvp_conquest/delete" style="display:inline">
-          <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
-          <button type="submit" class="btn btn-outline-danger btn-sm"
-                  onclick="return confirm('Remover alvo {{ t.target_id }}?')">✕</button>
-        </form>
-        {% else %}
-        <form method="post" action="/pvp_conquest/delete" style="display:inline">
-          <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
-          <button type="submit" class="btn btn-outline-secondary btn-sm">Limpar</button>
-        </form>
-        {% endif %}
-      </div>
-    </div>
+<section class="twb-panel" aria-labelledby="titulo-deadlines-pvp"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-deadlines-pvp">Deadlines de saída</h2><span class="small text-muted">Preflight na confirmação do jogo · contagem estática</span></div><div class="twb-panel-body">{% set dns = namespace(count=0) %}<div class="twb-deadline-grid">{% for t in targets if t.status in ['pending_scout','pending_sim','scheduled'] %}{% if t.first_send_time or t.departure_deadlines %}{% set dns.count = dns.count + 1 %}<article class="twb-deadline-card"><div><span class="twb-route-label">Alvo e chegada desejada</span><strong class="twb-technical-id">#{{ t.target_id }}</strong>{% if t.arrival_str %}<time class="twb-time">{{ t.arrival_str }}</time>{% else %}<span class="twb-status twb-status--unknown">Chegada não disponível</span>{% endif %}</div><div><span class="twb-route-label">Primeira saída</span>{% if t.first_send_time %}<time class="twb-time" data-deadline-at="{{ t.first_send_time }}">{{ t.first_send_str }}</time><span class="twb-deadline-relative" data-deadline-relative="{{ t.first_send_time }}">Contagem indisponível</span>{% else %}<span class="twb-status twb-status--unknown">Não calculada</span>{% endif %}</div><div><span class="twb-route-label">Saídas individuais</span><div class="twb-data-list">{% for d in t.departure_deadlines %}{% if d.send_time is defined %}<span><span>{% if d.label == 'clear' %}Limpeza{% elif d.label == 'noble' %}Nobre{% else %}{{ d.label | default('Comando', true) }}{% endif %} · origem #{{ d.source_village_id | default('?', true) }}</span><time class="twb-time" data-departure-at="{{ d.send_time }}">{{ d.send_time }}</time></span>{% else %}<span><span>Comando</span><span class="twb-status twb-status--unknown">Timestamp ausente</span></span>{% endif %}{% else %}<span class="twb-status twb-status--unknown">Detalhes não disponíveis</span>{% endfor %}</div></div><p class="twb-evidence-detail">Horários derivados da duração obtida na confirmação do jogo. Não provam agendamento nem despacho.</p></article>{% endif %}{% endfor %}</div>{% if dns.count == 0 %}<div class="twb-empty"><strong>Nenhum deadline calculado disponível</strong>O preflight pode ainda não ter fontes, tropas, mapa ou duração suficientes. A chegada desejada não é horário de saída.</div>{% endif %}</div></section>
 
-    <!-- Timeline de status -->
-    <div class="status-timeline mb-3">
-      {% set steps = [('pending_scout','Scout'),('pending_sim','Simulação'),('scheduled','Agendado'),('complete','Conquistado')] %}
-      {% set status_order = {'pending_scout':0,'pending_sim':1,'scheduled':2,'complete':3,'failed':99} %}
-      {% for s_key, s_label in steps %}
-        {% set this_order = status_order[s_key] %}
-        {% set cur_order = status_order.get(t.status, 0) %}
-        {% if t.status == 'failed' and s_key == 'scheduled' %}
-          <div class="status-step failed">{{ s_label }} ✕</div>
-        {% elif this_order < cur_order %}
-          <div class="status-step done">{{ s_label }} ✓</div>
-        {% elif this_order == cur_order %}
-          <div class="status-step active">{{ s_label }}</div>
-        {% else %}
-          <div class="status-step">{{ s_label }}</div>
-        {% endif %}
-      {% endfor %}
-    </div>
+<section class="twb-panel" aria-labelledby="titulo-preparacao-pvp"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-preparacao-pvp">Operações em preparação</h2><span class="small text-muted">{{ ns.preparing }} registros em scout ou simulação</span></div>{% if ns.preparing == 0 %}<div class="twb-panel-body"><div class="twb-empty"><strong>Nenhuma operação em preparação</strong>Não há registros em <code>pending_scout</code> ou <code>pending_sim</code>.</div></div>{% else %}<div class="twb-operation-list">{% for t in targets if t.status in ['pending_scout','pending_sim'] %}<article class="twb-operation-card {% if not t.arrival_ts or not t.clear_village_id %}twb-operation-card--unknown{% endif %}"><header class="twb-operation-card-header">{{ identity(t) }}<span class="twb-status {% if t.status == 'pending_scout' %}twb-status--warning{% else %}twb-status--info{% endif %}">{% if t.status == 'pending_scout' %}Aguardando scout utilizável{% else %}Aguardando simulação{% endif %}</span></header><div class="twb-operation-card-body">{{ sources(t) }}{{ evidence(t) }}<div class="twb-operation-flow">{{ sequence(t) }}</div><div class="twb-operation-actions">
+<form method="post" action="/pvp_conquest/set_clear" class="twb-inline-form" data-single-submit><input type="hidden" name="target_id" value="{{ t.target_id }}"><div class="twb-form-field"><label for="clear-{{ loop.index }}">Origem de limpeza</label><select id="clear-{{ loop.index }}" name="clear_village_id" class="form-control"><option value="">Seleção automática</option>{% for vid in managed_villages %}<option value="{{ vid }}" {% if t.clear_village_id == vid %}selected{% endif %}>#{{ vid }}{% if managed_villages[vid] %} · {{ managed_villages[vid] }}{% endif %}</option>{% endfor %}</select></div><button type="submit" class="btn btn-outline-secondary">Persistir origem</button></form>
+{% if not t.scout_override %}<form method="post" action="/pvp_conquest/scout_override" data-override-form data-target-id="{{ t.target_id }}"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger twb-critical-action" {% if t.time_to_first_send is not none and t.time_to_first_send <= 0 %}disabled aria-describedby="override-expired-{{ loop.index }}"{% endif %}>Autorizar sem scout válido</button>{% if t.time_to_first_send is not none and t.time_to_first_send <= 0 %}<small id="override-expired-{{ loop.index }}">A primeira saída calculada venceu; o backend recusará o override.</small>{% else %}<small>Pode permitir schedules de ataques reais em ciclo posterior.</small>{% endif %}</form>{% endif %}
+<form method="post" action="/pvp_conquest/delete" data-delete-target data-target-id="{{ t.target_id }}" data-operation-state="{{ t.status }}"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger">Excluir operação</button></form></div><div class="twb-sr-live" role="status" aria-live="polite"></div></div></article>{% endfor %}</div>{% endif %}</section>
 
-    {# fail_reason so e gravado junto com status="failed" (game/pvp_conquest.py),
-       entao um alerta unico aqui cobre todos os motivos. Fica acima das colunas
-       de proposito: um alvo que falhou depois de uma simulacao "Viavel" mostra
-       o bloco de simulacao verde a direita, e o motivo da falha nao pode ficar
-       escondido embaixo dele. #}
-    {% if t.status == 'failed' and t.fail_reason %}
-    <div class="alert alert-danger py-2 px-3 mb-3 small">
-      <strong>Falhou:</strong> {{ t.fail_reason_label }}
-      {% if t.hunter_fail_reason %}
-        <span class="ml-1">({{ t.hunter_fail_reason }})</span>
-      {% endif %}
-    </div>
-    {% endif %}
+<section class="twb-panel" aria-labelledby="titulo-agendadas-pvp"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-agendadas-pvp">Operações agendadas no Hunter</h2><span class="small text-muted">{{ ns.scheduled }} registros com schedules criados</span></div>{% if ns.scheduled == 0 %}<div class="twb-panel-body"><div class="twb-empty"><strong>Nenhuma operação com schedule PvP ativo</strong>“Registrada” e “simulada” não significam schedules escritos no Hunter.</div></div>{% else %}<div class="twb-operation-list">{% for t in targets if t.status == 'scheduled' %}<article class="twb-operation-card"><header class="twb-operation-card-header">{{ identity(t) }}<span class="twb-status twb-status--warning">Schedules criados no Hunter</span></header><div class="twb-operation-card-body"><div class="twb-inline-alert twb-inline-alert--unknown mb-3"><strong>Resultado ainda aberto.</strong> O PvP registrou clear e train no Hunter. Isso não prova tentativa, aceitação, chegada, impacto ou conquista.</div>{{ sources(t) }}{{ evidence(t) }}<div class="twb-operation-flow">{{ sequence(t) }}</div><div class="twb-operation-actions"><a class="btn btn-outline-secondary" href="/hunter">Ver schedules no Hunter</a><form method="post" action="/pvp_conquest/delete" data-delete-target data-target-id="{{ t.target_id }}" data-operation-state="scheduled"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger">Excluir acompanhamento</button></form></div><div class="twb-sr-live" role="status" aria-live="polite"></div></div></article>{% endfor %}</div>{% endif %}</section>
 
-    {% if t.farm_suspended_villages %}
-    <div class="alert alert-warning py-2 px-3 mb-3 small">
-      <strong>Uso de tropas suspenso:</strong>
-      {% for vid in t.farm_suspended_villages %}
-        <span class="unit-chip">{{ vid }}</span>
-      {% endfor %}
-      <div class="mt-1">
-        Farm, coleta e conquista bárbara ficam pausados nessas aldeias até o
-        Hunter enviar os ataques ou registrar uma falha.
-      </div>
-    </div>
-    {% endif %}
+<section class="twb-panel" id="nova-operacao" aria-labelledby="titulo-nova-operacao"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-nova-operacao">Nova operação</h2><span class="twb-status twb-status--danger">Pode levar a ataques reais</span></div><div class="twb-panel-body"><div class="twb-inline-alert twb-inline-alert--warning mb-3"><strong>Cadastro preparatório com efeito posterior.</strong> Este POST registra alvo e chegada; não confirma scout, simulação ou agenda. Com os sistemas habilitados e o bot executando, o fluxo pode selecionar tropas, suspender farm e criar schedules reais.</div><form method="post" action="/pvp_conquest/add" id="pvp-add-form" novalidate><fieldset class="twb-form-section"><legend>Alvo e chegada desejada</legend><div class="twb-form-grid"><div class="form-group twb-form-field"><label for="pvp-target-id">ID da aldeia-alvo</label><input type="text" id="pvp-target-id" name="target_id" class="form-control" inputmode="numeric" autocomplete="off" required aria-describedby="pvp-target-help"><small id="pvp-target-help" class="form-text text-muted">Informe o ID aceito pelo servidor; coordenadas não substituem este campo.</small></div><div class="form-group twb-form-field"><label for="pvp-arrival-time">Chegada desejada dos nobres</label><input type="datetime-local" id="pvp-arrival-time" name="arrival_time" class="form-control twb-time" required aria-describedby="pvp-arrival-help"><small id="pvp-arrival-help" class="form-text text-muted">O Flask interpreta o valor no horário local do host. O contrato não informa timezone. A limpeza é configurada para chegar {{ pvp_cfg.arrival_buffer_seconds | default(2) }} s antes.</small></div></div></fieldset><fieldset class="twb-form-section"><legend>Seleção inicial de origem</legend><div class="form-group twb-form-field"><label for="pvp-clear-village">Origem de limpeza (opcional)</label><select id="pvp-clear-village" name="clear_village_id" class="form-control"><option value="">Seleção automática pelo manager</option>{% for vid in managed_villages %}<option value="{{ vid }}">#{{ vid }}{% if managed_villages[vid] %} · {{ managed_villages[vid] }}{% endif %}</option>{% endfor %}</select><small class="form-text text-muted">As origens dos nobres são escolhidas separadamente e podem repetir a mesma aldeia.</small></div></fieldset><div class="twb-form-actions"><button type="submit" class="btn btn-primary">Registrar operação PvP</button><span class="twb-sr-live" id="pvp-add-message" role="status" aria-live="polite"></span></div></form></div></section>
 
-    {% if t.scout_override %}
-    <div class="alert alert-danger py-2 px-3 mb-3 small">
-      <strong>Autorização para seguir sem scout ativada.</strong>
-      Se houver relatório válido, ele ainda será simulado; caso contrário, o
-      bot agendará sem validar defesa ou muralha. O horário de saída continua
-      obrigatório e ataques atrasados nunca serão enviados.
-    </div>
-    {% endif %}
+{% if ns.failed or ns.complete or ns.unknown %}<section class="twb-panel" aria-labelledby="titulo-historico-pvp"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-historico-pvp">Histórico e estados terminais</h2><span class="small text-muted">Falha, posse confirmada ou contrato ambíguo</span></div><div class="twb-operation-list">{% for t in targets if t.status not in ['pending_scout','pending_sim','scheduled'] %}<article class="twb-operation-card {% if t.status == 'failed' %}twb-operation-card--danger{% else %}twb-operation-card--unknown{% endif %}"><header class="twb-operation-card-header">{{ identity(t) }}<span class="twb-status {% if t.status == 'failed' %}twb-status--danger{% elif t.status == 'complete' %}twb-status--success{% else %}twb-status--unknown{% endif %}">{% if t.status == 'failed' %}Falha registrada{% elif t.status == 'complete' %}Posse confirmada{% else %}Estado “{{ t.status }}”{% endif %}</span></header><div class="twb-operation-card-body">{% if t.status == 'failed' %}<div class="twb-inline-alert twb-inline-alert--danger mb-3"><strong>Falha PvP:</strong> {{ t.fail_reason_label | default('Motivo não exposto.', true) }}{% if t.hunter_fail_reason %}<div><strong>Falha propagada pelo Hunter:</strong> <code>{{ t.hunter_fail_reason }}</code>. A interface não infere causa adicional.</div>{% endif %}</div>{% elif t.status == 'complete' %}<div class="twb-inline-alert mb-3"><strong>Posse observada no cache de aldeias.</strong> O dono coincide com o jogador local. Não há relatório militar nem prova de qual ataque causou a conquista.</div>{% else %}<div class="twb-inline-alert twb-inline-alert--unknown mb-3"><strong>Registro antigo ou ambíguo.</strong> O status não é produzido pelo fluxo atual.</div>{% endif %}{{ sources(t) }}{{ evidence(t) }}<div class="twb-operation-flow">{{ sequence(t) }}</div><div class="twb-operation-actions"><a class="btn btn-outline-secondary" href="/logs">Investigar nos logs</a><form method="post" action="/pvp_conquest/delete" data-delete-target data-target-id="{{ t.target_id }}" data-operation-state="{{ t.status }}"><input type="hidden" name="target_id" value="{{ t.target_id }}"><button type="submit" class="btn btn-outline-danger">Excluir registro</button></form></div><div class="twb-sr-live" role="status" aria-live="polite"></div></div></article>{% endfor %}</div></section>{% endif %}
 
-    <div class="row">
+<section class="twb-panel" aria-labelledby="titulo-controle-pvp"><div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-controle-pvp">Controle global</h2><span class="twb-status twb-status--warning">Altera configuração real</span></div><div class="twb-panel-body"><p>Habilitar permite processamento em ciclos posteriores. Desabilitar não apaga operações, schedules Hunter nem desfaz comandos já tentados.</p><button id="btn-toggle-pvp" class="btn twb-critical-action {% if enabled %}btn-outline-danger{% else %}btn-primary{% endif %}" type="button" data-enabled="{{ 'true' if enabled else 'false' }}">{% if enabled %}Desabilitar Conquista PvP{% else %}Habilitar Conquista PvP{% endif %}</button><span class="twb-sr-live d-block mt-2" id="pvp-toggle-message" role="status" aria-live="polite"></span></div></section>
 
-      <!-- Coluna esquerda: configuração -->
-      <div class="col-md-5">
-        <table class="table table-sm table-borderless mb-0" style="font-size:0.82rem;">
-          <tr>
-            <td class="text-muted" style="width:110px">Aldeia de limpeza</td>
-            <td>
-              {% if t.clear_village_id %}
-                <strong>{{ t.clear_village_id }}</strong>
-                {% if t.clear_village_name %}<small class="text-muted">({{ t.clear_village_name }})</small>{% endif %}
-              {% else %}
-                <small class="text-muted">Seleção automática</small>
-              {% endif %}
-            </td>
-          </tr>
-          <tr>
-            <td class="text-muted">Aldeias nobles</td>
-            <td>
-              {% if t.noble_villages %}
-                {% for nvid in t.noble_villages %}
-                  <span class="unit-chip">{{ nvid }}</span>
-                {% endfor %}
-              {% else %}
-                <small class="text-muted">Auto (todas com noble)</small>
-              {% endif %}
-            </td>
-          </tr>
-          {% if t.scout_village_id %}
-          <tr>
-            <td class="text-muted">Scout enviado de</td>
-            <td><small>{{ t.scout_village_id }}</small></td>
-          </tr>
-          {% endif %}
-        </table>
-      </div>
-
-      <!-- Coluna direita: resultado de simulação -->
-      <div class="col-md-7">
-        {% if t.last_simulation %}
-        <div class="sim-block">
-          {% if t.last_simulation.overridden %}
-          <div class="text-danger small">
-            <strong>Simulação ignorada.</strong> Agendamento autorizado manualmente
-            sem relatório de scout válido.
-          </div>
-          {% else %}
-          <div class="d-flex justify-content-between mb-1">
-            <strong class="small">Última simulação</strong>
-            <span class="badge badge-{% if t.last_simulation.viable %}success{% else %}danger{% endif %}">
-              {% if t.last_simulation.viable %}Viável{% else %}Inviável{% endif %}
-            </span>
-          </div>
-          <div class="row g-1" style="font-size:0.78rem;">
-            <div class="col-6">
-              <span class="text-muted">Poder de ataque:</span>
-              <strong>{{ t.last_simulation.att_power | int }}</strong>
-            </div>
-            <div class="col-6">
-              <span class="text-muted">Muralha:</span>
-              {{ t.last_simulation.wall_before }} → {{ t.last_simulation.wall_after }}
-            </div>
-            <div class="col-6">
-              <span class="text-muted">Baixas do ataque:</span>
-              {% set loss_pct = (t.last_simulation.att_losses / [t.last_simulation.att_total,1]|max * 100) | int %}
-              <span class="{% if loss_pct > 50 %}text-danger{% elif loss_pct > 25 %}text-warning{% else %}text-success{% endif %}">
-                {{ t.last_simulation.att_losses }}/{{ t.last_simulation.att_total }} ({{ loss_pct }}%)
-              </span>
-            </div>
-            <div class="col-6">
-              <span class="text-muted">Defensores eliminados:</span>
-              {% set def_pct = (t.last_simulation.def_losses / [t.last_simulation.def_total,1]|max * 100) | int %}
-              <span class="{% if def_pct >= 90 %}text-success{% elif def_pct >= 50 %}text-warning{% else %}text-danger{% endif %}">
-                {{ t.last_simulation.def_losses }}/{{ t.last_simulation.def_total }} ({{ def_pct }}%)
-              </span>
-            </div>
-          </div>
-          {% endif %}
-        </div>
-        {% elif t.status in ['pending_scout','pending_sim'] %}
-        <div class="text-muted small mt-1">
-          {% if t.status == 'pending_scout' %}Aguardando envio do scout…{% else %}Scout enviado, aguardando relatório…{% endif %}
-        </div>
-        {% endif %}
-      </div>
-    </div>
-
-    <!-- Override manual de clear village (pending_scout ou pending_sim) -->
-    {% if t.status in ['pending_scout','pending_sim'] %}
-    <hr class="my-2"/>
-    <form method="post" action="/pvp_conquest/set_clear" class="form-inline">
-      <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
-      <label class="mr-2 small">Forçar aldeia de limpeza:</label>
-      <select name="clear_village_id" class="form-control form-control-sm mr-2" style="max-width:200px">
-        <option value="">Automático</option>
-        {% for vid in managed_villages %}
-        <option value="{{ vid }}" {% if t.clear_village_id == vid %}selected{% endif %}>
-          {{ vid }}{% if managed_villages[vid] %} — {{ managed_villages[vid] }}{% endif %}
-        </option>
-        {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-outline-secondary btn-sm">Definir</button>
-    </form>
-    {% if not t.scout_override %}
-    <form method="post" action="/pvp_conquest/scout_override" class="mt-2">
-      <input type="hidden" name="target_id" value="{{ t.target_id }}"/>
-      <button type="submit" class="btn btn-outline-danger btn-sm"
-              {% if t.time_to_first_send is not none and t.time_to_first_send <= 0 %}disabled{% endif %}
-              onclick="return confirm('Agendar SEM relatório de scout válido? A defesa e a muralha não serão simuladas. Esta decisão não pode autorizar um envio atrasado.')">
-        Ignorar scout e autorizar agendamento
-      </button>
-      <small class="text-muted ml-2">
-        Use somente quando a inteligência da operação vier por fora do bot.
-      </small>
-    </form>
-    {% endif %}
-    {% endif %}
-
-  </div>
-</div>
-{% endfor %}
-{% endif %}
-
-<div class="text-muted small mt-2">
-  O bot avança o status automaticamente a cada ciclo.
-  Simulações usam o relatório de scout mais recente disponível em <code>cache/reports/</code>.
-</div>
-
-<!-- ===================== MODAL NOVO ALVO ===================== -->
-<div class="modal fade" id="modal-new-target" tabindex="-1" role="dialog">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content">
-      <form method="post" action="/pvp_conquest/add">
-        <div class="modal-header" style="background:#2c1810;color:#d4a843;">
-          <h5 class="modal-title">Novo Alvo PvP</h5>
-          <button type="button" class="close text-white" data-dismiss="modal">&times;</button>
-        </div>
-        <div class="modal-body">
-
-          <div class="form-group">
-            <label class="font-weight-bold">ID da aldeia alvo</label>
-            <input type="text" name="target_id" class="form-control" placeholder="ex: 123456" required/>
-            <small class="text-muted">ID numérico da aldeia no TW.</small>
-          </div>
-
-          <div class="form-group">
-            <label class="font-weight-bold">Horário de chegada dos nobles</label>
-            <input type="datetime-local" name="arrival_time" class="form-control" required/>
-            <small class="text-muted">O clear chegará {{ pvp_cfg.arrival_buffer_seconds | default(2) }}s antes.</small>
-          </div>
-
-          <div class="form-group">
-            <label class="font-weight-bold">Aldeia de limpeza (opcional)</label>
-            <select name="clear_village_id" class="form-control">
-              <option value="">Automático (maior poder ofensivo)</option>
-              {% for vid in managed_villages %}
-              <option value="{{ vid }}">
-                {{ vid }}{% if managed_villages[vid] %} — {{ managed_villages[vid] }}{% endif %}
-              </option>
-              {% endfor %}
-            </select>
-          </div>
-
-          <div class="alert alert-info small mb-0">
-            <strong>Proteção das tropas:</strong> no primeiro ciclo após o cadastro,
-            o bot escolhe as fontes de limpeza e de nobles e suspende nelas o
-            farm, a coleta e a conquista bárbara. A proteção termina depois que
-            o Hunter envia os ataques ou registra uma falha.
-            Relatórios de scout valem por até
-            {{ pvp_cfg.scout_max_age_hours | default(24) }} horas.
-          </div>
-
-        </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancelar</button>
-          <button type="submit" class="btn btn-primary">Registrar alvo</button>
-        </div>
-      </form>
-    </div>
-  </div>
-</div>
+<dialog class="twb-confirm-dialog" id="pvp-override-dialog" aria-labelledby="pvp-override-title" aria-describedby="pvp-override-description">
+  <form method="dialog">
+    <div class="twb-confirm-dialog-body"><span class="twb-status twb-status--danger">Autorização de risco</span><h2 id="pvp-override-title">Continuar sem scout válido?</h2><p id="pvp-override-description">Você autoriza o alvo <strong id="pvp-override-target">não informado</strong> a avançar sem inteligência atualmente válida. Isso não confirma defesa, muralha ou segurança e pode permitir schedules de ataques reais.</p><div class="twb-inline-alert twb-inline-alert--danger"><strong>O override não autoriza atraso.</strong> Se a primeira saída calculada já venceu, o backend recusa a ação.</div></div>
+    <div class="twb-confirm-dialog-actions"><button type="submit" class="btn btn-outline-secondary" value="cancel">Cancelar</button><button type="button" class="btn btn-danger" id="pvp-override-confirm">Autorizar sem scout válido</button></div>
+  </form>
+</dialog>
 {% endblock %}
 
-{% block scripts %}
-<script>
-function togglePvp() {
-  var btn = $('#btn-toggle-pvp');
-  var isEnabled = btn.hasClass('btn-success');
-  $.post('/app/config/set?parameter=pvp_conquest.enabled&value=' + (!isEnabled), function() {
-    if (!isEnabled) {
-      btn.removeClass('btn-danger').addClass('btn-success').text('Ativado');
-    } else {
-      btn.removeClass('btn-success').addClass('btn-danger').text('Desativado');
-    }
-  });
-}
-</script>
-{% endblock %}
+{% block scripts %}<script>
+(function () {
+  'use strict';
+  function absolute(ts) { return new Date(ts * 1000).toLocaleString('pt-BR'); }
+  function relative(ts) { var delta = Math.round(ts - Date.now() / 1000); var value = Math.abs(delta); var h = Math.floor(value / 3600); var m = Math.floor((value % 3600) / 60); return delta >= 0 ? 'em ' + h + 'h ' + m + 'min' : 'o horário calculado passou há ' + h + 'h ' + m + 'min'; }
+  Array.prototype.forEach.call(document.querySelectorAll('[data-deadline-at], [data-departure-at]'), function (el) { var ts = Number(el.getAttribute('data-deadline-at') || el.getAttribute('data-departure-at')); if (ts) { el.textContent = absolute(ts); el.title = 'Timestamp Unix fornecido pelo backend · timezone não nomeado'; } });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-deadline-relative]'), function (el) { var ts = Number(el.getAttribute('data-deadline-relative')); if (ts) el.textContent = relative(ts); });
+  var future = Array.prototype.map.call(document.querySelectorAll('[data-departure-at]'), function (el) { return Number(el.getAttribute('data-departure-at')); }).filter(function (ts) { return ts > Date.now() / 1000; }).sort(function (a, b) { return a - b; }); var next = document.getElementById('pvp-next-deadline'); if (next && future.length) next.innerHTML = '<time class="twb-time">' + absolute(future[0]) + '</time>';
+  Array.prototype.forEach.call(document.querySelectorAll('[data-delete-target]'), function (form) { form.addEventListener('submit', function (event) { var target = form.getAttribute('data-target-id') || 'não informado'; var state = form.getAttribute('data-operation-state') || 'desconhecido'; if (!window.confirm('Excluir o registro PvP do alvo #' + target + ' (estado: ' + state + ')? Isso remove o acompanhamento, mas não desfaz scouts, schedules ou ataques já tentados.')) { event.preventDefault(); return; } form.querySelector('button[type="submit"]').disabled = true; }); });
+  var overrideDialog = document.getElementById('pvp-override-dialog'); var overrideTarget = document.getElementById('pvp-override-target'); var overrideConfirm = document.getElementById('pvp-override-confirm'); var pendingOverride = null;
+  Array.prototype.forEach.call(document.querySelectorAll('[data-override-form]'), function (form) { form.addEventListener('submit', function (event) { if (form.getAttribute('data-confirmed') === 'true') { form.querySelector('button[type="submit"]').disabled = true; var live = form.closest('.twb-operation-card').querySelector('.twb-sr-live'); if (live) live.textContent = 'Solicitação de override enviada. Schedule e despacho ainda não estão confirmados.'; return; } event.preventDefault(); pendingOverride = form; overrideTarget.textContent = '#' + (form.getAttribute('data-target-id') || 'não informado'); overrideDialog.showModal(); }); });
+  if (overrideConfirm) overrideConfirm.addEventListener('click', function () { if (!pendingOverride) return; pendingOverride.setAttribute('data-confirmed', 'true'); overrideDialog.close(); pendingOverride.requestSubmit(); });
+  if (overrideDialog) overrideDialog.addEventListener('close', function () { if (overrideDialog.returnValue === 'cancel') pendingOverride = null; });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-single-submit]'), function (form) { form.addEventListener('submit', function () { var button = form.querySelector('button[type="submit"]'); if (button) button.disabled = true; }); });
+  var addForm = document.getElementById('pvp-add-form'); var addMessage = document.getElementById('pvp-add-message'); if (addForm) addForm.addEventListener('submit', function (event) { if (!addForm.checkValidity()) { event.preventDefault(); addForm.reportValidity(); addMessage.textContent = 'Revise alvo e chegada antes de registrar.'; return; } addForm.querySelector('button[type="submit"]').disabled = true; addMessage.textContent = 'Cadastro solicitado. Scout, simulação e agenda ainda não estão confirmados.'; });
+  var toggle = document.getElementById('btn-toggle-pvp'); var msg = document.getElementById('pvp-toggle-message'); var status = document.getElementById('pvp-enabled-status'); if (toggle) toggle.addEventListener('click', function () { var on = toggle.getAttribute('data-enabled') !== 'true'; toggle.disabled = true; msg.textContent = 'Solicitação enviada; efeito ainda não reconciliado.'; $.post('/app/config/set?parameter=pvp_conquest.enabled&value=' + on, function () { toggle.setAttribute('data-enabled', on ? 'true' : 'false'); toggle.textContent = on ? 'Desabilitar Conquista PvP' : 'Habilitar Conquista PvP'; toggle.className = 'btn twb-critical-action ' + (on ? 'btn-outline-danger' : 'btn-primary'); status.className = 'twb-status ' + (on ? 'twb-status--info' : 'twb-status--muted'); status.textContent = on ? 'Habilitada' : 'Desabilitada'; msg.textContent = 'Configuração retornou como ' + (on ? 'habilitada' : 'desabilitada') + '; execução e despacho não confirmados.'; toggle.disabled = false; }).fail(function () { msg.textContent = 'Falha no retorno. Estado desconhecido; atualize antes de repetir.'; toggle.disabled = false; }); });
+})();
+</script>{% endblock %}

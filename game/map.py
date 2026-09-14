@@ -37,7 +37,7 @@ class Map:
         # Por instância, não por classe: cada Village cria seu próprio Map,
         # mas como atributos de classe todos escreviam no mesmo dict global,
         # acumulando o mapa de todas as regiões já visitadas por qualquer
-        # aldeia. Ver P1-15 em docs/auditoria_codigo_2026-08-08.md
+        # aldeia. Ver P1-15 em docs/backend.md
         self.map_data = []
         self.villages = {}
         self.map_pos = {}

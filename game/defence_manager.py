@@ -1,13 +1,15 @@
 import json
 import logging
+import math
 import random
 import re
 import time
 
 from core.extractors import INCOMING_ROW_RE, Extractor
+from core.filemanager import FileManager
 from core.world_config import WorldConfig
 
-# Mapeamento dos 8 tipos de bandeira do jogo (ver docs/bugs_flags.md).
+# Mapeamento dos 8 tipos de bandeira do jogo (ver docs/backend.md).
 # O bot hoje só gerencia ativamente os tipos 1 (produção) e 4 (defesa) via
 # set_flag_not_under_attack/set_flag_under_attack, mas o mapeamento completo
 # é usado para exibir nomes legíveis no webmanager (Feature 19).
@@ -63,6 +65,9 @@ class DefenceManager:
     # sido lido. Separa "markup mudou" (linhas > 0 e nenhum ETA) de "não havia
     # linha nenhuma" -- ver o bloco de log em update().
     incoming_rows_seen = 0
+    incoming_attack_rows_seen = 0
+    incoming_support_rows_seen = 0
+    village_position = None
 
     # Janela de envio de suporte, em segundos ANTES do impacto, somada ao tempo
     # de viagem. O suporte sai quando `viagem < eta <= viagem + lead`.
@@ -128,13 +133,13 @@ class DefenceManager:
         self.wrapper = wrapper
         self.logger = logging.getLogger("Defence Manager")
         # {(flag_type, level): attempt_count} - limita tentativas de upgrade
-        # por sessão para evitar loop infinito (ver docs/bugs_flags.md Bug 2)
+        # por sessão para evitar loop infinito (ver docs/backend.md, Bug 2)
         self._upgrade_attempts = {}
         # Todos por instância, não por classe: existe um DefenceManager por
-        # aldeia. `supported` era o Bug 3 de docs/bugs_flags.md -- suporte
+        # aldeia. `supported` era o Bug 3 de docs/backend.md -- suporte
         # enviado por uma aldeia marcava o alvo como "já suportado" para
         # todas as outras. Os demais são a mesma classe de problema,
-        # corrigidos junto. Ver Lote 1 em docs/auditoria_codigo_2026-08-08.md
+        # corrigidos junto. Ver Lote 1 em docs/backend.md
         self.supported = []
         self.attacks = []
         self.flags = {}
@@ -149,6 +154,9 @@ class DefenceManager:
         # {village_id: percentual} de aceleração do apoio que chega naquela
         # aldeia (item "Sinal da Aflição"). Mesmo motivo para estar aqui.
         self.my_other_villages_support_bonus = {}
+        self.incoming_attack_rows_seen = 0
+        self.incoming_support_rows_seen = 0
+        self.village_position = None
 
     def _planned_support(self):
         """
@@ -178,18 +186,64 @@ class DefenceManager:
         de my_other_villages_support_bonus, alimentado pelo cache da outra
         aldeia, e não de um atributo local.
         """
-        if not self.map or vid not in getattr(self.map, "map_pos", {}):
+        target_position = self._target_position(vid)
+        if target_position is None:
             return None
-        try:
-            distance = self.map.get_dist(self.map.map_pos[vid])
-        except Exception:
-            return None
+        distance = None
+        if self.map and getattr(self.map, "my_location", None):
+            try:
+                distance = self.map.get_dist(target_position)
+            except Exception:
+                distance = None
+        if distance is None and self.village_position is not None:
+            try:
+                distance = math.hypot(
+                    float(self.village_position[0]) - float(target_position[0]),
+                    float(self.village_position[1]) - float(target_position[1]),
+                )
+            except (TypeError, ValueError, IndexError):
+                return None
         return WorldConfig.travel_seconds(
             self.unit_speeds,
             distance,
             troops if troops is not None else self._planned_support(),
             speed_bonus_pct=self.my_other_villages_support_bonus.get(vid, 0),
         )
+
+    def _target_position(self, vid):
+        """Resolve coordenadas mesmo quando o mapa local ainda esta obsoleto.
+
+        Aldeias recem-conquistadas podem aparecer em ``cache/managed`` e no
+        cache global de aldeias horas antes de o ``Map`` desta doadora renovar
+        seu prefetch. O envio de apoio so precisa das coordenadas, portanto nao
+        deve depender exclusivamente de ``map.map_pos``.
+        """
+        vid = str(vid)
+        if self.map:
+            position = getattr(self.map, "map_pos", {}).get(vid)
+            if position:
+                return position
+            try:
+                cached = self.map.in_cache(vid)
+            except Exception:
+                cached = None
+            position = (cached or {}).get("location") if isinstance(cached, dict) else None
+            if position:
+                self.map.map_pos[vid] = position
+                return position
+
+        managed = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+        x, y = managed.get("x"), managed.get("y")
+        if x is None or y is None:
+            public = managed.get("public") or {}
+            position = public.get("location")
+        else:
+            position = [x, y]
+        if not position or len(position) != 2:
+            return None
+        if self.map:
+            self.map.map_pos[vid] = position
+        return position
 
     def support_timing(self, vid):
         """
@@ -237,6 +291,12 @@ class DefenceManager:
         if not self.units:
             return False
         send_support = self._planned_support()
+        if not send_support:
+            self.logger.info(
+                "Support %s -> %s nao enviado: nenhuma tropa defensiva disponivel",
+                self.village_id, requesting_village,
+            )
+            return False
 
         self.logger.info(
             "Sending requested support to village %s: %s", requesting_village, str(send_support)
@@ -258,13 +318,22 @@ class DefenceManager:
                 "(era %d%%)",
                 self.village_id, self.support_speed_bonus_pct, previous_bonus,
             )
-        if 'no_ignored_command' in main:
+        marker_present = 'no_ignored_command' in main
+        supports_only = False
+        if marker_present:
             self._parse_incoming_urgency(main)
+            supports_only = (
+                self.incoming_rows_seen > 0
+                and self.incoming_attack_rows_seen == 0
+                and self.incoming_support_rows_seen == self.incoming_rows_seen
+            )
+
+        if marker_present and not supports_only:
             urgent = self._is_urgent(self.incoming_eta)
 
             if self.incoming_eta is not None:
                 self.logger.warning(
-                    "Village %s: incoming command from %s, eta %ds (%.1fh) "
+                    "Village %s: incoming attack from %s, eta %ds (%.1fh) "
                     "(command_id=%s) -- %s",
                     self.village_id,
                     self.incoming_attacker or self.incoming_origin or "?",
@@ -301,11 +370,19 @@ class DefenceManager:
             if self.auto_evacuate and with_defence and urgent:
                 self.evacuate()
         else:
-            self.incoming_eta = None
-            self.incoming_attacker = None
-            self.incoming_command_id = None
-            self.incoming_origin = None
-            self.incoming_rows_seen = 0
+            if supports_only:
+                self.logger.info(
+                    "Village %s: %d incoming support command(s), no attack detected",
+                    self.village_id, self.incoming_support_rows_seen,
+                )
+            else:
+                self.incoming_eta = None
+                self.incoming_attacker = None
+                self.incoming_command_id = None
+                self.incoming_origin = None
+                self.incoming_rows_seen = 0
+                self.incoming_attack_rows_seen = 0
+                self.incoming_support_rows_seen = 0
             self.flag_logic(self.preferred_flags())
             if not with_defence:
                 self.under_attack = False
@@ -362,15 +439,22 @@ class DefenceManager:
         o comportamento seguro de antes da Feature 16 (evacua sempre que
         'no_ignored_command' aparece no HTML).
         """
-        self.incoming_rows_seen = len(INCOMING_ROW_RE.findall(main))
+        rows = INCOMING_ROW_RE.findall(main)
+        self.incoming_rows_seen = len(rows)
+        row_types = [Extractor.incoming_command_type(row) for row in rows]
+        self.incoming_support_rows_seen = row_types.count("support")
+        # Desconhecido continua suspeito: so um apoio reconhecido explicitamente
+        # pode ser retirado do conjunto defensivo.
+        self.incoming_attack_rows_seen = self.incoming_rows_seen - self.incoming_support_rows_seen
         commands = Extractor.incoming_commands(main)
-        if not commands:
+        attack_commands = [c for c in commands if c.get("command_type") != "support"]
+        if not attack_commands:
             self.incoming_eta = None
             self.incoming_attacker = None
             self.incoming_command_id = None
             self.incoming_origin = None
             return
-        soonest = min(commands, key=lambda c: c["eta_seconds"])
+        soonest = min(attack_commands, key=lambda c: c["eta_seconds"])
         self.incoming_eta = soonest["eta_seconds"]
         self.incoming_attacker = soonest.get("attacker")
         self.incoming_command_id = soonest.get("command_id")
@@ -673,7 +757,18 @@ class DefenceManager:
         # P2-38: a validacao da posicao vinha depois do GET da praca, entao a
         # requisicao (com o sleep de delay_factor) era desperdicada quando o
         # destino nao estava no mapa.
-        if not self.map or vid not in self.map.map_pos:
+        target_position = self._target_position(vid)
+        if target_position is None:
+            self.logger.warning(
+                "[Support] %s -> %s: destino sem coordenadas no mapa/cache, abortando",
+                self.village_id, vid,
+            )
+            return False
+        if troops is not None and not troops:
+            self.logger.info(
+                "[Support] %s -> %s: contingente vazio, nada a enviar",
+                self.village_id, vid,
+            )
             return False
 
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
@@ -685,14 +780,18 @@ class DefenceManager:
         for u in Extractor.attack_form(pre_support):
             k, v = u
             pre_data[k] = v
-        if troops:
+        if troops is not None:
             pre_data.update(troops)
         else:
             pre_data.update(self.units.troops)
 
-        x, y = self.map.map_pos[vid]
-        post_data = {"x": x, "y": y, "target_type": "coord", "support": "Ondersteunen"}
+        x, y = target_position
+        post_data = {"x": x, "y": y, "target_type": "coord"}
         pre_data.update(post_data)
+        # O valor do submit e localizado ("Apoio" em pt-BR). Preserva o que a
+        # propria pagina forneceu; se algum tema nao renderizar o input, basta a
+        # presenca do nome da acao e usamos um fallback neutro.
+        pre_data.setdefault("support", "support")
 
         confirm_url = f"game.php?village={self.village_id}&screen=place&try=confirm"
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
@@ -731,5 +830,14 @@ class DefenceManager:
             params={"screen": "place"},
             data=confirm_data,
         )
-
-        return result
+        if result:
+            self.logger.info(
+                "[Support] %s -> %s enviado e confirmado pelo jogo",
+                self.village_id, vid,
+            )
+            return result
+        self.logger.warning(
+            "[Support] %s -> %s: resposta final nao confirmou o envio",
+            self.village_id, vid,
+        )
+        return False

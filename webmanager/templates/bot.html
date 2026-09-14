@@ -1,154 +1,164 @@
 {% extends "main.html" %}
+{% block title %}Visão geral{% endblock %}
 
 {% block content %}
+{% set ns = namespace(total_wood=0, total_stone=0, total_iron=0, off=0, def_count=0, watchtower=0, under_attack=0, missing_data=0, queued=0, latest_run=0) %}
+{% for vid, v in data.bot.items() %}
+  {% if v.resources %}
+    {% set ns.total_wood = ns.total_wood + (v.resources.wood | default(0)) %}
+    {% set ns.total_stone = ns.total_stone + (v.resources.stone | default(0)) %}
+    {% set ns.total_iron = ns.total_iron + (v.resources.iron | default(0)) %}
+  {% else %}{% set ns.missing_data = ns.missing_data + 1 %}{% endif %}
+  {% if v.profile == 'offensive' %}{% set ns.off = ns.off + 1 %}{% elif v.profile == 'defensive' %}{% set ns.def_count = ns.def_count + 1 %}{% elif v.profile == 'watchtower' %}{% set ns.watchtower = ns.watchtower + 1 %}{% endif %}
+  {% if v.under_attack %}{% set ns.under_attack = ns.under_attack + 1 %}{% endif %}
+  {% if v.queued %}{% set ns.queued = ns.queued + (v.queued | length) %}{% endif %}
+  {% if v.last_run and v.last_run > ns.latest_run %}{% set ns.latest_run = v.last_run %}{% endif %}
+{% endfor %}
+
+<header class="twb-page-header">
+  <div>
+    <p class="twb-eyebrow">Operação</p>
+    <h1 class="twb-page-title">Visão geral</h1>
+    <p class="twb-page-summary">Estado observado dos processos e snapshots locais. Ausência de telemetria permanece explícita.</p>
+  </div>
+  <div class="twb-page-actions">
+    <a class="btn btn-outline-secondary" href="/villages">Examinar aldeias</a>
+    <a class="btn btn-primary" href="/logs">Diagnosticar atividade</a>
+  </div>
+</header>
+
+<section class="twb-health-strip" aria-label="Saúde operacional">
+  <div class="twb-health-item">
+    <span class="twb-health-label">Processo do bot</span>
+    <span class="twb-health-value">
+      {% if data.status %}<span class="twb-status twb-status--info">Processo detectado</span>{% else %}<span class="twb-status twb-status--warning">Processo não detectado</span>{% endif %}
+    </span>
+    <span class="twb-health-meta">Inclui processos iniciados pelo console. Presença do processo não confirma a saúde das automações — ver “Controle do processo”.</span>
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Última observação de aldeia</span>
+    <span class="twb-health-value">
+      {% if ns.latest_run %}<time class="twb-time" data-observed-at="{{ ns.latest_run }}">calculando idade…</time>{% else %}<span class="twb-status twb-status--unknown">Sem dados</span>{% endif %}
+    </span>
+    <span class="twb-health-meta">Snapshot local; SLA de frescor não definido.</span>
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Exceções observáveis</span>
+    <span class="twb-health-value">{{ ns.under_attack + ns.missing_data }}</span>
+    <span class="twb-health-meta">{{ ns.under_attack }} sob ataque · {{ ns.missing_data }} sem recursos</span>
+  </div>
+</section>
+
 <div class="row">
-  <!-- Sidebar esquerda -->
-  <div class="col-lg-4">
-
-    <!-- Status do Bot -->
-    <div class="card mb-3 border-left-success">
-      <div class="card-body">
-        <h5 class="card-title mb-3">Status do Bot</h5>
-        <div id="bot-status-area">
-          {% if data.status %}
-            <span class="badge badge-success px-3 py-2" id="status-badge">● Ativo</span>
-            <button class="btn btn-danger btn-sm ml-2" id="btn-stop" onclick="bot_action('stop')">Parar</button>
-          {% else %}
-            <span class="badge badge-warning px-3 py-2" id="status-badge">● Inativo</span>
-            <button class="btn btn-success btn-sm ml-2" id="btn-start" onclick="bot_action('start')">Iniciar</button>
-            <p class="text-muted small mt-2 mb-0">Ignore se estiver rodando twb.py manualmente.</p>
-          {% endif %}
-        </div>
-        <div id="bot-action-msg" class="small mt-2 text-muted"></div>
-
-        <hr/>
-        <h6>Sessão atual</h6>
-        <p class="text-muted small mb-1">{{ session.endpoint }}</p>
-        <input type="text" id="session_data" class="form-control form-control-sm mb-2" value="{{ session.raw }}"/>
-        <button class="btn btn-primary btn-sm" onclick="set_session_data()">Atualizar sessão</button>
+  <div class="col-xl-7">
+    <section class="twb-panel {% if ns.under_attack %}twb-panel--exception{% elif not data.bot or ns.missing_data %}twb-panel--unknown{% endif %}" aria-labelledby="titulo-atencao">
+      <div class="twb-panel-header">
+        <h2 class="twb-panel-title" id="titulo-atencao">Requer atenção</h2>
+        <span class="twb-status {% if ns.under_attack %}twb-status--danger{% elif not data.bot or ns.missing_data %}twb-status--unknown{% else %}twb-status--muted{% endif %}">
+          {% if ns.under_attack %}Risco observado{% elif not data.bot or ns.missing_data %}Estado incompleto{% else %}Sem exceções conhecidas{% endif %}
+        </span>
       </div>
-    </div>
-
-    <!-- Resumo do Império -->
-    <div class="card mb-3">
-      <div class="card-body">
-        <h5 class="card-title">Resumo do Império</h5>
-        {% set ns = namespace(total_wood=0, total_stone=0, total_iron=0, off=0, def_count=0) %}
-        {% for vid in data.bot %}
-          {% set v = data.bot[vid] %}
-          {% if v.resources %}
-            {% set ns.total_wood = ns.total_wood + (v.resources.wood | default(0)) %}
-            {% set ns.total_stone = ns.total_stone + (v.resources.stone | default(0)) %}
-            {% set ns.total_iron = ns.total_iron + (v.resources.iron | default(0)) %}
-          {% endif %}
-          {% if v.profile == 'offensive' %}{% set ns.off = ns.off + 1 %}{% endif %}
-          {% if v.profile == 'defensive' %}{% set ns.def_count = ns.def_count + 1 %}{% endif %}
-        {% endfor %}
-        <p class="mb-2"><strong>Aldeias gerenciadas:</strong> {{ data.bot | length }}</p>
-        <p class="mb-3">
-          <span class="badge badge-danger mr-1">Ofensivas: {{ ns.off }}</span>
-          <span class="badge badge-primary">Defensivas: {{ ns.def_count }}</span>
-        </p>
-        <table class="table table-sm table-borderless mb-0">
-          <tr>
-            <td><img src="/static/images/wood.png" class="res-icon"/> Madeira</td>
-            <td class="text-right font-weight-bold">{{ ns.total_wood | int }}</td>
-          </tr>
-          <tr>
-            <td><img src="/static/images/stone.png" class="res-icon"/> Argila</td>
-            <td class="text-right font-weight-bold">{{ ns.total_stone | int }}</td>
-          </tr>
-          <tr>
-            <td><img src="/static/images/iron.png" class="res-icon"/> Ferro</td>
-            <td class="text-right font-weight-bold">{{ ns.total_iron | int }}</td>
-          </tr>
-        </table>
+      <div class="twb-panel-body">
+        {% if not data.bot %}
+          <div class="twb-empty"><strong>Nenhum snapshot de aldeia disponível</strong>O sistema não pode afirmar que a operação está saudável. Inicie o bot ou consulte os logs.</div>
+        {% elif ns.under_attack or ns.missing_data %}
+          <ul class="twb-exception-list">
+            {% for vid, v in data.bot.items() if v.under_attack %}
+            {% set pub = v.public or {} %}
+            <li class="twb-exception-item">
+              <div class="twb-exception-copy"><strong>{{ pub.name | default('Aldeia ' ~ vid, true) }}</strong><span>{{ pub.location | default('Coordenada indisponível', true) }} · marcada como sob ataque no último ciclo</span></div>
+              <a class="btn btn-outline-danger btn-sm" href="/village?id={{ vid }}">Ver aldeia</a>
+            </li>
+            {% endfor %}
+            {% for vid, v in data.bot.items() if not v.resources %}
+            {% set pub = v.public or {} %}
+            <li class="twb-exception-item">
+              <div class="twb-exception-copy"><strong>{{ pub.name | default('Aldeia ' ~ vid, true) }}</strong><span>Recursos não disponíveis no snapshot atual.</span></div>
+              <a class="btn btn-outline-secondary btn-sm" href="/logs">Investigar</a>
+            </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="twb-empty"><strong>Nenhuma exceção presente nos campos disponíveis</strong>Frescor, falhas de ação e resultados desconhecidos ainda não possuem contrato agregado; isto não equivale a “tudo saudável”.</div>
+        {% endif %}
       </div>
-    </div>
+    </section>
 
+    <section class="twb-panel" aria-labelledby="titulo-proximas-acoes">
+      <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-proximas-acoes">Próximas ações e deadlines</h2><a href="/hunter" class="btn btn-outline-secondary btn-sm">Abrir Hunter</a></div>
+      <div class="twb-panel-body"><div class="twb-inline-alert twb-inline-alert--unknown"><strong>Agenda consolidada não disponível.</strong> Os dados atuais não oferecem um contrato único de próxima ação, deadline e confirmação. Hunter e conquistas permanecem nas áreas específicas.</div></div>
+    </section>
+
+    <section class="twb-panel" aria-labelledby="titulo-atividade">
+      <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-atividade">Atividade recente</h2><a href="/reports" class="btn btn-outline-secondary btn-sm">Todos os relatórios</a></div>
+      <div class="twb-panel-body">
+        {% if data.reports %}
+          {% for report_id, r in data.reports.items() %}
+            {% if loop.index <= 6 %}
+            <article class="twb-report">
+              <div class="d-flex justify-content-between align-items-start">
+                <div><span class="twb-status {% if r.type == 'attack' %}twb-status--danger{% elif r.type == 'support' %}twb-status--success{% elif r.type == 'scout' %}twb-status--info{% else %}twb-status--muted{% endif %}">{{ r.type | default('Tipo desconhecido', true) }}</span> <small class="text-muted">#{{ report_id }}</small></div>
+                {% if r.origin and r.dest %}<span class="twb-report-route">{{ r.origin }} → {{ r.dest }}</span>{% endif %}
+              </div>
+            </article>
+            {% endif %}
+          {% endfor %}
+        {% else %}
+          <div class="twb-empty"><strong>Sem relatórios no cache</strong>Nenhuma atividade recente pode ser confirmada por esta fonte.</div>
+        {% endif %}
+      </div>
+    </section>
   </div>
 
-  <!-- Coluna direita: relatórios + output log -->
-  <div class="col-lg-8">
-
-    <!-- Output do processo -->
-    <div class="card mb-3">
-      <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h5 class="card-title mb-0">Output do processo</h5>
-          <button class="btn btn-outline-secondary btn-sm" onclick="refresh_output()">↺ Atualizar</button>
+  <div class="col-xl-5">
+    <section class="twb-panel" id="controle-do-processo" aria-labelledby="titulo-controle">
+      <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-controle">Controle do processo</h2></div>
+      <div class="twb-panel-body">
+        <dl class="twb-meta mb-3" id="bot-status-detail">
+          <div><dt>Processo</dt><dd id="bot-proc-state"><span class="twb-status twb-status--unknown">verificando…</span></dd></div>
+          <div><dt>Atividade</dt><dd id="bot-proc-activity">—</dd></div>
+          <div><dt>Origem</dt><dd id="bot-proc-origin">—</dd></div>
+        </dl>
+        <div id="bot-status-area">
+          {% if data.status %}<button class="btn btn-danger" id="btn-stop" onclick="bot_action('stop')">Parar processo</button>{% else %}<button class="btn btn-success" id="btn-start" onclick="bot_action('start')">Iniciar processo</button>{% endif %}
         </div>
-        <div id="bot-output"
-             style="background:#1e1e1e; color:#d4d4d4; font-family:monospace; font-size:0.78rem;
-                    height:200px; overflow-y:auto; border-radius:4px; padding:10px;">
-          <span class="text-muted">Carregando...</span>
+        <p class="text-muted small mt-2 mb-0">
+          Iniciar abre uma <strong>janela de console própria</strong> para o bot. Ela é
+          necessária: quando a sessão expira, o bot pede o cookie do navegador por
+          <code>input()</code> e só dá para responder ali. Fechar a janela mata o processo.
+        </p>
+        <div id="bot-action-msg" class="twb-sr-live small mt-2" role="status" aria-live="polite"></div>
+      </div>
+      <details class="twb-details">
+        <summary>Sessão e conexão</summary>
+        <div>
+          <label for="session_data" class="font-weight-bold">Dados da sessão atual</label>
+          <p class="text-muted small mb-2">Endpoint: {{ session.endpoint | default('não disponível', true) }}. O valor abaixo pode conter informação sensível.</p>
+          <input type="text" id="session_data" class="form-control form-control-sm mb-2" value="{{ session.raw }}" autocomplete="off">
+          <button class="btn btn-primary btn-sm" onclick="set_session_data()">Atualizar sessão</button>
         </div>
+      </details>
+    </section>
+
+    <section class="twb-panel" aria-labelledby="titulo-imperio">
+      <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-imperio">Resumo do império</h2><a href="/empire" class="btn btn-outline-secondary btn-sm">Detalhes</a></div>
+      <div class="twb-panel-body">
+        <div class="twb-metric-grid">
+          <div class="twb-metric"><span class="twb-metric-label">Aldeias</span><span class="twb-metric-value">{{ data.bot | length }}</span></div>
+          <div class="twb-metric"><span class="twb-metric-label">Filas de construção</span><span class="twb-metric-value">{{ ns.queued }}</span></div>
+          <div class="twb-metric"><span class="twb-metric-label">Sob ataque</span><span class="twb-metric-value">{{ ns.under_attack }}</span></div>
+        </div>
+        <dl class="twb-meta mt-3">
+          <div><dt>Perfis</dt><dd>{{ ns.off }} ofensivas · {{ ns.def_count }} defensivas{% if ns.watchtower %} · {{ ns.watchtower }} torre{% endif %}</dd></div>
+          <div><dt>Recursos observados</dt><dd class="twb-number">{{ ns.total_wood | int }} madeira · {{ ns.total_stone | int }} argila · {{ ns.total_iron | int }} ferro</dd></div>
+        </dl>
       </div>
-    </div>
+    </section>
 
-    <!-- Relatórios -->
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Relatórios recentes</h5>
-        {% for report_id in data.reports %}
-          {% set r = data.reports[report_id] %}
-          <div class="report-item border rounded mb-2 p-2">
-            <div class="d-flex justify-content-between align-items-start">
-              <div>
-                {% if r.type == 'attack' %}
-                  <span class="badge badge-danger mr-1">Ataque</span>
-                {% elif r.type == 'scout' %}
-                  <span class="badge badge-secondary mr-1">Scout</span>
-                {% elif r.type == 'support' %}
-                  <span class="badge badge-success mr-1">Apoio</span>
-                {% elif r.type == 'ReportFoundCrew' %}
-                  <span class="badge badge-info mr-1">Crew</span>
-                {% else %}
-                  <span class="badge badge-light border mr-1">{{ r.type }}</span>
-                {% endif %}
-                <small class="text-muted">#{{ report_id }}</small>
-              </div>
-              {% if r.origin and r.dest %}
-              <small class="text-muted">{{ r.origin }} → {{ r.dest }}</small>
-              {% endif %}
-            </div>
-
-            {% if r.type == 'attack' or r.type == 'scout' %}
-            <div class="mt-1 ml-1">
-              {% if r.loot %}
-              <small>
-                <img src="/static/images/wood.png" class="res-icon"/> {{ r.loot.wood | default(0) }}
-                &nbsp;<img src="/static/images/stone.png" class="res-icon"/> {{ r.loot.stone | default(0) }}
-                &nbsp;<img src="/static/images/iron.png" class="res-icon"/> {{ r.loot.iron | default(0) }}
-              </small>
-              {% endif %}
-              {% if r.extra and r.extra.units_sent %}
-              <small class="text-muted ml-2">
-                Enviados:
-                {% for unit, qty in r.extra.units_sent.items() %}
-                  {% if qty and qty > 0 %}
-                    <img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"/> {{ qty }}
-                  {% endif %}
-                {% endfor %}
-              </small>
-              {% endif %}
-              {% if r.losses %}
-              <small class="text-danger ml-2">
-                Perdas:
-                {% for unit, qty in r.losses.items() %}
-                  {% if qty and qty > 0 %}
-                    <img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"/> {{ qty }}
-                  {% endif %}
-                {% endfor %}
-              </small>
-              {% endif %}
-            </div>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-
+    <section class="twb-panel" aria-labelledby="titulo-output">
+      <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-output">Output do processo</h2><button class="btn btn-outline-secondary btn-sm" type="button" onclick="refresh_output()">Atualizar</button></div>
+      <div class="twb-panel-body"><div id="bot-output" class="twb-process-output" role="log" aria-live="polite"><span>Carregando…</span></div></div>
+    </section>
   </div>
 </div>
 {% endblock %}
@@ -157,65 +167,85 @@
 <script>
 function set_session_data() {
   var val = $('#session_data').val();
-  $.post('/app/config/set?parameter=session&value=' + encodeURIComponent(val), function(){
-    alert('Sessão atualizada.');
-  }, 'json');
+  var msg = $('#bot-action-msg');
+  msg.text('Atualizando sessão…');
+  $.post('/app/config/set?parameter=session&value=' + encodeURIComponent(val), function(){ msg.text('Sessão atualizada.'); }, 'json')
+    .fail(function(){ msg.text('Falha ao atualizar a sessão.'); });
+}
+function fmt_duration(seconds) {
+  if (seconds === null || seconds === undefined) return 'desconhecida';
+  seconds = Math.round(seconds);
+  if (seconds < 60) return seconds + 's';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'min ' + (seconds % 60) + 's';
+  return Math.floor(seconds / 3600) + 'h ' + Math.floor((seconds % 3600) / 60) + 'min';
+}
+
+// Um pid vivo nao prova que o bot trabalha: parado num prompt de input ele
+// fica vivo e mudo. O sinal util e a idade da ultima linha do log, com uma
+// ressalva -- entre ciclos o bot dorme de proposito, e nesse caso ele avisa
+// na ultima linha ate quando.
+function render_status(s) {
+  var state = $('#bot-proc-state'), activity = $('#bot-proc-activity'), origin = $('#bot-proc-origin');
+  if (!s || !s.running) {
+    state.html('<span class="twb-status twb-status--warning">Não está rodando</span>');
+    activity.text(s && s.log_age !== null && s.log_age !== undefined
+      ? 'Log da última sessão parou há ' + fmt_duration(s.log_age) + '.' : 'Sem log de sessão.');
+    origin.text('—');
+    if ($('#btn-start').length === 0) {
+      $('#bot-status-area').html('<button class="btn btn-success" id="btn-start" onclick="bot_action(\'start\')">Iniciar processo</button>');
+    }
+    $('#bot-status-area button').prop('disabled', false);
+    return;
+  }
+  state.html('<span class="twb-status twb-status--success">Rodando</span> <small class="text-muted">PID ' + s.pid +
+             (s.started_at ? ' · no ar há ' + fmt_duration(Date.now() / 1000 - s.started_at) : '') + '</small>');
+  if (s.sleeping) {
+    activity.html('<span class="twb-status twb-status--info">Dormindo entre ciclos</span> <small class="text-muted">' +
+                  s.sleeping.minutes.toFixed(1) + ' min · próximo ciclo às ' + s.sleeping.next_run + '</small>');
+  } else if (s.log_age !== null && s.log_age !== undefined) {
+    var cls = s.log_age < 120 ? 'twb-status--success' : (s.log_age < 2400 ? 'twb-status--info' : 'twb-status--warning');
+    var note = s.log_age >= 2400 ? ' — sem aviso de sono; pode estar aguardando input na janela do console.' : '';
+    activity.html('<span class="twb-status ' + cls + '">Última linha há ' + fmt_duration(s.log_age) + '</span>' +
+                  '<small class="text-muted">' + note + '</small>');
+  } else {
+    activity.text('Log de sessão não encontrado.');
+  }
+  origin.text(s.started_by_panel ? 'Iniciado por este painel' : 'Iniciado fora do painel (console próprio), adotado aqui');
+  if ($('#btn-stop').length === 0) {
+    $('#bot-status-area').html('<button class="btn btn-danger" id="btn-stop" onclick="bot_action(\'stop\')">Parar processo</button>');
+  }
+  $('#bot-status-area button').prop('disabled', false);
 }
 
 function bot_action(action) {
   var msg = $('#bot-action-msg');
-  msg.text(action === 'start' ? 'Iniciando...' : 'Parando...');
-  $.post('/bot/' + action, function(data) {
-    var running = (data === true) || (data && data.running);
-    var badge = $('#status-badge');
-    if (running) {
-      badge.removeClass('badge-warning').addClass('badge-success').text('● Ativo');
-      $('#bot-status-area button').replaceWith(
-        '<button class="btn btn-danger btn-sm ml-2" id="btn-stop" onclick="bot_action(\'stop\')">Parar</button>'
-      );
-      msg.text(data.pid ? 'Bot iniciado (PID ' + data.pid + ')' : 'Bot ativo');
+  msg.text(action === 'start' ? 'Solicitação de início enviada…' : 'Solicitação de parada enviada…');
+  $('#bot-status-area button').prop('disabled', true);
+  $.post('/bot/' + action, function(response) {
+    render_status(response);
+    if (response && response.error) { msg.text('Falha ao iniciar: ' + response.error); }
+    else if (response && response.running) {
+      msg.text(action === 'start'
+        ? 'Processo no ar (PID ' + response.pid + '). Uma janela de console foi aberta — acompanhe o output por lá ou abaixo.'
+        : 'O processo continua detectado.');
     } else {
-      badge.removeClass('badge-success').addClass('badge-warning').text('● Inativo');
-      $('#bot-status-area button').replaceWith(
-        '<button class="btn btn-success btn-sm ml-2" id="btn-start" onclick="bot_action(\'start\')">Iniciar</button>'
-      );
-      msg.text('Bot parado.');
+      msg.text(action === 'stop' ? 'Processo encerrado.' : 'Processo não detectado após a solicitação. Veja a janela do console.');
     }
-    setTimeout(refresh_output, 800);
-  }).fail(function() {
-    msg.text('Erro ao comunicar com o servidor.');
-  });
+    setTimeout(refresh_output, 1200);
+  }).fail(function() { $('#bot-status-area button').prop('disabled', false); msg.text('Erro ao comunicar com o servidor. Resultado desconhecido.'); });
 }
-
 function refresh_output() {
   $.getJSON('/bot/output', function(data) {
+    render_status(data);
     var box = $('#bot-output');
-    if (!data.lines || data.lines.length === 0) {
-      box.html('<span class="text-muted">Sem output ainda. Inicie o bot para ver os logs aqui.</span>');
-      return;
-    }
-    var html = data.lines.map(function(line) {
-      var cls = 'color:#d4d4d4';
-      if (line.indexOf('ERROR') !== -1 || line.indexOf('Traceback') !== -1 || line.indexOf('Exception') !== -1) {
-        cls = 'color:#f48771';
-      } else if (line.indexOf('WARNING') !== -1 || line.indexOf('Warning') !== -1) {
-        cls = 'color:#dcdcaa';
-      } else if (line.indexOf('---') !== -1) {
-        cls = 'color:#569cd6';
-      }
-      return '<div style="' + cls + '">' + $('<div>').text(line).html() + '</div>';
-    }).join('');
-    box.html(html);
-  });
+    if (!data.lines || data.lines.length === 0) { box.text('Sem output disponível.'); return; }
+    box.empty();
+    data.lines.forEach(function(line) { $('<div>').text(line).appendTo(box); });
+  }).fail(function(){ $('#bot-output').text('Falha ao obter o output. Estado desconhecido.'); });
 }
-
-// Carrega output ao abrir a página
 $(document).ready(function() {
   refresh_output();
-  // Auto-refresh do output a cada 30s se o bot estiver ativo
-  setInterval(function() {
-    {% if data.status %}refresh_output();{% endif %}
-  }, 30000);
+  setInterval(refresh_output, 15000);
 });
 </script>
 {% endblock %}

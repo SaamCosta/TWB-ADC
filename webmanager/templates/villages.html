@@ -1,132 +1,147 @@
 {% extends "main.html" %}
+{% block title %}Aldeias{% endblock %}
 
 {% block content %}
-<div class="row">
-  <div class="col-12">
-    <div class="card">
-      <div class="card-body">
-        <h5 class="card-title">Aldeias gerenciadas</h5>
-        <table class="table table-sm table-striped align-middle">
-          <thead class="thead-dark">
-            <tr>
-              <th>ID</th>
-              <th>Nome</th>
-              <th>Perfil</th>
-              <th>Recursos</th>
-              <th>Tropas</th>
-              <th>Construção</th>
-              <th>Template</th>
-              <th>Zona</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for village_id in data.bot %}
-            {% set v = data.bot[village_id] %}
-            {% set storage = v.resources.storage_max | default(10000) %}
-            <tr class="align-middle">
-              <td class="text-muted small">{{ village_id }}</td>
+{% set ns = namespace(under_attack=0, missing=0, queued=0) %}
+{% for vid, v in data.bot.items() %}
+  {% if v.under_attack %}{% set ns.under_attack = ns.under_attack + 1 %}{% endif %}
+  {% if not v.last_run or not v.resources %}{% set ns.missing = ns.missing + 1 %}{% endif %}
+  {% if v.queued %}{% set ns.queued = ns.queued + (v.queued | length) %}{% endif %}
+{% endfor %}
 
-              <td>
-                <strong>{{ v.public.name }}</strong>
-                <br/><small class="text-muted">{{ v.public.location }}</small>
-              </td>
-
-              <td>
-                {% if v.profile == 'offensive' %}
-                  <span class="badge badge-danger">Ofensivo</span>
-                {% elif v.profile == 'defensive' %}
-                  <span class="badge badge-primary">Defensivo</span>
-                {% else %}
-                  <span class="badge badge-secondary">—</span>
-                {% endif %}
-              </td>
-
-              <!-- Recursos com barra de progresso -->
-              <td style="min-width:140px">
-                {% if v.resources %}
-                  {% set wood = v.resources.wood | default(0) %}
-                  {% set stone = v.resources.stone | default(0) %}
-                  {% set iron = v.resources.iron | default(0) %}
-                  {% set wood_pct = [(wood / storage * 100), 100] | min | int %}
-                  {% set stone_pct = [(stone / storage * 100), 100] | min | int %}
-                  {% set iron_pct = [(iron / storage * 100), 100] | min | int %}
-
-                  <div class="d-flex align-items-center mb-1">
-                    <img src="/static/images/wood.png" class="res-icon mr-1"/>
-                    <div class="progress flex-grow-1" style="height:8px">
-                      <div class="progress-bar bg-success" style="width:{{ wood_pct }}%"></div>
-                    </div>
-                    <small class="ml-1" style="min-width:45px">{{ wood }}</small>
-                  </div>
-                  <div class="d-flex align-items-center mb-1">
-                    <img src="/static/images/stone.png" class="res-icon mr-1"/>
-                    <div class="progress flex-grow-1" style="height:8px">
-                      <div class="progress-bar bg-warning" style="width:{{ stone_pct }}%"></div>
-                    </div>
-                    <small class="ml-1" style="min-width:45px">{{ stone }}</small>
-                  </div>
-                  <div class="d-flex align-items-center">
-                    <img src="/static/images/iron.png" class="res-icon mr-1"/>
-                    <div class="progress flex-grow-1" style="height:8px">
-                      <div class="progress-bar bg-secondary" style="width:{{ iron_pct }}%"></div>
-                    </div>
-                    <small class="ml-1" style="min-width:45px">{{ iron }}</small>
-                  </div>
-                {% else %}
-                  <small class="text-muted">—</small>
-                {% endif %}
-              </td>
-
-              <!-- Tropas: apenas > 0, com ícones -->
-              <td style="min-width:180px">
-                <div class="d-flex flex-wrap">
-                {% for unit, qty in v.troops.items() %}
-                  {% if qty and qty > 0 %}
-                  <span class="mr-2 mb-1 small" title="{{ unit }}">
-                    <img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"/>
-                    {{ qty }}
-                  </span>
-                  {% endif %}
-                {% endfor %}
-                </div>
-              </td>
-
-              <td>
-                {% if v.queued | count > 0 %}
-                  <span class="badge badge-info">{{ v.queued | count }} na fila</span>
-                {% else %}
-                  <span class="badge badge-light border">Livre</span>
-                {% endif %}
-              </td>
-
-              <td class="small">
-                {% if village_id in data.config.villages %}
-                  <span class="d-block">{{ data.config.villages[village_id].building }}</span>
-                  <span class="text-muted">{{ data.config.villages[village_id].units }}</span>
-                {% else %}
-                  <span class="text-muted">Sem config</span>
-                {% endif %}
-              </td>
-
-              <td>
-                {% set vzone = v.get('zone') if v.get else v['zone'] if 'zone' in v else None %}
-                {% if vzone %}
-                  <a href="/zones" class="badge badge-secondary text-decoration-none">{{ vzone }}</a>
-                {% else %}
-                  <span class="text-muted small">—</span>
-                {% endif %}
-              </td>
-
-              <td>
-                <a href="/map?center={{ village_id }}" class="btn btn-outline-success btn-sm d-block mb-1">Mapa</a>
-                <a href="/village?id={{ village_id }}" class="btn btn-outline-primary btn-sm d-block">Config</a>
-              </td>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </div>
+<header class="twb-page-header">
+  <div>
+    <p class="twb-eyebrow">Operação · inventário comparável</p>
+    <h1 class="twb-page-title">Aldeias</h1>
+    <p class="twb-page-summary">Varredura dos últimos snapshots locais. Estado observado e ausência de dados são apresentados separadamente.</p>
   </div>
+  <div class="twb-page-actions"><a href="/map" class="btn btn-outline-secondary">Abrir mapa</a><a href="/config" class="btn btn-primary">Configuração global</a></div>
+</header>
+
+<section class="twb-health-strip" aria-label="Resumo das aldeias">
+  <div class="twb-health-item"><span class="twb-health-label">Gerenciadas no cache</span><span class="twb-health-value">{{ data.bot | length }}</span><span class="twb-health-meta">Snapshots encontrados nesta leitura.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Exceções observadas</span><span class="twb-health-value">{{ ns.under_attack }}</span><span class="twb-health-meta">Aldeias marcadas como sob ataque.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Dados incompletos</span><span class="twb-health-value">{{ ns.missing }}</span><span class="twb-health-meta">Sem observação ou recursos no snapshot.</span></div>
+</section>
+
+<div class="twb-filter-bar mb-3" role="search" aria-label="Filtrar aldeias">
+  <div class="twb-filter flex-grow-1">
+    <label for="village-search">Nome, ID ou coordenada</label>
+    <input class="form-control form-control-sm" id="village-search" type="search" placeholder="Ex.: BBM 001, 41123 ou 578|297">
+  </div>
+  <div class="twb-filter">
+    <label for="village-state">Estado</label>
+    <select class="form-control form-control-sm" id="village-state">
+      <option value="">Todos</option>
+      <option value="danger">Sob ataque</option>
+      <option value="unknown">Sem dados</option>
+      <option value="observed">Observado</option>
+    </select>
+  </div>
+  <div class="twb-filter">
+    <label for="village-profile">Perfil</label>
+    <select class="form-control form-control-sm" id="village-profile">
+      <option value="">Todos</option>
+      <option value="offensive">Ofensivo</option>
+      <option value="defensive">Defensivo</option>
+      <option value="watchtower">Torre de vigia</option>
+      <option value="unknown">Não definido</option>
+    </select>
+  </div>
+  <span class="small text-muted" id="village-count" role="status" aria-live="polite">{{ data.bot | length }} aldeias exibidas</span>
 </div>
+
+{% if not data.bot %}
+<div class="twb-panel twb-panel--unknown"><div class="twb-panel-body"><div class="twb-empty"><strong>Nenhum snapshot de aldeia disponível</strong>A lista não pode inferir aldeias saudáveis a partir de um cache vazio. Inicie o bot ou consulte os logs.</div></div></div>
+{% else %}
+<section class="twb-panel" aria-labelledby="titulo-tabela-aldeias">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-tabela-aldeias">Estado operacional por aldeia</h2><span class="small text-muted">Recursos e tropas são snapshots, não valores em tempo real.</span></div>
+  <div class="twb-table-scroll table-responsive">
+    <table class="table table-sm twb-operational-table" id="villages-table">
+      <caption class="sr-only">Aldeias gerenciadas, ordenadas conforme o cache fornecido pelo servidor</caption>
+      <thead><tr><th scope="col">Aldeia</th><th scope="col">Estado</th><th scope="col">Perfil</th><th scope="col">Recursos</th><th scope="col">Tropas em casa</th><th scope="col">Construção</th><th scope="col">Observação</th><th scope="col">Próxima ação</th><th scope="col"><span class="sr-only">Ações</span></th></tr></thead>
+      <tbody>
+      {% for village_id, v in data.bot.items() %}
+        {% set pub = v.public or {} %}
+        {% set resources = v.resources or {} %}
+        {% set troops = v.troops or {} %}
+        {% set profile = v.profile | default('unknown', true) %}
+        {% set coordinate = (pub.location | replace('[', '') | replace(']', '') | replace(', ', '|') | replace(',', '|')) if pub.location is string else (pub.location | join('|')) if pub.location else none %}
+        {% set state = 'danger' if v.under_attack else 'unknown' if not v.last_run or not v.resources else 'observed' %}
+        <tr class="{% if state == 'danger' %}twb-row--danger{% elif state == 'unknown' %}twb-row--unknown{% endif %}" data-village-row data-search="{{ (pub.name | default('', true)) | lower }} {{ village_id }} {{ coordinate | default('', true) }}" data-state="{{ state }}" data-profile="{{ profile }}">
+          <td>
+            <strong>{{ pub.name | default('Nome indisponível', true) }}</strong>
+            <div><span class="small text-muted">#{{ village_id }}</span>{% if coordinate %} · <span class="twb-coordinate">{{ coordinate }}</span><button class="twb-copy-button small" type="button" data-copy-coordinate="{{ coordinate }}" aria-label="Copiar coordenada {{ coordinate }}">Copiar</button>{% endif %}</div>
+          </td>
+          <td>
+            {% if v.under_attack %}<span class="twb-status twb-status--danger">Sob ataque</span>
+            {% elif not v.last_run or not v.resources %}<span class="twb-status twb-status--unknown">Dados incompletos</span>
+            {% else %}<span class="twb-status twb-status--info">Snapshot observado</span>{% endif %}
+          </td>
+          <td>
+            {% if profile == 'offensive' %}<span class="twb-status twb-status--danger">Ofensivo</span>
+            {% elif profile == 'defensive' %}<span class="twb-status twb-status--info">Defensivo</span>
+            {% elif profile == 'watchtower' %}<span class="twb-status twb-status--warning">Torre de vigia</span>
+            {% else %}<span class="twb-status twb-status--unknown">Não definido</span>{% endif %}
+          </td>
+          <td>
+            {% if resources %}
+            <div class="twb-resource-list" aria-label="Recursos">
+              <span class="twb-resource"><img src="/static/images/wood.png" class="res-icon" alt="Madeira"><span class="twb-number">{{ resources.wood | default('—') }}</span></span>
+              <span class="twb-resource"><img src="/static/images/stone.png" class="res-icon" alt="Argila"><span class="twb-number">{{ resources.stone | default('—') }}</span></span>
+              <span class="twb-resource"><img src="/static/images/iron.png" class="res-icon" alt="Ferro"><span class="twb-number">{{ resources.iron | default('—') }}</span></span>
+            </div>
+            {% else %}<span class="twb-status twb-status--unknown">Sem dados</span>{% endif %}
+          </td>
+          <td>
+            {% set shown = namespace(count=0) %}
+            <div class="twb-unit-summary">
+            {% for unit, qty in troops.items() if qty and qty > 0 %}
+              {% if shown.count < 5 %}<span class="mr-2 text-nowrap"><img src="/static/images/unit_{{ unit }}.png" class="res-icon" alt="{{ unit }}"> <span class="twb-number">{{ qty }}</span></span>{% endif %}
+              {% set shown.count = shown.count + 1 %}
+            {% endfor %}
+            {% if shown.count == 0 %}<span class="text-muted">Sem tropas informadas</span>{% elif shown.count > 5 %}<span class="text-muted">+{{ shown.count - 5 }} tipos</span>{% endif %}
+            </div>
+          </td>
+          <td>
+            {% if v.queued %}<span class="twb-status twb-status--info">{{ v.queued | length }} na fila</span>{% else %}<span class="twb-status twb-status--muted">Fila livre</span>{% endif %}
+            {% if village_id in data.config.villages %}<div class="small text-muted mt-1">{{ data.config.villages[village_id].building | default('template não definido') }}</div>{% endif %}
+          </td>
+          <td>
+            {% if v.last_run %}<time class="twb-time small" data-observed-at="{{ v.last_run }}">calculando idade…</time><div class="small text-muted">SLA não definido</div>{% else %}<span class="twb-status twb-status--unknown">Sem timestamp</span>{% endif %}
+          </td>
+          <td><span class="twb-status twb-status--unknown">Não disponível</span><div class="small text-muted mt-1">Sem contrato agregado</div></td>
+          <td class="text-right"><a href="/village?id={{ village_id }}" class="btn btn-primary btn-sm">Detalhes</a><a href="/map?center={{ village_id }}" class="btn btn-outline-secondary btn-sm mt-1">Mapa</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var search = document.getElementById('village-search');
+  var state = document.getElementById('village-state');
+  var profile = document.getElementById('village-profile');
+  var rows = Array.prototype.slice.call(document.querySelectorAll('[data-village-row]'));
+  var count = document.getElementById('village-count');
+  function applyFilters() {
+    var query = (search.value || '').toLowerCase().trim();
+    var visible = 0;
+    rows.forEach(function (row) {
+      var match = (!query || row.getAttribute('data-search').indexOf(query) !== -1) && (!state.value || row.getAttribute('data-state') === state.value) && (!profile.value || row.getAttribute('data-profile') === profile.value);
+      row.hidden = !match;
+      if (match) visible += 1;
+    });
+    count.textContent = visible + (visible === 1 ? ' aldeia exibida' : ' aldeias exibidas');
+  }
+  if (search) search.addEventListener('input', applyFilters);
+  if (state) state.addEventListener('change', applyFilters);
+  if (profile) profile.addEventListener('change', applyFilters);
+})();
+</script>
 {% endblock %}

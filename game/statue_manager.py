@@ -1,7 +1,7 @@
 """
 Feature 24 (fase 1) — leitura periódica do estado do(s) Paladino(s), sem
 nenhuma automação ativa (treino por XP e re-especialização ficam para uma
-fase futura, que precisa de mais desenho — ver docs/backlog.md Feature 24).
+fase futura, que precisa de mais desenho — ver docs/backend.md Feature 24).
 
 Roda uma vez por ciclo completo do bot (não por aldeia — o roster de
 Paladinos é compartilhado por toda a conta), pedindo screen=statue&mode=overview

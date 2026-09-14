@@ -32,7 +32,7 @@ class BuildingManager:
 
     # Can be increased with a premium account. Set per-cycle from config in
     # game/village.py (building.max_queued_items / premium_max_queued_items,
-    # see Feature 22 in docs/backlog.md) — this class default is only a fallback.
+    # see Feature 22 in docs/backend.md) — this class default is only a fallback.
     max_queue_len = 2
     resman = None
     raw_template = None
