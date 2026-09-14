@@ -160,18 +160,31 @@ def get_vars():
 
 @app.route('/bot/start', methods=['POST'])
 def start_bot():
-    bm.start()
-    import time; time.sleep(0.5)
-    return jsonify({"running": bm.is_running(), "pid": bm.pid})
+    result = bm.start()
+    import time; time.sleep(1.0)
+    status = bm.status()
+    if result.get("error"):
+        status["error"] = result["error"]
+    return jsonify(status)
 
 @app.route('/bot/stop', methods=['POST'])
 def stop_bot():
     bm.stop()
-    return jsonify({"running": bm.is_running()})
+    return jsonify(bm.status())
+
+@app.route('/bot/status', methods=['GET'])
+def bot_status():
+    """
+    Estado do processo sem efeito colateral -- o painel faz polling disto para
+    refletir o bot que morreu (ou que subiu pelo cmd) sem recarregar a pagina.
+    """
+    return jsonify(bm.status())
 
 @app.route('/bot/output', methods=['GET'])
 def bot_output():
-    return jsonify({"lines": BotManager.read_output_log(lines=300)})
+    status = bm.status()
+    status["lines"] = BotManager.read_output_log(lines=300)
+    return jsonify(status)
 
 @app.route('/config', methods=['GET'])
 def get_config():

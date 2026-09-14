@@ -37,6 +37,14 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   HTML do jogo), `filemanager.py`, `templates.py`, `reporter.py`, `notification.py`.
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
   `config.json`. Rotas em `server.py`, lógica de leitura em `utils.py`.
+  `BotManager` (reescrito em 2026-09-14) sobe o bot num **console visível
+  próprio** (`CREATE_NEW_CONSOLE`, sem redirecionar stdout) e **adota**
+  qualquer `twb.py` vivo neste diretório, tenha sido iniciado pelo painel ou
+  pelo `cmd` — ver o vigésimo segundo padrão abaixo. O output do painel vem do
+  `cache/logs/session_latest.log` (o tee do próprio `twb.py`), não mais do
+  `bot_output.log`. Testes em `tests/test_bot_manager.py`, mais um smoke com
+  processo real em `tests/smoke_bot_manager.py` (fora do glob da suíte de
+  propósito: abre console de verdade; rodar na mão ao mexer em `BotManager`).
 - **Cache (`cache/`)** — todo estado runtime persiste em JSON por diretório
   (`cache/attacks`, `cache/conquest`, `cache/managed`, `cache/zones.json`,
   `cache/hunter/schedules.json`, `cache/pvp_conquest`, etc). `.gitignore` cobre
@@ -603,6 +611,35 @@ puxa o fio.**
   que ela ainda falha** — reproduzi o `twb.py` bugado num diretório temporário
   e confirmei que os dois sinais disparam. Guarda que não pode falhar é o
   décimo quinto padrão de cabeça para baixo, e passa despercebida para sempre.
+- ⚠️ **Vigésimo segundo padrão, achado em 2026-09-14: automatizar o lançamento
+  de um programa interativo, tirando dele justamente o canal pelo qual ele
+  fala.** O `/bot/start` do painel subia o `twb.py` com `CREATE_NO_WINDOW` e
+  stdout num arquivo. Só que o bot **pergunta coisas**: `core/request.py:115`
+  faz `input("Enter browser cookie string> ")` quando a sessão expira, e
+  `twb.py` pede URL e user-agent no primeiro run. Sem console não há onde
+  responder — o processo fica **vivo, com pid válido e parado para sempre**, e
+  o painel, que só checava o pid, dizia "rodando". O `bot_output.log` guardava
+  a prova desde 30/06/2026: duas tentativas seguidas, ambas terminando na linha
+  `Enter browser cookie string> `. Ninguém leu porque o sintoma visível era
+  "iniciar pelo painel não é confiável", e não um erro.
+  A regra: antes de embrulhar um programa num botão, **procurar todo `input()`,
+  `getpass` e prompt no caminho dele** — se existir algum, ou o supervisor sabe
+  responder, ou o programa precisa de um console de verdade (aqui,
+  `CREATE_NEW_CONSOLE`, que é o que o usuário já usava na mão). Corolário sobre
+  o sinal de vida: **pid vivo não é atividade.** Quando o programa mantém um
+  log, a idade da última linha é o sinal honesto — com o cuidado de separar
+  "parado de propósito" (o bot avisa `Dead for X minutes (next run at: …)`
+  antes de dormir `inactive_delay`) de "congelado", senão o indicador vira o
+  décimo quinto padrão.
+  Segundo corolário, sobre detecção: `is_running()` olhava só o pid escrito
+  pelo próprio painel, então um bot iniciado pelo `cmd` — o jeito normal de
+  rodar aqui — aparecia como "não detectado", e o botão Iniciar subiria um
+  **segundo** bot na mesma conta. É o risco de ban que o P2-32 existia para
+  matar, entrando por outra porta: ele cobriu "o webmanager reiniciou" e não
+  "o processo não nasceu daqui". Ao guardar unicidade de um recurso externo,
+  perguntar quem mais pode criá-lo — se a resposta inclui o usuário, a
+  detecção tem que ser por **varredura do estado real do SO** (aqui
+  `psutil.process_iter` + cwd do repo, 5 ms), não por registro próprio.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do

@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 import psutil
 
@@ -365,13 +366,44 @@ class MapBuilder:
 
 
 class BotManager:
+    """
+    Controla o processo do bot a partir do painel.
+
+    Tres decisoes valem explicacao, porque as tres nasceram de sintomas medidos
+    em 2026-09-14 e nao de preferencia de desenho:
+
+    1. **O processo sobe num console visivel** (`CREATE_NEW_CONSOLE`), sem
+       redirecionar stdout. A versao anterior usava `CREATE_NO_WINDOW` com
+       stdout num arquivo, e isso e incompativel com o bot: `core/request.py`
+       chama `input("Enter browser cookie string> ")` quando a sessao expira, e
+       `twb.py` pergunta URL/user-agent no primeiro run. Sem console nao ha
+       como responder -- o processo fica vivo e parado para sempre, com o
+       painel dizendo "rodando". O `bot_output.log` de 30/06/2026 registra
+       exatamente isso duas vezes seguidas: as duas tentativas morreram no
+       prompt do cookie.
+    2. **`is_running()` adota qualquer twb.py do repo**, tenha sido iniciado
+       pelo painel ou pelo `cmd`. O P2-32 persistiu o pid em disco para cobrir
+       o restart do webmanager, mas o caso comum aqui e o usuario rodar
+       `python twb.py` na mao: sem pid file, o painel dizia "nao detectado" e o
+       botao Iniciar subiria um SEGUNDO bot na mesma conta -- o risco de ban
+       que o P2-32 existia para matar, por outra porta.
+    3. **O output vem do `session_latest.log`**, nao do `bot_output.log`. O tee
+       de `twb.py` ja escreve tudo la (linha a linha, `buffering=1`),
+       independente de quem iniciou o processo. O `bot_output.log` so recebia
+       algo quando o painel redirecionava stdout, e passou a nao receber nada.
+    """
+
     pid = None
     _proc = None
+    _started_by_panel = False
+    # Mantido so para leitura do historico antigo; nada escreve mais aqui.
     OUTPUT_LOG = os.path.join(os.path.dirname(__file__), "..", "cache", "logs", "bot_output.log")
+    SESSION_LOG = os.path.join(os.path.dirname(__file__), "..", "cache", "logs", "session_latest.log")
     # P2-32: o pid vivia so em memoria, entao reiniciar o webmanager perdia a
     # referencia -> is_running() retornava False -> /bot/start subia um SEGUNDO
     # twb.py na mesma conta (risco de ban). Persistir em disco.
     PID_FILE = os.path.join(os.path.dirname(__file__), "..", "cache", "bot.pid")
+    REPO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
     def _read_pid_file(self):
         try:
@@ -392,53 +424,167 @@ class BotManager:
         except OSError:
             pass
 
-    @staticmethod
-    def _is_twb_process(pid):
+    @classmethod
+    def _is_twb_process(cls, pid):
         """
-        Confirma que o pid ainda e um twb.py nosso, e nao um pid reciclado
+        Confirma que o pid ainda e um twb.py DESTE repo, e nao um pid reciclado
         pelo SO apontando para um processo qualquer.
         """
         try:
             proc = psutil.Process(pid)
             if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
                 return False
-            return any("twb.py" in str(arg) for arg in (proc.cmdline() or []))
+            return cls._cmdline_is_twb(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             return False
 
+    @classmethod
+    def _cmdline_is_twb(cls, proc):
+        try:
+            cmdline = proc.cmdline() or []
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return False
+        # O primeiro argumento depois do interpretador e o script. Casar so
+        # pelo basename evitaria confundir com tests/ ou com outro .py que
+        # mencione twb.py num argumento.
+        if not any(os.path.basename(str(arg)) == "twb.py" for arg in cmdline[1:]):
+            return False
+        try:
+            # Se o cwd for legivel, exigir que seja este repo -- assim um
+            # segundo clone rodando em outra pasta nao e confundido com o
+            # nosso. Quando nao da para ler, aceitar: o nome do script ja e um
+            # sinal forte e o custo do falso negativo (subir um bot duplicado)
+            # e maior que o do falso positivo.
+            return os.path.normcase(proc.cwd()) == os.path.normcase(cls.REPO_DIR)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+            return True
+
+    @classmethod
+    def _scan_for_twb(cls):
+        """
+        Procura um twb.py vivo que o painel nao conhece -- tipicamente um que o
+        usuario subiu na mao pelo cmd. Sem isto o painel diz "nao detectado"
+        para um bot que esta rodando, e o botao Iniciar sobe um segundo bot na
+        mesma conta.
+        """
+        me = os.getpid()
+        for proc in psutil.process_iter(["pid", "name"]):
+            if proc.info["pid"] == me:
+                continue
+            name = (proc.info["name"] or "").lower()
+            if "python" not in name and "pythonw" not in name:
+                continue
+            if cls._cmdline_is_twb(proc):
+                return proc.info["pid"]
+        return None
+
     def is_running(self):
         pid = self.pid or self._read_pid_file()
-        if not pid:
-            return False
-        if self._is_twb_process(pid):
+        if pid and self._is_twb_process(pid):
             self.pid = pid
             return True
+        # Pid conhecido morreu (ou nunca houve): varrer antes de concluir que
+        # nao ha bot rodando.
         self.pid = None
         self._proc = None
+        adopted = self._scan_for_twb()
+        if adopted:
+            self.pid = adopted
+            self._started_by_panel = False
+            self._write_pid_file(adopted)
+            return True
+        self._started_by_panel = False
         self._write_pid_file(None)
         return False
 
+    def started_at(self):
+        """Momento em que o processo detectado subiu, lido do proprio SO."""
+        if not self.pid:
+            return None
+        try:
+            return psutil.Process(self.pid).create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return None
+
+    # "Dead for 11.62 minutes (next run at: 18:23:52.530554)" -- o que twb.py
+    # imprime antes de cada sono entre ciclos.
+    SLEEP_RE = re.compile(r"Dead for ([\d.]+) minutes \(next run at: (\d{2}:\d{2}:\d{2})")
+
+    @classmethod
+    def _sleep_hint(cls):
+        """
+        Distingue "parado de proposito" de "congelado". O log so avanca quando
+        o bot trabalha, entao idade alta sozinha nao diz nada: entre ciclos ele
+        dorme `inactive_delay` (2000 s na config atual) em silencio. Quando a
+        ultima linha e o aviso de sono, da para dizer ate quando.
+        """
+        tail = cls.read_output_log(lines=3)
+        if not tail:
+            return None
+        match = cls.SLEEP_RE.search(tail[0])
+        if not match:
+            return None
+        return {"minutes": float(match.group(1)), "next_run": match.group(2)}
+
+    def status(self):
+        running = self.is_running()
+        return {
+            "running": running,
+            "pid": self.pid if running else None,
+            "started_at": self.started_at() if running else None,
+            "started_by_panel": bool(running and self._started_by_panel),
+            "log_age": self.output_log_age(),
+            "sleeping": self._sleep_hint() if running else None,
+        }
+
     def start(self):
+        """
+        Sobe o bot num console proprio e visivel. Devolve o dict de status.
+
+        O console nao e enfeite: o bot faz `input()` quando a sessao expira
+        (cookie do navegador) e no primeiro run (URL / user-agent). Sem janela
+        nao ha como responder e o processo fica parado sem sinal nenhum.
+        """
         if self.is_running():
-            return
-        wd = os.path.join(os.path.dirname(__file__), "..")
-        log_dir = os.path.join(wd, "cache", "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        output_log = os.path.join(log_dir, "bot_output.log")
-        log_file = open(output_log, "a", encoding="utf-8")
-        log_file.write("\n--- Bot iniciado em %s ---\n" % datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-        log_file.flush()
-        kwargs = {"cwd": wd, "stdout": log_file, "stderr": log_file, "shell": False}
+            return self.status()
+        wd = self.REPO_DIR
+        os.makedirs(os.path.join(wd, "cache", "logs"), exist_ok=True)
+        kwargs = {"cwd": wd, "shell": False}
         if os.name == "nt":
             import sys
-            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            cmd = [sys.executable, "twb.py"]
+            # CREATE_NEW_CONSOLE da ao processo um console proprio, com stdin
+            # funcional. Nao redirecionar stdout aqui: quem registra tudo em
+            # disco e o tee do proprio twb.py (cache/logs/session_latest.log),
+            # que roda tenha o bot sido iniciado pelo painel ou pelo cmd.
+            kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
+            # `-u` derruba o buffer de bloco do stdout. Sem isto a janela
+            # cospe o output em rajadas de 8 KB e parece travada.
+            cmd = [sys.executable, "-u", "twb.py"]
         else:
-            cmd = ["python3", "twb.py"]
-        self._proc = subprocess.Popen(cmd, **kwargs)
+            cmd = self._posix_console_command()
+        try:
+            self._proc = subprocess.Popen(cmd, **kwargs)
+        except OSError as exc:
+            return {"running": False, "pid": None, "error": str(exc)}
         self.pid = self._proc.pid
+        self._started_by_panel = True
         self._write_pid_file(self.pid)
         print("Bot started (PID %d)" % self.pid)
+        return self.status()
+
+    @staticmethod
+    def _posix_console_command():
+        """
+        Em Linux/macOS nao ha equivalente universal do CREATE_NEW_CONSOLE.
+        Tenta um emulador de terminal instalado; se nao houver, cai para o
+        processo sem janela -- com o aviso de que um prompt de cookie ali fica
+        invisivel.
+        """
+        import shutil
+        for term, flag in (("x-terminal-emulator", "-e"), ("gnome-terminal", "--"), ("konsole", "-e"), ("xterm", "-e")):
+            if shutil.which(term):
+                return [term, flag, "python3", "-u", "twb.py"]
+        return ["python3", "-u", "twb.py"]
 
     def stop(self):
         if not self.is_running():
@@ -455,18 +601,53 @@ class BotManager:
         finally:
             self.pid = None
             self._proc = None
+            self._started_by_panel = False
             self._write_pid_file(None)
 
-    @staticmethod
-    def read_output_log(lines=200):
-        log_path = os.path.join(os.path.dirname(__file__), "..", "cache", "logs", "bot_output.log")
+    @classmethod
+    def output_log_age(cls):
+        """
+        Segundos desde a ultima escrita no log de sessao. E o unico sinal
+        disponivel de que o processo esta *trabalhando*, e nao apenas vivo --
+        um bot parado num prompt de input fica com pid valido e log congelado.
+        """
+        try:
+            return max(0.0, time.time() - os.path.getmtime(cls.SESSION_LOG))
+        except OSError:
+            return None
+
+    @classmethod
+    def read_output_log(cls, lines=200):
+        """
+        Le o fim do `session_latest.log` -- o tee que o proprio twb.py mantem,
+        que funciona tenha o bot sido iniciado pelo painel ou pelo cmd.
+
+        Le so o final do arquivo: ele passa de 2 MB numa sessao longa e isto e
+        chamado em polling. Somente leitura, nunca escrita: o bot esta com o
+        arquivo aberto (ver o vigesimo primeiro padrao no CLAUDE.md).
+        """
+        log_path = cls.SESSION_LOG
         if not os.path.exists(log_path):
+            log_path = cls.OUTPUT_LOG  # historico pre-2026-09-14
+            if not os.path.exists(log_path):
+                return []
+        # ~400 bytes por linha de log deste bot, com folga.
+        window = max(64 * 1024, lines * 500)
+        try:
+            with open(log_path, "rb") as f:
+                size = f.seek(0, os.SEEK_END)
+                f.seek(max(0, size - window))
+                raw = f.read()
+        except OSError:
             return []
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
-        recent = all_lines[-lines:]
+        if size > window:
+            raw = raw.split(b"\n", 1)[-1]  # descarta a primeira linha cortada
+        # O log pode conter bytes NUL (ver vigesimo primeiro padrao): um
+        # truncate concorrente deixa buracos que viram \x00 no meio do texto.
+        text = raw.replace(b"\x00", b"").decode("utf-8", errors="replace")
+        recent = [l.rstrip() for l in text.splitlines() if l.strip()][-lines:]
         recent.reverse()
-        return [l.rstrip() for l in recent if l.strip()]
+        return recent
 
 
 class LogReader:
