@@ -89,6 +89,7 @@ from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
 from game.village import Village
+from game.conquest_planner import BarbarianTrainPlanner
 from game.hunter import Hunter
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
@@ -792,6 +793,20 @@ class TWB:
                 # opt-in (config["inventory"]["enabled"]), nenhum item é
                 # ativado. Roda uma vez por ciclo (não por aldeia).
                 InventoryManager.run(self.wrapper, config, self.found_villages)
+
+                # Feature 8 (fase 2): monta o trem de nobres bárbaro com os
+                # nobres de TODAS as aldeias, não mais 4 na mesma. Roda uma vez
+                # por ciclo, e antes do Hunter de propósito: o agendamento que
+                # ele acabou de criar precisa ser sondado e entrar no
+                # nearest_send_time() ainda neste ciclo, senão o bot dorme por
+                # cima da janela de envio do próprio trem que acabou de montar.
+                if config.get("conquest", {}).get("enabled", False):
+                    BarbarianTrainPlanner(
+                        wrapper=self.wrapper,
+                        villages=managed_villages_dict,
+                        config=config,
+                        hunter=self.hunter,
+                    ).run()
 
                 sleep = 0
                 if self.is_active_hours(config=config):

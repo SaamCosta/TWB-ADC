@@ -730,6 +730,11 @@ class ConquestReader:
     # como "Conquistada" as 20:19:37 com o nobre ainda voando e a aldeia ainda
     # barbara -- a tela afirmava um fato que ninguem tinha verificado.
     STATUS_LABELS = {
+        # Trem multi-origem montado e registrado no Hunter, ainda sem sair: o
+        # envio de cada origem é recuado a partir de uma hora de chegada comum,
+        # então essa janela dura de minutos a horas
+        # (game/conquest_planner.py::BarbarianTrainPlanner).
+        "train_scheduled": "Trem agendado (aguardando janela de envio)",
         "train_sent":    "Train Enviado",
         "extra_pending": "Extra Pendente",
         "conquered":     "Conquistada (confirmada)",
@@ -745,6 +750,7 @@ class ConquestReader:
         "complete":      "Concluída (registro antigo)",
     }
     STATUS_COLORS = {
+        "train_scheduled": "info",
         "train_sent":    "warning",
         "extra_pending": "info",
         "conquered":     "success",
@@ -888,6 +894,13 @@ class ConquestReader:
                 # por nenhuma aldeia) ou invalidados (deixaram de ser bárbaras).
                 "queued_at":      data.get("queued_at"),
                 "queued_at_fmt":  ConquestReader._fmt_ts(data.get("queued_at")),
+                # Trem multi-origem ainda por sair: a chegada e uma PREVISAO
+                # (o horario comum que o planejador escolheu), nao um pouso
+                # observado -- por isso campo proprio, separado de
+                # last_hit_ts, que so existe depois do despacho.
+                "scheduled_arrival":     data.get("scheduled_arrival"),
+                "scheduled_arrival_fmt": ConquestReader._fmt_ts(data.get("scheduled_arrival")),
+                "sources":        data.get("sources") or {},
                 "invalid_reason": data.get("invalid_reason"),
                 # Quem levou a bárbara antes de nós (status "lost").
                 "lost_to_owner":  data.get("lost_to_owner"),
@@ -903,12 +916,87 @@ class ConquestReader:
         # olho humano (sem confirmação, e perdida para outro jogador), e por
         # último o que está resolvido.
         order = {
-            "manual": -1, "train_sent": 0, "extra_pending": 1,
-            "assumed_done": 2, "lost": 3, "conquered": 4,
-            "complete": 5, "invalid": 6,
+            "manual": -1, "train_scheduled": 0, "train_sent": 1,
+            "extra_pending": 2, "assumed_done": 3, "lost": 4,
+            "conquered": 5, "complete": 6, "invalid": 7,
         }
         targets.sort(key=lambda t: (order.get(t["status"], 9), -t["last_hit_ts"]))
         return targets
+
+    # ------------------------------------------------------------------
+    # Área de interesse — para que lado o bot cresce
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def area_of_interest(config=None):
+        """
+        Estado da `conquest.area_of_interest` mais uma contagem REAL de quantas
+        bárbaras conhecidas caem dentro dela.
+
+        Por que a contagem e não só a caixa: uma caixa com os eixos trocados,
+        ou apontada para o hemisfério errado, é indistinguível de uma caixa
+        correta olhando só os números. O que separa as duas é quantos alvos ela
+        seleciona — e esse é justamente o valor que o operador não consegue
+        calcular de cabeça.
+
+        Custo medido em 17/09/2026: 0,112 s para os 850 arquivos de
+        `cache/villages` (contra os 8,3 s que a varredura de `cache/reports`
+        custava antes de ser indexada — são 850 arquivos pequenos, não 1.056
+        relatórios). Sem índice de propósito: `Map.build_cache_entry` reescreve
+        esses arquivos in-place quando dono ou pontos mudam, então um índice
+        por nome de arquivo serviria dado velho, e um por mtime não pagaria o
+        próprio custo em 0,1 s.
+
+        `dentro` NÃO aplica o raio: o raio é medido a partir de cada aldeia de
+        origem, então não existe um número global. É contagem de elegíveis por
+        dono e pontos, e a interface diz isso.
+        """
+        config = config if config is not None else DataReader.config_grab()
+        cq = (config or {}).get("conquest", {}) or {}
+        area = cq.get("area_of_interest") or {}
+        out = {
+            "enabled": bool(area.get("enabled", False)),
+            "x_min": area.get("x_min"), "x_max": area.get("x_max"),
+            "y_min": area.get("y_min"), "y_max": area.get("y_max"),
+            "min_points": cq.get("min_points"), "max_points": cq.get("max_points"),
+            "max_radius": cq.get("max_radius"),
+            "label": None, "inside": 0, "total": 0, "usable": False,
+        }
+        try:
+            box = (int(area["x_min"]), int(area["x_max"]),
+                   int(area["y_min"]), int(area["y_max"]))
+        except (KeyError, TypeError, ValueError):
+            return out
+        out["usable"] = True
+        out["label"] = "%d–%d | %d–%d" % box
+
+        x_min, x_max, y_min, y_max = box
+        lo = cq.get("min_points", 0) or 0
+        hi = cq.get("max_points", 10 ** 9) or 10 ** 9
+        v_dir = ConquestReader._villages_dir()
+        if not os.path.isdir(v_dir):
+            return out
+        for entry in os.scandir(v_dir):
+            if not entry.name.endswith(".json"):
+                continue
+            try:
+                with open(entry.path, "r", encoding="utf-8") as f:
+                    v = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            loc = v.get("location")
+            if not loc or len(loc) != 2:
+                continue
+            if str(v.get("owner", "0")) != "0":
+                continue
+            pts = v.get("points") or 0
+            if pts < lo or pts > hi:
+                continue
+            out["total"] += 1
+            x, y = int(loc[0]), int(loc[1])
+            if x_min <= x <= x_max and y_min <= y <= y_max:
+                out["inside"] += 1
+        return out
 
     # ------------------------------------------------------------------
     # Feature 15 — seleção manual de alvo de conquista bárbara

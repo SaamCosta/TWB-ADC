@@ -655,6 +655,56 @@ class AttackManager:
                 return False
         return True
 
+    def _resolve_position(self, vid):
+        """
+        Coordenada (x, y) do alvo, ou None quando nao da para saber onde ele
+        fica -- unico caso em que o ataque nao pode sequer ser tentado.
+
+        Duas fontes, nesta ordem:
+
+        1. `self.map.map_pos`, o scan de mapa DESTA aldeia neste ciclo. E o que
+           o farm usa, e para o farm basta: ele so itera sobre `map.villages`,
+           entao o alvo sempre veio dali.
+        2. `cache/villages/{vid}.json`, o snapshot COMPARTILHADO que qualquer
+           aldeia gerenciada alimenta (game/map.py::Map.build_cache_entry).
+
+        A fonte 2 existe por causa da conquista: `ConquestManager.find_target()`
+        devolve alvo manual ignorando raio de proposito, e `_get_village_meta()`
+        ja consultava esse mesmo snapshot para nome/pontos. So a COORDENADA
+        continuava saindo apenas do `map_pos` local -- entao um alvo legitimo,
+        validado pelo webmanager contra `cache/villages`, era recusado aqui em
+        silencio se por acaso nao estivesse no prefetch de mapa da aldeia que o
+        reivindicou. Com `farms.map_sector_radius = 0` (o default, e o valor em
+        campo) esse prefetch e pequeno e erratico -- ver o comentario em
+        map.py:56 --, entao o caso era comum, e o unico sinal era um
+        `attack N/4 failed` sem motivo.
+
+        O gate do P2-38 continua valendo: sem coordenada em NENHUMA das duas
+        fontes, devolve None antes do GET da praca (que custa o sleep de
+        delay_factor). O que muda e que agora isso e logado -- "recusei" sem
+        dizer por que foi metade do custo do bug original.
+        """
+        position = self.map.map_pos.get(vid)
+        if position:
+            return position
+
+        cached = FileManager.load_json_file(f"cache/villages/{vid}.json") or {}
+        location = cached.get("location")
+        if location and len(location) == 2:
+            self.logger.debug(
+                "[Attack] %s -> %s: coordenada %s|%s veio do cache compartilhado "
+                "(alvo fora do scan de mapa desta aldeia)",
+                self.village_id, vid, location[0], location[1]
+            )
+            return int(location[0]), int(location[1])
+
+        self.logger.warning(
+            "[Attack] %s -> %s: sem coordenada no scan desta aldeia nem em "
+            "cache/villages/%s.json -- nao da para montar o ataque",
+            self.village_id, vid, vid
+        )
+        return None
+
     def attack(self, vid, troops=None, additional_attacks=None):
         """
         Send one TW attack, optionally with more attacks in the same request.
@@ -688,7 +738,8 @@ class AttackManager:
         # P2-38: validar a posicao antes do GET da praca -- a requisicao
         # (com o sleep de delay_factor) era desperdicada quando o alvo nao
         # estava no mapa.
-        if vid not in self.map.map_pos:
+        position = self._resolve_position(vid)
+        if position is None:
             return False
 
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
@@ -705,7 +756,7 @@ class AttackManager:
         else:
             pre_data.update(self.troopmanager.troops)
 
-        x, y = self.map.map_pos[vid]
+        x, y = position
         post_data = {"x": x, "y": y, "target_type": "coord", "attack": "Aanvallen"}
         pre_data.update(post_data)
 
@@ -848,15 +899,54 @@ class ConquestCache:
     def set(target_id, entry):
         FileManager.save_json_file(entry, f"cache/conquest/{target_id}.json")
 
+    # Status que significam "este alvo ja e de alguem, nao reeleja".
+    #
+    # `train_scheduled` entrou com o planejador multi-origem
+    # (game/conquest_planner.py): entre agendar no Hunter e o Hunter disparar
+    # passam-se minutos ou horas, e nessa janela nao ha nobre no ar nem
+    # registro "train_sent" -- ou seja, nenhum dos dois filtros antigos
+    # cobria o alvo e find_target() o reelegeria como se estivesse livre. E o
+    # mesmo buraco do incidente de 2026-08-12 (registro fora de all_reserved
+    # com quatro nobres voando), so que do outro lado da linha do tempo.
+    ACTIVE_STATUSES = ("train_scheduled", "train_sent", "extra_pending")
+
     @staticmethod
     def all_reserved():
         """Returns set of target_ids currently reserved by any village."""
         reserved = set()
         for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
             data = FileManager.load_json_file(f"cache/conquest/{fname}")
-            if data and data.get("status") in ("train_sent", "extra_pending"):
+            if data and data.get("status") in ConquestCache.ACTIVE_STATUSES:
                 reserved.add(fname.replace(".json", ""))
         return reserved
+
+    @staticmethod
+    def active_conquests():
+        """
+        {target_id: data} de toda conquista barbara em andamento, de qualquer
+        aldeia -- agendada, em voo ou aguardando nobre extra.
+
+        O planejador usa isto para manter a invariante de UM trem barbaro por
+        vez no imperio. Ela ja existia de fato no modelo por aldeia, so que
+        por acidente: cada ConquestManager so via a propria aldeia e precisava
+        de 4 nobres proprios, entao dois trens simultaneos eram raros. Com o
+        planejador juntando nobres do imperio inteiro, nada garantiria isso --
+        e dois trens concorrentes disputariam os mesmos nobres.
+        """
+        active = {}
+        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+            data = FileManager.load_json_file(f"cache/conquest/{fname}")
+            if not data:
+                continue
+            target_id = fname.replace(".json", "")
+            if data.get("status") in ConquestCache.ACTIVE_STATUSES:
+                active[target_id] = data
+            elif ConquestCache.nobles_in_flight(data):
+                # Status pode estar errado -- foi o que aconteceu em
+                # 2026-08-12 ("complete" com quatro nobres no ar). A chegada
+                # nao mente, entao ela tem a ultima palavra.
+                active[target_id] = data
+        return active
 
     @staticmethod
     def nobles_in_flight(data, now=None):
@@ -924,6 +1014,9 @@ class ConquestManager:
     """
     TRAIN_SIZE = 4
     MAX_RADIUS = 100
+    # Quantas reivindicacoes sem envio um alvo manual aguenta antes de sair da
+    # fila. Ver _note_failed_claim() para por que a fila precisa de uma saida.
+    MANUAL_CLAIM_ATTEMPTS = 3
     # Units never used as escort filler.
     # knight (Paladino): there is only ever one per village and it must never
     # leave on its own -- same rule already enforced for the PvP conquest in
@@ -971,7 +1064,23 @@ class ConquestManager:
     def run(self):
         """
         Main entry point called from village.run_conquest().
-        Returns True if a train was dispatched, False otherwise.
+        Returns True if something was dispatched, False otherwise.
+
+        Desde a fase 2 (game/conquest_planner.py) este metodo NAO monta mais
+        trem novo. Ele cuida da conquista que esta em andamento: lealdade real
+        do relatorio, nobre extra quando faltou pouco, confirmacao de posse e
+        alvo perdido para outro jogador. Quem escolhe alvo e despacha trem e o
+        `BarbarianTrainPlanner`, que roda uma vez por ciclo e enxerga o
+        imperio inteiro.
+
+        A montagem saiu daqui inteira, e nao ficou como plano B, de proposito.
+        Dois sistemas capazes de comprometer nobre para o mesmo alvo e o bug
+        de double-booking que a Feature 27 existe para matar -- e a janela
+        entre o planejador agendar (`train_scheduled`) e o Hunter disparar dura
+        horas, que e tempo de sobra para uma aldeia com 4 nobres proprios
+        montar um segundo trem contra o mesmo alvo sem saber do primeiro.
+        Nobre e a unidade mais cara do jogo e ja custou 527 tropas e uma moeda
+        neste projeto (2026-08-12).
         """
         cfg = self.config.get("conquest", {})
         if not cfg.get("enabled", False):
@@ -989,57 +1098,14 @@ class ConquestManager:
         if existing:
             return self._handle_existing(existing, cfg)
 
-        # Need exactly TRAIN_SIZE nobles available, not counting nobles another
-        # conquest system already has scheduled (Feature 27)
-        available_nobles = self._available_nobles()
-        if available_nobles < self.TRAIN_SIZE:
-            self.logger.info(
-                "Conquest: %d/%d nobles available, waiting for full train",
-                available_nobles, self.TRAIN_SIZE
-            )
-            # Clear any stale reserve (nobles were lost or used elsewhere).
-            # Only touches this manager's own owner_key -- other pending
-            # reservations (e.g. a PvP conquest escort) must not be wiped.
-            self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
-            return False
-
-        # Find and reserve a new target
-        target_id = self.find_target(cfg)
-        if not target_id:
-            self.logger.info("Conquest: no suitable barbarian target found")
-            return False
-
-        # Pre-check escort: if insufficient, set reserve so farm/gather
-        # leave these troops at home until escort threshold is met.
-        escort = self._build_escort(cfg)
-        if escort is None:
-            needed = self._calculate_needed_escort(cfg)
-            if needed:
-                self.troopmanager.conquest_reserve["barbarian_conquest"] = needed
-                self.logger.info(
-                    "Conquest: escort insufficient — reserving %s for next cycle "
-                    "(farm and gather will respect this reserve)",
-                    needed
-                )
-            # P2-22: an empty result used to mean "no troops at all", which
-            # essentially never happened, so a missing else was harmless.
-            # Now _calculate_needed_escort() also returns {} when its own
-            # gates decide reserving is counterproductive -- and troop counts
-            # shrink (losses in farm/defence), so a village CAN cross back
-            # under the gate after a reserve was already set. Without this
-            # pop, that stale reserve would linger forever and starve
-            # farm/gather exactly the way P2-22 describes, just by a
-            # different route.
-            elif self.troopmanager.conquest_reserve.pop("barbarian_conquest", None):
-                self.logger.info(
-                    "Conquest: released stale escort reserve — farm and gather "
-                    "are free again while troops rebuild"
-                )
-            return False
-
-        # Escort is sufficient: clear any previous reserve and fire the train
+        # Sem conquista em andamento nesta aldeia nao ha nada a fazer aqui: a
+        # montagem do trem e do planejador global. A reserva de escolta que o
+        # caminho antigo mantinha tambem sai, senao ela ficaria presa para
+        # sempre -- era o `run()` seguinte que a soltava, e ele nao existe
+        # mais (P2-22 por outra porta).
         self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
-        return self._send_train(target_id, cfg)
+        return False
+
 
     # ------------------------------------------------------------------
     # Target selection
@@ -1062,7 +1128,7 @@ class ConquestManager:
             )
             return manual_target
 
-        max_radius = min(cfg.get("max_radius", 20), self.MAX_RADIUS)
+        max_radius = self._effective_radius(cfg)
         min_pts = cfg.get("min_points", 100)
         max_pts = cfg.get("max_points", 3000)
         # `all_reserved` filtra por status; `targets_with_nobles_in_flight`
@@ -1094,14 +1160,123 @@ class ConquestManager:
                 continue
 
             score = self._score_target(village, dist, my_locations, cfg)
-            candidates.append((vid, score))
+            candidates.append((vid, score, village["location"]))
 
         if not candidates:
             return None
 
+        # Area de interesse: dentro dela primeiro, fora so quando nao sobrou
+        # nada dentro. Ver _prefer_area_of_interest().
+        candidates = self._prefer_area_of_interest(candidates, cfg)
+
         # Lower score = better target
         candidates.sort(key=lambda x: x[1])
         return candidates[0][0]
+
+    def _prefer_area_of_interest(self, candidates, cfg):
+        """
+        Filtra os candidatos para a caixa de coordenadas de
+        `conquest.area_of_interest`, DEVOLVENDO A LISTA ORIGINAL quando nao
+        sobra ninguem dentro dela.
+
+        `candidates` e a lista de `(vid, score, location)` montada por
+        find_target(); a coordenada viaja na tupla em vez de ser reconsultada
+        aqui, para nao criar uma segunda fonte de verdade para a posicao do
+        mesmo alvo dentro da mesma decisao.
+
+        Preferencia, nao restricao, e isso e de proposito. A formulacao no
+        forum da tribo (SQUAD 02, br143) e "nao quero jogador crescendo para
+        fora da regiao ENQUANTO AINDA TIVERMOS BBs e alvos disponiveis dentro
+        da nossa area" -- ou seja, a area esgotada libera o resto, e um filtro
+        duro deixaria o bot parado em vez de expandir.
+
+        Por que nao virou peso no _score_target: o score e uma mistura de
+        centralidade, distancia e pontos, e qualquer peso finito pode ser
+        vencido por uma combinacao boa o bastante fora da area. "Dentro ganha
+        de fora, ponto" e a regra que o texto descreve, e particao expressa
+        isso sem precisar calibrar constante nenhuma.
+
+        Dentro da area o ranking nao muda: continua o `fill_gaps`, que por
+        medir distancia media ao imperio inteiro elege naturalmente a borda
+        mais proxima do cluster -- que e o "expandir gradativamente" do mesmo
+        post. E o `fill_gaps` sozinho que NAO serve aqui: com o centroide das
+        28 aldeias em ~(577|308), um alvo na fronteira norte (572|295) tem
+        distancia media ~13 contra ~5 de um alvo no miolo, e com 60% de peso em
+        centralidade a fronteira nunca ganha. O `fill_gaps` foi escrito para
+        adensar o miolo; a area de interesse e o que diz para qual lado crescer.
+        """
+        area = cfg.get("area_of_interest") or {}
+        if not area.get("enabled", False) or not candidates:
+            return candidates
+
+        try:
+            x_min, x_max = int(area["x_min"]), int(area["x_max"])
+            y_min, y_max = int(area["y_min"]), int(area["y_max"])
+        except (KeyError, TypeError, ValueError):
+            self.logger.warning(
+                "Conquest: area_of_interest ligada mas sem x_min/x_max/y_min/"
+                "y_max utilizaveis (%s) -- ignorando a area neste ciclo", area
+            )
+            return candidates
+
+        inside = []
+        for candidate in candidates:
+            loc = candidate[2]
+            if not loc or len(loc) != 2:
+                continue
+            x, y = int(loc[0]), int(loc[1])
+            if x_min <= x <= x_max and y_min <= y <= y_max:
+                inside.append(candidate)
+
+        if not inside:
+            self.logger.info(
+                "Conquest: nenhuma barbara elegivel dentro de %d-%d|%d-%d neste "
+                "ciclo -- avaliando os %d candidatos de fora da area",
+                x_min, x_max, y_min, y_max, len(candidates)
+            )
+            return candidates
+
+        self.logger.info(
+            "Conquest: %d de %d candidatos estao na area de interesse "
+            "(%d-%d|%d-%d) -- os de fora ficam para quando ela esgotar",
+            len(inside), len(candidates), x_min, x_max, y_min, y_max
+        )
+        return inside
+
+    def _effective_radius(self, cfg):
+        """
+        Raio de busca em campos, limitado pelo que o NOBRE realmente alcanca
+        neste mundo (`<snob><max_dist>`, br143 = 70).
+
+        `MAX_RADIUS = 100` e um teto chumbado do bot base e nao corresponde a
+        regra de mundo nenhuma. Sem esta trava, `conquest.max_radius: 100`
+        elegeria alvos que o jogo recusa no envio -- e a recusa vem no FIM do
+        caminho, depois de escolher alvo, montar escolta, sondar duracao e
+        agendar no Hunter. O alvo ficaria reservado, o trem nao sairia, e o
+        unico sinal seria uma recusa generica.
+
+        O limite do mundo e servido do cache em disco (TTL de 6h), entao isto
+        nao vai a rede por ciclo. Mundo que nao publica a tag, ou publica 0
+        (sem limite), cai no teto antigo -- e a configuracao do usuario segue
+        valendo quando for menor, porque ela e uma escolha e nao um limite.
+        """
+        configured = cfg.get("max_radius", 20)
+        server_cfg = (self.config or {}).get("server", {})
+        world_limit = WorldConfig.noble_max_distance(
+            WorldConfig.get(
+                server=server_cfg.get("server"),
+                endpoint=server_cfg.get("endpoint"),
+            )
+        )
+        ceiling = world_limit if world_limit else self.MAX_RADIUS
+        if configured > ceiling:
+            self.logger.warning(
+                "Conquest: max_radius %s excede o alcance do nobre neste mundo "
+                "(%s campos) -- usando %s. Alvo alem disso seria recusado pelo "
+                "jogo so na hora do envio",
+                configured, ceiling, ceiling
+            )
+        return min(configured, ceiling)
 
     def _score_target(self, village, dist, my_locations, cfg):
         """
@@ -1127,7 +1302,10 @@ class ConquestManager:
         pts = village.get("points", 1)
         loc = village["location"]
 
-        max_radius = max(1, min(cfg.get("max_radius", 20), self.MAX_RADIUS))
+        # Mesmo raio do filtro em find_target(), nao o cru da config: e por ele
+        # que a distancia e normalizada, e usar dois numeros diferentes faria a
+        # pontuacao referir-se a um raio que a selecao nao usa.
+        max_radius = max(1, self._effective_radius(cfg))
         max_pts = max(1, cfg.get("max_points", 3000))
         # Higher points = more desirable, so this is subtracted below;
         # capped at 1.0 in case a village exceeds max_points somehow.
@@ -1200,6 +1378,56 @@ class ConquestManager:
                 continue
             return target_id
         return None
+
+    def _note_failed_claim(self, target_id):
+        """
+        Registra que uma aldeia reivindicou um alvo MANUAL e nao conseguiu
+        despachar o trem. Depois de MANUAL_CLAIM_ATTEMPTS tentativas o registro
+        vira "invalid" e sai da fila.
+
+        Isto existe por causa de como `find_target()` trata alvo manual: ele e
+        devolvido antes de tudo e sem condicao nenhuma, entao enquanto houver um
+        unico registro "manual" na fila NENHUMA aldeia da conta faz selecao
+        automatica. Um alvo que nunca consegue ser atacado -- coordenada
+        irrecuperavel, o jogo recusando o envio, a aldeia que o pegou nao
+        alcancando -- congelava a Feature 8 inteira, e o unico sinal era um
+        `attack 1/4 failed` por ciclo. Sem contador nao ha saida desse estado a
+        nao ser alguem abrir o dashboard e perceber.
+
+        Falha aqui NAO e a mesma coisa que "escolta insuficiente": o chamador so
+        conta o que passou pelo gate de escolta e chegou a tentar enviar. E
+        nobre em voo tambem nao conta -- `_send_train` devolve False quando o
+        `_noble_flight_guard` segura o envio, e isso e o sistema funcionando,
+        nao o alvo sendo ruim. Confundir os dois invalidaria justamente o alvo
+        que esta dando certo.
+        """
+        data = ConquestCache.get(target_id)
+        if not data or data.get("status") != "manual":
+            return
+        if ConquestCache.nobles_in_flight(data):
+            return
+
+        attempts = int(data.get("failed_claims", 0)) + 1
+        data["failed_claims"] = attempts
+        data["last_failed_claim_by"] = self.village_id
+        if attempts >= self.MANUAL_CLAIM_ATTEMPTS:
+            data["status"] = "invalid"
+            data["invalid_reason"] = (
+                "O trem nao saiu em %d tentativas (ultima pela aldeia %s). "
+                "Alvo tirado da fila para nao travar a conquista automatica."
+                % (attempts, self.village_id)
+            )
+            self.logger.warning(
+                "Conquest: alvo manual %s invalidado apos %d tentativas sem "
+                "envio -- a selecao automatica volta a rodar",
+                target_id, attempts
+            )
+        else:
+            self.logger.warning(
+                "Conquest: alvo manual %s continua na fila, mas o envio falhou "
+                "%d/%d vezes", target_id, attempts, self.MANUAL_CLAIM_ATTEMPTS
+            )
+        ConquestCache.set(target_id, data)
 
     def _get_village_meta(self, target_id):
         """
@@ -1274,130 +1502,6 @@ class ConquestManager:
             )
         return True
 
-    def _send_train(self, target_id, cfg):
-        """
-        Builds and sends a 4-noble train to target_id.
-        Divides available escort troops evenly across 4 attacks.
-        """
-        if self._noble_flight_guard(target_id):
-            return False
-
-        escort_per_attack = self._build_escort(cfg)
-        if escort_per_attack is None:
-            self.logger.warning(
-                "Conquest: not enough troops for minimum escort, skipping"
-            )
-            return False
-
-        self.logger.info(
-            "Conquest: sending noble train (%d nobles) to %s | escort/attack: %s",
-            self.TRAIN_SIZE, target_id, escort_per_attack
-        )
-        self.wrapper.reporter.report(
-            self.village_id,
-            "TWB_CONQUEST",
-            f"Noble train → {target_id} | escort: {escort_per_attack}"
-        )
-
-        hits_sent = 0
-        arrivals = []
-
-        for i in range(self.TRAIN_SIZE):
-            troops = dict(escort_per_attack)
-            troops["snob"] = 1
-            result = self._attack_manager.attack(target_id, troops=troops)
-            if result and result != "forced_peace":
-                hits_sent += 1
-                arrivals.append(self._arrival_of_last_attack())
-                # Deduct from troopmanager so next iteration sees updated counts
-                for unit, qty in escort_per_attack.items():
-                    current = int(self.troopmanager.troops.get(unit, 0))
-                    self.troopmanager.troops[unit] = str(max(0, current - qty))
-                snob_current = int(self.troopmanager.troops.get("snob", 0))
-                self.troopmanager.troops["snob"] = str(max(0, snob_current - 1))
-            else:
-                self.logger.warning(
-                    "Conquest: attack %d/%d failed for target %s",
-                    i + 1, self.TRAIN_SIZE, target_id
-                )
-                break
-
-        if hits_sent == 0:
-            return False
-
-        # Train fired: release this manager's reserve so farm/gather can use
-        # that portion of the pool again (other owners' reservations, if any,
-        # are left untouched).
-        self.troopmanager.conquest_reserve.pop("barbarian_conquest", None)
-
-        # Bugfix (auditoria Feature 15): faltavam os campos target_name/
-        # target_points/target_location/hits_needed, e a chave gravada era
-        # "hits" enquanto o webmanager (ConquestReader.load(), lê "hits_done").
-        # Resultado: a página /conquest sempre mostrava 0/4 nobles e nome/
-        # pontos/coordenada genéricos, independente do progresso real.
-        target_meta = self._get_village_meta(target_id)
-
-        # PIOR CASO, de proposito: cada nobre remove um sorteio uniforme em
-        # [_drop_min, _drop_max] (20-35 no br143), entao 4 nobres removem de 80
-        # a 140. Usar a media (25 fixo) fazia a conta prever exatamente 100 e
-        # tratar a conquista como certa; em ~1 de cada 8 trens ela nao e. Foi
-        # esse o trem de 2026-08-12: as quatro quedas somaram 89 e a aldeia
-        # ficou em 11, enquanto o bot registrava 0.
-        #
-        # Com o piso da faixa, a estimativa passa a ser um limite SUPERIOR da
-        # lealdade restante -- "no minimo isto sobrou". Errar para cima aqui
-        # e seguro: no maximo o bot manda um nobre a mais, e desde a trava de
-        # nobre em voo ele nunca empilha em cima do que ja esta no ar. Errar
-        # para baixo era o que abandonava alvo vivo dando conquista por feita.
-        loyalty_after = max(0, 100 - (hits_sent * self._drop_min))
-        # last_hit_timestamp passa a ser o *pouso* do ultimo nobre, nao o
-        # envio. O campo sempre foi lido como "quando a lealdade comecou a
-        # regenerar" -- por attack.py::_handle_existing e por
-        # webmanager/utils.py::ConquestReader._estimate_loyalty -- mas era
-        # gravado na saida do trem, 3h41 antes do impacto no caso do
-        # incidente de 40314. Os dois consumidores queriam a chegada; agora
-        # recebem a chegada.
-        known_arrivals = [ts for ts in arrivals if ts]
-        ConquestCache.set(target_id, {
-            "reserved_by": self.village_id,
-            "hits_done": hits_sent,
-            "hits_needed": self.TRAIN_SIZE,
-            "loyalty_after_train": loyalty_after,
-            "loyalty_source": "estimate",
-            "noble_arrivals": arrivals,
-            "last_hit_timestamp": max(known_arrivals) if known_arrivals else int(time.time()),
-            "status": "train_sent" if hits_sent == self.TRAIN_SIZE else "extra_pending",
-            "target_name": target_meta.get("name") or ("Bárbara #%s" % target_id),
-            "target_points": target_meta.get("points"),
-            "target_location": target_meta.get("location"),
-            # Parametros usados nesta conta, gravados para o dashboard refazer
-            # a mesma estimativa. ConquestReader._estimate_loyalty le as duas
-            # chaves do proprio registro; como _send_train nunca as gravava, a
-            # tela caia nos defaults dela (25 e 1.5) e podia divergir do bot
-            # em silencio -- inclusive ignorando mudanca de config do usuario.
-            "loyalty_drop_per_noble": self._drop_min,
-            "loyalty_drop_range": [self._drop_min, self._drop_max],
-            "loyalty_regen_per_hour": cfg.get("loyalty_regen_per_hour", 1),
-        })
-
-        if loyalty_after > 0:
-            # Com o piso da faixa isto e o caso NORMAL, nao uma anomalia: 4
-            # nobres a 20 de piso deixam 20 de lealdade no papel. Significa
-            # "nao da para afirmar que caiu", que e a verdade -- quem decide
-            # e o relatorio, quando pousar.
-            self.logger.info(
-                "Conquest: trem de %d nobre(s) enviado a %s. No pior caso "
-                "(%d por nobre) sobra lealdade %.0f; no melhor (%d) a aldeia "
-                "cai. O relatorio dira qual foi.",
-                hits_sent, target_id, self._drop_min, loyalty_after, self._drop_max
-            )
-        else:
-            self.logger.info(
-                "Conquest: trem completo enviado a %s — mesmo no pior caso "
-                "(%d por nobre) a lealdade zera", target_id, self._drop_min
-            )
-
-        return hits_sent > 0
 
     def _available_troops(self):
         """
@@ -1494,7 +1598,10 @@ class ConquestManager:
         (gate 2). Both are opt-out-able via config for anyone who prefers
         the old all-in behaviour (max_pct 1.0, min_progress 0.0).
         """
-        ratio = cfg.get("escort_ratio", 0.5)
+        # Mesma fracao do _build_escort, senao a reserva mira um alvo que o
+        # envio nao usa: reservar para 50% e mandar 15% prende tropa que nunca
+        # vai sair, e reservar para 15% e exigir 50% nunca fecha a escolta.
+        ratio = self._escort_ratio(cfg)
         min_total = cfg.get("min_escort_total", 50)
         max_pct = cfg.get("escort_reserve_max_pct", 0.8)
         min_progress = cfg.get("escort_reserve_min_progress", 0.5)
@@ -1536,10 +1643,36 @@ class ConquestManager:
 
         return reserve
 
+    @staticmethod
+    def _escort_ratio(cfg):
+        """
+        Fracao da tropa de casa que vai de escolta -- SO para barbaro.
+
+        `conquest.escort_ratio` parece pertencer a este modulo pelo nome da
+        secao, mas quem tambem o le e o PvpConquestManager
+        (game/pvp_conquest.py:588 e :905, `config["conquest"]["escort_ratio"]`).
+        As duas conquistas tem riscos opostos:
+
+          - barbara nao tem defesa nem dono, entao escolta grande e quase toda
+            desperdicio: a tropa fica fora de casa a viagem inteira, ida e
+            volta, sem farmar;
+          - contra JOGADOR a escolta e o que impede o defensor de snipar um
+            comando isolado do trem. Afina-la e perder o nobre e a operacao.
+
+        Baixar `escort_ratio` para economizar contra barbaro teria afinado o
+        trem de PvP junto, em silencio. Por isso a chave nova
+        `barbarian_escort_ratio` -- ausente, cai no valor antigo e nada muda
+        para ninguem.
+        """
+        ratio = cfg.get("barbarian_escort_ratio")
+        if ratio is None:
+            ratio = cfg.get("escort_ratio", 0.5)
+        return ratio
+
     def _build_escort(self, cfg):
         """
         Calculates per-attack escort by dividing available troops across
-        TRAIN_SIZE attacks using escort_ratio.
+        TRAIN_SIZE attacks using barbarian_escort_ratio (see _escort_ratio).
         Returns dict of {unit: qty_per_attack} or None if below minimum.
 
         Accepts any combat troop type (spear, sword, archer, axe, light, heavy, ram).
@@ -1551,7 +1684,7 @@ class ConquestManager:
         - min_escort: per-unit minimums (optional, e.g. {"heavy": 20})
         - min_escort_total: minimum combined troops per noble attack (default: 50)
         """
-        ratio = cfg.get("escort_ratio", 0.5)
+        ratio = self._escort_ratio(cfg)
         min_escort = cfg.get("min_escort", {})
         min_escort_total = cfg.get("min_escort_total", 50)
 

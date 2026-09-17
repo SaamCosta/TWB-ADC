@@ -392,9 +392,29 @@ class Hunter:
             )
             return None
 
-        if target_id not in village.area.map_pos:
+        # Mesma resolucao de coordenada que o envio usa
+        # (AttackManager._resolve_position): scan de mapa desta aldeia e, na
+        # falta dele, o snapshot compartilhado cache/villages.
+        #
+        # Tem que ser a MESMA fonte dos dois lados. Enquanto a sonda exigia
+        # map_pos e o envio nao, um alvo fora do scan local desta aldeia
+        # falhava aqui e o comando ficava "pending" para sempre -- sem
+        # send_time, invisivel em nearest_send_time(), ate a hora de chegada
+        # passar e o schedule inteiro virar "failed". Indistinguivel de "ainda
+        # nao chegou a hora" no log, que e exatamente como o bug de
+        # `{target}_pvp_{label}` sobreviveu desde a primeira versao desta
+        # integracao (ver HunterReader.add_schedule).
+        if not village.attack:
             self.logger.warning(
-                "Hunter: target %s not in map_pos for village %s", target_id, source_id
+                "Hunter: village %s has no attack manager for duration probe",
+                source_id
+            )
+            return None
+        position = village.attack._resolve_position(target_id)
+        if position is None:
+            self.logger.warning(
+                "Hunter: sem coordenada para o alvo %s a partir da aldeia %s",
+                target_id, source_id
             )
             return None
 
@@ -413,7 +433,7 @@ class Hunter:
             pre_data[k] = v
         pre_data.update(troops)
 
-        x, y = village.area.map_pos[target_id]
+        x, y = position
         pre_data.update({"x": x, "y": y, "target_type": "coord", "attack": "Aanvallen"})
 
         confirm_url = f"game.php?village={source_id}&screen=place&try=confirm"

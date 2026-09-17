@@ -696,6 +696,7 @@ confirmou e o que permanece desconhecido.
 | `DEF-01` | Workspace defensivo explicável | 4 | P1 | L | manager existe, UI fragmentada |
 | `DEF-02` | Ciclo de vida de apoio | 4 | P1 | XL | envio e ETA; sem chegada/retorno |
 | `ECO-01` | Perfis progressivos e coordenação econômica | 5 | P2 | L | perfil fixo; combina Features 32b e 33 |
+| `CAL-01` | Auto-calibração de parâmetros de farm por alvo | 5 | P2‡ | M | ausente — constantes fixas em template; ver §7.8 |
 | `EXP-01` | Cobertura territorial e expansão assistida | 5 | P2† | L | torre fase 1; Feature 31 |
 | `OPS-01` | Planner canônico de operações | 6 | P2 | XL | telas e caches específicos |
 | `COL-01` | Colaboração local-first com proveniência | 6 | P2† | XL | ausente |
@@ -709,6 +710,8 @@ confirmou e o que permanece desconhecido.
 
 † condicional: `EXP-01` espera o império crescer o suficiente para `min_spacing`
 discriminar sítios; `COL-01` só sobe com pelo menos dois operadores recorrentes.
+‡ condicional e **bloqueado por pré-requisito de medição**, não por esforço —
+`CAL-01` só é implementável depois do baseline do passo 3 da §9. Detalhe em §7.8.
 
 **Detalhamento dos cinco P0:**
 
@@ -744,6 +747,7 @@ FND-01 ─┬─> FND-02 ─┬─> TIM-01 ─> TIM-02
 FND-03 ─> TIM-01, DEF-02, ECO-01, OPS-01
 FND-05 ─> TIM-02, OPS-01, COL-01
 SEC-01 ─> COL-01, REC-01, NT-02
+FND-01 + baseline (§9.3) ─> CAL-01 ─ (acoplado a) ─ ECO-01
 ```
 
 ### 7.5 O que **não** fazer
@@ -759,7 +763,23 @@ Descartado com justificativa, não por falta de tempo:
 - **mensagens automáticas em nome do jogador**;
 - **automações de evento, recompensas, renomeação, notas, relíquias** — sem
   gargalo medido;
-- **muitos provedores de notificação antes do barramento** (`NT-01/02`).
+- **muitos provedores de notificação antes do barramento** (`NT-01/02`);
+- **aprendizado por reforço (RL) sobre a política do bot** — descartado em
+  2026-09-16 após a pergunta "isso se beneficiaria de uma instância de RL?".
+  Não por moda nem por esforço: o domínio nega as três pré-condições. (a) Um
+  episódio é *um mundo* — meses — e não há simulador da economia/mapa (o
+  `simulator.py` resolve batalha, não o resto), então não há amostra barata;
+  (b) não existe reset, e exploração custa tropa irrecuperável; (c) o crédito
+  não é atribuível — latência de horas entre ação e efeito, resultado dominado
+  por vizinho humano não modelado, ambiente não-estacionário. **Razão adicional
+  específica deste repo:** o histórico de falhas caras (§5 e os padrões do
+  `CLAUDE.md`) é de *sensor*, não de política — regex que não casa,
+  `attack_duration()` devolvendo 0, `_parse_locked_slots()` devolvendo `[]`,
+  moral lida da tag errada. Uma política aprendida sobre sensor quebrado
+  **aprende a compensar o bug** e o torna permanentemente invisível, porque
+  passa a "funcionar". O que se quer de RL aqui — adaptação que não dependa de
+  um LLM externo instável — é obtido por `CAL-01` (§7.8) sem abrir mão de
+  auditabilidade.
 
 E o que é **só posicionamento comercial**, e por isso não entra no modelo de
 prioridade: contagem de ferramentas (27, 37, 41, 53…), precisão de "1–3 ms" sem
@@ -801,6 +821,79 @@ Métricas de timing **sempre** separam erro de dispatch, carimbo de chegada e
 efeito. Métricas de farm só valem a partir da correção que passou a distinguir
 tentativa de envio confirmado. Valor no teto de capacidade é **observação
 censurada**, não observação.
+
+### 7.8 `CAL-01` — auto-calibração (2026-09-16, possibilidade registrada)
+
+> **Status: possibilidade, não decisão.** Nada disto foi implementado, nenhum
+> número abaixo foi medido para este fim. É o desenho que sobrou depois de
+> descartar RL (§7.5) — registrado para não se perder, com o gatilho explícito
+> de quando ele deixa de ser prematuro.
+
+**O problema que resolve.** Hoje os parâmetros de farm são constantes escritas
+em arquivo: capacidade do pacote por estágio de template, intervalo de
+revisita, limiar de abandono de alvo. O décimo quarto padrão do `CLAUDE.md`
+já mostrou que constante escrita em relação a um estado do jogo **expira
+sozinha** quando o outro lado da relação se move — foi assim que 100% dos
+ataques de uma aldeia passaram a ser recusados sem ninguém tocar no código. E
+o décimo primeiro mostrou que a calibração manual desses mesmos números é
+propensa a inverter o sinal da conclusão quando a amostra é heterogênea.
+`CAL-01` é a proposta de fechar esse laço dentro do bot.
+
+**Recorte — por que só farm.** O critério de inclusão é *uma ação → uma
+medição, em ~1h, sem confundidor*:
+
+| Candidato | Feedback | Entra? |
+|---|---|---|
+| capacidade do pacote por alvo | saque do relatório, ~1h | **sim** |
+| intervalo de revisita por alvo | acúmulo observado entre visitas | **sim** |
+| limiar de abandono (`farm_score`) | série de saque por alvo | **sim** |
+| ordem de construção | semanas, confundida | não |
+| composição de tropa | n≈10, confundida | não |
+| quando/onde nobrar | n≈10, vizinho humano decide | não |
+
+Fora do farm o n é pequeno e o efeito é confundido; ali o certo continua sendo
+regra explícita calibrada contra número lido do servidor (§4.1).
+
+**Forma.** Estimador + política explícita, **não** caixa-preta:
+
+1. estimador por alvo sobre `cache/reports` — taxa de acúmulo e capacidade
+   provável, com os valores no teto tratados como **censurados** (§7.7:
+   "voltou com 8.000" = "tinha ≥ 8.000", não "= 8.000");
+2. escolha do pacote/intervalo por conta fechada a partir da estimativa;
+3. o valor escolhido **e o motivo** vão para o log e para a UI, como qualquer
+   outra decisão;
+4. o parâmetro se move só dentro de uma faixa declarada em config, com o valor
+   manual continuando a poder vetar.
+
+Os itens 3 e 4 são o ponto inteiro do desenho: é o que separa isto de RL e de
+LLM-na-malha. Adaptação sem perder o "sei de onde veio o número", que é o que
+o projeto já pratica em §4.
+
+**Quando implementar — três pré-requisitos, nenhum opcional:**
+
+- **`FND-01`** (evento com fonte, `observed_at`, TTL). Sem proveniência
+  uniforme, o estimador aprende sobre dado velho sem saber que é velho, e a
+  falha é silenciosa — o segundo padrão do `CLAUDE.md` com outra máscara.
+- **Baseline de 7–14 dias** (passo 3 da §9). Sem série anterior não há como
+  dizer se a calibração melhorou ou piorou, e aí ela vira fé. Este é o
+  bloqueio real: é medição, não código.
+- **Sensor de farm confiável**, com tentativa distinguida de envio confirmado
+  (já corrigido) e as recusas do jogo logadas com motivo (`error_box_text`, já
+  existe). Calibrar em cima de "ataque que o bot achou que enviou" produz
+  estimativa deslocada para baixo, sem erro nenhum aparecendo.
+
+**Portanto: depois do baseline da §9 e de `FND-01`, junto ou logo após
+`ECO-01`** — os perfis progressivos e a calibração mexem nos mesmos números e
+brigam entre si se forem construídos separados. **Não antes:** implementado
+hoje, o estimador roda sobre eventos sem proveniência e sem comparação
+possível, e a primeira coisa que ele vai fazer é absorver um bug de parsing
+como se fosse propriedade do mundo.
+
+**Como saber que valeu.** Métrica candidata, a acrescentar na tabela da §7.7
+quando o item sair do registro e virar trabalho: *saque por unidade de
+população por hora*, comparado contra o baseline, com a fração de retornos no
+teto de capacidade reportada junto — se essa fração não cair, a medição
+continua censurada e o ganho aparente não é ganho.
 
 ---
 
@@ -877,7 +970,189 @@ que o estudo não tinha: são os dois subsistemas com o vocabulário **mais pobr
 
 ---
 
+## 8.5 Coleta (scavenging) — prioridade imediata definida pelo usuário em 2026-09-17
+
+**Contexto que motiva a prioridade:** a conquista está consumindo as bárbaras
+próximas, e a §4 do post do SQUAD 02 manda noblar *todas* as bárbaras da região.
+O fim natural disso é **ficar sem alvo de farm**. A coleta não depende de alvo
+externo, não perde tropa e o bot já a executa bem — vira a saída principal de
+recurso a partir daí. Formulação do usuário: *"vamos ficar sem bárbaras para
+farmar, a coleta é melhor saída e o bot já faz isso bem"*.
+
+### Estado medido em 2026-09-17 (não presumido)
+
+Config real das 28 aldeias, lida de `config.json`:
+
+| Chave | Valor em todas as 28 |
+|---|---|
+| `gather_enabled` | `false` |
+| `gather_selection` | `1` |
+| `advanced_gather` | `true` |
+
+Ou seja: **a coleta está desligada no império inteiro**, e mesmo se ligada hoje
+usaria só o nível 1.
+
+Como funciona hoje (`TroopManager.gather()`, `game/troopmanager.py:398`; chamada
+por `Village.do_gather()`, `game/village.py:1017`):
+
+- `gather_enabled` (por aldeia, default `false`) liga ou desliga.
+- `gather_selection` (1–4, default `1`) é o **teto manual** de qual nível usar.
+- `advanced_gather` (default `true`) distribui a tropa entre os níveis
+  `1..gather_selection` calibrando para que todos terminem em tempo parecido
+  (`selection_map`/`batch_multiplier`, `troopmanager.py:452`).
+- A tropa reservada por conquista é subtraída antes
+  (`total_conquest_reserve()`, `troopmanager.py:433`), então coleta e trem de
+  nobres não disputam a mesma tropa.
+
+### P-COL-01 — Botão "ativar coleta em todas as aldeias" no webmanager
+
+**Prioridade 2** (depois de `P-CONQ-RAIO`, o tópico 1).
+
+Um POST no painel que grave `gather_enabled: true` nas 28 aldeias de uma vez.
+Granularidade por aldeia fica para depois — pedido explícito do usuário.
+
+Pontos de atenção ao implementar:
+
+- Toda rota que escreve no painel é POST e passa pela guarda CSRF de
+  `server.py:23` (`reject_cross_origin_writes`). Seguir o padrão das rotas
+  existentes, não criar GET que escreve.
+- A escrita é em `config.json`, que o bot **relê a cada ciclo**
+  (`twb.py:577`) — então o efeito pega sem reiniciar o bot. Isso é uma
+  vantagem real do botão e deve ser dito na interface.
+- ⚠️ `gather_enabled` já existe em `village_template` (`config.example.json`),
+  então não há chave nova a documentar — mas **confirmar** antes de assumir.
+- Mostrar na tela o estado agregado (quantas das N estão ligadas), não só o
+  botão: botão sem leitura de estado é o décimo quinto padrão do `CLAUDE.md`.
+
+### P-COL-02 — O que o bot **não** faz bem na coleta
+
+**Prioridade 3.** São dois buracos distintos, e só um deles é o que parece.
+
+**(a) Não ajusta o nível usado conforme o que está desbloqueado.**
+Formulação do usuário: *"não ajusta sozinho quais coletas fazer com base nas
+que já estão desbloqueadas"*. Precisão necessária: o código **lê** `is_locked`
+da resposta do jogo e pula opção travada (`troopmanager.py:475` e `:533`), então
+ele não quebra nem tenta usar coleta travada. O que falta é o outro lado:
+`gather_selection` é um **teto digitado à mão** e não sobe sozinho. Desbloquear
+o nível 4 no jogo não muda nada enquanto alguém não editar a config — e o
+sintoma é mudo, porque o bot segue coletando normalmente, só que no nível 1.
+Correção provável: derivar o teto do maior nível não-travado que o próprio jogo
+reporta, mantendo `gather_selection` como limite opcional para quem quiser
+menos.
+
+**(b) Não desbloqueia coleta automaticamente.**
+Confirmado por varredura: **não existe nenhum código de desbloqueio**. O único
+uso de `scavenge_api` é `send_squads` (`troopmanager.py:517` e `:565`) — enviar
+tropa para coletar. Não há chamada para iniciar o desbloqueio de um nível.
+
+⚠️ **O endpoint de desbloqueio precisa ser capturado do jogo antes de escrever
+qualquer código.** Não inventar payload. As regras do repositório que se aplicam
+aqui, e que já custaram caro antes:
+
+- Fixture de markup/payload se copia do servidor (`CLAUDE.md`, 2º parágrafo de
+  Convenções).
+- **Sondar com os cabeçalhos que o bot usa de fato** (7º padrão): o mesmo
+  endpoint devolveu envelopes diferentes com e sem `TribalWars-Ajax: 1`. Sondar
+  chamando o próprio método do `WebWrapper`, não um `requests.Session()` montado
+  à mão.
+- O desbloqueio **consome recurso e leva tempo real**, então é ação com efeito
+  diferido — vale o 6º padrão: separar "quando mandei" de "quando termina".
+
+Decisão de produto ainda em aberto, a levar ao usuário antes de implementar:
+desbloquear custa recurso que competiria com construção e recrutamento. Se deve
+ser automático, sob que condição (excedente? aldeia madura? nível máximo
+desejado?) é escolha dele, não default a inventar.
+
+---
+
+## 8.6 `P-CONQ-RAIO` — alcance e âncora do trem multi-origem (2026-09-17)
+
+**Prioridade 1.** Duas coisas no mesmo lugar: um número de config e um defeito
+de desenho introduzido no `BarbarianTrainPlanner` em 2026-09-17.
+
+### O defeito
+
+`BarbarianTrainPlanner._anchor_village()` (`game/conquest_planner.py`) elege
+como referência **a aldeia com mais nobres**, e `ConquestManager.find_target()`
+aplica o filtro de `max_radius` a partir *dessa* aldeia apenas. O comentário que
+escrevi para justificar dizia:
+
+> *"ancorar em quem tem mais nobres aproxima o alvo de onde está a maior parte
+> do trem, o que encurta a viagem mais longa"*
+
+Isso é verdade sobre a **viagem** e falso sobre a **visibilidade**: o conjunto
+de alvos candidatos passou a depender de onde os nobres se acumularam, que é
+circunstância, não geografia.
+
+### Medições de 2026-09-17 (cache real, 28 aldeias)
+
+Bárbaras elegíveis conhecidas dentro do K25 (x 500–599, y 200–299, 100–1100
+pontos): **46**.
+
+| Medindo de… | Alcançáveis com raio 30 |
+|---|---|
+| Qualquer aldeia gerenciada | **46 de 46** |
+| BBM 001 (577\|306, 3 nobres → âncora atual) | **35 de 46** |
+| BBM 001, com raio 50 | 46 de 46 |
+
+As 11 invisíveis são o bolsão oeste, vizinho da **BBM 023 (553\|300)**:
+`#40382 543|296` (35,4 campos da BBM 001, **10,8** da BBM 023), `#41100
+543|291` (37,2 / **13,5**), `#46535 553|285` (31,9 / **15,0**), entre outras.
+
+### Dados de mundo confirmados no servidor
+
+`interface.php?func=get_config` do br143 (público, sem autenticação):
+
+```xml
+<snob><max_dist>70</max_dist><no_barb_conquer/></snob>
+```
+
+- Alcance máximo do nobre: **70 campos**. Já lido pelo bot desde 2026-09-17
+  (`WorldConfig._parse_snob` / `noble_max_distance`), e `max_radius` agora é
+  limitado por ele em `ConquestManager._effective_radius()`.
+- `no_barb_conquer` **vazia** = conquistar bárbara é permitido neste mundo.
+- Pior caso origem → alvo entre todas as combinações: **BBM 024 (588|314) →
+  543|291 = 50,5 campos**, dentro dos 70. Nenhuma aldeia seria recusada pelo
+  jogo ao compor o trem multi-origem contra qualquer bárbara do K25.
+
+### Efeito colateral já medido de aumentar o raio
+
+A pontuação normaliza distância e centralidade por `max_radius`, mas o termo de
+pontos (`pts_factor * 0.1`) é fixo. Com raio maior, **pontos pesam relativamente
+mais**. Medido na lista real: com raio 70 a ordem diverge **a partir da 5ª
+posição** — `#50833` (15,1 campos, 551 pts) cai da 5ª para a 8ª e `#53604`
+(17,0 campos, 1001 pts) sobe para a 5ª.
+
+Não é bug: troca ~2 campos de viagem por ~450 pontos de aldeia, o que é
+defensável. Mas é mudança de preferência e precisa ser decisão consciente.
+Com raio 50 o efeito é bem menor que com 70.
+
+⚠️ **Registro de método:** ao medir isto pela primeira vez olhei só os 4
+primeiros colocados, vi que não mudavam e afirmei que não havia efeito. A
+divergência começa na 5ª posição. É o 11º padrão do `CLAUDE.md` outra vez —
+conclusão tirada de recorte que não representa o conjunto.
+
+### Buraco conhecido, não urgente
+
+O planejador monta o trem com **todas** as aldeias que têm nobre, mas não
+verifica se cada origem está dentro dos 70 campos do alvo. Hoje não pode
+acontecer (teto medido de 50,5), e a falha seria segura — a sondagem de duração
+não retorna valor e nada é agendado — mas sem dizer o motivo.
+
+---
+
 ## 9. Próximos passos
+
+**Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
+
+0. **`P-CONQ-RAIO`** — subir `conquest.max_radius` e corrigir o
+   `_anchor_village()` do `BarbarianTrainPlanner`, que hoje filtra os alvos pelo
+   raio de *uma* aldeia e por isso esconde 11 das 46 bárbaras do K25. Detalhe e
+   medições na §8.6.
+1. **`P-COL-01`** — botão de ativar coleta em todas as aldeias (§8.5).
+2. **`P-COL-02`** — teto de coleta automático e desbloqueio automático (§8.5).
+
+Depois disso, a fila anterior:
 
 1. **Fechar as validações de campo da §6.2**, que não custam código: são
    observações no log de sessão do bot já rodando. A das bandeiras (§6.3) é a

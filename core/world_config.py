@@ -296,6 +296,69 @@ class WorldConfig:
         }
 
     @staticmethod
+    def _parse_snob(xml_text):
+        """
+        Bloco <snob> do mundo -- as regras do nobre.
+
+          <snob><max_dist>  distancia MAXIMA, em campos, que um nobre pode
+                            viajar. O jogo recusa o ataque acima disso.
+                            br143 = 70. 0 significa "sem limite".
+          <snob><no_barb_conquer>  quando ligado, conquistar barbara e
+                            PROIBIDO no mundo -- a Feature 8 inteira nao teria
+                            o que fazer. No br143 a tag vem vazia (desligado).
+
+        Por que entrou: `ConquestManager.MAX_RADIUS` era 100, chumbado no
+        codigo, e `conquest.max_radius` podia ser configurado ate la. Qualquer
+        valor acima de 70 no br143 faria o bot eleger alvos que o jogo recusa
+        no envio -- e a recusa acontece no fim do caminho, depois de escolher
+        alvo, montar escolta, sondar duracao e agendar. O numero certo estava
+        publicado de graca em `interface.php?func=get_config`, que e publico e
+        sem autenticacao, e este mesmo modulo ja baixava esse XML e jogava o
+        bloco fora. Mesma historia do <archer> em 2026-08-17.
+
+        Ausente vira None para o consumidor distinguir "o mundo nao publicou"
+        de "o mundo diz que nao tem limite" (0).
+        """
+        m = re.search(r"<snob>(.*?)</snob>", xml_text, re.S)
+        if not m:
+            return {"max_dist": None, "no_barb_conquer": None}
+        block = m.group(1)
+
+        def _int(name):
+            hit = re.search(fr"<{name}>\s*(\d+)\s*</{name}>", block)
+            return int(hit.group(1)) if hit else None
+
+        return {
+            "max_dist": _int("max_dist"),
+            # Tag vazia (<no_barb_conquer />) e o caso do br143 e significa
+            # desligado; so conta como ligado quando traz um inteiro > 0.
+            "no_barb_conquer": _int("no_barb_conquer"),
+        }
+
+    @staticmethod
+    def noble_max_distance(world_config, fallback=None):
+        """
+        Distancia maxima, em campos, que um nobre alcanca neste mundo.
+        None quando o mundo nao publicou ou publicou 0 (= sem limite).
+        """
+        snob = (world_config or {}).get("snob") or {}
+        max_dist = snob.get("max_dist")
+        if max_dist is None:
+            return fallback
+        return max_dist if max_dist > 0 else None
+
+    @staticmethod
+    def barbarian_conquest_allowed(world_config):
+        """
+        False so quando o mundo diz explicitamente que proibe conquistar
+        barbara. Desconhecido conta como permitido: e o comportamento historico
+        e o caso da esmagadora maioria dos mundos.
+        """
+        snob = (world_config or {}).get("snob") or {}
+        flag = snob.get("no_barb_conquer")
+        return not (flag and flag > 0)
+
+    @staticmethod
     def min_attack_population(world_config, village_points, fallback_pct=0):
         """
         Populacao minima que um ataque precisa carregar, saindo de uma aldeia
@@ -430,6 +493,13 @@ class WorldConfig:
                     # rodaria ate o TTL inteiro (6h) com fake_limit=None --
                     # ou seja, sem saber o piso de populacao por ataque.
                     and cls._features_complete(cached.get("features"))
+                    # Mesma razao do _features_complete logo acima: o cache
+                    # gravado antes de `snob` existir tem todo o resto valido e
+                    # passaria na checagem, entao o bot rodaria o TTL inteiro
+                    # (6h) sem saber o alcance do nobre -- e o alcance e o que
+                    # limita a escolha de alvo. Presenca da chave basta; valor
+                    # None dentro dela e legitimo ("o mundo nao publicou").
+                    and isinstance(cached.get("snob"), dict)
             ):
                 return cached
 
@@ -446,6 +516,7 @@ class WorldConfig:
             "moral": cls._parse_moral(xml_text),
             "mood": cls._parse_mood(xml_text),
             "features": cls._parse_features(xml_text),
+            "snob": cls._parse_snob(xml_text),
             "_fetched_at": int(time.time()),
         }
         FileManager.create_directory(FileManager.get_path("cache/world"))

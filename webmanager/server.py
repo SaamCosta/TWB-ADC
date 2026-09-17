@@ -340,6 +340,9 @@ def get_conquest():
         targets=targets,
         error=error,
         conquest_enabled=conquest_enabled,
+        # Para que lado o bot cresce. Sem isto a página descrevia a seleção de
+        # alvo sem mostrar o parâmetro que mais manda nela.
+        area=ConquestReader.area_of_interest(config),
     )
 
 # Unidades disponíveis para o formulário de schedules
