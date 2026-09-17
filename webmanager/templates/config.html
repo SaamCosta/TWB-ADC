@@ -1,123 +1,65 @@
 {% extends "main.html" %}
-
+{% block title %}Configuração global{% endblock %}
 {% block content %}
-<div class="row mb-2 align-items-center">
-  <div class="col">
-    <ul class="nav nav-tabs flex-wrap" id="configTabs">
-      {% for section in config %}
-      <li class="nav-item">
-        <a class="nav-link {% if loop.first %}active{% endif %}"
-           role="tab" data-toggle="tab" href="#tab-{{ section }}">
-          {{ section | capitalize }}
-        </a>
-      </li>
-      {% endfor %}
-    </ul>
-  </div>
-  <div class="col-auto mt-1">
-    <button id="save_config" class="btn btn-success disabled">💾 Salvar alterações</button>
+{% set persisted = data.get('config') or {} %}
+{% set expected = ['server','reporting','notifications','bot','building','units','inheritance','empire','watchtower','village_template','conquest','resource_sharing','farms','market','premium_exchange','world','zones','pvp_conquest','statue','inventory'] %}
+<header class="twb-page-header">
+  <div><p class="twb-eyebrow">Sistema · Configuração global</p><h1 class="twb-page-title">Editor global</h1><p class="twb-page-summary">Cada alteração pode atingir todas as aldeias ou definir o padrão de novas aldeias. Persistir um valor não confirma que o bot já o leu nem que produziu efeito.</p></div>
+  <div class="twb-page-actions"><a class="btn btn-outline-secondary" href="/villages">Comparar aldeias</a><a class="btn btn-outline-secondary" href="/logs">Ver atividade</a></div>
+</header>
+<section class="twb-health-strip twb-health-strip--config" aria-label="Contexto da configuração global">
+  <div class="twb-health-item"><span class="twb-health-label">Fonte persistida</span><span class="twb-health-value"><code>config.json</code> local</span><span class="twb-health-meta">Sem revisão, recibo tipado ou instante de escrita.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Superfície exposta</span><span class="twb-health-value">{{ config|length }} seções · <span id="config-field-count">contando…</span> campos</span><span class="twb-health-meta">Somente controles produzidos pelo gerador atual.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Alterações locais</span><span class="twb-health-value" id="config-pending-count">0 pendentes</span><span class="twb-health-meta">Ainda não persistidas.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Alcance</span><span class="twb-health-value"><span class="twb-status twb-status--warning">Blast radius global</span></span><span class="twb-health-meta">Gates e defaults podem mudar ciclos posteriores.</span></div>
+</section>
+<section class="twb-panel {% if not persisted or not config %}twb-panel--exception{% else %}twb-panel--unknown{% endif %}" aria-labelledby="config-attention-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="config-attention-title">Exceções e limites do contrato</h2><span class="twb-status {% if not persisted or not config %}twb-status--danger{% else %}twb-status--unknown{% endif %}">{% if not persisted or not config %}Edição indisponível{% else %}Contrato parcial{% endif %}</span></div>
+  <div class="twb-panel-body"><ul class="twb-exception-list">
+    {% if not persisted %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Configuração ausente</strong><span>O backend não publicou <code>data.config</code>.</span></div><span class="twb-status twb-status--danger">Bloqueada</span></li>{% endif %}
+    {% if not config %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Nenhuma seção editável</strong><span>O gerador não produziu seções ou controles.</span></div><span class="twb-status twb-status--danger">Bloqueada</span></li>{% endif %}
+    {% for name in expected if name not in persisted %}<li class="twb-exception-item"><div class="twb-exception-copy"><strong>Seção ausente: <code>{{ name }}</code></strong><span>Declarada no schema de exemplo, mas ausente na resposta atual.</span></div><span class="twb-status twb-status--unknown">Ausente</span></li>{% endfor %}
+    <li class="twb-exception-item"><div class="twb-exception-copy"><strong>Seções deliberadamente ocultas</strong><span><code>build</code>, <code>villages</code>, <code>profile_templates</code> e <code>hunter</code> não são editáveis por este gerador.</span></div><span class="twb-status twb-status--muted">Não editáveis</span></li>
+    <li class="twb-exception-item"><div class="twb-exception-copy"><strong>Dicionários sem controle</strong><span>Folhas como <code>village_template.keep_resources</code> e <code>conquest.min_escort</code> vazio são omitidas; a interface não finge editá-las.</span></div><span class="twb-status twb-status--unknown">Gerador parcial</span></li>
+    <li class="twb-exception-item" id="config-runtime-exception" hidden><div class="twb-exception-copy"><strong data-exception-title>Resultado desconhecido</strong><span data-exception-detail>Confira antes de repetir.</span></div><span class="twb-status twb-status--unknown">Atenção</span></li>
+  </ul></div>
+</section>
+{% if config %}
+<div class="twb-config-layout">
+  <aside class="twb-config-sidebar" aria-label="Navegação e alterações da configuração">
+    <nav class="twb-section-nav" aria-label="Seções da configuração"><h2>Seções</h2><ul>{% for section in config %}<li><a href="#config-section-{{ section }}" data-config-nav="{{ section }}"><span>{{ section|replace('_',' ')|capitalize }}</span><span data-nav-count>—</span></a></li>{% endfor %}</ul></nav>
+    <section class="twb-pending-panel" aria-labelledby="pending-title"><h2 id="pending-title">Alterações pendentes</h2><p id="pending-empty">Nenhuma alteração local.</p><ol id="pending-list" class="twb-pending-list"></ol><div class="twb-config-actions"><button id="save_config" class="btn btn-danger" type="button" disabled>Revisar e persistir</button><button id="discard_config" class="btn btn-outline-secondary" type="button" disabled>Descartar pendências</button></div></section>
+  </aside>
+  <div class="twb-config-sections">
+    <noscript><div class="twb-inline-alert twb-inline-alert--danger">JavaScript é necessário para associar labels, separar valores persistidos e impedir gravações sem confirmação.</div></noscript>
+    {% for section in config %}<section class="twb-panel twb-config-section" id="config-section-{{ section }}" data-config-section="{{ section }}" aria-labelledby="config-title-{{ section }}"><div class="twb-panel-header"><div><p class="twb-config-section-scope" data-section-scope></p><h2 class="twb-panel-title" id="config-title-{{ section }}" data-section-title>{{ section|replace('_',' ')|capitalize }}</h2></div><span class="twb-status twb-status--muted"><span data-section-count>0</span> campo(s)</span></div><div class="twb-panel-body">{% if section in helpfile %}<p class="twb-section-intro">{{ helpfile[section] }}</p>{% endif %}{% if config[section] %}<div class="twb-generated-config" data-generated-config="{{ section }}">{{ config[section]|safe }}</div>{% else %}<div class="twb-empty twb-empty--unknown"><strong>Seção vazia.</strong> O backend publicou a seção, mas não gerou controles.</div>{% endif %}</div></section>{% endfor %}
   </div>
 </div>
-
-<div class="tab-content border bg-white p-3 rounded shadow-sm">
-  {% for section in config %}
-  <div role="tabpanel"
-       class="tab-pane fade {% if loop.first %}show active{% endif %}"
-       id="tab-{{ section }}">
-    <h5 class="mb-1">{{ section | capitalize }}</h5>
-    {% if section in helpfile %}
-      <p class="text-muted small mb-3">{{ helpfile[section] }}</p>
-    {% endif %}
-
-    <div class="form-vertical config-section">
-      {{ config[section] | safe }}
-    </div>
-  </div>
-  {% endfor %}
-</div>
+<div class="twb-sr-live" id="config-save-status" role="status" aria-live="polite">Nenhuma alteração pendente.</div>
+<dialog class="twb-confirm-dialog twb-confirm-dialog--wide" id="global-config-dialog" aria-labelledby="config-dialog-title" aria-describedby="config-dialog-description"><div class="twb-confirm-dialog-body"><span class="twb-status twb-status--warning">Alteração global</span><h2 id="config-dialog-title">Confirmar gravação sequencial?</h2><p id="config-dialog-description">Cada valor será escrito separadamente. Persistência só será confirmada se o valor reaparecer em <code>data.config</code>; efeito operacional continuará não observado.</p><div class="twb-table-scroll"><table class="table twb-operational-table twb-confirm-table"><caption class="sr-only">Valores persistidos e propostos</caption><thead><tr><th scope="col">Chave</th><th scope="col">Persistido</th><th scope="col">Proposto</th><th scope="col">Alcance</th></tr></thead><tbody id="config-dialog-changes"></tbody></table></div><p class="twb-inline-alert twb-inline-alert--warning">Cancelar conserva as propostas apenas no navegador e não envia POST.</p></div><div class="twb-confirm-dialog-actions"><button class="btn btn-outline-secondary" type="button" data-config-cancel>Cancelar</button><button class="btn btn-danger" type="button" data-config-confirm>Persistir alterações globais</button></div></dialog>
+{% endif %}
 {% endblock %}
-
-{% block scripts %}
-<style>
-  /* Conter botões toggle para não ocupar largura total */
-  .config-section .btn[data-type="toggle"] {
-    display: inline-block;
-    width: auto;
-    min-width: 100px;
-  }
-  .config-section hr {
-    margin-top: 1rem;
-    margin-bottom: 0.25rem;
-  }
-  .config-section strong {
-    font-size: 0.95rem;
-  }
-  .config-section i {
-    font-size: 0.82rem;
-    color: #6c757d;
-  }
-  .config-section input.form-control,
-  .config-section select.form-control {
-    max-width: 400px;
-  }
-</style>
-<script>
-var set_values = {};
-
-function set_config(parameter, value) {
-  $.post("/app/config/set?parameter=" + encodeURIComponent(parameter) + "&value=" + encodeURIComponent(value));
-}
-
-function set_toggle_value(target, value) {
-  if (!value) {
-    target.removeClass("btn-success").addClass("btn-danger").text("Disabled");
-  } else {
-    target.addClass("btn-success").removeClass("btn-danger").text("Enabled");
-  }
-}
-
-function toggle_event(event) {
-  var target = $(event.target);
-  var name = target.attr("data-type-option");
-  if (!name) return;
-  var next_value = !target.hasClass("btn-success");
-  set_config(name, next_value);
-  set_toggle_value(target, next_value);
-}
-
-function select_event(event) {
-  var target = $(event.target);
-  var name = target.attr("data-type-option");
-  if (!name) return;
-  set_config(name, target.val());
-}
-
-function num_event(event) {
-  var target = $(event.target);
-  var name = target.attr("data-type-option");
-  if (!name) return;
-  set_values[name] = parseFloat(target.val());
-  $('#save_config').removeClass('disabled');
-}
-
-function text_event(event) {
-  var target = $(event.target);
-  var name = target.attr("data-type-option");
-  if (!name) return;
-  set_values[name] = target.val();
-  $('#save_config').removeClass('disabled');
-}
-
-$(document).ready(function () {
-  $(document).on("click", "[data-type=toggle]", toggle_event);
-  $(document).on("change", "[data-type=select]", select_event);
-  $(document).on("change", "[data-type=number]", num_event);
-  $(document).on("change", "[data-type=text]", text_event);
-
-  $('#save_config').click(function () {
-    $.each(set_values, function (k, v) { set_config(k, v); });
-    setTimeout(function () { location.reload(); }, 600);
-  });
-});
-</script>
-{% endblock %}
+{% block scripts %}{% if config %}<script>
+(function(){
+'use strict';
+var editors=[].slice.call(document.querySelectorAll('[data-generated-config]')),save=document.getElementById('save_config'),discard=document.getElementById('discard_config'),list=document.getElementById('pending-list'),empty=document.getElementById('pending-empty'),count=document.getElementById('config-pending-count'),live=document.getElementById('config-save-status'),dialog=document.getElementById('global-config-dialog'),rows=document.getElementById('config-dialog-changes'),confirmBtn=dialog.querySelector('[data-config-confirm]'),cancelBtn=dialog.querySelector('[data-config-cancel]'),exception=document.getElementById('config-runtime-exception'),pending={},controls={},busy=false,trigger=null;
+var exactLists={ {% for section, values in (data.get('config') or {}).items() if section in config and values is mapping %}{% for key, value in values.items() if value is sequence and value is not string %}{{ (section ~ '.' ~ key)|tojson }}:{{ value|tojson }},{% endfor %}{% endfor %} };
+var sections={server:['Servidor','Conexão global'],reporting:['Relatórios técnicos','Saída global'],notifications:['Notificações','Canal global'],bot:['Ciclo do bot','Execução global'],building:['Construção','Gate e defaults globais'],units:['Tropas','Gates e defaults globais'],inheritance:['Herança','Default para novas aldeias'],empire:['Composição do império','Default para novas aldeias'],watchtower:['Torres de vigia','Gate global'],village_template:['Padrão de aldeia','Default local'],conquest:['Conquista bárbara','Gate e política globais'],resource_sharing:['Compartilhamento de recursos','Gate global sem gate local'],farms:['Farm','Gate e política globais'],market:['Mercado público','Gate e política globais'],premium_exchange:['Troca premium','Política global'],world:['Capacidades do mundo','Gate, fallback e autodetecção'],zones:['Zonas','Gate e política globais'],pvp_conquest:['Conquista PvP','Gate e política globais'],statue:['Paladino','Gate global de leitura'],inventory:['Inventário','Gate global de leitura']};
+var labels={server:'Mundo',endpoint:'URL completa do mundo',server_on_twstats:'Mundo no TWStats',enabled:'Habilitar recurso',connection_string:'Destino dos relatórios',channel_id:'ID do canal',token:'Token do bot',active_hours:'Horário ativo',delay_factor:'Fator de atraso',active_delay:'Intervalo ativo (s)',inactive_still_active:'Executar fora do horário ativo',inactive_delay:'Intervalo inativo (s)',add_new_villages:'Adicionar novas aldeias',village_name_template:'Modelo de nome',village_name_number_length:'Dígitos no nome',auto_set_village_names:'Renomear automaticamente',user_agent:'User-Agent',check_update:'Verificar atualização',max_cached_reports:'Máximo de relatórios em cache',humanize_village_order:'Alternar ordem das aldeias',jitter_min:'Variação mínima (s)',jitter_max:'Variação máxima (s)',attention_lag_chance:'Chance de atraso extra',attention_lag_extra_min:'Atraso extra mínimo (s)',attention_lag_extra_max:'Atraso extra máximo (s)',manage_buildings:'Gerenciar construções',default:'Template padrão',max_lookahead:'Itens examinados',max_queued_items:'Máximo na fila',auto_queue_len:'Ajustar fila premium',premium_max_queued_items:'Máximo premium na fila',recruit:'Recrutar unidades',upgrade:'Pesquisar unidades',batch_size:'Tamanho do lote',manage_defence:'Gerenciar defesa',remove_manual_queued:'Remover fila manual',randomize_unit_queue:'Alternar fila de unidades',mode:'Modo de herança',offensive_ratio:'Proporção ofensiva',defensive_ratio:'Proporção defensiva',min_spacing:'Distância mínima',min_villages:'Mínimo de aldeias',inherit_on_first_run:'Herdar no primeiro ciclo',profile:'Perfil padrão',building:'Template de construção',units:'Template de tropas',managed:'Gerenciada pelo bot',conquest_enabled:'Permitir conquista bárbara',additional_farms:'Farms adicionais',prioritize_building:'Priorizar construção',prioritize_snob:'Priorizar academia',trade_for_premium:'Permitir troca premium',gather_enabled:'Habilitar coleta',gather_selection:'Seleção de coleta',advanced_gather:'Coleta avançada',snobs:'Nobres a manter',mint_coins:'Cunhar moedas',evacuate_fragile_units_on_attack:'Evacuar unidades frágeis',evacuate_on_zone_attack:'Evacuar por ataque na zona',zone_attack_threshold:'Vizinhos sob ataque',evacuate_urgency_threshold_sec:'Urgência de evacuação (s)',zone_attack_eta_window_sec:'Janela da zona (s)',support_others:'Enviar apoio',support_others_factor:'Fração de apoio',support_others_max_villages:'Máximo de destinos',support_lead_time_sec:'Antecedência do apoio (s)',request_support_on_attack:'Solicitar apoio',max_radius:'Raio máximo',priority:'Prioridade',min_points:'Pontos mínimos',max_points:'Pontos máximos',loyalty_regen_per_hour:'Regeneração de lealdade/h',loyalty_drop_per_noble:'Queda por nobre (fallback)',escort_ratio:'Fração de escolta',min_escort_total:'Escolta mínima total',escort_reserve_max_pct:'Reserva máxima de escolta',escort_reserve_min_progress:'Progresso mínimo para reservar',max_sends_per_cycle:'Envios máximos por ciclo',min_send_amount:'Mínimo por envio',receiver_fill_max_pct:'Limite do receptor (%)',merchant_capacity:'Capacidade do mercador',overflow_enabled:'Habilitar transbordo',overflow_trigger_pct:'Gatilho de transbordo (%)',overflow_target_pct:'Meta de transbordo (%)',need_enabled:'Atender necessidade',need_donor_floor:'Piso do doador',farm:'Habilitar farm',search_radius:'Raio de busca',map_sector_radius:'Raio de setores',default_away_time:'Intervalo padrão (s)',full_loot_away_time:'Intervalo saque cheio (s)',low_loot_away_time:'Intervalo saque baixo (s)',high_profile_fill_rate:'Taxa do perfil alto',low_profile_utilization:'Utilização do perfil baixo',profile_min_attacks:'Ataques para classificar',max_farms:'Máximo de farms',attack_higher_points:'Atacar mais pontuadas',force_scout_if_available:'Exigir histórico ou scout',forced_peace_times:'Janelas de paz forçada',farm_scout_amount:'Espiões no farm',auto_trade:'Negociar automaticamente',max_trade_duration:'Duração máxima (h)',auto_remove:'Remover ofertas',trade_multiplier:'Proporção desigual',trade_multiplier_value:'Multiplicador da troca',trade_max_per_hour:'Trocas por hora',max_rate_per_point:'Custo máximo por PP',sell_batch:'Lote de venda',min_sell_batch:'Lote mínimo',max_batches_per_run:'Lotes por ciclo',min_free_merchants:'Mercadores livres',keep_wood:'Madeira preservada',keep_stone:'Argila preservada',keep_iron:'Ferro preservado',knight_enabled:'Paladino (fallback)',flags_enabled:'Bandeiras disponíveis',flag_priority:'Prioridade de bandeiras',flag_priority_academy:'Prioridade com academia',flag_manual_types:'Bandeiras manuais',quests_enabled:'Missões disponíveis',archers_enabled:'Arqueiros (fallback)',building_destruction_enabled:'Demolição (fallback)',boosters_enabled:'Boosters detectados',premium_account:'Conta premium detectada',radius:'Raio de agrupamento',clear_ratio:'Fração do clear',min_attack_power:'Poder mínimo',nobles_per_target:'Nobres por alvo',arrival_buffer_seconds:'Antecedência do clear (s)',scout_amount:'Espiões no scout',scout_max_age_hours:'Validade do scout (h)',dynamic_moral_night_bonus:'Moral e bônus dinâmicos'};
+var sensitive=/^(notifications\.token|reporting\.connection_string)$/;
+function key(c){return c.getAttribute('data-type-option')||''}function leaf(p){var a=p.split('.');return a[a.length-1]}function say(m){live.textContent=m}function same(a,b){return JSON.stringify(a)===JSON.stringify(b)}
+function value(c){var t=c.getAttribute('data-type'),r=c.value&&c.value.trim();if(t==='toggle')return c.getAttribute('aria-pressed')==='true';if(t==='number')return r===''?NaN:Number(r);if(t==='list'){if(r==='')return[];if(r[0]==='['){var x=JSON.parse(r);if(!Array.isArray(x))throw Error('Informe uma lista JSON.');return x}return r.split(',').map(function(v){v=v.trim();try{return JSON.parse(v)}catch(e){return v}}).filter(function(v){return v!==''})}if(c.getAttribute('data-original-null')==='true'&&r==='')return null;return c.value}
+function shown(p,v){if(sensitive.test(p))return v?'valor protegido':'vazio';if(v===null)return'null';if(Array.isArray(v))return v.length?JSON.stringify(v):'lista vazia';if(v===true)return'habilitado';if(v===false)return'desabilitado';if(v==='')return'string vazia';return String(v)}
+function setValue(c,v){var t=c.getAttribute('data-type');if(t==='toggle'){c.setAttribute('aria-pressed',v===true?'true':'false');c.classList.toggle('btn-success',v===true);c.classList.toggle('btn-danger',v!==true);c.textContent=v===true?'Habilitada':'Desabilitada'}else if(t==='list')c.value=Array.isArray(v)?(v.some(function(i){return typeof i==='object'})?JSON.stringify(v):v.join(', ')):'';else c.value=v==null?'':v;c.setAttribute('data-original-null',v===null?'true':'false')}
+function old(c){return JSON.parse(c.getAttribute('data-persisted-value'))}function scope(p){var s=p.split('.')[0];if(s==='village_template')return'Default local; só novas aldeias.';if(s==='resource_sharing')return'Global, sem gate por aldeia.';if(s==='building'||s==='units')return'Global, com alguns overrides locais.';if(s==='conquest')return'Global; também exige permissão local.';return'Configuração global.'}function effect(p){if(/^world\.(knight_enabled|archers_enabled|building_destruction_enabled)$/.test(p)||p==='conquest.loyalty_drop_per_noble')return'Fallback quando a fonte principal não publica o valor.';if(/^world\.(boosters_enabled|premium_account)$/.test(p))return'Pode ser autodetectado e escrito pelo bot.';return'Efeito depende de consumidor ou ciclo posterior e não é confirmado aqui.'}
+function render(m){var ps=Object.keys(pending);list.replaceChildren();ps.forEach(function(p){var li=document.createElement('li'),b=document.createElement('strong'),s=document.createElement('span');b.textContent=p;s.textContent=shown(p,pending[p].old)+' → '+shown(p,pending[p].next);li.append(b,s);list.appendChild(li)});empty.hidden=!!ps.length;count.textContent=ps.length+' pendente'+(ps.length===1?'':'s');save.disabled=!ps.length||busy;discard.disabled=!ps.length||busy;say(m||(ps.length?ps.length+' alteração(ões) apenas no navegador.':'Nenhuma alteração pendente.'))}
+function stage(c){var p=key(c),v;try{v=value(c);c.removeAttribute('aria-invalid')}catch(e){c.setAttribute('aria-invalid','true');say(p+': '+e.message);return}if(c.getAttribute('data-type')==='number'&&!Number.isFinite(v)){c.setAttribute('aria-invalid','true');say('Informe um número válido para '+p+'.');return}if(same(v,old(c)))delete pending[p];else pending[p]={control:c,old:old(c),next:v};render()}
+function warn(title,detail){exception.hidden=false;exception.querySelector('[data-exception-title]').textContent=title;exception.querySelector('[data-exception-detail]').textContent=detail;exception.scrollIntoView({block:'nearest'})}
+function enhance(ed){var sec=ed.dataset.generatedConfig,sm=sections[sec]||[sec,'Escopo não classificado'],panel=ed.closest('[data-config-section]'),nav=document.querySelector('[data-config-nav="'+sec+'"]'),cs=[].slice.call(ed.querySelectorAll('[data-type-option]')),frag=document.createDocumentFragment();panel.querySelector('[data-section-title]').textContent=sm[0];panel.querySelector('[data-section-scope]').textContent=sm[1];if(nav)nav.firstElementChild.textContent=sm[0];cs.forEach(function(c,i){var p=key(c),id='global-config-'+sec+'-'+i,h=c.previousElementSibling&&c.previousElementSibling.tagName==='I'?c.previousElementSibling.textContent.trim():'Sem descrição específica no contrato atual.',o;if(c.dataset.type==='list'&&Object.prototype.hasOwnProperty.call(exactLists,p))o=exactLists[p];else if(c.placeholder==='null'&&c.value==='')o=null;else{if(c.dataset.type==='toggle')c.setAttribute('aria-pressed',c.classList.contains('btn-success')?'true':'false');o=value(c)}var f=document.createElement('div'),l=document.createElement('label'),tech=document.createElement('code'),help=document.createElement('p'),facts=document.createElement('dl');f.className='twb-config-field';l.htmlFor=id;l.textContent=labels[leaf(p)]||(p.split('.').length===3?'Valor de '+leaf(p).replace(/_/g,' '):'Valor configurado');tech.className='twb-config-key';tech.textContent=p;help.id=id+'-help';help.className='twb-config-help';help.textContent=h;facts.className='twb-config-field-facts';facts.innerHTML='<div><dt>Persistido</dt><dd data-persisted></dd></div><div><dt>Escopo conhecido</dt><dd></dd></div><div><dt>Efeito</dt><dd></dd></div>';facts.children[0].lastElementChild.textContent=shown(p,o);facts.children[1].lastElementChild.textContent=scope(p);facts.children[2].lastElementChild.textContent=effect(p);c.id=id;c.setAttribute('aria-describedby',help.id);c.setAttribute('data-persisted-value',JSON.stringify(o));c.setAttribute('data-original-null',o===null?'true':'false');if(c.tagName==='BUTTON'){c.type='button';setValue(c,o)}if(sensitive.test(p)){c.type='password';c.autocomplete='off'}f.append(l,tech,help,facts,c);frag.appendChild(f);controls[p]=c});ed.replaceChildren(frag);panel.querySelector('[data-section-count]').textContent=cs.length;if(nav)nav.querySelector('[data-nav-count]').textContent=cs.length}
+function observed(data,p){var n=data&&data.config,a=p.split('.');for(var i=0;i<a.length;i++){if(!n||!Object.prototype.hasOwnProperty.call(n,a[i]))return{found:false};n=n[a[i]]}return{found:true,value:n}}
+function persistOne(e){var p=key(e.control),controller=window.AbortController?new AbortController():null,timer=controller?setTimeout(function(){controller.abort()},10000):null,url='/app/config/set?parameter='+encodeURIComponent(p)+'&value='+encodeURIComponent(JSON.stringify(e.next));e.control.disabled=true;say('Solicitação enviada para '+p+'; persistência ainda não confirmada.');return fetch(url,{method:'POST',headers:{Accept:'application/json'},signal:controller?controller.signal:undefined}).then(function(r){if(!r.ok)throw Error('HTTP '+r.status);return r.json()}).then(function(d){var o=observed(d,p),failure;if(!o.found){warn('Resposta sem reconciliação','A resposta não contém '+p+'. Não repita automaticamente.');failure=Error('sem reconciliação');failure.reconciled=true;throw failure}if(!same(o.value,e.next)){e.control.setAttribute('data-persisted-value',JSON.stringify(o.value));e.control.closest('.twb-config-field').querySelector('[data-persisted]').textContent=shown(p,o.value);e.old=o.value;warn('Resposta divergente',p+' devolveu '+shown(p,o.value)+'.');failure=Error('divergente');failure.reconciled=true;throw failure}e.control.setAttribute('data-persisted-value',JSON.stringify(o.value));e.control.closest('.twb-config-field').querySelector('[data-persisted]').textContent=shown(p,o.value);setValue(e.control,o.value);delete pending[p];render('Persistência confirmada para '+p+'. Efeito operacional ainda não observado.')}).catch(function(err){if(!err.reconciled)warn('Resultado de gravação desconhecido',p+': '+(err.name==='AbortError'?'timeout':'erro de rede ou resposta')+'. Confira antes de repetir; não houve retry.');throw err}).finally(function(){if(timer)clearTimeout(timer);e.control.disabled=false})}
+function close(){if(dialog.open)dialog.close();if(trigger)trigger.focus()}function open(){if(busy||!Object.keys(pending).length)return;rows.replaceChildren();Object.keys(pending).forEach(function(p){var tr=document.createElement('tr');[p,shown(p,pending[p].old),shown(p,pending[p].next),'Global / default global'].forEach(function(v,i){var td=document.createElement(i?'td':'th');if(!i)td.scope='row';td.textContent=v;tr.appendChild(td)});rows.appendChild(tr)});trigger=document.activeElement;if(dialog.showModal){dialog.showModal();cancelBtn.focus()}else if(window.confirm('Persistir alterações globais?'))run()}
+function run(){if(busy)return;close();busy=true;save.disabled=true;discard.disabled=true;confirmBtn.disabled=true;var chain=Promise.resolve(),entries=Object.keys(pending).map(function(p){return pending[p]});entries.forEach(function(e){chain=chain.then(function(){return persistOne(e)})});chain.then(function(){render('Persistência confirmada por reconciliação. Efeito operacional ainda não observado.')}).catch(function(){render('Sequência interrompida. Alguns valores podem estar persistidos; confira antes de repetir.')}).finally(function(){var message=live.textContent;busy=false;confirmBtn.disabled=false;render(message)})}
+editors.forEach(enhance);document.getElementById('config-field-count').textContent=Object.keys(controls).length;editors.forEach(function(ed){ed.addEventListener('click',function(ev){var c=ev.target.closest('[data-type="toggle"]');if(c&&!busy){ev.preventDefault();setValue(c,c.getAttribute('aria-pressed')!=='true');stage(c)}});ed.addEventListener('input',function(ev){var c=ev.target.closest('[data-type-option]');if(c&&c.dataset.type!=='toggle'&&!busy)stage(c)});ed.addEventListener('change',function(ev){var c=ev.target.closest('[data-type-option]');if(c&&c.dataset.type!=='toggle'&&!busy)stage(c)})});save.addEventListener('click',open);discard.addEventListener('click',function(){if(busy)return;Object.keys(pending).forEach(function(p){setValue(pending[p].control,pending[p].old)});pending={};render('Alterações locais descartadas; nenhum POST foi enviado.')});cancelBtn.addEventListener('click',close);confirmBtn.addEventListener('click',run);dialog.addEventListener('cancel',function(ev){ev.preventDefault();close()});document.addEventListener('keydown',function(ev){if(ev.key==='Escape'&&dialog.open){ev.preventDefault();close()}});
+})();
+</script>{% endif %}{% endblock %}

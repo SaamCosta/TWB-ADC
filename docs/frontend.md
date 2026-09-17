@@ -44,8 +44,8 @@ preserva as classes Bootstrap). Não há migração de dados.
 
 ## 2. Estado da migração
 
-**Seis fatias auditáveis concluídas até 2026-09-14** — etapas 1 a 10 da sequência
-abaixo. A sexta fechou exclusivamente `village.html`.
+**Sete fatias auditáveis concluídas até 2026-09-14** — etapas 1 a 11 da sequência
+abaixo. A sétima fechou exclusivamente `config.html`.
 
 | # | Template | Objetivo | Estado |
 |---:|---|---|---|
@@ -59,8 +59,8 @@ abaixo. A sexta fechou exclusivamente `village.html`.
 | 8 | `pvp_conquest.html` | evidência separada, pipeline, override | ✅ |
 | 9 | `conquest.html` | posse confirmada versus estimada | ✅ |
 | 10 | `village.html` | detalhe, estado observado, configuração | ✅ |
-| 11 | `config.html` | configuração global | ⬅️ **próxima** |
-| 12 | `map.html` | camadas e alternativa acessível ao canvas | ⬜ |
+| 11 | `config.html` | configuração global | ✅ |
+| 12 | `map.html` | camadas e alternativa acessível ao canvas | ⬅️ **próxima, condicionada a alternativa tabular** |
 | 13 | `zones.html` | risco regional e raio | ⬜ |
 | 14 | `empire.html` | agregados coerentes | ⬜ |
 | 15 | `farmscores.html` | explicar score e segurança | ⬜ |
@@ -70,10 +70,10 @@ abaixo. A sexta fechou exclusivamente `village.html`.
 | 19 | `unit_templates.html` | editor seguro e confirmação | ⬜ |
 | 20 | `templates.html` | corrigir markup e completar CRUD | ⬜ |
 
-**Por que `config.html` é a próxima:** é o complemento natural de `village.html` —
-mesmo HTML concatenado gerado no servidor, blast radius maior, e precisa
-explicitar quais mudanças afetam todas as aldeias, quais são autodetectadas e
-quais só valem no próximo ciclo.
+**A sétima fatia (`config.html`)** completou o par do editor por aldeia: o mesmo
+HTML concatenado é reorganizado em seções acessíveis, mas o alcance global,
+defaults locais, fallback/autodetecção e efeito em ciclo posterior permanecem
+separados da persistência.
 
 **Riscos de canvas ficam para depois** (`map`, `zones`, `empire`): são de alto
 valor mas exigem alternativa tabular antes de poderem ser considerados
@@ -384,6 +384,63 @@ Descobertas ao migrar e hoje documentadas na matriz global-versus-aldeia:
 - resource sharing tem **só gate global**; `keep_resources` protege apenas a regra
   de necessidade, não o transbordo.
 
+### 6.4 Contrato real da configuração global — sétima fatia
+
+`GET /config` continua chamando `pre_process_config()`, que devolve um dicionário
+de **HTML concatenado**, não um schema. No config vivo observado, o gerador expôs
+20 seções e 147 controles: booleanos, números, strings, `null`, listas, selects e
+chaves com dois componentes. Uma subseção aninhada não vazia também produz chaves
+com três componentes. `render_value()` não produz controle para dicionários.
+
+As seções `build`, `villages`, `profile_templates` e `hunter` são ocultadas pelo
+backend. Dicionários fora das seções marcadas como aninhadas também são pulados;
+folhas objeto relevantes, como `village_template.keep_resources`, não entram no
+editor. `conquest.min_escort` só gera controles quando seus filhos existem. A UI
+expõe essas limitações e não cria aproximação editável.
+
+O editor agora mantém três representações distintas: valor persistido, proposta
+local e estado da solicitação. Toggle, select, texto, número, lista e `null` são
+staged; o diálogo lista chave, valor anterior, proposta e alcance. O POST permanece
+exatamente `POST /app/config/set?parameter=<chave>&value=<valor>`, sem body e sem
+endpoint novo. Escritas múltiplas são sequenciais. Um HTTP 200 só vira
+"persistência confirmada" quando o valor reaparece no caminho correspondente de
+`data.config`; ausência, divergência, erro e timeout viram resultado desconhecido
+ou divergente, sem retry automático. Mesmo após reconciliação, a interface diz
+"efeito operacional ainda não observado".
+
+Semântica comprovada no código consumidor: `building` e `units` têm gates/defaults
+globais com overrides locais; `village_template` é default para novas aldeias e
+não reconfigura registros existentes; conquista bárbara exige gate global e
+local; resource sharing não tem gate por aldeia; premium exchange exige o gate
+do mundo e o local; campos de capacidade do mundo podem ser gates, fallback ou
+autodetectados; alterações são percebidas apenas quando o respectivo consumidor
+volta a ler a configuração. Campos sem consumidor localizado ficam apresentados
+sem alegação de efeito.
+
+QA usou servidor temporário isolado, sem importar `webmanager.server` e com toda
+escrita interceptada em memória pelo cabeçalho
+`X-TWB-Fixture-Write: intercepted-memory-only`. Cobriu config cheia/vazia,
+seção/campo ausente, `null`, zero, `false`, string/lista vazia, lista preenchida,
+subseção, legado, reconciliação positiva, divergência e timeout. Em navegador real
+foram verificados 1440×900, 1024×900, 720×900 e 390×844: sem overflow no body, um
+`h1`, IDs únicos, labels associados, navegação por âncora/teclado, foco, Escape,
+cancelamento sem POST, bloqueio de duplo clique e ordem sequencial. Capturas:
+`config-desktop-1440.png`, `config-mobile-390.png`,
+`config-pending-changes.png`, `config-global-confirmation.png`,
+`config-persistence-confirmed.png`, `config-divergent-result.png` e
+`config-unknown-timeout.png`.
+
+Limites dependentes do backend: falta schema tipado de campo/validação/risco;
+recibo com versão e erro tipado; confirmação do efeito no consumidor; contrato de
+frescor; e suporte formal a dicionários. Correspondem a `backend.md` §7.4
+(`FND-01`, `FND-02`, `FND-04`, `FND-05`) e §8. Não foram simulados no frontend.
+
+Backlog visual preservado para `bot.html`: (1) a faixa superior nasce do render
+inicial e não acompanha o polling; (2) parar processo detectado/adotado fora do
+painel merece confirmação forte; (3) polling de estado deve preferir
+`/bot/status`, deixando `/bot/output` para atualização explícita ou menos
+frequente. Nenhum desses itens foi implementado nesta fatia.
+
 ---
 
 ## 7. Processo por fatia
@@ -435,8 +492,8 @@ reais permanecem intocados; o servidor de fixture é removido antes da entrega.
 
 ## 8. Próximos passos
 
-1. **`config.html`** (fatia 7), com a mesma disciplina de precedência e
-   confirmação de `village.html`.
+1. **`map.html`** (fatia 8), somente depois de oferecer alternativa tabular
+   acessível ao canvas.
 2. **Validação com leitor de tela real** (NVDA/VoiceOver) — é a única categoria de
    acessibilidade que nenhuma fatia cobriu.
 3. **Alternativa tabular ao canvas** antes de migrar `map`, `zones` e `empire`;
