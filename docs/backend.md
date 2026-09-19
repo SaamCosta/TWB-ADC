@@ -1067,6 +1067,10 @@ desejado?) é escolha dele, não default a inventar.
 
 ## 8.6 `P-CONQ-RAIO` — alcance e âncora do trem multi-origem (2026-09-17)
 
+✅ **Corrigido em 2026-09-19.** Ver "O que foi feito" no fim da seção. O
+diagnóstico abaixo fica como está porque ele estava **incompleto**, e o que
+faltava é a parte que interessa: o raio era o segundo funil, não o primeiro.
+
 **Prioridade 1.** Duas coisas no mesmo lugar: um número de config e um defeito
 de desenho introduzido no `BarbarianTrainPlanner` em 2026-09-17.
 
@@ -1139,16 +1143,96 @@ verifica se cada origem está dentro dos 70 campos do alvo. Hoje não pode
 acontecer (teto medido de 50,5), e a falha seria segura — a sondagem de duração
 não retorna valor e nada é agendado — mas sem dizer o motivo.
 
+### O segundo funil, achado em 2026-09-19 — e que o diagnóstico acima não vê
+
+`find_target()` não varre o snapshot compartilhado: ela itera sobre
+`self.map.villages`, que é o **prefetch de mapa da própria âncora**. Com
+`farms.map_sector_radius: 0` (o valor em campo) esse prefetch é pequeno e não
+centrado na aldeia — o comentário em `map.py:56` já registrava 36 contra 220
+aldeias entre duas aldeias a 8 campos uma da outra.
+
+Sondado ao vivo com o `WebWrapper` do bot em 2026-09-19 (leitura pura, sem
+escrever em `cache/`), sobre as **39** bárbaras elegíveis que o império conhece
+hoje no K25 (eram 46 em 17/09; o cache andou):
+
+| Fonte | aldeias | bárbaras elegíveis | delas no K25 |
+|---|---|---|---|
+| scan da BBM 001 (âncora) | 332 | 26 | **23** |
+| scan da BBM 011 (a outra com nobre) | 332 | 26 | **23** |
+| scan da BBM 023 | 239 | 34 | **30** |
+| `cache/villages` (compartilhado) | 851 | 102 | **39** |
+
+Contando como o `find_target()` real conta (área de interesse + raio), do ponto
+de vista da âncora: **21** candidatos com raio 30 e **23** com raio 50 pelo
+scan local, contra **31** e **67** pelo snapshot compartilhado.
+
+Duas consequências que a medição de 17/09 não podia mostrar:
+
+1. **Subir `max_radius` não alcançava 16 dos 39 alvos** — eles nunca chegavam a
+   ser filtrados pelo raio, porque não estavam na lista. O raio filtra o que já
+   entrou.
+2. A tabela "qualquer aldeia gerenciada → 46 de 46" de 17/09 foi calculada
+   sobre `cache/villages`, ou seja, **sobre um pool que o código não usava**. Ela
+   media a correção certa por acidente e atribuía todo o ganho ao raio.
+
+O painel, aliás, já contava pelo snapshot compartilhado
+(`ConquestReader.area_of_interest`), então painel e bot vinham respondendo
+números diferentes para a mesma pergunta.
+
+### Efeito colateral do raio 50, medido (2026-09-19)
+
+Sobre a lista real, com o pool compartilhado: o **alvo escolhido é o mesmo** com
+raio 30, 50 e 70 — `#51991 570|293`, 990 pts. A ordem diverge a partir da **6ª**
+posição de 30→50 (troca `#54895` ↔ `#51804`: ~1 campo por ~250 pontos) e da
+**3ª** de 50→70. Bem menor que o efeito 30→70 registrado acima, como previsto.
+
+### O que foi feito (2026-09-19)
+
+- **`ConquestManager.find_target(cfg, reach_from=None)`** — `reach_from` são as
+  coordenadas das aldeias que podem de fato despachar nobre. Com ela: o filtro
+  de raio passa a usar a **menor** distância até qualquer origem, e o pool vira
+  `cache/villages` **com o scan vivo da âncora por cima** (fonte fresca vence).
+  A pontuação continua medindo da âncora, de propósito — é a viagem dela que
+  costuma definir a chegada comum. Sem `reach_from`, comportamento histórico
+  intacto (é o que o caminho por aldeia continua usando).
+- **`ConquestManager._candidate_pool()`** — novo, com o porquê da fonte e o que
+  ela tem de pior (dono/pontos podem estar velhos; a revalidação de posse em
+  `_handle_existing()` continua sendo a rede de baixo). Custo medido: 851
+  arquivos em 0,13 s, uma vez por ciclo.
+- **`BarbarianTrainPlanner._reach_locations()`** — coordenada de cada origem,
+  do `area.my_location` e, na falta, de `cache/managed/{vid}.json`. Aldeia sem
+  coordenada sai da conta com WARNING em vez de virar `(0, 0)`, que é uma
+  coordenada válida no mapa do jogo.
+- **`_anchor_village()`** — só pontua agora; o comentário que justificava a
+  âncora falando de viagem (certo) e a usava para visibilidade (errado) foi
+  reescrito com essa distinção explícita.
+- **Guarda de alcance por origem** (`_source_reaches`, `_noble_range`) — o
+  buraco acima, fechado: origem além do `<snob><max_dist>` do mundo fica de fora
+  do trem com log próprio. Dúvida (coordenada faltando, mundo sem limite
+  publicado) deixa passar — falso negativo custa uma aldeia fora do trem, falso
+  positivo custa um comando recusado sem tropa gasta.
+- **`conquest.max_radius: 50`** no `config.json` (já estava aplicado pelo
+  usuário). `config.example.json` segue em 20, que é o default conservador.
+- **Testes:** `tests/test_conquest_target_reach.py` (novo, 10 casos, com as
+  coordenadas reais do bolsão oeste) e 5 casos novos em
+  `tests/test_conquest_planner.py`. Suíte inteira (37 arquivos) verde, e
+  `cache/` byte a byte idêntico antes e depois.
+- **Smoke ao vivo:** `tests/smoke_conquest_reach.py` (fora do glob `test_*.py`,
+  vai à rede, só lê). Rodado em 2026-09-19: pool 332 → 851, candidatos na área
+  26 → 102 (67 dentro dela), e o alvo eleito é o mesmo `#51991` nos três
+  cenários — como a medição offline previa.
+
+**Não validado em campo:** o primeiro trem multi-origem real ainda não
+aconteceu. Isto continua sendo código que nunca despachou nobre de verdade.
+
 ---
 
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 
-0. **`P-CONQ-RAIO`** — subir `conquest.max_radius` e corrigir o
-   `_anchor_village()` do `BarbarianTrainPlanner`, que hoje filtra os alvos pelo
-   raio de *uma* aldeia e por isso esconde 11 das 46 bárbaras do K25. Detalhe e
-   medições na §8.6.
+0. ~~**`P-CONQ-RAIO`**~~ — ✅ **feito em 2026-09-19** (§8.6). Falta só a
+   validação em campo: o primeiro trem multi-origem real ainda não saiu.
 1. **`P-COL-01`** — botão de ativar coleta em todas as aldeias (§8.5).
 2. **`P-COL-02`** — teto de coleta automático e desbloqueio automático (§8.5).
 

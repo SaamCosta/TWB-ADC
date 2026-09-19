@@ -56,7 +56,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   em "sem test suite", está velha). São testes pontuais de lógica pura, sem
   rede e sem estado de jogo. Rodar:
   `foreach ($t in (Get-ChildItem tests/test_*.py)) { python $t.FullName }`
-  — cada arquivo roda sozinho, sem depender de `pytest` instalado.
+  — cada arquivo roda sozinho, sem depender de `pytest` instalado. Os
+  `tests/smoke_*.py` ficam **fora** desse glob de propósito: vão à rede ou
+  abrem processo de verdade, e se rodam na mão (`smoke_bot_manager.py`,
+  `smoke_conquest_reach.py`).
   Cobertura atual: conquista bárbara (nobre em voo, lealdade do relatório,
   alvo perdido, semântica de status, faixa de queda), encoding do
   `FileManager`, alocação de torre de vigia, limiares de slot de Paladino
@@ -92,7 +95,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   (`tests/test_report_reader.py` — veredito agregado por alvo espelhando
   `ReportManager.safe_to_engage`, rótulo de aldeia com o `name=0` de bárbara,
   filtro de tipo dinâmico e paginação; substitui as duas funções que tocam
-  disco por fixtures, então não depende do `cache/` real).
+  disco por fixtures, então não depende do `cache/` real) e a elegibilidade de
+  alvo do trem multi-origem (`tests/test_conquest_target_reach.py` — pool de
+  candidatos e alcance por origem, com as coordenadas reais do bolsão oeste do
+  K25; ver o vigésimo quarto padrão).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -662,6 +668,26 @@ puxa o fio.**
   porque cita um mecanismo concreto (o hash do commit). Promessa de
   recuperabilidade só vale depois de tentar recuperar — um `git show` de teste
   custava cinco segundos e teria falhado na hora.
+- ⚠️ **Vigésimo quarto padrão, achado em 2026-09-19: medir a hipótese sobre um
+  conjunto de dados que o código não consome.** O diagnóstico de `P-CONQ-RAIO`
+  (§8.6) dizia que `conquest.max_radius` escondia 11 das 46 bárbaras do K25, e
+  provava isso com uma tabela calculada sobre `cache/villages` — o snapshot
+  compartilhado, com 851 aldeias. Só que `find_target()` **não varre esse
+  snapshot**: ela itera sobre `self.map.villages`, o prefetch de mapa da própria
+  aldeia, que com `map_sector_radius: 0` tinha 23 das 39 bárbaras. Ou seja,
+  havia **dois funis em série** e o diagnóstico mediu só o de baixo. Subir o
+  raio não alcançaria 16 dos alvos, porque eles nunca chegavam a ser filtrados:
+  não estavam na lista. A medição não estava errada — estava descrevendo um
+  programa diferente do que roda.
+  A regra: ao medir o efeito de um filtro, **medir a partir da mesma fonte que o
+  código lê**, e perguntar quantas peneiras existem antes dela. O sinal de
+  alerta é usar um cache "equivalente" porque ele é mais fácil de abrir offline
+  — foi exatamente o atalho aqui. Custou um `Map.get_map()` com o `WebWrapper`
+  do bot para descobrir (sétimo padrão de novo: sondar com o cliente certo).
+  Corolário barato: quando duas partes do sistema respondem a mesma pergunta,
+  compará-las é diagnóstico de graça. O painel já contava pelo snapshot
+  (`ConquestReader.area_of_interest`) e o bot pelo scan local; os dois números
+  divergiam havia semanas e ninguém tinha posto um ao lado do outro.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do

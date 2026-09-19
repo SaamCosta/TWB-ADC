@@ -48,6 +48,17 @@ FAKE_LIMIT_MESSAGES = (
 )
 
 
+def field_distance(a, b):
+    """
+    Distancia em campos entre duas coordenadas (x, y).
+
+    Mesma conta do `Map.get_dist`, mas entre dois pontos quaisquer em vez de
+    "daqui ate la" -- o trem multi-origem precisa medir de varias origens e
+    nenhuma delas e necessariamente a aldeia do Map em maos.
+    """
+    return math.sqrt(((a[0] - b[0]) ** 2) + ((a[1] - b[1]) ** 2))
+
+
 class AttackManager:
     """
     Attackmanager class
@@ -1111,7 +1122,7 @@ class ConquestManager:
     # Target selection
     # ------------------------------------------------------------------
 
-    def find_target(self, cfg):
+    def find_target(self, cfg, reach_from=None):
         """
         Scans the map for barbarian villages within radius, scores them
         and returns the best unreserved target_id.
@@ -1119,6 +1130,25 @@ class ConquestManager:
         Feature 15: a manually queued target (set via webmanager /conquest)
         always takes priority over automatic scoring, bypassing the
         radius/points filters below (deliberate user choice).
+
+        `reach_from` e a lista de coordenadas (x, y) das aldeias que podem de
+        fato despachar nobre -- o trem multi-origem do BarbarianTrainPlanner.
+        Quando ela vem:
+
+          - o filtro de raio passa a usar a MENOR distancia ate qualquer uma
+            dessas origens, em vez da distancia ate esta aldeia;
+          - o pool de candidatos deixa de ser so o scan de mapa desta aldeia
+            (ver _candidate_pool).
+
+        A PONTUACAO continua medindo a partir desta aldeia (a ancora), de
+        proposito: a ancora e quem manda mais nobres, entao a viagem dela e a
+        que costuma definir a chegada comum de todo mundo. O que a ancora nao
+        pode mais fazer e decidir QUEM ENTRA na lista -- era esse o defeito
+        (docs/backend.md 8.6): o conjunto de alvos visiveis dependia de onde os
+        nobres se acumularam, que e circunstancia e nao geografia.
+
+        Sem `reach_from` o comportamento e o historico, byte por byte: uma
+        aldeia so, vendo so o proprio scan.
         """
         manual_target = self._get_manual_target()
         if manual_target:
@@ -1142,9 +1172,26 @@ class ConquestManager:
         # Collect managed village locations for gap-filling score
         my_locations = self._get_managed_locations()
 
+        origins = [tuple(loc) for loc in (reach_from or []) if loc and len(loc) == 2]
+        if not origins:
+            # Sem origens explicitas, a unica referencia e esta aldeia -- e ela
+            # so tem coordenada depois de um scan de mapa bem-sucedido. Segundo
+            # padrao do CLAUDE.md: `get_map()` devolve False em resposta que
+            # nao e a tela de mapa, e ai `my_location` continua None.
+            if not self.map.my_location:
+                self.logger.warning(
+                    "Conquest: aldeia %s ainda sem coordenada propria (scan de "
+                    "mapa nao veio) -- sem ela nao da para medir raio nenhum",
+                    self.village_id
+                )
+                return None
+            origins = [tuple(self.map.my_location)]
+
+        pool = self._candidate_pool(reach_from)
+
         candidates = []
-        for vid, village in self.map.villages.items():
-            if village.get("owner", "0") != "0":
+        for vid, village in pool.items():
+            if str(village.get("owner", "0")) != "0":
                 continue  # not barbarian
             if vid in reserved:
                 continue  # already targeted
@@ -1155,12 +1202,20 @@ class ConquestManager:
             if pts < min_pts or pts > max_pts:
                 continue
 
-            dist = self.map.get_dist(village["location"])
-            if dist > max_radius:
+            location = village.get("location")
+            # O pool compartilhado e disco, nao o scan em memoria: uma entrada
+            # truncada ou de formato antigo chegaria aqui sem coordenada, e o
+            # `get_dist` abaixo estouraria o ciclo inteiro do planejador.
+            if not location or len(location) != 2:
                 continue
 
+            # Alcance: a menor viagem entre as origens que podem mandar nobre.
+            if min(field_distance(location, origin) for origin in origins) > max_radius:
+                continue
+
+            dist = self.map.get_dist(location)
             score = self._score_target(village, dist, my_locations, cfg)
-            candidates.append((vid, score, village["location"]))
+            candidates.append((vid, score, location))
 
         if not candidates:
             return None
@@ -1326,6 +1381,62 @@ class ConquestManager:
             score = dist_norm - (pts_factor * 0.1)
 
         return score
+
+    def _candidate_pool(self, reach_from=None):
+        """
+        {village_id: dados} sobre o qual a selecao automatica varre.
+
+        Sem `reach_from` (caminho historico, uma aldeia decidindo sozinha) e
+        so o scan de mapa DESTA aldeia. Com ele, o snapshot compartilhado
+        `cache/villages` -- alimentado por todas as aldeias gerenciadas -- com
+        o scan vivo desta aldeia por cima.
+
+        POR QUE O SCAN LOCAL NAO BASTA
+        ------------------------------
+        Com `farms.map_sector_radius = 0` (o default, e o valor em campo) o
+        `TWMap.sectorPrefech` traz poucos setores e nao centrados na aldeia
+        (ver o comentario em map.py:56). Medido ao vivo em 19/09/2026, com as
+        39 barbaras elegiveis que o imperio conhece no K25:
+
+            BBM 001 (a ancora de hoje) enxergava 23
+            BBM 011 (a outra aldeia com nobre) enxergava as mesmas 23
+            BBM 023 enxergava 30
+            cache/villages tinha as 39
+
+        Como o laco de find_target() so via esse funil, o conjunto de alvos
+        dependia de qual aldeia acumulou nobre. Subir `max_radius` NAO corrige
+        isso -- o raio filtra o que ja esta na lista; 16 alvos nunca chegavam a
+        ser filtrados. O painel ja contava pelo snapshot compartilhado
+        (ConquestReader.area_of_interest), entao ele e o bot vinham dando
+        numeros diferentes para a mesma pergunta.
+
+        O QUE ESTA FONTE TEM DE PIOR, E POR QUE AINDA ASSIM SERVE
+        --------------------------------------------------------
+        O snapshot e disco: dono e pontos sao do ultimo scan que passou por
+        ali, entao uma barbara conquistada por um jogador pode continuar
+        registrada como barbara ate alguem reescanear. O scan vivo desta
+        aldeia entra por cima justamente por isso -- onde as duas fontes
+        falam, a fresca vence. E o que escapar disso ainda encontra a
+        revalidacao de posse em `_handle_existing()` (que le a mesma
+        cache/villages e encerra o alvo como "lost"), a mesma rede que ja
+        segurava o alvo manual em `_get_manual_target()`.
+
+        Custo: uma varredura de diretorio por chamada. Isto roda UMA VEZ POR
+        CICLO (o planejador global), nao por aldeia -- medido em 19/09/2026,
+        851 arquivos em 0,13 s com o cache de disco do SO quente (a frio nao
+        medi). Se o numero de aldeias conhecidas crescer muito, e um candidato
+        ao indice descrito em docs/backend.md 6.5.
+        """
+        if not reach_from:
+            return self.map.villages
+
+        pool = {}
+        for fname in FileManager.list_directory("cache/villages", ends_with=".json"):
+            data = FileManager.load_json_file(f"cache/villages/{fname}")
+            if data:
+                pool[fname.replace(".json", "")] = data
+        pool.update(self.map.villages)
+        return pool
 
     def _get_managed_locations(self):
         """Returns list of (x, y) for all managed villages with cached coords."""

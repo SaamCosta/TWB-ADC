@@ -52,7 +52,8 @@ import logging
 import time
 
 from core.filemanager import FileManager
-from game.attack import ConquestCache, ConquestManager
+from core.world_config import WorldConfig
+from game.attack import ConquestCache, ConquestManager, field_distance
 from game.hunter import Hunter
 
 logger = logging.getLogger("ConquestPlanner")
@@ -138,12 +139,14 @@ class BarbarianTrainPlanner:
             )
             return None
 
-        target_id, target_meta = self._pick_target(cfg)
+        target_id, target_meta = self._pick_target(cfg, sources)
         if not target_id:
             self.logger.info("Conquest: nenhum alvo barbaro elegivel neste ciclo")
             return None
 
-        plan = self._build_plan(target_id, sources, cfg)
+        plan = self._build_plan(
+            target_id, sources, cfg, target_location=target_meta.get("location")
+        )
         scheduled = self._schedule(target_id, target_meta, plan, cfg) if plan else None
         if not scheduled:
             # A fila manual tem prioridade absoluta em find_target(), entao um
@@ -155,7 +158,7 @@ class BarbarianTrainPlanner:
             # mudou de dono: a chamada antiga estava no run() por aldeia, que
             # deixou de existir. Mover a decisao sem mover a guarda junto
             # deixaria a guarda viva nos testes e morta em campo.
-            anchor = self._anchor_village()
+            anchor = self._anchor_village(sources)
             if anchor:
                 self._manager_for(anchor)._note_failed_claim(target_id)
         return scheduled
@@ -213,24 +216,64 @@ class BarbarianTrainPlanner:
     # Alvo
     # ------------------------------------------------------------------
 
-    def _pick_target(self, cfg):
+    def _pick_target(self, cfg, sources=None):
         """
-        Reaproveita a selecao do ConquestManager, mas vista da aldeia com mais
-        nobres -- e nao de uma aldeia arbitraria.
+        Reaproveita a selecao do ConquestManager, mas com o alcance do IMPERIO:
+        elegivel e o alvo que ALGUMA aldeia com nobre livre consegue atingir.
 
         Por que delegar em vez de reimplementar: `find_target()` carrega o
         alvo manual da fila, a area de interesse, o filtro de dono/pontos/raio
         e os dois filtros de alvo ja reservado. Reescrever tudo aqui criaria
         uma segunda politica de selecao para divergir da primeira em silencio.
+
+        A ancora continua entrando -- ela e quem PONTUA --, mas nao decide mais
+        quem entra na lista. Ver `_anchor_village()` e `find_target(reach_from=)`.
         """
-        anchor_id = self._anchor_village()
+        sources = self._noble_sources() if sources is None else sources
+        anchor_id = self._anchor_village(sources)
         if not anchor_id:
             return None, {}
         manager = self._manager_for(anchor_id)
-        target_id = manager.find_target(cfg)
+        target_id = manager.find_target(cfg, reach_from=self._reach_locations(sources))
         if not target_id:
             return None, {}
         return target_id, manager._get_village_meta(target_id)
+
+    def _reach_locations(self, sources):
+        """
+        [(x, y)] das aldeias que podem de fato despachar nobre neste ciclo.
+
+        Duas fontes por aldeia, nesta ordem -- a mesma escada que
+        `AttackManager._resolve_position` usa para o alvo:
+
+          1. `village.area.my_location`, a coordenada do scan de mapa deste
+             ciclo. E a que o `Map.get_dist` ja usa, entao medir por ela
+             mantem um numero so dentro da mesma decisao.
+          2. `cache/managed/{vid}.json`, gravado por `Village.get_config`/
+             `Village.run()` -- serve quando o scan de mapa desta aldeia falhou
+             neste ciclo (`get_map()` devolve False e `my_location` fica None).
+
+        Aldeia sem coordenada em nenhuma das duas sai da conta em vez de virar
+        um zero: (0, 0) e uma coordenada valida no mapa do jogo e faria o
+        filtro de raio medir de um ponto que nao existe.
+        """
+        locations = []
+        for vid, _qty in sources:
+            village = self.villages.get(vid)
+            area = getattr(village, "area", None)
+            location = getattr(area, "my_location", None)
+            if not location:
+                cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+                if cached.get("x") is not None and cached.get("y") is not None:
+                    location = [cached["x"], cached["y"]]
+            if location and len(location) == 2:
+                locations.append((int(location[0]), int(location[1])))
+            else:
+                self.logger.warning(
+                    "Conquest: aldeia %s tem nobre mas nao tem coordenada "
+                    "conhecida -- ela nao conta para o alcance deste ciclo", vid
+                )
+        return locations
 
     def _manager_for(self, vid):
         """
@@ -249,24 +292,38 @@ class BarbarianTrainPlanner:
             config=self.config,
         )
 
-    def _anchor_village(self):
+    def _anchor_village(self, sources=None):
         """
-        Aldeia de referencia para a selecao: a que tem mais nobres.
+        Aldeia de referencia para PONTUAR os alvos: a que tem mais nobres.
 
-        A escolha importa porque `find_target()` pontua por distancia ate a
-        aldeia de referencia (`map.get_dist`) e filtra por `max_radius` sobre
-        o scan de mapa dela. Ancorar em quem tem mais nobres aproxima o alvo
-        de onde esta a maior parte do trem, o que encurta a viagem mais longa
-        -- que e justamente a que define a chegada comum de todo mundo.
+        Ancorar em quem tem mais nobres aproxima o alvo de onde esta a maior
+        parte do trem, o que encurta a viagem mais longa -- que e justamente a
+        que define a chegada comum de todo mundo. Isso continua valendo.
+
+        O QUE A ANCORA NAO FAZ MAIS, E POR QUE (docs/backend.md 8.6)
+        -----------------------------------------------------------
+        A versao de 17/09/2026 deste comentario justificava a ancora falando
+        so de viagem, e o codigo usava a ancora tambem para decidir QUEM ENTRA
+        na lista de candidatos -- `find_target()` filtrava `max_radius` a
+        partir dela e varria apenas o scan de mapa dela. O argumento estava
+        certo sobre a viagem e errado sobre a visibilidade: o conjunto de
+        alvos passava a depender de onde os nobres se acumularam, que e
+        circunstancia e nao geografia.
+
+        Medido com o cache real em 19/09/2026, sobre as 39 barbaras elegiveis
+        do K25: a BBM 001 alcancava 29 delas com raio 30 (39 com raio 50) e
+        enxergava 23 no proprio scan de mapa. Hoje a elegibilidade sai de
+        `find_target(reach_from=...)`, que mede de qualquer aldeia com nobre
+        livre e varre o snapshot compartilhado; a ancora so ordena.
         """
-        sources = self._noble_sources()
+        sources = self._noble_sources() if sources is None else sources
         return sources[0][0] if sources else None
 
     # ------------------------------------------------------------------
     # Plano
     # ------------------------------------------------------------------
 
-    def _build_plan(self, target_id, sources, cfg):
+    def _build_plan(self, target_id, sources, cfg, target_location=None):
         """
         [{source_village_id, troops}] com exatamente TRAIN_SIZE nobres, um por
         comando, cada um com sua escolta.
@@ -274,13 +331,21 @@ class BarbarianTrainPlanner:
         Um nobre por comando e a regra do jogo, nao uma escolha: cada ataque
         derruba lealdade uma vez, entao quatro nobres num comando so seriam um
         unico golpe de lealdade com quatro nobres mortos junto.
+
+        `target_location` habilita a guarda de alcance por origem: o alvo
+        passou pelo raio de ALGUMA aldeia, o que nao garante que cada origem
+        escolhida chegue la. Sem coordenada do alvo a guarda e pulada -- e o
+        comportamento anterior, que nao era errado, so era mudo.
         """
         plan = []
         remaining = ConquestManager.TRAIN_SIZE
+        noble_range = self._noble_range()
 
         for vid, available in sources:
             if remaining <= 0:
                 break
+            if not self._source_reaches(vid, target_location, noble_range):
+                continue
             take = min(available, remaining)
             escort = self._escort_for(vid, cfg, take)
             if escort is None:
@@ -297,13 +362,71 @@ class BarbarianTrainPlanner:
             remaining -= take
 
         if remaining > 0:
+            # "escolta ou alcance" e nao "escolta": a recusa por distancia
+            # entrou depois e tem linha propria acima, mas um resumo que
+            # afirma a causa errada manda quem le procurar tropa faltando
+            # quando o problema era geografia.
             self.logger.info(
-                "Conquest: so %d/%d nobres tem escolta suficiente para sair -- "
-                "nao agendo trem parcial",
+                "Conquest: so %d/%d nobres passaram no gate de escolta e alcance "
+                "-- nao agendo trem parcial (o motivo de cada aldeia esta nas "
+                "linhas acima)",
                 ConquestManager.TRAIN_SIZE - remaining, ConquestManager.TRAIN_SIZE
             )
             return None
         return plan
+
+    def _noble_range(self):
+        """
+        Alcance do nobre neste mundo, em campos, ou None quando o mundo nao
+        publica a tag (`<snob><max_dist>`, br143 = 70).
+
+        None desliga a guarda em vez de chutar um numero: mundo sem limite
+        publicado e mundo onde qualquer distancia vale, e inventar um teto aqui
+        recusaria em casa um envio que o jogo aceitaria.
+        """
+        server_cfg = (self.config or {}).get("server", {})
+        return WorldConfig.noble_max_distance(
+            WorldConfig.get(
+                server=server_cfg.get("server"),
+                endpoint=server_cfg.get("endpoint"),
+            )
+        )
+
+    def _source_reaches(self, vid, target_location, noble_range):
+        """
+        True quando a aldeia `vid` pode legalmente mandar nobre ate o alvo.
+
+        Por que existe: o alvo entra na lista por estar dentro do raio de
+        ALGUMA aldeia com nobre (find_target(reach_from=...)), e o trem se
+        monta com todas as que tem nobre -- as duas coisas nao sao o mesmo
+        conjunto. Hoje nao da para acontecer nesta conta (a pior combinacao
+        origem->alvo medida em 17/09/2026 e 50,5 campos, contra os 70 do
+        mundo), e a falha seria segura: o jogo recusaria o envio e a sondagem
+        de duracao voltaria vazia, sem agendar nada. Mas o log so diria "nao
+        consegui a duracao pelo servidor", que e o sintoma de meia duzia de
+        coisas diferentes -- ver o decimo quinto padrao do CLAUDE.md sobre
+        sinal que nao distingue nada.
+
+        Duvida (coordenada faltando, mundo sem limite publicado) deixa passar:
+        o custo de um falso negativo aqui e a aldeia ficar de fora do trem, e
+        o custo de um falso positivo e um comando recusado sem tropa gasta.
+        """
+        if not noble_range or not target_location or len(target_location) != 2:
+            return True
+        origins = self._reach_locations([(vid, 0)])
+        if not origins:
+            return True
+        distance = field_distance(
+            (int(target_location[0]), int(target_location[1])), origins[0]
+        )
+        if distance <= noble_range:
+            return True
+        self.logger.info(
+            "Conquest: aldeia %s esta a %.1f campos do alvo, acima do alcance "
+            "do nobre neste mundo (%s) -- fica de fora deste trem",
+            vid, distance, noble_range
+        )
+        return False
 
     def _reserve_toward_escort(self, vid, cfg):
         """

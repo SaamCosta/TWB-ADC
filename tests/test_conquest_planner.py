@@ -63,20 +63,27 @@ class _Units:
         return total
 
 
+class _Area:
+    """`Village.area` e o Map da aldeia; daqui so sai a coordenada dela."""
+
+    def __init__(self, my_location=None):
+        self.my_location = my_location
+
+
 class _Village:
-    def __init__(self, vid, troops):
+    def __init__(self, vid, troops, location=None):
         self.village_id = vid
         self.units = _Units(troops)
-        self.area = object()
+        self.area = _Area(location)
         self.attack = None
 
 
-# Estado real da conta em 16/09/2026.
+# Estado real da conta em 16/09/2026, com as coordenadas de campo.
 def _empire():
     return {
-        "41123": _Village("41123", {"snob": 3, "axe": 4000, "light": 800}),
-        "41140": _Village("41140", {"snob": 2, "axe": 3000, "light": 600}),
-        "44620": _Village("44620", {"snob": 0, "axe": 2000}),
+        "41123": _Village("41123", {"snob": 3, "axe": 4000, "light": 800}, [577, 306]),
+        "41140": _Village("41140", {"snob": 2, "axe": 3000, "light": 600}, [585, 304]),
+        "44620": _Village("44620", {"snob": 0, "axe": 2000}, [586, 308]),
     }
 
 
@@ -85,11 +92,13 @@ class _FakeManager:
     escort = {"axe": 100}
     target = "49709"
     failed_claims = []
+    reach_seen = []
 
     def __init__(self, *a, **k):
         pass
 
-    def find_target(self, cfg):
+    def find_target(self, cfg, reach_from=None):
+        _FakeManager.reach_seen.append(reach_from)
         return _FakeManager.target
 
     def _get_village_meta(self, target_id):
@@ -164,6 +173,7 @@ def _install(store=None, schedules=None, active=None):
     _FakeManager.failed_claims = []
     _FakeManager.escort = {"axe": 100}
     _FakeManager.target = "49709"
+    _FakeManager.reach_seen = []
     return calls
 
 
@@ -223,12 +233,54 @@ def test_aldeia_com_conquest_enabled_false_fica_de_fora():
 
 def test_ancora_e_quem_tem_mais_nobres():
     """
-    Importa porque find_target() pontua distancia a partir da ancora: ancorar
-    onde esta a maior parte do trem encurta a viagem mais longa, que e a que
-    define a chegada comum de todo mundo.
+    Importa porque find_target() PONTUA a distancia a partir da ancora:
+    ancorar onde esta a maior parte do trem encurta a viagem mais longa, que e
+    a que define a chegada comum de todo mundo.
+
+    O que a ancora nao faz mais e decidir quem entra na lista -- ver
+    test_alcance_vem_de_todas_as_aldeias_com_nobre.
     """
     p, _ = _planner()
     assert p._anchor_village() == "41123"
+
+
+# --------------------------------------------------------------------------
+# Alcance do imperio (docs/backend.md 8.6)
+# --------------------------------------------------------------------------
+
+def test_alcance_vem_de_todas_as_aldeias_com_nobre():
+    """
+    O defeito de 17/09/2026: a elegibilidade do alvo era medida SO da ancora,
+    entao o conjunto de alvos dependia de onde os nobres se acumularam --
+    circunstancia, nao geografia. Medido no cache real, isso escondia 10 das
+    39 barbaras do K25 com raio 30.
+    """
+    p, _ = _planner()
+    p.run()
+    assert _FakeManager.reach_seen == [[(577, 306), (585, 304)]]
+
+
+def test_aldeia_sem_nobre_nao_conta_para_o_alcance():
+    """
+    Alcance e "de onde um nobre pode SAIR". A 44620 nao tem nobre, entao um
+    alvo que so ela alcanca nao e alcancavel de verdade -- e o trem sairia
+    montado com origens que nao chegam la.
+    """
+    p, _ = _planner()
+    p.run()
+    assert (586, 308) not in _FakeManager.reach_seen[0]
+
+
+def test_origem_sem_coordenada_conhecida_nao_entra_no_alcance():
+    """
+    Sem a guarda, `my_location` None viraria (0, 0) -- coordenada valida no
+    mapa do jogo -- e o filtro de raio mediria a partir do canto do mundo.
+    """
+    villages = _empire()
+    villages["41140"].area.my_location = None
+    p, _ = _planner(villages=villages)
+    p.run()
+    assert _FakeManager.reach_seen == [[(577, 306)]]
 
 
 # --------------------------------------------------------------------------
@@ -264,6 +316,49 @@ def test_escolta_e_redistribuida_quando_a_aldeia_manda_menos_de_quatro():
     plan = p._build_plan("49709", [("41140", 1), ("41123", 3)], {})
     da_41140 = [a for a in plan if a["source_village_id"] == "41140"]
     assert da_41140[0]["troops"]["axe"] == 400  # 100 * (4/1)
+
+
+def test_origem_fora_do_alcance_do_nobre_fica_de_fora():
+    """
+    O alvo entra na lista por estar no raio de ALGUMA aldeia com nobre; isso
+    nao garante que CADA origem chegue la. Nesta conta ainda nao acontece (a
+    pior combinacao medida e 50,5 campos contra os 70 do mundo), e a falha
+    seria segura -- o jogo recusaria o envio --, mas o log diria apenas "nao
+    consegui a duracao pelo servidor", que e sintoma de meia duzia de coisas.
+
+    A 41123 (577|306) esta a 95,2 campos de 500|250. Sem ela sobram 2 nobres,
+    e trem parcial nao sai.
+    """
+    class _WC:
+        @staticmethod
+        def get(server=None, endpoint=None, force_refresh=False):
+            return {"snob": {"max_dist": 70}}
+
+        @staticmethod
+        def noble_max_distance(data):
+            return (data.get("snob") or {}).get("max_dist")
+
+    p, _ = _planner()
+    original = planner_mod.WorldConfig
+    planner_mod.WorldConfig = _WC
+    try:
+        assert p._build_plan("49709", p._noble_sources(), {},
+                             target_location=[500, 250]) is None
+        # Sem a coordenada do alvo a guarda nao roda -- e o comportamento
+        # anterior, que serve de controle: o que barrou acima foi a distancia.
+        assert p._build_plan("49709", p._noble_sources(), {}) is not None
+    finally:
+        planner_mod.WorldConfig = original
+
+
+def test_alcance_do_nobre_desconhecido_deixa_passar():
+    """
+    Mundo que nao publica `<snob><max_dist>` e mundo sem limite conhecido.
+    Inventar um teto aqui recusaria em casa um envio que o jogo aceitaria.
+    """
+    p, _ = _planner()
+    assert p._build_plan("49709", p._noble_sources(), {},
+                         target_location=[500, 250]) is not None
 
 
 def test_sem_escolta_nao_agenda_trem_parcial():
