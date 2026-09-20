@@ -84,13 +84,17 @@ class BarbarianTrainPlanner:
     # sono quando ha send_time proximo (`nearest_send_time`).
     ARRIVAL_MARGIN_SECONDS = 600
 
-    def __init__(self, wrapper, villages, config, hunter=None, reservation_board=None):
+    def __init__(self, wrapper, villages, config, hunter=None, reservation_board=None,
+                 world_villages=None):
         self.wrapper = wrapper
         self.villages = villages or {}
         self.config = config or {}
         self.logger = logger
         self._hunter = hunter
         self.reservation_board = reservation_board
+        # Feature 36: compartilhada, como o quadro de reservas. Opcional para
+        # os testes e chamadas antigas -- None devolve o pool de duas fontes.
+        self.world_villages = world_villages
 
     # ------------------------------------------------------------------
     # Entrada
@@ -298,6 +302,7 @@ class BarbarianTrainPlanner:
             map_obj=village.area,
             config=self.config,
             reservation_board=self.reservation_board,
+            world_villages=self.world_villages,
         )
 
     def _anchor_village(self, sources=None):

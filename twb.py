@@ -96,6 +96,7 @@ from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
 from game.pvp_conquest import PvpConquestManager
 from game.reservations import ReservationBoard
+from game.world_villages import WorldVillages
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -137,6 +138,9 @@ class TWB:
     # reservas valer de verdade. Imutavel como default de classe (o objeto e
     # criado sob demanda), mesma forma do `hunter` acima.
     reservation_board = None
+    # Feature 36: idem -- sobrevive entre ciclos para o TTL de 6h da lista do
+    # mundo valer, e para o arquivo de 6,3 MB nao ser reparseado por ciclo.
+    world_villages = None
 
     def __init__(self):
         # Precisam ser criados por instância, não como atributo de classe:
@@ -691,6 +695,17 @@ class TWB:
                     if reservation_board.enabled and managed_villages_dict:
                         reservation_board.refresh(sorted(managed_villages_dict)[0])
 
+                # Feature 36: UMA lista de aldeias do mundo por ciclo, pelo
+                # mesmo motivo do quadro acima -- o conteudo e global e mede
+                # 6,3 MB. Construir aqui nao vai a rede: o download e
+                # preguicoso, com TTL de 6h e cache em disco.
+                world_villages = None
+                if config.get("conquest", {}).get("enabled", False):
+                    if not self.world_villages:
+                        self.world_villages = WorldVillages(config=config)
+                    self.world_villages.config = config
+                    world_villages = self.world_villages
+
                 pvp_manager = None
                 if config.get("pvp_conquest", {}).get("enabled", False):
                     pvp_manager = PvpConquestManager(
@@ -844,6 +859,7 @@ class TWB:
                         config=config,
                         hunter=self.hunter,
                         reservation_board=reservation_board,
+                        world_villages=world_villages,
                     ).run()
 
                 sleep = 0

@@ -722,6 +722,26 @@ puxa o fio.**
   geral, que é o 15º padrão de cabeça para baixo: lá o detector disparava
   sempre, aqui ele **nunca** dispararia — e as duas falhas se parecem de fora,
   porque em nenhum dos dois casos alguém vai investigar.
+- ⚠️ **Vigésimo sétimo padrão, achado em 2026-09-20: "fonte mais velha" é uma
+  propriedade do CAMPO, não da fonte.** O plano do `P-CONQ-MAPA` (§8.6) mandava
+  entrar com `map/village.txt` como "piso de descoberta, nunca autoridade sobre
+  dono/pontos", porque ele seria "o mais completo e o mais velho ao mesmo
+  tempo". Soa óbvio e estava errado na metade que importa. Medindo **antes** de
+  implementar: das 851 entradas de `cache/villages`, **38 diziam bárbara para
+  aldeias que o village.txt já dava como de jogador, e ZERO no sentido
+  inverso** — porque bárbara virar aldeia de jogador é o que conquista faz, e o
+  snapshot local (20,6 dias de idade) não fica sabendo. Ou seja, para *posse* o
+  arquivo "velho" é a fonte **nova**, e obedecer a precedência escrita teria
+  deixado 38 alvos-fantasma elegíveis — nobre de verdade contra aldeia de
+  gente, que é o incidente da §8.7 entrando por outra porta.
+  A regra: quando duas fontes se sobrepõem, "qual é mais fresca" se pergunta
+  **por campo**, e a resposta costuma estar no próprio dado — aqui a assimetria
+  38×0 era a impressão digital de qual lado apodrece. Cruzar as duas fontes
+  custa minutos e transforma a ordem de precedência de escolha estética em fato
+  medido. Sinal de alerta: escrever "X é mais velho que Y" sem dizer *sobre o
+  quê*. É o 16º padrão outra vez (a instrução vinha de um documento, e
+  documento é memória, não especificação), com o agravante de que aqui o
+  documento era o **plano da própria tarefa**.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do

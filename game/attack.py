@@ -1048,9 +1048,13 @@ class ConquestManager:
     # cai no 1o padrao do CLAUDE.md -- o perigo la e list/dict mutados
     # in-place, compartilhados entre as instancias de todas as aldeias.
     reservation_board = None
+    # Feature 36: lista de aldeias do mundo (map/village.txt). Mesmo motivo de
+    # ser default de classe, e tambem imutavel do ponto de vista do 1o padrao
+    # -- a instancia guarda estado, mas o default aqui e None.
+    world_villages = None
 
     def __init__(self, wrapper, village_id, troopmanager, map_obj, config, repman=None,
-                 reservation_board=None):
+                 reservation_board=None, world_villages=None):
         self.wrapper = wrapper
         self.village_id = village_id
         self.troopmanager = troopmanager
@@ -1062,6 +1066,10 @@ class ConquestManager:
         # de proposito: injetado por twb.py, ausente nos testes e nas chamadas
         # antigas. Quando e None a conquista se comporta como antes.
         self.reservation_board = reservation_board
+        # Feature 36: piso de descoberta de alvo (docs/backend.md 8.6). Opcional
+        # pelo mesmo motivo do quadro de reservas: injetado por twb.py, ausente
+        # nos testes antigos, e quando e None o pool se comporta como antes.
+        self.world_villages = world_villages
         self.logger = logging.getLogger(f"Conquest:{self.village_id}")
         self._attack_manager = AttackManager(
             wrapper=wrapper,
@@ -1208,7 +1216,10 @@ class ConquestManager:
                 return None
             origins = [tuple(self.map.my_location)]
 
-        pool = self._candidate_pool(reach_from)
+        # `max_radius` viaja junto porque e ele que define a caixa de recorte
+        # da lista do mundo -- ver _world_box(). Sem reach_from o pool continua
+        # sendo so o scan desta aldeia, byte por byte como antes.
+        pool = self._candidate_pool(reach_from, max_radius=max_radius)
 
         candidates = []
         for vid, village in pool.items():
@@ -1475,7 +1486,7 @@ class ConquestManager:
 
         return score
 
-    def _candidate_pool(self, reach_from=None):
+    def _candidate_pool(self, reach_from=None, max_radius=None):
         """
         {village_id: dados} sobre o qual a selecao automatica varre.
 
@@ -1519,17 +1530,87 @@ class ConquestManager:
         851 arquivos em 0,13 s com o cache de disco do SO quente (a frio nao
         medi). Se o numero de aldeias conhecidas crescer muito, e um candidato
         ao indice descrito em docs/backend.md 6.5.
+
+        A TERCEIRA FONTE (Feature 36, 2026-09-20)
+        -----------------------------------------
+        As duas fontes acima tem o MESMO limite, e o conserto de 19/09 nao o
+        tocou: as duas so contem o que alguma aldeia nossa ja escaneou algum
+        dia. Medido em 20/09: o mundo tem 130.909 aldeias e `cache/villages`
+        tinha 851 -- cobertura de 0,65%. `map/village.txt` entra como PISO de
+        descoberta, recortado pela caixa de coordenadas que o raio permite
+        (ver `max_radius` abaixo).
+
+        PRECEDENCIA -- e ela NAO e a mesma para as duas perguntas que este
+        pool responde. Para DESCOBERTA (quem existe e onde) as tres fontes
+        somam. Para POSSE vale scan vivo > village.txt > cache/villages,
+        porque o cruzamento das 851 entradas em 20/09 deu 38 aldeias que o
+        cache jurava barbaras e o mundo dava como de jogador, contra ZERO no
+        sentido inverso -- barbara virar aldeia de jogador e o que conquista
+        faz, e o cache local nao fica sabendo. Deixar o cache ganhar em posse
+        manteria 38 barbaras fantasma elegiveis, que e o incidente da 8.7
+        entrando por outra porta e com nobre de verdade. O racional completo
+        esta no topo de game/world_villages.py.
         """
         if not reach_from:
             return self.map.villages
 
         pool = {}
+
+        # 1. Piso de descoberta: o mundo inteiro, recortado pelo alcance.
+        world = self._world_box(reach_from, max_radius)
+        pool.update(world)
+
+        # 2. cache/villages por cima -- mais campos (tribo, scout, buildings) e
+        #    normalmente mais recente em pontos.
         for fname in FileManager.list_directory("cache/villages", ends_with=".json"):
             data = FileManager.load_json_file(f"cache/villages/{fname}")
-            if data:
-                pool[fname.replace(".json", "")] = data
+            if not data:
+                continue
+            vid = fname.replace(".json", "")
+            known = world.get(vid)
+            if known and str(data.get("owner", "0")) == "0" and str(known["owner"]) != "0":
+                # O cache apodreceu: esta aldeia tem dono. 38 a 0 na medicao,
+                # entao isto nao e empate a desempatar, e uma fonte errada.
+                data = dict(data)
+                data["owner"] = known["owner"]
+                data["points"] = known["points"]
+            pool[vid] = data
+
+        # 3. Scan vivo desta aldeia por ultimo: e a unica fonte deste ciclo, e
+        #    pode legitimamente contradizer as duas de cima nos dois sentidos.
         pool.update(self.map.villages)
         return pool
+
+    def _world_box(self, reach_from, max_radius):
+        """
+        As aldeias do mundo dentro do alcance de alguma origem, ou {}.
+
+        RECORTE ANTES DA PONTUACAO, e esse e o ponto. O laco de find_target()
+        passaria de ~851 para ~130.909 iteracoes por ciclo se o mundo entrasse
+        inteiro; a caixa de coordenadas derivada de `max_radius` devolve so a
+        vizinhanca util. A caixa e o retangulo que circunscreve os circulos de
+        raio `max_radius` em volta das origens -- ela admite os cantos, que
+        estao fora do alcance, mas isso nao muda o resultado: o filtro de raio
+        real, por distancia de campo, roda logo depois no proprio laco.
+
+        Sem `max_radius` nao ha recorte seguro a fazer, entao a fonte fica de
+        fora em vez de entrar inteira.
+        """
+        if not self.world_villages or not max_radius:
+            return {}
+        origins = [tuple(loc) for loc in (reach_from or []) if loc and len(loc) == 2]
+        if not origins:
+            return {}
+        try:
+            radius = int(max_radius)
+        except (TypeError, ValueError):
+            return {}
+        xs = [int(o[0]) for o in origins]
+        ys = [int(o[1]) for o in origins]
+        return self.world_villages.in_box(
+            min(xs) - radius, max(xs) + radius,
+            min(ys) - radius, max(ys) + radius,
+        )
 
     def _get_managed_locations(self):
         """Returns list of (x, y) for all managed villages with cached coords."""

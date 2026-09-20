@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.1",
+    "version": "4.2",
     "author": "stefan2200"
   },
   "server": {
@@ -139,7 +139,9 @@
     "escort_reserve_min_progress": 0.5,
     "respect_tribe_reservations": true,
     "reservation_cache_seconds": 600,
-    "excluded_targets": []
+    "excluded_targets": [],
+    "use_world_village_list": true,
+    "world_village_list_ttl": 21600
   },
   "resource_sharing": {
     "enabled": false,

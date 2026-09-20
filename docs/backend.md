@@ -1498,6 +1498,74 @@ aldeias e o bot conhece 851** — ou seja, `cache/villages` cobre **0,65%** do
 mundo, e os 332 do scan local cobriam 0,25%. A ordem de grandeza do funil é maior
 do que esta seção estimava.
 
+### ✅ O que foi feito (`P-CONQ-MAPA`, 2026-09-20)
+
+**`game/world_villages.py`** (novo) — `WorldVillages`, uma instância por
+processo criada em `twb.py` e compartilhada pelo ciclo, com TTL de 6 h, cache
+em disco (`cache/world/villages_<mundo>.txt`, o arquivo cru) e as três guardas
+que esta seção pedia. Ligada em `ConquestManager._candidate_pool()` como
+terceira camada e injetada pelo `BarbarianTrainPlanner`.
+
+**Medido antes e depois pelo `find_target()` real** (`tests/smoke_conquest_pool_census.py`,
+novo; ele intercepta a lista que o laço produziu em vez de recalcular os
+filtros — 24º padrão):
+
+| cenário | pool antes | pool depois | candidatos antes | depois | na área |
+|---|---|---|---|---|---|
+| só a âncora (histórico) | 332 | 332 | 23 | 23 | 20 |
+| as 2 origens com nobre | 851 | **2.290** | 96 | **198** | 121 |
+| as 30 gerenciadas | 851 | **4.097** | 96 | **387** | 181 |
+
+O alvo eleito é o **mesmo** (`#51991 570|293`) nos três cenários, antes e
+depois — alargar a descoberta não desestabilizou a escolha.
+
+**Custo**: o pool não vai a 130.937 porque o recorte por caixa de coordenadas
+(`_world_box()`) roda **antes** de qualquer pontuação. `find_target()` inteiro
+custa **0,39 s** com as 30 origens, contra 0,33 s antes. A representação em
+memória é tupla e não dict, com o nome decodificado só na saída: **42,4 MB** e
+0,22 s de carga, contra 65,9 MB e 5,5 s na primeira versão (medido; ver o 25º
+padrão do `CLAUDE.md`, que é sobre exatamente esse tipo de custo).
+
+⚠️ **A precedência desta seção estava errada para POSSE, e a medição inverteu.**
+O texto acima dizia que o village.txt é "o mais completo e o mais velho ao mesmo
+tempo", logo nunca autoridade sobre dono/pontos. Cruzando as 851 entradas de
+`cache/villages` com o village.txt do mesmo instante:
+
+```
+cache diz BARBARA e o mundo diz JOGADOR ....  38   (idade do cache: 20,6 dias)
+cache diz JOGADOR e o mundo diz BARBARA ....   0
+```
+
+38 a 0 não é ruído: bárbara virar aldeia de jogador é o que conquista faz, e o
+cache local não fica sabendo. Para **posse**, quem apodrece é o `cache/villages`.
+Então são duas perguntas com duas precedências:
+
+- **descoberta** (quem existe e onde) — village.txt é o piso, as outras somam;
+- **posse e pontos** — scan vivo > village.txt > `cache/villages`.
+
+Deixar o cache ganhar em posse manteria 38 bárbaras-fantasma elegíveis, ou seja,
+o bot mandando nobre contra aldeia de gente: o incidente da §8.7 por outra porta.
+Verificado depois da correção: as 38 saem corrigidas e **nenhuma** sobra.
+
+⚠️ **O cliente é `requests` puro, não o `WebWrapper`** — e isso não é
+desleixo. `WebWrapper.post_process()` roda em toda resposta e faz
+`del self.headers['x-csrf-token']` quando não acha `<meta name="csrf-token">`.
+village.txt é texto puro e não tem, então baixá-lo pelo wrapper **apagaria o
+token de CSRF da sessão** e quebraria os POSTs seguintes do ciclo
+(recrutamento, mercado, envio). De quebra o wrapper rodaria dois regex sobre
+6,3 MB e guardaria o corpo inteiro em `last_response`. A implementação de
+referência do fork usa o wrapper e teria esse defeito.
+
+**Testes:** `tests/test_world_villages.py` (19 casos, sem rede, fixture
+verbatim de 8 linhas reais do br143 — inclui `30375`/`34331`, duas das 38
+fantasma). Um deles reprovou a primeira versão e achou um defeito real: com o
+TTL vencido e o refresh falhando, `rows()` devolvia `{}` e descartava a lista
+boa ainda carregada em memória. Corrigido no código.
+
+**Não validado em campo:** nenhum trem foi montado com esse pool ainda.
+
+---
+
 ⚠️ **Não é a mesma pergunta que a §8.7 responde, e as duas não se substituem.**
 `village.txt` diz *quem é o dono e onde fica*; o quadro de reservas diz *quem
 pediu a aldeia*. Alargar a descoberta **sem** o filtro de reserva multiplicaria
@@ -1719,17 +1787,30 @@ Estado em 2026-09-20 — ✅ = coberto por teste, ⏳ = falta campo.
   renderizada. **Trocar pela real na próxima captura**, porque markup suposto é o
   que fez `loyalty_from_report()` falhar. Está anotado no topo do arquivo de
   teste, não só aqui.
-- ⏳ **Nada disso foi exercitado em campo.** Zero ciclos reais: o bot está
-  parado e a sessão do `cache/session.json` expirou. O que observar no primeiro
-  run, por ordem de valor:
-  1. `Reservations: N reservas no quadro da tribo (1 minhas, N-1 de terceiros)` —
-     se `N` vier 10 em vez de ~489, o `&page=all` não pegou e o bot está cego em
-     98% do quadro;
-  2. a **1** reserva própria não pode aparecer como bloqueio (é o único caso que
-     distingue "reservado por mim" de "por outro" em produção, e é justamente o
-     que a fixture derivada não prova);
-  3. silêncio de `sem leitura do quadro de reservas` — se aparecer todo ciclo, a
-     conquista está travada e o sintoma é mudo (15º padrão).
+- ✅/⏳ **Primeira observação em campo: 2026-09-20, dois ciclos (10:03 e
+  12:16).** Dos três sinais previstos:
+  1. ✅ `Reservations: 480 reservas no quadro da tribo (1 minhas, 479 de
+     terceiros)` e, no ciclo seguinte, 482 (1 / 481). Não vieram 10 — o
+     `&page=all` pegou;
+  2. ✅ **na metade que o log consegue provar, e é a metade que importa.** O
+     `own_player_id` foi lido do `game_state` ao vivo e casou com **exatamente
+     1** das 480 reservas, que é o número real da conta. Era isso que a fixture
+     derivada não provava: a separação "minha" × "de terceiro" funciona sobre o
+     quadro real. O que ainda **não** foi exercitado é o gate em si — ver abaixo;
+  3. ✅ zero ocorrências de `sem leitura do quadro de reservas`.
+- ⏳ **O gate nunca rodou.** Nenhuma linha de `Conquest:` no log inteiro: o
+  `BarbarianTrainPlanner` roda depois do laço de aldeias, e nos dois ciclos ele
+  não foi alcançado — o ciclo 1 morreu às 12:15 num crash e o ciclo 2 ainda
+  estava na 28ª aldeia quando o bot parou. Ou seja, "a reserva própria não
+  apareceu como bloqueio" é verdade e **vazio**: nada foi bloqueado porque nada
+  foi avaliado.
+- ⚠️ **Crash não relacionado, achado na mesma leitura** (`session_latest.log`,
+  12:15): uma falha de DNS transitória (`getaddrinfo failed`) derrubou o
+  processo inteiro em `Village.ensure_map_loaded()` → `Map.get_map()` →
+  `Extractor.game_state(res)` com `res=None`. É o **2º padrão** do `CLAUDE.md`
+  num caminho quente e sem guarda: `map.py:53`. Enquanto isso não for fechado,
+  qualquer soluço de rede no meio do laço custa o ciclo inteiro — e com ele o
+  planejador de conquista, que é o último a rodar.
 
 ---
 
@@ -1751,15 +1832,19 @@ Estado em 2026-09-20 — ✅ = coberto por teste, ⏳ = falta campo.
 
 3. ~~**`P-CONQ-RESERVA` Fase 1**~~ — ✅ **feita em 2026-09-20** (§8.7): captura,
    parser com fixture, exclusão dura nos cinco caminhos e
-   `conquest.excluded_targets`. **⏳ Zero ciclos em campo** — ver os três sinais a
-   observar no Aceite da §8.7. **Fase 2 (o bot criar reserva) segue aberta**, com
+   `conquest.excluded_targets`. **⏳ Leitura validada em campo em 2026-09-20
+   (480/482 reservas, 1 própria separada corretamente), gate ainda não
+   exercitado** — o planejador não foi alcançado em nenhum dos dois ciclos. Ver
+   o Aceite da §8.7. **Fase 2 (o bot criar reserva) segue aberta**, com
    gate `conquest.reserve_targets` default off e canário de uma reserva; falta
    capturar o payload de `action=new_reservation` e descobrir o que o jogo faz
    quando já existe reserva de outro para o mesmo alvo.
-4. ~~**Medir `map/village.txt` no br143**~~ — ✅ **medido em 2026-09-20** (§8.6):
-   200, 130.664 linhas, sem sessão. O conserto do funil de descoberta está
-   liberado e é barato. **Ordem importa:** ele multiplica os alvos visíveis, então
-   só faz sentido agora que o filtro de reserva do item 3 existe.
+4. ~~**`P-CONQ-MAPA` — fechar o terceiro funil com `map/village.txt`**~~ —
+   ✅ **feito em 2026-09-20** (§8.6, "O que foi feito"). `game/world_villages.py`,
+   terceira camada em `_candidate_pool()`, recorte por caixa antes da pontuação.
+   Candidatos 96 → 387 e o alvo eleito inalterado. De brinde, 38 bárbaras-fantasma
+   do cache local deixaram de ser elegíveis. **⏳ Nenhum trem montado com esse
+   pool ainda.**
 5. **Itens 1–3 da fila tática da §7.10** — captcha/sessão sem `input()`,
    `InstanceLock` por conta, e o `try/except` que falta no `Notification.send`.
    Os três são locais, sem rede e sem medição prévia; o primeiro é o que ainda
