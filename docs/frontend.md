@@ -356,6 +356,41 @@ Centro de eventos
 | Aldeia (com `reserves`/`blockers`) | `FND-03` | matriz de precedência honesta |
 | Centro de eventos | `FND-01` + `OBS-01` | os três itens de Defesa hoje desabilitados |
 
+### 6.1.1 Candidatos de painel vindos do estudo dos forks (2026-09-20)
+
+Quatro itens com implementação de referência nos forks irmãos (todos GPLv3;
+inventário completo em `backend.md` §7.10). Nenhum é urgente; os dois primeiros
+ficam de pé sem nenhum dos contratos acima, e por isso são os candidatos
+realistas para uma fatia futura.
+
+- **Métricas de farm 24 h / 7 d** (`Trojanekkk/TWB`, `webmanager/stats.py`, 500
+  linhas). Agrega os relatórios em taxa de preenchimento, % de perda, capacidade
+  enviada × saque obtido e mediana, com *buckets* horários para gráfico. É a
+  versão persistida da análise que fizemos à mão no décimo primeiro padrão — e
+  alimenta o baseline que a §9.3 do `backend.md` exige antes de `CAL-01`.
+  ⚠️ **Contrato a preservar:** capacidade é **teto**, então "voltou com 8.000" é
+  observação *censurada*, não medida. Um gráfico que apresente valores no teto
+  como se fossem o valor real reintroduz o erro que a análise original cometeu; a
+  UI precisa marcar a censura. E antes de trocar qualquer coisa, comparar com o
+  nosso `ReportReader`, que já faz filtro dinâmico de tipo — o `_report_kind`
+  deles deduz tipo por presença de campo, que é mais frágil.
+- **Estado do saque previsto da coleta** (`LazyTurtleStyle`, `scavenge_log.json`).
+  Depende do `P-COL-03` do backend existir primeiro: hoje o painel não tem como
+  responder "a coleta rendeu quanto", porque o dado não é gravado em lugar nenhum
+  (o relatório de coleta concluída não carrega saque).
+- **Senha no painel** (`Trojanekkk`, ~40 linhas): hook `before_request`, rotas
+  isentas, `hmac.compare_digest` contra senha vinda de `.env`, e — o detalhe bom —
+  **503 com tela explicativa quando não há senha configurada**, em vez de abrir
+  sozinho. Só vira prioridade se o painel sair de `127.0.0.1`; enquanto for local,
+  é complexidade sem ameaça correspondente.
+- **Extensão de restauração de sessão** (`LazyTurtleStyle`, `browser-extension/`
+  + rota `/app/tw-open`). Resolve uma dor real de quem joga junto com o bot: o
+  login vive em **dois domínios** (o mundo e o portal da conta), o bot só tem o do
+  mundo, então entrar pelo portal faz o jogo **cunhar uma sessão nova e matar a do
+  bot**. A extensão injeta os cookies do bot no navegador e abre o mundo direto.
+  É o item de maior esforço dos quatro e o único que exige rota nova + artefato
+  distribuível.
+
 ### 6.2 Limitações concretas achadas na sexta fatia
 
 Diagnóstico do contrato real de `/village`, que é representativo do resto:

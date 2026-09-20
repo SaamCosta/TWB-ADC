@@ -278,6 +278,14 @@ parâmetro do mundo, buscar uma instância onde esse parâmetro **não** seja ne
 | Capacidade da fazenda | ×1,1722 por nível; nível 30 = **24.006** | `get_building_info` |
 | Bolsa premium | `PremiumExchange=1`, `MerchantExchange=1` | `get_config` |
 
+**Não medido ainda, e barato (2026-09-20):**
+
+| Pergunta | Por que importa | Onde olhar |
+|---|---|---|
+| Existe **limite de saque** (`Beutelimit`) neste mundo? | Se existir e não tratarmos, o farm bate num teto invisível e as recusas aparecem como falha sem motivo. O fork `Themegaindex` trata isso com margem configurável | `get_config` + `/page/settings`; na praça o contador aparece como "saqueado X / Y" |
+| A fórmula de duração de coleta vale aqui? | Ela é a base para dimensionar corrida por tempo (§8.5, `P-COL-03`) e foi medida num mundo speed 2.0 | uma corrida real de opção IV, comparando previsto × observado |
+| `map/village.txt` responde? | Fecha o funil de descoberta de alvo da §8.6 | `GET <endpoint sem /game.php>/map/village.txt` |
+
 Mundos br **com** arqueiro em 2026-08-18: br137, br141, br142, brc2, brp10.
 **Sem**: br132, br138, br139, br140, br143.
 ⚠️ A detecção de mundo **desabilita a unidade, não troca o template**: quem abrir
@@ -594,6 +602,30 @@ campo e o cooldown de 24h está sendo respeitado.
 
 Ao retomar: `grep -a` (o log tem bytes NUL) por `Current village flag` e
 `Setting flag` em `cache/logs/session_latest.log`.
+
+⚠️ **Pergunta a responder ANTES de fechar esta validação (2026-09-20).** O fork
+principal reescreveu bandeiras do zero justamente por causa do nosso Bug 1, e o
+diagnóstico dele é mais fundo que o nosso: **bandeira não é config por aldeia, é
+inventário de conta.** Você possui N de cada tipo/nível, e cada uma está em
+exatamente uma aldeia — dar uma à aldeia B é tirá-la da aldeia A. Não existe
+"vinte aldeias na bandeira de recurso" possuindo três delas.
+
+Nossa política ordenada por aldeia resolve o sintoma comparando *bandeira atual ×
+desejada*, e isso basta **enquanto houver bandeira sobrando**. A pergunta é se ela
+conta a **oferta**: se dez aldeias quiserem um tipo do qual possuímos três, o que
+acontece? Se a resposta for "as sete últimas ficam pedindo todo ciclo", o Bug 1
+volta no dia em que o inventário apertar, e a validação atual (três trocas, com
+folga de bandeiras) mede só o caso fácil.
+
+O passe deles serve de referência de desenho (`game/flags.py:356`, `allocate`):
+oferta = possuídas **menos as que já estão em pé** (bandeira fazendo serviço
+nunca conta como sobra); aldeia que já carrega o tipo certo não é tocada — e a
+nota deles diz explicitamente que *isso*, não a contagem, é o que para o
+embaralhamento; quem sobra vira **`unmet` reportado**, não é servido com bandeira
+roubada. Respeitam também o cooldown de troca do jogo, reportando "em cooldown"
+uma vez em vez de uma fileira de falhas idênticas.
+**Atenção:** o módulo deles é alpha declarado e o parser de `setFlagCounts` nunca
+rodou em conta viva — a arquitetura vale, o parser precisa de fixture do br143.
 
 ### 6.4 Sobrecomprometimento de tropa entre múltiplos alvos
 
@@ -938,6 +970,109 @@ poller somente leitura de incoming; passe account-wide de bandeiras; métricas
 resource sharing. Cada um precisa de teste e canário local — o número de módulos
 do fork não é evidência de qualidade.
 
+### 7.10 Backlog tático do estudo dos forks (leitura independente, 2026-09-20)
+
+Segunda leitura dos mesmos cinco repositórios, feita em paralelo à §7.9. Ela
+concorda com a matriz acima; o que segue é o que ela acrescenta. **Auditoria
+estática:** nada abaixo foi medido no br143, e o fork principal é jogado quase
+só em mundos `.nl` — vale o décimo sétimo padrão para toda constante herdada
+dali. Os cinco repos são GPLv3, igual a este, então adaptar código é legal
+mantendo a licença.
+
+Três correções de fato sobre a §7.9, porque mudam decisão:
+
+1. **`KrzysztofKalisiak/TWB_plus` no `master` é byte-a-byte igual ao upstream.**
+   `diff -rq --exclude=.git` não acusa um arquivo. Não é fork desatualizado, é
+   espelho. O trabalho dele existe só no branch `NoDriverLogging` (`cebd75c`).
+2. **A trava cross-process do fork principal é no-op no Windows.**
+   `attack_scheduler.py::_Lock` faz `if fcntl is None: return self`, e `fcntl`
+   não existe aqui. Os módulos listados como próximos candidatos na §7.9
+   (bandeiras account-wide, scheduler) são **justamente** os que dependem dela.
+   Qualquer transplante precisa reescrever a trava (`msvcrt.locking` ou rename
+   atômico com retry). O `os.replace()` salva o leitor de ver meio arquivo, não
+   salva o read-modify-write perdido.
+3. **`map/village.txt` fecha o funil da §8.6** e não aparece na §7.9. Ver o
+   bloco novo no fim daquela seção.
+
+**Fila tática.** Ordenada por (valor × certeza) ÷ risco; `S` cabe numa sessão.
+
+| # | Item | Origem | Esf. | Medir antes |
+|---|---|---|---|---|
+| 1 | Captcha auto-resume + sessão lida de arquivo (tirar os dois `input()` de `core/request.py`) | LT `core/request.py:242,333,388` | S | nada, é lógica local |
+| 2 | `InstanceLock` por endpoint da conta | LT `core/instance_lock.py` | S | nada |
+| 3 | `Notification`: config lazy + `try/except` no `send` + categorias | LT `core/notification.py:22,74` | S | nada |
+| 4 | Ler `map/village.txt` e `map/player.txt` do mundo | LT `game/worldvillages.py` | S | o arquivo responde 200 e traz > 100 linhas |
+| 5 | Verificar os quatro bugs da auditoria deles (abaixo) | LT `CODE_REVIEW.md` | S | leitura |
+| 6 | `ServerClock` + `GameClock` | LT `core/server_clock.py:54,137` | M | formato de data do rodapé do br143 |
+| 7 | Auto-desbloqueio de coleta por nível de EP; saque previsto logado | LT `troopmanager.py:13,486` | M | §8.5 |
+| 8 | Consolidação noturna da coleta | LT `village.py:800` | M | depende de 7 |
+| 9 | Bandeiras: a nossa política conta **oferta**? | LT `game/flags.py:356` | M | §6.3 |
+| 10 | `mode=call`: ler do servidor o que já está a caminho | LT `balancer.py:355` | M | fixture verbatim |
+| 11 | Velocidade de mercador medida na página de confirmação | LT `balancer.py:683` | M | mesma fixture |
+| 12 | Ícones A/B/C do `am_farm` + `data-units-forecast` | LT `attack.py:152` | M | br143 renderiza o atributo? |
+| 13 | Paginação do `am_farm` (o nosso leitor segue páginas?) | kuzyn | S | leitura |
+| 14 | Existe limite de saque (`Beutelimit`) no br143? | megaindex | S | `get_config` + `/page/settings` |
+| 15 | Pacote de farm por capacidade equivalente | megaindex | M | interação com `min_attack_population` |
+| 16 | Notas privadas de aldeia (`ajaxaction=village_note_edit`) | LT `villagenotes.py` | S | fixture do `info_village` |
+
+Itens de painel (métricas 24h/7d, senha, extensão de sessão) foram para
+`docs/frontend.md` §6.1.
+
+**Os quatro bugs deles que viram verificação nossa** (o `CODE_REVIEW.md` do fork
+principal é, na prática, uma segunda auditoria da mesma base que a §5 auditou;
+sete dos onze itens já são coisas que fechamos):
+
+- **B4** — `main()` faz `t.wrapper.reporter.report(...)` sem guardar que
+  `t.wrapper` pode ser `None` num crash de startup. A exceção secundária escapa
+  do laço de retry: o bot **nem tenta de novo nem notifica**. Mesma família do
+  "logger que ainda não existe no caminho de erro" (corolário do Lote 4).
+- **B8** — `report["extra"]["units_sent"]` acessado direto. Relatório com tabela
+  de atacante malformada vira `KeyError` no meio do `farm_manager`, e os perfis
+  das farms restantes param de ser atualizados.
+- **B9** — overview que parseia **zero** aldeias faz **todas** serem marcadas
+  "não disponível" e puladas, *parecendo saudável*. Temos
+  `tests/test_village_purge_guard.py`, mas a pergunta específica é outra:
+  distinguimos "logado, parseou zero" de "genuinamente zero"?
+- **B10** — user-agent lido da seção errada do config (`server` em vez de `bot`),
+  derrotando em silêncio o propósito de usar o UA real.
+
+**Armadilhas a não copiar junto** (além da `_Lock` acima):
+
+- **Separador de milhar como elemento.** O jogo escreve `23<span>.</span>000`,
+  então qualquer regex que pare na primeira tag lê **23**. Eles caíram nisso três
+  vezes, nas telas de mercado e academia — que nós também lemos, e em pt-BR o
+  ponto é o nosso separador. **Fatiar a célula antes de ler os dígitos.**
+- **`flags.py` nunca rodou em conta viva** (o próprio arquivo diz: `flags.manage`
+  está off desde o fork). A arquitetura vale; o parser de `setFlagCounts` é
+  palpite de formato e precisa de fixture do br143.
+- **Fallback de regex frouxo:** o `get_farm_bag_state` do megaindex cai para
+  `(\d+)\s*/\s*(\d+)` sobre a página inteira despida de tags — casa com qualquer
+  "N/M" da tela. Décimo quinto padrão em pessoa; não reaproveitar o parser, só a
+  pergunta que ele faz.
+- **Restaurar a tela do jogador.** Dois commits deles existem só para devolver o
+  overview a "Combinado" e a tela de relatórios a "Todos" depois de ler. Se nós
+  trocamos `mode`/`group` para ler e não restauramos, o jogador encontra a tela
+  mexida — e relatórios podem cair em grupos que o bot nunca lê.
+
+**O que a leitura independente descartou:** painel sem autenticação exposto em
+`0.0.0.0` (o Lote 5 já fechou; a auditoria interna deles registra que
+`DEBUG=True` + bind aberto é RCE pelo debugger do Werkzeug), o `hunter.py` deles
+(protótipo morto, o nosso é melhor), multi-mundo, snipe/c-snipe completos
+(alpha), e o login automatizado do `TWB_plus` (credencial em texto plano,
+`bypass_captcha()` é stub com `find('???')`, e o caminho está desligado no
+próprio branch). Do `TWB_plus` sobra **só a ideia** de rotacionar a sessão em
+intervalo aleatorizado, que casa com o conselho do fork principal de que "uma
+sessão rodando 24 h seguidas é forte sinal de bot".
+
+**Uma nota sobre evidência.** O fork principal tem **zero testes** (não existe
+`tests/`) e é ele mesmo vibe-coded — prosa boa de docstring não é validação. Mas
+vários módulos carregam, no docstring, **a medição que originou a correção**, com
+data, mundo e número: a corrida de coleta prevista em 16h10 e observada em 16h09,
+os dois snipes que provaram que `k` conta fronteiras de segundo, os 767 MB do
+`py-spy`, o 4,01 min/campo contra o 1,0 banqueado. Não substitui teste; é
+evidência **de campo**, que nenhum teste unitário nosso produz. As duas coisas
+valem, e valem por motivos diferentes.
+
 ---
 
 ## 8. Estudo complementar — inventário de estados e reservas (2026-09-14)
@@ -1102,6 +1237,58 @@ desbloquear custa recurso que competiria com construção e recrutamento. Se dev
 ser automático, sob que condição (excedente? aldeia madura? nível máximo
 desejado?) é escolha dele, não default a inventar.
 
+**Candidato a verificar, do estudo dos forks (2026-09-20).** O fork principal
+implementa o desbloqueio em `game/troopmanager.py:486` (`unlock_scavenge`), e
+duas coisas dele respondem às perguntas acima:
+
+- **A forma da chamada** é `get_api_action(action="start_unlock",
+  params={"screen": "scavenge_api"}, data={village_id, option_id, h})` — o mesmo
+  `scavenge_api` que o nosso `send_squads` já usa. Isto é **candidato**, não
+  resposta: continua valendo capturar do br143 com o próprio `WebWrapper` antes
+  de escrever código. O valor de ter o candidato é saber o que procurar na
+  captura.
+- **A regra do jogo que o parser precisa respeitar:** só **uma** opção desbloqueia
+  por vez. Eles checam `unlock_time` em qualquer opção antes de tentar, e
+  disparam no máximo um desbloqueio por ciclo, sempre o mais baixo pendente.
+- **Uma resposta possível para a decisão de produto**, que evita inventar
+  default: amarrar o teto ao **nível do Edifício Principal** em vez de a um
+  excedente de recurso (eles usam 1/5/8/15 para as opções I–IV, configurável por
+  aldeia). E, quando o desbloqueio é desejado mas impagável, um flag
+  `prioritize_scavenge_unlock` que **segura a construção** até juntar o recurso —
+  o que transforma a competição descrita acima numa precedência explícita em vez
+  de numa corrida. Continua sendo escolha do usuário; a contribuição aqui é que
+  a escolha tem forma conhecida.
+
+### P-COL-03 — O que a coleta ainda não sabe medir nem aproveitar (2026-09-20)
+
+Três lacunas vistas no fork principal, em ordem de valor:
+
+1. **Não sabemos quanto a coleta rende.** E não há como descobrir depois: o
+   relatório de coleta concluída **não carrega saque**. A única janela é o
+   instante do despacho, onde saque esperado = capacidade do esquadrão ×
+   `{I: 0.10, II: 0.25, III: 0.50, IV: 0.75}`. Registrar isso num
+   `cache/scavenge_log.json` é o que torna possível a pergunta "a coleta rendeu
+   mais que o farm nas últimas 24 h", que hoje não tem resposta.
+2. **Não dimensionamos a corrida pelo tempo.** A duração é
+   `((carry² × 100 × fator²)^0,45 + 1800) × world_speed^-0,55` — fórmula da
+   comunidade que eles verificaram contra uma corrida real de opção IV: 39.160 de
+   capacidade previu 16h10, observado 16h09 (mundo NL, speed 2.0). Invertida, ela
+   responde "qual o maior esquadrão que volta dentro de X", que é o que habilita
+   o item 3. ⚠️ **Medir no br143 antes de usar:** o mundo deles é speed 2.0 e o
+   nosso não, então este é exatamente o caso do décimo sétimo padrão — uma
+   corrida real basta para separar as hipóteses.
+3. **Consolidação noturna.** Dentro de uma janela configurável, mandar **uma**
+   corrida longa na maior opção em vez de dividir, dimensionada para voltar
+   quando a janela fecha — cobre a noite sem atenção. Com dois cuidados que eles
+   pagaram para aprender: não iniciar consolidação se falta pouco para o fim da
+   janela (corrida curta inútil), e **nunca consolidar sob ataque**, porque uma
+   corrida longa com o exército inteiro é o oposto do que se quer com incoming.
+
+Existe ainda uma quarta ideia, de valor menor e desenho bom: **política de coleta
+por grupo do jogo** (`never` / `pause_attacked` / `always`, a mais restritiva
+vencendo quando a aldeia está em vários grupos). Vale principalmente porque usa o
+vocabulário que o jogador **já criou** no jogo, em vez de criar um segundo.
+
 ---
 
 ## 8.6 `P-CONQ-RAIO` — alcance e âncora do trem multi-origem (2026-09-17)
@@ -1264,6 +1451,117 @@ posição de 30→50 (troca `#54895` ↔ `#51804`: ~1 campo por ~250 pontos) e d
 **Não validado em campo:** o primeiro trem multi-origem real ainda não
 aconteceu. Isto continua sendo código que nunca despachou nobre de verdade.
 
+### O terceiro funil não tem cura local: `map/village.txt` (2026-09-20)
+
+O conserto acima trocou o scan local pelo snapshot compartilhado, e isso subiu
+o pool de 332 para 851. Mas `cache/villages` **também** é um funil: ele só
+contém o que alguma aldeia nossa já escaneou algum dia. O mundo inteiro nunca
+esteve disponível para o bot.
+
+Está, e de graça. O TribalWars publica, **sem sessão e sem autenticação**:
+
+```
+<mundo>/map/village.txt   id,name,x,y,player_id,points,rank     (owner "0" = bárbara)
+<mundo>/map/player.txt    id,name,tribe,villages,points,rank
+<mundo>/map/ally.txt      id,name,tag,members,villages,points,…
+```
+
+Uma requisição responde "quem é o dono disto e onde fica" para o mundo todo
+(~600 KB num mundo cheio). É a mesma fonte em que as ferramentas de mapa da
+comunidade são construídas. Implementação de referência no fork principal:
+`game/worldvillages.py`, 131 linhas, com três guardas que valem copiar junto —
+recusar corpo acima de 40 MB, **recusar parse com ≤ 100 aldeias** (um mundo
+sempre tem milhares, então um punhado significa que veio redirect e não o
+arquivo), e devolver o cache velho em qualquer falha. TTL de 6 h, porque posse
+muda na escala de conquistas.
+
+O que isso muda aqui: `max_radius` volta a ser **decisão de alcance** e deixa de
+ser peneira de descoberta; `_candidate_pool()` ganha uma terceira fonte, mais
+completa que as duas atuais e mais velha que o scan vivo (a ordem de precedência
+continua "fresca vence"); e o painel para de mostrar id cru para aldeia fora do
+cache.
+
+**Pré-requisito, e é medição, não código:** confirmar que
+`br143.tribalwars.com.br/map/village.txt` responde 200 com mais de 100 linhas.
+Dois minutos. O quinto padrão manda não adiar por falta de dado que é buscável
+agora.
+
+---
+
+## 8.7 `P-CONQ-RESERVA` — o bot conquistou aldeia reservada por companheiro de tribo
+
+**Relatado pelo usuário em 2026-09-20**, sobre uma conquista de poucos dias
+antes. A descrição dele: *"ficou uma situação meio chata"*. Qual alvo foi não
+está identificado, e tentar deduzir pelo log esbarra no **nono padrão**: o log
+registra o que o *bot* fez, não o estado do mundo. A reserva foi feita por outra
+pessoa, então ela é invisível aqui por construção.
+
+### Por que aconteceu
+
+O bot **não tem o conceito de reserva**. `ConquestManager.find_target()` elege
+alvo por dono (bárbara), raio, pontuação e área de interesse
+(`attack.py:1125–1229`), e nenhum desses filtros sabe que outro jogador da tribo
+pediu aquela aldeia. Não é bug de implementação: é uma regra do mundo social que
+nunca foi modelada. O `_prefer_area_of_interest` já codifica **uma** regra de
+tribo (a formulação do fórum do SQUAD 02, `attack.py:1242`), o que prova que o
+canal existe e que só esta regra ficou de fora.
+
+### Custo de errar, e por que ele é assimétrico
+
+Um falso negativo (pular alvo que não estava reservado) custa **uma bárbara** —
+há dezenas no K25. Um falso positivo (nobrar reserva alheia) custa capital
+social na tribo, é irreversível, e o bot já gastou 4 nobres e uma moeda para
+causar isso. **Na dúvida, pular.** É o inverso da regra do `_source_reaches`, e
+de propósito: lá o falso positivo só custava um comando recusado.
+
+### Solução em duas camadas — a de baixo primeiro
+
+**Camada 1 (agora, sem depender do jogo): lista de exclusão manual.**
+`conquest.excluded_targets`, aceitando id de aldeia **e** coordenada `"xxx|yyy"`,
+lida em `find_target()` como **exclusão dura** — não preferência, ao contrário da
+área de interesse. Precisa valer nos três caminhos, não só no automático:
+
+- `find_target()` / `_candidate_pool()` — eleição automática;
+- `_get_manual_target()` — alvo enfileirado à mão no painel pode ter sido
+  reservado **depois** de entrar na fila;
+- `_handle_existing()` — uma conquista **já em andamento** contra alvo que
+  acabou de ser reservado precisa poder ser encerrada. Isto é o sexto padrão:
+  reconferir a premissa no momento de agir, não no de decidir. Um trem leva ~4 h,
+  e a reserva pode nascer nesse intervalo.
+
+Mais um campo por entrada em `cache/conquest/*.json` registrando **por que** foi
+excluído, senão daqui a um mês ninguém sabe se a coordenada na lista ainda vale.
+
+**Camada 2 (depois, e só depois de capturar): ler as reservas do jogo.**
+⚠️ **Não sei onde o br143 publica isso, e não vou inventar o endpoint.** Há duas
+fontes plausíveis e elas são mutuamente exclusivas — a tribo usa uma ou a outra:
+
+1. **Sistema oficial de reservas da tribo**, se este mundo o tiver ligado (é
+   recurso premium de tribo em parte dos mercados, e aparece como marcador no
+   mapa). Se existir, a tela é a fonte, e ela é estruturada.
+2. **Fórum da tribo** — que é comprovadamente onde o SQUAD 02 coordena
+   (`attack.py:1242` cita um post de lá). Aí a "reserva" é texto livre com
+   coordenadas, e o parser é frágil por natureza: convenção de escrita muda sem
+   aviso, e um parser que perde uma reserva reintroduz exatamente o incidente.
+
+Regra: **capturar as duas telas com a sessão do bot antes de escrever parser**
+(quarta e quinta metades do quinto padrão), e usar o wrapper do próprio bot para
+a sondagem, não um `requests.Session()` montado à mão — o sétimo padrão existe
+porque a resposta depende de como se pergunta. Se a fonte for o fórum, a leitura
+automática deve **alimentar a lista da camada 1** e ser revisável no painel, em
+vez de decidir sozinha: parser frágil que decide em silêncio é pior que lista
+manual que o usuário enxerga.
+
+### Aceite
+
+- Nenhum alvo da lista é eleito, enfileirado ou mantido em conquista.
+- Excluir um alvo **em andamento** encerra a conquista com status próprio e
+  libera as reservas de tropa (`_release`), sem deixar reserva órfã — é a
+  armadilha do P2-22: alargar o conjunto de retornos de uma função sem reler os
+  consumidores.
+- Teste sem rede, no estilo de `tests/test_conquest_target_reach.py`, cobrindo os
+  três caminhos e a exclusão por coordenada além da exclusão por id.
+
 ---
 
 ## 9. Próximos passos
@@ -1276,7 +1574,23 @@ aconteceu. Isto continua sendo código que nunca despachou nobre de verdade.
    próximo ciclo real (§8.5).
 2. **`P-COL-02(b)`** — desbloqueio automático continua bloqueado até captura do
    endpoint/payload real e decisão de política de gasto. O ajuste ao maior nível
-   desbloqueado, `P-COL-02(a)`, está ✅ feito (§8.5).
+   desbloqueado, `P-COL-02(a)`, está ✅ feito (§8.5). O estudo dos forks deu um
+   **candidato** de payload e uma forma possível para a política (§8.5,
+   P-COL-02(b), bloco de 2026-09-20) — continua exigindo captura.
+
+**Acrescentado em 2026-09-20, depois do estudo dos forks:**
+
+3. **`P-CONQ-RESERVA`** (§8.7) — o bot conquistou aldeia reservada por
+   companheiro de tribo. **A camada 1 (lista de exclusão manual) não depende de
+   captura nenhuma e deve vir antes de qualquer outra coisa de conquista**, porque
+   o custo de repetir o incidente é social e irreversível, enquanto o custo de
+   pular um alvo é uma bárbara entre dezenas.
+4. **Medir `map/village.txt` no br143** (§4.2, §8.6) — dois minutos, e decide se
+   o funil de descoberta de alvo tem conserto barato.
+5. **Itens 1–3 da fila tática da §7.10** — captcha/sessão sem `input()`,
+   `InstanceLock` por conta, e o `try/except` que falta no `Notification.send`.
+   Os três são locais, sem rede e sem medição prévia; o primeiro é o que ainda
+   obriga o bot a subir em console visível.
 
 Depois disso, a fila anterior:
 
