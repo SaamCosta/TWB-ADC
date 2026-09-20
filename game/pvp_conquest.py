@@ -20,6 +20,7 @@ from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.world_config import WorldConfig
 from game.hunter import Hunter
+from game.reservations import manual_exclusion
 from game.simulator import Simulator
 
 logger = logging.getLogger("PvpConquest")
@@ -71,10 +72,14 @@ class PvpConquestManager:
       - config: full bot config dict
     """
 
-    def __init__(self, wrapper, villages, config):
+    def __init__(self, wrapper, villages, config, reservation_board=None):
         self.wrapper = wrapper
         self.villages = villages      # {village_id: Village}
         self.config = config
+        # Feature 35: quadro de reservas da tribo. Por decisao do usuario a
+        # regra vale para TODA conquista, nao so a barbara -- furar reserva de
+        # companheiro numa aldeia de jogador custa o mesmo capital social.
+        self.reservation_board = reservation_board
         self.sim = Simulator()
         # Feature 18: cached world settings (night bonus, moral) -- refreshed
         # at most every WorldConfig.CACHE_TTL, cheap to call every cycle.
@@ -122,6 +127,18 @@ class PvpConquestManager:
 
         for target_id, data in targets.items():
             try:
+                # Feature 35: reserva de ALVO da tribo. Antes de qualquer passo
+                # da maquina de estados -- inclusive antes de travar origem --
+                # porque a partir daqui o alvo so acumula compromisso.
+                #
+                # Nao checa `is_readable()`: um alvo PvP so entra aqui porque o
+                # operador o colocou a mao, e derrubar o trabalho dele por uma
+                # pagina que nao abriu seria pior que o problema. So reserva
+                # efetivamente LIDA barra. O `finally` abaixo solta as travas
+                # de origem assim que o status vira terminal.
+                if self._block_if_reserved(target_id, data):
+                    continue
+
                 # Assign the future clear/noble sources before the state
                 # machine waits for a scout report.  Previously these choices
                 # only happened in _step_simulate(), leaving pending_scout and
@@ -172,6 +189,52 @@ class PvpConquestManager:
                 # must release immediately, while an exception errs safe and
                 # preserves the lock for an active target.
                 self._sync_source_locks(target_id, data)
+
+    def _block_if_reserved(self, target_id, data):
+        """
+        True (e marca "failed") quando o alvo PvP esta reservado por outra
+        pessoa da tribo, ou listado em `conquest.excluded_targets`.
+
+        Status "failed" e nao um novo estado proprio: `FARM_SUSPEND_STATUSES`
+        ja trata como terminal tudo que nao esta nela, entao "failed" e o que
+        faz `_sync_source_locks()` soltar as travas de origem no `finally` do
+        chamador. Inventar um status novo aqui exigiria reler cada consumidor
+        de status do modulo -- e a armadilha do P2-22 (alargar o conjunto de
+        valores que algo devolve sem reler quem consome).
+        """
+        if data.get("status") in ("complete", "failed"):
+            return False
+        board = self.reservation_board
+        location = None
+        for village in self.villages.values():
+            pos = getattr(getattr(village, "area", None), "map_pos", {}) or {}
+            if str(target_id) in pos:
+                location = pos[str(target_id)]
+                break
+
+        matched = manual_exclusion(self.config, target_id, location)
+        claim = board.claimed_by_other(target_id, location) if board else None
+        if not matched and not claim:
+            return False
+
+        who = matched if matched else claim.get("reserved_by_name")
+        reason = "excluded_targets" if matched else "tribe_reservation"
+        logger.warning(
+            "PvpConquest: alvo %s cancelado -- reservado por %s (%s)",
+            target_id, who, reason
+        )
+        data["status"] = "failed"
+        data["failure_reason"] = "Alvo reservado por %s (%s)" % (who, reason)
+        data["blocked_reason"] = reason
+        data["blocked_at"] = int(time.time())
+        if claim:
+            data["reserved_by_id"] = claim.get("reserved_by_id")
+            data["reserved_by_name"] = claim.get("reserved_by_name")
+            data["reserved_by_tribe"] = claim.get("reserved_by_tribe")
+            data["reservation_expires"] = claim.get("expires_text")
+        PvpConquestCache.set(target_id, data)
+        self._sync_source_locks(target_id, data)
+        return True
 
     def is_troop_spending_suspended(self, village_id):
         """True while ``village_id`` is committed to an active PvP target."""

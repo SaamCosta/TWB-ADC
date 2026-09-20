@@ -702,6 +702,26 @@ puxa o fio.**
   copiar o estado que precisa ser independente; sessão HTTP, lock, conexão,
   logger e outros recursos vivos devem ser injetados e compartilhados
   explicitamente. Testar identidade (`is`), não apenas igualdade.
+- ⚠️ **Vigésimo sexto padrão, achado em 2026-09-20: ler uma lista do jogo sem
+  perguntar se ela está paginada.** A tela oficial de reservas da tribo
+  (`screen=ally&mode=reservations`) parecia responder tudo num GET. Respondia
+  **10 de 489** — havia 49 páginas, e o bloco de navegação estava a 40 KB de
+  distância do trecho que eu tinha aberto para escrever o regex da linha. Um
+  parser escrito ali teria concluído que 479 alvos estavam livres, e a feature
+  inteira (não conquistar aldeia reservada por companheiro de tribo) falharia
+  em **98% do quadro sem emitir um único erro** — lista curta é indistinguível
+  de lista completa. A saída foi `&page=all`, que traz tudo numa requisição.
+  A regra: ao capturar uma tela que é uma **lista**, a primeira pergunta não é
+  "qual o regex da linha", é **"quantas linhas existem no total, e este é o
+  total?"**. Contar as linhas casadas e procurar navegação (`page=`, `[2]`, um
+  `<select>` de páginas) custa um grep na captura que já está em disco.
+  Corolário específico deste jogo: o tamanho de página costuma ser
+  configurável, mas por POST e às vezes numa configuração **compartilhada com a
+  tribo** — mudá-la para conseguir uma leitura mexe na interface de outras
+  pessoas (21º padrão); preferir sempre o parâmetro de querystring. Corolário
+  geral, que é o 15º padrão de cabeça para baixo: lá o detector disparava
+  sempre, aqui ele **nunca** dispararia — e as duas falhas se parecem de fora,
+  porque em nenhum dos dois casos alguém vai investigar.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do

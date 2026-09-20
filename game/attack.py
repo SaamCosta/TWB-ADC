@@ -13,6 +13,7 @@ from datetime import timedelta
 from core.filemanager import FileManager
 from core.templates import UNIT_CARRY, UNIT_POP
 from core.world_config import WorldConfig
+from game.reservations import manual_exclusion
 
 # Trechos do error_box que significam "o pacote nao cabe no que ha em casa".
 # So esta causa pode marcar o pacote como indisponivel no ciclo; qualquer
@@ -1042,13 +1043,25 @@ class ConquestManager:
     # _available_nobles().
     EXCLUDED_UNITS = {"spy", "knight", "snob"}
 
-    def __init__(self, wrapper, village_id, troopmanager, map_obj, config, repman=None):
+    # Default de classe porque varios chamadores (e os testes) constroem o
+    # manager por `__new__`, sem passar pelo __init__. E imutavel, entao nao
+    # cai no 1o padrao do CLAUDE.md -- o perigo la e list/dict mutados
+    # in-place, compartilhados entre as instancias de todas as aldeias.
+    reservation_board = None
+
+    def __init__(self, wrapper, village_id, troopmanager, map_obj, config, repman=None,
+                 reservation_board=None):
         self.wrapper = wrapper
         self.village_id = village_id
         self.troopmanager = troopmanager
         self.map = map_obj
         self.config = config
         self.repman = repman  # ReportManager — used for real loyalty extraction
+        # Feature 35 / Fase 1: quadro oficial de reservas da tribo (ALVO, nao
+        # tropa -- ver o aviso de vocabulario em game/reservations.py). Opcional
+        # de proposito: injetado por twb.py, ausente nos testes e nas chamadas
+        # antigas. Quando e None a conquista se comporta como antes.
+        self.reservation_board = reservation_board
         self.logger = logging.getLogger(f"Conquest:{self.village_id}")
         self._attack_manager = AttackManager(
             wrapper=wrapper,
@@ -1150,6 +1163,14 @@ class ConquestManager:
         Sem `reach_from` o comportamento e o historico, byte por byte: uma
         aldeia so, vendo so o proprio scan.
         """
+        # Feature 35: sem leitura do quadro de reservas nao se INICIA conquista
+        # nenhuma -- nem automatica, nem manual. Antes de tudo de proposito:
+        # e a fila manual que tem prioridade absoluta logo abaixo, entao uma
+        # guarda colocada depois dela deixaria justamente o caminho manual
+        # passando as cegas.
+        if not self._may_start_new_conquest():
+            return None
+
         manual_target = self._get_manual_target()
         if manual_target:
             self.logger.info(
@@ -1213,6 +1234,18 @@ class ConquestManager:
             if min(field_distance(location, origin) for origin in origins) > max_radius:
                 continue
 
+            # Reserva de ALVO (tribo). Exclusao dura, depois do filtro de raio
+            # so para nao consultar o quadro para alvo que ja saiu por outro
+            # motivo -- a ordem nao muda o resultado.
+            blocked = self._claim_block_reason(vid, location)
+            if blocked:
+                self.logger.info(
+                    "Conquest: alvo %s descartado da selecao automatica (%s: %s)",
+                    vid, blocked[0],
+                    blocked[1].get("reserved_by_name") or blocked[1].get("matched")
+                )
+                continue
+
             dist = self.map.get_dist(location)
             score = self._score_target(village, dist, my_locations, cfg)
             candidates.append((vid, score, location))
@@ -1227,6 +1260,66 @@ class ConquestManager:
         # Lower score = better target
         candidates.sort(key=lambda x: x[1])
         return candidates[0][0]
+
+    # ------------------------------------------------------------------
+    # Feature 35 / Fase 1 -- reserva de ALVO (tribo), nao reserva de tropa
+    # ------------------------------------------------------------------
+
+    def _claim_block_reason(self, target_id, location=None):
+        """
+        Motivo pelo qual este alvo NAO pode ser conquistado por nos, ou None.
+
+        Devolve `(motivo_curto, detalhe_dict)` para o chamador logar e gravar
+        em cache/conquest -- sem isso, daqui a um mes ninguem sabe se a
+        exclusao ainda vale (docs/backend.md 8.7).
+
+        Duas fontes, nesta ordem:
+          1. `conquest.excluded_targets` -- valvula de escape manual, para
+             reserva combinada fora do jogo (forum, Discord).
+          2. O quadro oficial da tribo, quando reservado por OUTRA pessoa.
+
+        Isto e exclusao DURA, ao contrario de `_prefer_area_of_interest()`, que
+        e preferencia. A assimetria e deliberada: pular um alvo livre custa uma
+        barbara entre dezenas; nobrar reserva alheia custa capital social, e
+        irreversivel, e ja gastou 4 nobres e uma moeda.
+        """
+        manual = manual_exclusion(self.config, target_id, location)
+        if manual:
+            return "excluded_targets", {"blocked_by": "config", "matched": manual}
+
+        board = self.reservation_board
+        if not board:
+            return None
+        claim = board.claimed_by_other(target_id, location)
+        if claim:
+            return "tribe_reservation", {
+                "blocked_by": "tribe_reservation",
+                "reserved_by_id": claim.get("reserved_by_id"),
+                "reserved_by_name": claim.get("reserved_by_name"),
+                "reserved_by_tribe": claim.get("reserved_by_tribe"),
+                "reservation_expires": claim.get("expires_text"),
+            }
+        return None
+
+    def _may_start_new_conquest(self):
+        """
+        False quando o bot nao tem leitura confiavel do quadro de reservas.
+
+        Ler isto como "na duvida, pule" e nao como "na duvida, siga" e o ponto
+        inteiro da feature: sem a leitura o bot nao sabe o que e de quem. Vale
+        SO para conquista nova -- `_handle_existing()` nao consulta isto de
+        proposito, porque abortar um trem por falha de leitura joga fora tropa
+        real que ja esta voando.
+        """
+        board = self.reservation_board
+        if not board or board.is_readable():
+            return True
+        self.logger.warning(
+            "Conquest: sem leitura do quadro de reservas da tribo -- nenhuma "
+            "conquista NOVA sera iniciada neste ciclo. Um alvo livre a mais "
+            "custa uma barbara; nobrar reserva alheia custa capital social."
+        )
+        return False
 
     def _prefer_area_of_interest(self, candidates, cfg):
         """
@@ -1475,6 +1568,33 @@ class ConquestManager:
 
         for _, target_id, data in pending:
             village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
+
+            # Feature 35: o alvo pode ter sido reservado por outra pessoa
+            # DEPOIS de entrar na fila -- a fila e um estado parado e o quadro
+            # da tribo nao e. E o 6o padrao do CLAUDE.md: reconferir a premissa
+            # no momento de agir, nao no de decidir.
+            #
+            # Vira "blocked" e nao "invalid" porque a causa e externa e
+            # reversivel (a reserva expira em 3 dias no br143, e pode ser
+            # solta antes): "invalid" e para alvo que nunca vai servir.
+            blocked = self._claim_block_reason(
+                target_id, (village_data or {}).get("location")
+            )
+            if blocked:
+                reason, detail = blocked
+                who = detail.get("reserved_by_name") or detail.get("matched")
+                self.logger.warning(
+                    "Conquest: alvo manual %s esta reservado (%s: %s) -- "
+                    "tirando da fila sem enviar nada", target_id, reason, who
+                )
+                ConquestCache.set(target_id, {
+                    **data, **detail,
+                    "status": "blocked",
+                    "blocked_reason": reason,
+                    "blocked_at": int(time.time()),
+                })
+                continue
+
             if village_data and str(village_data.get("owner", "0")) != "0":
                 self.logger.warning(
                     "Conquest: manual target %s is no longer a barbarian village "
@@ -2005,6 +2125,42 @@ class ConquestManager:
             self.wrapper.reporter.report(
                 self.village_id, "TWB_CONQUEST",
                 f"Alvo {target_id} perdido: conquistado pelo jogador {taken_by}"
+            )
+            return False
+
+        # --- Priority 2.5: alguem da tribo reservou o alvo ---
+        # Feature 35. O trem leva ~4h e a reserva pode nascer nesse intervalo:
+        # reconferir no momento de agir, nao no de decidir (6o padrao).
+        #
+        # Deliberadamente NAO consulta `_may_start_new_conquest()`: falha de
+        # LEITURA nao encerra conquista em andamento, porque abortar por nao
+        # conseguir abrir uma pagina joga fora tropa real que ja esta voando.
+        # So uma reserva efetivamente LIDA barra aqui.
+        #
+        # Nao desfaz nada -- nobre que ja saiu nao volta --, exatamente como a
+        # Priority 2 acima. O efeito e parar de comprometer nobres novos e
+        # liberar a aldeia. A tropa ainda reservada para este alvo e solta por
+        # `BarbarianTrainPlanner._release_orphan_reserves()`, que varre toda
+        # reserva `barb_train:*` cujo alvo saiu de "train_scheduled" -- e a
+        # armadilha do P2-22, e o mecanismo que ja existe para ela.
+        blocked = self._claim_block_reason(target_id, self._get_village_meta(target_id).get("location"))
+        if blocked:
+            reason, detail = blocked
+            who = detail.get("reserved_by_name") or detail.get("matched")
+            self.logger.warning(
+                "Conquest: alvo %s em andamento foi reservado por %s (%s) -- "
+                "encerrando. Nobres ja em rota nao voltam, mas nenhum novo sai.",
+                target_id, who, reason
+            )
+            ConquestCache.set(target_id, {
+                **conquest_data, **detail,
+                "status": "blocked",
+                "blocked_reason": reason,
+                "blocked_at": int(time.time()),
+            })
+            self.wrapper.reporter.report(
+                self.village_id, "TWB_CONQUEST",
+                f"Alvo {target_id} abandonado: reservado por {who}"
             )
             return False
 

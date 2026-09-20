@@ -95,6 +95,7 @@ from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
 from game.pvp_conquest import PvpConquestManager
+from game.reservations import ReservationBoard
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -132,6 +133,10 @@ class TWB:
     should_run = True
     runs = 0
     hunter = None
+    # Feature 35: sobrevive entre ciclos de proposito, para o TTL do quadro de
+    # reservas valer de verdade. Imutavel como default de classe (o objeto e
+    # criado sob demanda), mesma forma do `hunter` acima.
+    reservation_board = None
 
     def __init__(self):
         # Precisam ser criados por instância, não como atributo de classe:
@@ -668,12 +673,31 @@ class TWB:
                 # Built only when the feature is on: the constructor calls
                 # WorldConfig.get(), which can hit the network, and there is
                 # no reason to pay that for a bot with pvp_conquest disabled.
+                # Feature 35 / Fase 1: UM quadro de reservas da tribo por
+                # ciclo, compartilhado por todos os sistemas de conquista. A
+                # lista e global (nao ha recorte por aldeia) e a resposta mede
+                # ~707 KB, entao uma instancia por aldeia faria 30 requisicoes
+                # identicas por ciclo. O refresh real e preguicoso e com TTL:
+                # construir aqui nao vai a rede.
+                reservation_board = None
+                if (config.get("conquest", {}).get("enabled", False)
+                        or config.get("pvp_conquest", {}).get("enabled", False)):
+                    if not self.reservation_board:
+                        self.reservation_board = ReservationBoard(
+                            wrapper=self.wrapper, config=config
+                        )
+                    self.reservation_board.config = config
+                    reservation_board = self.reservation_board
+                    if reservation_board.enabled and managed_villages_dict:
+                        reservation_board.refresh(sorted(managed_villages_dict)[0])
+
                 pvp_manager = None
                 if config.get("pvp_conquest", {}).get("enabled", False):
                     pvp_manager = PvpConquestManager(
                         wrapper=self.wrapper,
                         villages=managed_villages_dict,
                         config=config,
+                        reservation_board=reservation_board,
                     )
 
                 # Hunter used to run only after the complete village loop and
@@ -695,6 +719,7 @@ class TWB:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
                     _v.hunter_service_callback = hunter_callback
+                    _v.reservation_board = reservation_board
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
@@ -818,6 +843,7 @@ class TWB:
                         villages=managed_villages_dict,
                         config=config,
                         hunter=self.hunter,
+                        reservation_board=reservation_board,
                     ).run()
 
                 sleep = 0

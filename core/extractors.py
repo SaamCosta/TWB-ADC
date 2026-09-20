@@ -655,6 +655,133 @@ class Extractor:
                 return pct
         return 0
 
+    # Ancora de "esta e de fato a tela de reservas". O que motiva a guarda: a
+    # resposta de sessao expirada e um 200 com a pagina de login (51 KB, medida
+    # em 2026-09-20), e nela o regex de linha simplesmente nao casa -- sem esta
+    # checagem, "sessao morreu" e "a tribo nao reservou nada" viram o mesmo
+    # `[]`, e o consumidor liberaria conquista justamente quando esta cego.
+    # Ancorada no MESMO padrao que a tela usa, nao numa versao frouxa dele
+    # (15o padrao do CLAUDE.md): na pagina de login ha zero ocorrencias, na
+    # tela real havia 122.
+    RESERVATION_SCREEN_ANCHOR = "mode=reservations"
+
+    RESERVATION_ROW_RE = re.compile(r'<tr id="reservation_(\d+)">(.*?)</tr>', re.S)
+    RESERVATION_CELL_RE = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
+
+    @staticmethod
+    def tribe_reservations(res):
+        """
+        Reservas do sistema OFICIAL da tribo (`screen=ally&mode=reservations`).
+
+        Devolve lista de dicts, ou **None** quando a resposta nao e a tela de
+        reservas -- e a distincao importa mais que o conteudo: `None` significa
+        "nao sei o que esta reservado" e `[]` significa "nada esta reservado".
+        Confundir os dois faria o bot conquistar livremente durante uma sessao
+        expirada, que e exatamente o incidente que a Feature existe para
+        impedir (docs/backend.md 8.7, "Custo de errar").
+
+        Markup real do br143, capturado ao vivo em 2026-09-20 com o WebWrapper
+        do bot (7o padrao). Uma linha, verbatim e sem cortes no meio:
+
+            <tr id="reservation_75920">
+                <td>
+                    <input type="checkbox" name="ids[]" value="75920"/>
+                    <span class="village_anchor" data-player="0" data-id="40808">
+                      <a href="...screen=info_village&amp;id=40808">
+                        Aldeia de barbaros (531|289) K25</a></span>
+                </td>
+                <td>1012</td>
+                <td>---</td>
+                <td>
+                    <a href="...screen=info_ally&amp;&amp;id=16">[RANDOW]</a>
+                    <a href="...screen=info_player&amp;id=919714218">Conde ...</a>
+                </td>
+                <td>hoje as 07:45</td>
+                ...
+            </tr>
+
+        Tres armadilhas que a captura desfez, e que um parser escrito de
+        cabeca teria errado:
+
+        1. **O id do `<tr>` e o id da RESERVA, nao da aldeia** (75920 contra
+           40808). A aldeia sai de `data-id` no `span.village_anchor`; o dono
+           atual sai de `data-player` (`"0"` = barbara). Usar o id do `<tr>`
+           como alvo nunca casaria com nada em `cache/conquest`.
+        2. **A coluna 5 e "Data de validade", nao a data de criacao** -- lido
+           do `<th>`, que ordena por `sort=expires_at`. O texto e relativo e em
+           portugues ("hoje as 07:45"), entao ele e guardado **cru**, sem
+           virar timestamp: a Fase 1 nao precisa da data (estar na lista ja
+           significa reservada, porque o servidor nao lista o que expirou) e
+           inventar um parser de data relativa seria fragilidade de graca.
+        3. **A celula do reservante tem DOIS links** quando ele tem tribo: o
+           da tribo (`info_ally`) vem antes do jogador (`info_player`). Pegar
+           "o primeiro id da linha" traria a tribo, e pegar "o ultimo id da
+           linha" traria o icone de mapa. Por isso o parse e por celula
+           posicional, com `info_player` so dentro da celula 3.
+
+        A premissa do parse por celula -- nenhum `<td>` aninhado dentro da
+        linha -- foi **medida** contra a fixture real (6 celulas), nao suposta;
+        ver `tests/test_tribe_reservations.py`.
+        """
+        if res is None:
+            return None
+        html = res if isinstance(res, str) else getattr(res, "text", "") or ""
+        if Extractor.RESERVATION_SCREEN_ANCHOR not in html:
+            return None
+
+        reservations = []
+        for reservation_id, row in Extractor.RESERVATION_ROW_RE.findall(html):
+            cells = Extractor.RESERVATION_CELL_RE.findall(row)
+            if len(cells) < 5:
+                continue
+
+            anchor = re.search(r'data-player="(\d+)"\s+data-id="(\d+)"', cells[0])
+            if not anchor:
+                continue
+            owner, village_id = anchor.group(1), anchor.group(2)
+
+            coords = re.search(r"\((\d+)\|(\d+)\)", cells[0])
+            name = re.search(r"<a[^>]*>(.*?)</a>", cells[0], re.S)
+
+            player = re.search(
+                r'info_player&(?:amp;)?id=(\d+)[^>]*>(.*?)</a>', cells[3], re.S
+            )
+            tribe = re.search(r"\[([^\]]+)\]", cells[3])
+
+            reservations.append({
+                "reservation_id": reservation_id,
+                "village_id": village_id,
+                "owner": owner,
+                "location": (int(coords.group(1)), int(coords.group(2))) if coords else None,
+                "village_name": " ".join(name.group(1).split()) if name else "",
+                "reserved_by_id": player.group(1) if player else None,
+                "reserved_by_name": " ".join(player.group(2).split()) if player else "",
+                "reserved_by_tribe": tribe.group(1) if tribe else "",
+                "expires_text": " ".join(re.sub(r"<[^>]+>", " ", cells[4]).split()),
+            })
+        return reservations
+
+    @staticmethod
+    def own_player_id(res):
+        """
+        Id do jogador da propria conta, lido do `game_state` que vem em quase
+        toda tela -- inclusive na propria tela de reservas.
+
+        Existe para separar "reservado por mim" de "reservado por outro" sem
+        config nova: uma chave de config com o id errado faria o bot furar
+        reserva alheia (achando que e sua) ou barrar os proprios alvos, e nada
+        no log denunciaria. Confirmado ao vivo em 2026-09-20 na resposta de
+        `screen=ally&mode=reservations`: `player.id = 5955651`, que e o mesmo
+        numero que o filtro "[Sua]" da propria tela usa
+        (`group_id=creator_id&filter=5955651`) -- ou seja, o jogo concorda que
+        este e o campo que identifica o criador da reserva.
+
+        Devolve string (os ids das reservas vem do HTML como string) ou None.
+        """
+        state = Extractor.game_state(res) or {}
+        player_id = (state.get("player") or {}).get("id")
+        return str(player_id) if player_id else None
+
     @staticmethod
     def get_daily_reward(res):
         """

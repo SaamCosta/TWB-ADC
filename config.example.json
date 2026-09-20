@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.0",
+    "version": "4.1",
     "author": "stefan2200"
   },
   "server": {
@@ -136,7 +136,10 @@
     "min_escort": {},
     "min_escort_total": 50,
     "escort_reserve_max_pct": 0.8,
-    "escort_reserve_min_progress": 0.5
+    "escort_reserve_min_progress": 0.5,
+    "respect_tribe_reservations": true,
+    "reservation_cache_seconds": 600,
+    "excluded_targets": []
   },
   "resource_sharing": {
     "enabled": false,

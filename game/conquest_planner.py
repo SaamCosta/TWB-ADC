@@ -55,6 +55,7 @@ from core.filemanager import FileManager
 from core.world_config import WorldConfig
 from game.attack import ConquestCache, ConquestManager, field_distance
 from game.hunter import Hunter
+from game.reservations import manual_exclusion
 
 logger = logging.getLogger("ConquestPlanner")
 
@@ -83,12 +84,13 @@ class BarbarianTrainPlanner:
     # sono quando ha send_time proximo (`nearest_send_time`).
     ARRIVAL_MARGIN_SECONDS = 600
 
-    def __init__(self, wrapper, villages, config, hunter=None):
+    def __init__(self, wrapper, villages, config, hunter=None, reservation_board=None):
         self.wrapper = wrapper
         self.villages = villages or {}
         self.config = config or {}
         self.logger = logger
         self._hunter = hunter
+        self.reservation_board = reservation_board
 
     # ------------------------------------------------------------------
     # Entrada
@@ -109,6 +111,11 @@ class BarbarianTrainPlanner:
         # em "train_scheduled" para sempre -- e, como esse status reserva o
         # alvo, a conquista do imperio inteiro travava junto, sem log.
         self._promote_scheduled_trains()
+        # Feature 35: antes de soltar as orfas, de proposito -- cancelar um
+        # trem agendado tira o alvo de "train_scheduled", e e justamente isso
+        # que faz `_release_orphan_reserves()` devolver a tropa dele. Na ordem
+        # inversa a reserva sobreviveria mais um ciclo inteiro.
+        self._cancel_reserved_targets()
         self._release_orphan_reserves()
 
         if not self.config.get("hunter", {}).get("enabled", False):
@@ -290,6 +297,7 @@ class BarbarianTrainPlanner:
             troopmanager=village.units,
             map_obj=village.area,
             config=self.config,
+            reservation_board=self.reservation_board,
         )
 
     def _anchor_village(self, sources=None):
@@ -607,6 +615,97 @@ class BarbarianTrainPlanner:
             units = getattr(village, "units", None)
             if units is not None:
                 units.conquest_reserve.pop(key, None)
+
+    def _known_location(self, target_id):
+        """
+        (x, y) de `target_id` pelo scan de mapa de qualquer aldeia, ou pelo
+        snapshot compartilhado. `None` quando ninguem conhece a aldeia.
+
+        Serve so para permitir a exclusao por COORDENADA
+        (`conquest.excluded_targets` aceita "531|289"). A exclusao por id nao
+        depende disto, entao devolver None aqui degrada de forma segura: o
+        bloqueio por id e pelo quadro da tribo continua valendo.
+        """
+        for village in self.villages.values():
+            area = getattr(village, "area", None)
+            entry = (getattr(area, "villages", None) or {}).get(target_id)
+            if entry and entry.get("location"):
+                return entry["location"]
+        entry = FileManager.load_json_file(f"cache/villages/{target_id}.json") or {}
+        return entry.get("location")
+
+    def _cancel_reserved_targets(self):
+        """
+        Feature 35: cancela trem AGENDADO contra alvo que a tribo reservou.
+
+        Este e o unico ponto da conquista onde ainda da para EVITAR a ofensa
+        em vez de so parar de piorar: em `train_scheduled` nada saiu ainda --
+        o Hunter esta dormindo ate o `send_time`. Depois que o trem voa, o que
+        resta e `ConquestManager._handle_existing()`, que encerra o alvo mas
+        nao traz nobre de volta.
+
+        Cancelar o registro sem cancelar o SCHEDULE seria bloqueio cosmetico:
+        o Hunter nao conhece conquista, ele so manda ataque na hora marcada, e
+        dispararia o trem inteiro contra a reserva alheia com o
+        cache/conquest ja dizendo "blocked". Por isso os dois morrem juntos.
+
+        Nao consulta `is_readable()` de proposito: falha de leitura nao
+        cancela nada. So uma reserva efetivamente lida cancela.
+        """
+        board = self.reservation_board
+        cfg_excluded = self.config.get("conquest", {}).get("excluded_targets") or []
+        if not board and not cfg_excluded:
+            return
+
+        schedules = None
+        for target_id, data in ConquestCache.active_conquests().items():
+            location = self._known_location(target_id)
+
+            blocked = None
+            matched = manual_exclusion(self.config, target_id, location)
+            if matched:
+                blocked = ("excluded_targets", {"blocked_by": "config",
+                                                "matched": matched})
+            elif board:
+                claim = board.claimed_by_other(target_id, location)
+                if claim:
+                    blocked = ("tribe_reservation", {
+                        "blocked_by": "tribe_reservation",
+                        "reserved_by_id": claim.get("reserved_by_id"),
+                        "reserved_by_name": claim.get("reserved_by_name"),
+                        "reserved_by_tribe": claim.get("reserved_by_tribe"),
+                        "reservation_expires": claim.get("expires_text"),
+                    })
+            if not blocked:
+                continue
+
+            reason, detail = blocked
+            who = detail.get("reserved_by_name") or detail.get("matched")
+
+            if data.get("status") == "train_scheduled":
+                key = data.get("hunter_schedule_key")
+                if key:
+                    if schedules is None:
+                        schedules = FileManager.load_json_file(Hunter.SCHEDULE_CACHE) or {}
+                    sched = schedules.pop(key, None)
+                    if sched:
+                        FileManager.save_json_file(schedules, Hunter.SCHEDULE_CACHE)
+                        self.logger.warning(
+                            "Conquest: schedule %s do trem contra %s cancelado "
+                            "-- alvo reservado por %s", key, target_id, who
+                        )
+                self._release(target_id)
+
+            self.logger.warning(
+                "Conquest: alvo %s (%s) bloqueado -- reservado por %s (%s)",
+                target_id, data.get("status"), who, reason
+            )
+            ConquestCache.set(target_id, {
+                **data, **detail,
+                "status": "blocked",
+                "blocked_reason": reason,
+                "blocked_at": int(time.time()),
+            })
 
     def _release_orphan_reserves(self):
         """

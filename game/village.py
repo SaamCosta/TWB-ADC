@@ -85,6 +85,13 @@ class Village:
     # checkpoints instead of sharing the HTTP session from a second thread.
     hunter_service_callback = None
 
+    # Feature 35: quadro de reservas da tribo para este ciclo, instalado por
+    # twb.py junto dos dois acima. Mesma nota de seguranca: sempre reatribuido,
+    # nunca mutado in-place. None significa "sem quadro", e a conquista se
+    # comporta como antes da feature -- que e o que mantem Village.run() util
+    # isolado, nos testes e no smoke.
+    reservation_board = None
+
     twp = TwStats()
 
     def __init__(self, village_id=None, wrapper=None):
@@ -842,6 +849,10 @@ class Village:
             troopmanager=self.units,
             map_obj=self.area,
             config=self.config,
+            # Feature 35: injetado por twb.py no inicio do ciclo. Sem ele o
+            # `_handle_existing()` desta aldeia nao veria reserva nova nascida
+            # durante as ~4h de voo do trem.
+            reservation_board=self.reservation_board,
         )
         conquest.run()
 

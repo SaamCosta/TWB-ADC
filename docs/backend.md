@@ -1481,10 +1481,28 @@ completa que as duas atuais e mais velha que o scan vivo (a ordem de precedênci
 continua "fresca vence"); e o painel para de mostrar id cru para aldeia fora do
 cache.
 
-**Pré-requisito, e é medição, não código:** confirmar que
-`br143.tribalwars.com.br/map/village.txt` responde 200 com mais de 100 linhas.
-Dois minutos. O quinto padrão manda não adiar por falta de dado que é buscável
-agora.
+**Pré-requisito ✅ MEDIDO em 2026-09-20 — e o conserto está liberado.**
+
+```
+GET https://br143.tribalwars.com.br/map/village.txt
+200 · 6.327.655 bytes · 130.664 linhas · sem sessão, sem cookie
+
+1,011,631,531,7363091,10106,0
+2,K46+004,600,423,919524568,9622,0
+3,004+-+Voyage,489,470,7941477,2596,0
+```
+
+Formato confirmado (`id,nome,x,y,player_id,pontos,rank`), nome URL-encoded
+(`K46+004`), e passa folgado na guarda das 100 linhas. **O mundo tem 130.664
+aldeias e o bot conhece 851** — ou seja, `cache/villages` cobre **0,65%** do
+mundo, e os 332 do scan local cobriam 0,25%. A ordem de grandeza do funil é maior
+do que esta seção estimava.
+
+⚠️ **Não é a mesma pergunta que a §8.7 responde, e as duas não se substituem.**
+`village.txt` diz *quem é o dono e onde fica*; o quadro de reservas diz *quem
+pediu a aldeia*. Alargar a descoberta **sem** o filtro de reserva multiplicaria
+justamente o risco do incidente da §8.7 — mais alvos visíveis, mais chance de
+pisar em reserva alheia. Por isso a Fase 1 da §8.7 entrou primeiro.
 
 ---
 
@@ -1553,42 +1571,109 @@ Não reutilizar o vocabulário de `_reserve`/`_release` do `conquest_planner` se
 qualificar — lá "reserva" é tropa. Dois significados para a mesma palavra no
 mesmo módulo é como a §8.2 começou.
 
-### O que **não** está capturado
+### ✅ A captura foi feita (2026-09-20) — e corrigiu três coisas que esta seção assumia
 
-Sei a URL; **não** sei o markup da lista nem o payload de criar/remover, e nada
-disso vai ser adivinhado. Antes de escrever parser, capturar a tela com o
-`WebWrapper` do próprio bot (7º padrão: a resposta depende de como se pergunta —
-o mesmo endpoint devolveu envelopes diferentes com e sem `TribalWars-Ajax: 1`).
-Perguntas que a captura precisa responder, e que mudam o desenho:
+Capturada com o `WebWrapper` do próprio bot (7º padrão). Dump local em
+`cache/debug/reservations_plain.html`; fixture verbatim em
+`tests/test_tribe_reservations.py`. O que a tela respondeu:
 
-- A lista é por **id de aldeia** ou por coordenada? Traz o **nome do reservante**?
-- Reserva **expira**? Se sim, em quanto tempo — uma reserva do bot que caduca no
-  meio de um trem de 4 h é um buraco silencioso.
-- **Toda posição da tribo pode reservar?** Se a conta não tiver o direito, o POST
-  falha; isso precisa virar log e estado visível, não sucesso presumido (é o
-  segundo padrão: `None` não guardado vindo de rede).
-- O que o jogo faz quando **já existe** reserva de outro para o mesmo alvo — erro,
-  substituição silenciosa, ou fila? A resposta decide se ler antes de escrever é
-  suficiente ou se é preciso reconferir depois.
+- **Identifica pelos dois.** O alvo sai de `data-id` no
+  `span.village_anchor`, e o nome traz `(x|y)` — então a exclusão funciona por
+  id **e** por coordenada. ⚠️ O `id` do `<tr id="reservation_75920">` é o id da
+  **reserva**, não da aldeia (`40808`); confundir os dois faria a exclusão nunca
+  casar com `cache/conquest` e falhar calada.
+- **Traz o reservante**, com id e nome (`info_player&id=919714218`), e a tribo
+  dele quando tem. ⚠️ A célula tem **dois** links quando há tribo, e o da tribo
+  vem primeiro — "o primeiro id da linha" traria a tribo; na linha de aldeia de
+  jogador, "o último" traria o ícone de mapa.
+- **Expira: 3 dias** (`Limite de tempo: 3 dias`, lido de
+  `p#reservation_settings`; limite de 5 aldeias por jogador, espera 0). A coluna
+  5 é **"Data de validade"**, não data de criação — o `<th>` ordena por
+  `sort=expires_at`. Isso **derruba a preocupação** desta seção: 3 dias é muito
+  maior que as ~4 h de um trem, então uma reserva do bot caducando no meio do voo
+  não é o risco que se antecipava. A Fase 1 guarda o texto **cru**, sem parse: o
+  servidor não lista o que já expirou, então estar na lista já significa
+  reservada, e um parser de data relativa em português ("hoje às 07:45") seria
+  fragilidade de graça.
+- **A conta TEM o direito de reservar** (o formulário de configurações e o de
+  criar reserva renderizam). O caso "sem direito" não foi observado, e o parser
+  foi escrito para não depender disso: ele lê só as linhas
+  `<tr id="reservation_N">`, nunca os formulários.
+
+**Duas descobertas que a seção não previa, e que mudaram o desenho:**
+
+1. **A lista é paginada, e é grande.** O default são 10 por página e havia **49
+   páginas / 489 reservas**. Um GET ingênuo teria lido só as 10 primeiras e o bot
+   acharia que 479 alvos estavam livres — um falso negativo em 98% do quadro, e
+   silencioso. **`&page=all` traz tudo numa requisição** (707 KB, medido). O
+   tamanho de página também é configurável na tela, mas por POST e a configuração
+   é **compartilhada com a tribo inteira**: mexer nela mudaria a interface de
+   outras pessoas para conseguir uma leitura (21º padrão).
+2. **O quadro é compartilhado com tribos ALIADAS**, não só a própria — a tela tem
+   filtro `[Sua]` / `[Tribo]` / `[Aliados]`, e das 489 só **1** era da conta
+   (`group_id=creator_id&filter=5955651`). A exclusão respeita **todas**, porque
+   "na dúvida, pular" e furar reserva de aliado custa o mesmo.
+
+**A identidade sai do jogo, sem config nova:** `game_state.player.id`
+(`5955651`) vem na própria resposta da tela de reservas, e é o mesmo número que o
+filtro `[Sua]` usa — ou seja, o jogo concorda que é esse o campo que identifica o
+criador. Uma chave de config com o id errado faria o bot furar reserva alheia
+(achando que é sua) ou barrar os próprios alvos, sem nada no log denunciando.
+
+Ainda **não** capturado, e só a Fase 2 precisa: o payload de criar/remover
+(`action=new_reservation` / `action=submit`, ambos com `h=<csrf>`) e o que o jogo
+faz quando já existe reserva de outro para o mesmo alvo.
 
 ### Faseamento
 
-**Fase 1 — somente leitura, e é ela que fecha o incidente.**
-Capturar `screen=ally&mode=reservations`, parsear para
-`{alvo → reservante}`, cachear com TTL curto (reserva de terceiro pode nascer a
-qualquer momento, e o custo de reler é uma requisição), e aplicar como
-**exclusão dura** — não preferência, ao contrário da área de interesse. Precisa
-valer nos **quatro** caminhos, não só no automático:
+**Fase 1 — somente leitura, e é ela que fecha o incidente.** ✅ **Implementada em
+2026-09-20.** `core/extractors.py::tribe_reservations` / `own_player_id`,
+`game/reservations.py::ReservationBoard` (TTL de `reservation_cache_seconds`,
+default 600 s, com graça de 6× para não transformar soluço de rede em bloqueio
+total), config `conquest.respect_tribe_reservations` (default **true**) e
+`conquest.excluded_targets`. Um quadro por ciclo, compartilhado, instanciado em
+`twb.py`. Testes: `tests/test_tribe_reservations.py` (parser + quadro) e
+`tests/test_conquest_reservation_gate.py` (os caminhos).
 
-- `ConquestManager.find_target()` / `_candidate_pool()` — eleição automática;
-- `ConquestManager._get_manual_target()` — alvo enfileirado à mão no painel pode
-  ter sido reservado **depois** de entrar na fila;
-- `ConquestManager._handle_existing()` — conquista **já em andamento** contra
-  alvo recém-reservado precisa poder ser encerrada. Sexto padrão: reconferir a
-  premissa no momento de agir, não no de decidir. Um trem leva ~4 h e a reserva
-  pode nascer nesse intervalo;
-- `PvpConquestManager` — por decisão do usuário o sistema vale para **toda**
-  conquista, não só a bárbara.
+Exclusão **dura** — não preferência, ao contrário da área de interesse. Onde
+entrou, e ⚠️ **a correção de uma coisa que esta seção dizia errado**: o texto
+abaixo mandava ligar no `ConquestManager.find_target()` como se ele fosse o lugar
+onde a conquista começa, mas desde a Feature 27 o `ConquestManager.run()`
+**não monta mais trem** — quem chama `find_target()` é o
+`BarbarianTrainPlanner`. São os mesmos caminhos, com um quinto que a seção não
+listava (16º padrão: este documento é memória, não especificação).
+
+- `ConquestManager.find_target()` — a guarda "sem leitura não inicia conquista"
+  fica **antes** de tudo, porque a fila manual tem prioridade absoluta logo
+  abaixo e uma guarda depois dela deixaria o caminho manual passando às cegas;
+- `ConquestManager._candidate_pool()` / laço de `find_target()` — eleição
+  automática, alvo reservado sai da lista;
+- `ConquestManager._get_manual_target()` — alvo enfileirado à mão pode ter sido
+  reservado **depois** de entrar na fila. Vira `status: blocked`, **não**
+  `invalid`: a causa é externa e reversível (expira em 3 dias, e pode ser solta
+  antes), enquanto `invalid` é para alvo que nunca vai servir;
+- `ConquestManager._handle_existing()` — conquista **já em andamento**. Sexto
+  padrão: reconferir a premissa no momento de agir. Encerra como `blocked` e para
+  de comprometer nobres novos, sem desfazer nada — nobre que saiu não volta,
+  igual ao caminho `lost`;
+- `BarbarianTrainPlanner._cancel_reserved_targets()` — **o caminho que a seção
+  não previa, e o único onde ainda dá para evitar a ofensa em vez de só parar de
+  piorar.** Em `train_scheduled` nada saiu: o Hunter está dormindo até o
+  `send_time`. Marcar o registro como bloqueado **sem apagar o schedule** seria
+  bloqueio cosmético — o Hunter não conhece conquista, só manda ataque na hora
+  marcada, e despacharia o trem inteiro contra a reserva alheia com o
+  `cache/conquest` já dizendo `blocked`. Os dois morrem juntos, e o cancelamento
+  roda **antes** de `_release_orphan_reserves()` de propósito, senão a reserva de
+  **tropa** sobreviveria mais um ciclo;
+- `PvpConquestManager.run()` — por decisão do usuário o sistema vale para **toda**
+  conquista. Vira `status: failed` e não um estado novo, porque é `failed` que faz
+  `_sync_source_locks()` soltar as travas de origem; inventar status exigiria
+  reler todo consumidor (P2-22).
+
+**Reserva de ALVO ≠ reserva de TROPA.** `game/reservations.py` abre com esse
+aviso: `_reserve`/`_release`/`conquest_reserve` são **tropa**, e nada no módulo
+novo usa esses nomes. Dois significados para a mesma palavra no mesmo módulo é
+como a §8.2 começou.
 
 Junto, e barato: `conquest.excluded_targets` (id ou `"xxx|yyy"`) como **válvula
 de escape manual**, para reserva combinada fora do jogo ou alvo que o usuário
@@ -1611,21 +1696,40 @@ pessoas da tribo:
 
 ### Aceite
 
-- Nenhum alvo reservado por terceiro é eleito, enfileirado ou mantido em
+Estado em 2026-09-20 — ✅ = coberto por teste, ⏳ = falta campo.
+
+- ✅ Nenhum alvo reservado por terceiro é eleito, enfileirado ou mantido em
   conquista — nem pelo `ConquestManager`, nem pelo `PvpConquestManager`.
-- Barrar um alvo **em andamento** encerra a conquista com status próprio e
-  libera as reservas de **tropa** (`_release`), sem deixar reserva órfã — é a
-  armadilha do P2-22: alargar o conjunto de retornos de uma função sem reler os
-  consumidores.
-- Falha ao ler a tela de reservas **não** libera geral: sem a leitura, o bot não
-  sabe o que é de quem, e o custo de errar é assimétrico (§8.7, "Custo de
-  errar"). Comportamento na dúvida = não iniciar conquista nova; conquista já em
-  andamento segue, porque abortar por falha de leitura joga fora tropa real.
-- Teste sem rede, no estilo de `tests/test_conquest_target_reach.py`, cobrindo os
-  quatro caminhos, a exclusão por coordenada além da exclusão por id, e a
-  distinção entre "reservado por mim" e "reservado por outro".
-- Fixture do parser é **recorte verbatim** de `screen=ally&mode=reservations` do
-  br143, não markup suposto.
+- ✅ Barrar um alvo **em andamento** encerra a conquista com status próprio
+  (`blocked`) e libera as reservas de **tropa**, sem deixar reserva órfã. Não foi
+  reimplementado: `_release_orphan_reserves()` já solta toda reserva
+  `barb_train:*` cujo alvo saiu de `train_scheduled`, e é por isso que o
+  cancelamento roda antes dela. Reusar o mecanismo que já existe para o P2-22 é
+  melhor que escrever um segundo.
+- ✅ Falha ao ler a tela **não** libera geral. Na dúvida = não iniciar conquista
+  nova (`_may_start_new_conquest()`); conquista já em andamento **segue**, porque
+  abortar por falha de leitura joga fora tropa real. Os dois lados têm teste, e o
+  segundo é o que mais fácil se escreveria errado.
+- ✅ Teste sem rede cobrindo os cinco caminhos, exclusão por coordenada além de
+  por id, e "reservado por mim" contra "reservado por outro".
+- ⚠️ Fixture: **duas das três linhas são verbatim.** A terceira ("reservado por
+  mim") é derivada — a captura dela foi interrompida. O que é medido: o filtro
+  `[Sua]` devolve exatamente 1 linha, logo a conta tem uma reserva própria e o
+  jogo a identifica por `creator_id=5955651`. O que não foi observado: essa linha
+  renderizada. **Trocar pela real na próxima captura**, porque markup suposto é o
+  que fez `loyalty_from_report()` falhar. Está anotado no topo do arquivo de
+  teste, não só aqui.
+- ⏳ **Nada disso foi exercitado em campo.** Zero ciclos reais: o bot está
+  parado e a sessão do `cache/session.json` expirou. O que observar no primeiro
+  run, por ordem de valor:
+  1. `Reservations: N reservas no quadro da tribo (1 minhas, N-1 de terceiros)` —
+     se `N` vier 10 em vez de ~489, o `&page=all` não pegou e o bot está cego em
+     98% do quadro;
+  2. a **1** reserva própria não pode aparecer como bloqueio (é o único caso que
+     distingue "reservado por mim" de "por outro" em produção, e é justamente o
+     que a fixture derivada não prova);
+  3. silêncio de `sem leitura do quadro de reservas` — se aparecer todo ciclo, a
+     conquista está travada e o sintoma é mudo (15º padrão).
 
 ---
 
@@ -1645,14 +1749,17 @@ pessoas da tribo:
 
 **Acrescentado em 2026-09-20, depois do estudo dos forks:**
 
-3. **`P-CONQ-RESERVA`** (§8.7) — o bot conquistou aldeia reservada por
-   companheiro de tribo. **Fase 1 (leitura de `screen=ally&mode=reservations` +
-   exclusão) vem antes de qualquer outra coisa de conquista**, porque o custo de
-   repetir o incidente é social e irreversível, enquanto o custo de pular um alvo
-   é uma bárbara entre dezenas. Começa por **captura da tela**, não por código.
-   Fase 2 (escrever a reserva) depois, com gate e canário.
-4. **Medir `map/village.txt` no br143** (§4.2, §8.6) — dois minutos, e decide se
-   o funil de descoberta de alvo tem conserto barato.
+3. ~~**`P-CONQ-RESERVA` Fase 1**~~ — ✅ **feita em 2026-09-20** (§8.7): captura,
+   parser com fixture, exclusão dura nos cinco caminhos e
+   `conquest.excluded_targets`. **⏳ Zero ciclos em campo** — ver os três sinais a
+   observar no Aceite da §8.7. **Fase 2 (o bot criar reserva) segue aberta**, com
+   gate `conquest.reserve_targets` default off e canário de uma reserva; falta
+   capturar o payload de `action=new_reservation` e descobrir o que o jogo faz
+   quando já existe reserva de outro para o mesmo alvo.
+4. ~~**Medir `map/village.txt` no br143**~~ — ✅ **medido em 2026-09-20** (§8.6):
+   200, 130.664 linhas, sem sessão. O conserto do funil de descoberta está
+   liberado e é barato. **Ordem importa:** ele multiplica os alvos visíveis, então
+   só faz sentido agora que o filtro de reserva do item 3 existe.
 5. **Itens 1–3 da fila tática da §7.10** — captcha/sessão sem `input()`,
    `InstanceLock` por conta, e o `try/except` que falta no `Notification.send`.
    Os três são locais, sem rede e sem medição prévia; o primeiro é o que ainda
