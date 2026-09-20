@@ -19,7 +19,7 @@
 > (módulos M01–M15, cenários, pontuação) **não existem mais**.
 >
 > O par deste documento é [`frontend.md`](frontend.md) (webmanager e interface).
-> As **lições de método** (os vinte e dois padrões de bug recorrentes) continuam
+> As **lições de método** (os vinte e cinco padrões de bug recorrentes) continuam
 > em `CLAUDE.md`, que é o arquivo que entra em contexto — não são duplicadas aqui.
 
 ---
@@ -124,7 +124,7 @@ usa o template como base e descarta chave que só exista no config do usuário
 
 ### 2.5 Testes
 
-32 arquivos em `tests/`, cada um roda sozinho sem `pytest`:
+38 arquivos `test_*.py` em `tests/`, cada um roda sozinho sem `pytest`:
 
 ```powershell
 foreach ($t in (Get-ChildItem tests/test_*.py)) { python $t.FullName }
@@ -139,6 +139,9 @@ recebidos, gate de urgência do apoio, bônus do "Sinal da Aflição", alcance d
 mapa, perfis de farm, guarda do log de sessão, integridade da config, política de
 bandeira, `ReportReader`, `BotManager`, lote de ataques, suspensão do farm por
 PvP, defaults da API.
+O arquivo `test_gather_controls.py` acrescenta seleção dinâmica de coleta,
+fallback por opção ocupada/travada, escrita atômica em massa, contrato HTTP e a
+garantia de que todas as aldeias compartilhem a mesma sessão autenticada.
 
 `tests/smoke_bot_manager.py` fica fora do glob de propósito (abre console de
 verdade). **A maior parte do bot segue sem cobertura** — em especial tudo que faz
@@ -628,9 +631,11 @@ Paladino foi resolvido excluindo-o da escolta.
 
 ## 7. Benchmark dos concorrentes e roteiro de evolução
 
-> Síntese clean room dos estudos estáticos de **Nexus**, **PS Evolution** e
-> **ACID**, confrontados com o código real. Data de corte: 2026-09-13.
-> Nenhuma funcionalidade foi implementada; isto é backlog de produto.
+> As §§7.1–7.8 são a síntese clean room dos estudos estáticos de **Nexus**, **PS
+> Evolution** e **ACID**, confrontados com o código real. Data de corte:
+> 2026-09-13. Nada daquele recorte foi implementado; ele é backlog de produto.
+> A §7.9 registra uma auditoria posterior de forks irmãos GPLv3 e separa o que
+> foi incorporado, adiado ou rejeitado.
 
 ### 7.1 Método e o que a evidência vale
 
@@ -895,6 +900,44 @@ população por hora*, comparado contra o baseline, com a fração de retornos n
 teto de capacidade reportada junto — se essa fração não cair, a medição
 continua censurada e o ganho aparente não é ganho.
 
+### 7.9 Auditoria dos cinco forks irmãos (2026-09-20)
+
+Foram clonados e lidos os cinco repositórios indicados pelo usuário. Todos
+publicam GPLv3, como este projeto; portanto código pode ser adaptado mantendo a
+licença. Esta auditoria é **estática (`T`)**: datas e quantidades abaixo descrevem
+os commits inspecionados, não provam que uma função funciona no jogo ou no
+br143. Quando o branch default era antigo, foi estudado também o branch recente.
+
+| Fork / ref inspecionado | O que acrescenta | Evidência e decisão local |
+|---|---|---|
+| `LazyTurtleStyle/TWBOT_LazyTurtle` `a2b13a8` (2026-09-19, principal) | relógio do servidor, scheduler, retomada após captcha manual, poller de comandos recebidos, bandeiras account-wide, balanceador e módulos operacionais | superfície mais ampla, mas **0 testes** e vários módulos declarados alpha/.nl. Foram adaptados o conserto de coleta e o defeito P0 de `deepcopy`; relógio, captcha e incoming entram no backlog seletivo. Extensão de cookie/dashboard exposto e módulos alpha não entram. |
+| `Themegaindex/TWB` `aa48004` (2025-12-04) | smart farming, coordenador de armazéns com recursos em trânsito e tentativa de desbloquear coleta | **4 arquivos de teste**. As ideias de capacidade e ledger são úteis, mas o local já tem perfis de farm e resource sharing validados em campo. O payload de desbloqueio não foi capturado no br143 e não será transplantado por inferência. |
+| `Trojanekkk/TWB` branch `develop`, `8665362` (2026-05-29) | login do painel, status explícito do bot, estatísticas de farm e retenção de cache | **0 testes**; há cache/runtime versionado, `DEBUG=True` e rotas GET mutáveis. A agregação 24h/7d é uma boa base para `OBS-01`/baseline; autenticação só vira prioridade se o painel deixar de ser exclusivamente localhost. Coletor genérico que apaga cache por idade foi rejeitado. |
+| `KrzysztofKalisiak/TWB_plus` branch `NoDriverLogging`, `cebd75c` (2026-02-27) | automação de navegador, rotação/login e alerta de captcha | o único `test.py` contém credencial hard-coded e o runtime depende de `personal_config.SECRETS`; também preserva defaults mutáveis e caminhos HTTP frágeis. Rejeitado integralmente por segurança e confiabilidade. O `master` default para em 2024. |
+| `felipewariat/kuzyn-plemiona` `78ea499` (2026-06-23) | tradução polonesa e integração com Assistente de Saque/paginação | **0 testes**; a maior parte é tradução sobre a base de 2024, preservando limitações já corrigidas aqui. O farm local, por capacidade e relatório, é mais auditável; nada foi copiado. |
+
+**Incorporado agora, com teste local:**
+
+- `twb.py` não faz mais `copy.deepcopy(Village(...))`. Uma aldeia continua sendo
+  um objeto distinto, mas todas apontam para o mesmo `WebWrapper`; clonar a
+  árvore duplicava `requests.Session`, cookies, pool e `last_response`. O fork
+  principal registra uma queda observada de aproximadamente 767 MB para 85 MB
+  em 41 aldeias após correção equivalente. Aqui a regressão é coberta sem rede
+  por identidade do wrapper.
+- A coleta passa por opções travadas ou já ocupadas em vez de abortar a aldeia,
+  reduz o teto configurado ao maior nível realmente desbloqueado e, no modo
+  básico, envia o exército para **uma** opção apenas. O painel recebeu uma ação
+  em massa com uma única substituição atômica de `config.json`.
+- As gravações de configuração do webmanager passaram pelo `FileManager`,
+  herdando UTF-8 e `os.replace()` atômico em vez de truncar o arquivo in-place.
+
+**Próximos candidatos, não transplantados:** `ServerClock`/scheduler após fixture
+de tempo do br143; retomada de captcha preservando resultado desconhecido;
+poller somente leitura de incoming; passe account-wide de bandeiras; métricas
+24h/7d para o baseline; comparação do balanceador com o ledger já validado do
+resource sharing. Cada um precisa de teste e canário local — o número de módulos
+do fork não é evidência de qualidade.
+
 ---
 
 ## 8. Estudo complementar — inventário de estados e reservas (2026-09-14)
@@ -1006,39 +1049,35 @@ por `Village.do_gather()`, `game/village.py:1017`):
 
 ### P-COL-01 — Botão "ativar coleta em todas as aldeias" no webmanager
 
-**Prioridade 2** (depois de `P-CONQ-RAIO`, o tópico 1).
+✅ **Implementado e testado em 2026-09-20; efeito no jogo ainda não observado.**
 
-Um POST no painel que grave `gather_enabled: true` nas 28 aldeias de uma vez.
-Granularidade por aldeia fica para depois — pedido explícito do usuário.
+`POST /app/gather/bulk` aceita `enable`, `enable_all_unlocked` e `disable`. A
+página `/villages` mostra quantas aldeias estão habilitadas e quantas têm teto
+4, exige confirmação explícita e distingue **persistência confirmada** de
+**efeito pendente do próximo ciclo**. A alteração cobre todas as entradas de
+`config.villages` numa única gravação atômica; aldeias `managed: false` recebem
+a preferência, mas continuam sem executar o bot.
 
-Pontos de atenção ao implementar:
+Critérios fechados:
 
-- Toda rota que escreve no painel é POST e passa pela guarda CSRF de
-  `server.py:23` (`reject_cross_origin_writes`). Seguir o padrão das rotas
-  existentes, não criar GET que escreve.
-- A escrita é em `config.json`, que o bot **relê a cada ciclo**
-  (`twb.py:577`) — então o efeito pega sem reiniciar o bot. Isso é uma
-  vantagem real do botão e deve ser dito na interface.
-- ⚠️ `gather_enabled` já existe em `village_template` (`config.example.json`),
-  então não há chave nova a documentar — mas **confirmar** antes de assumir.
-- Mostrar na tela o estado agregado (quantas das N estão ligadas), não só o
-  botão: botão sem leitura de estado é o décimo quinto padrão do `CLAUDE.md`.
+- POST passa pela guarda CSRF de `server.py`;
+- nenhum campo de configuração novo foi criado;
+- `DataReader.gather_bulk_set()` preserva os outros campos e salva uma vez;
+- teste cobre enable, opção 4, disable, ação inválida, recibo HTTP, campo legado
+  malformado e preservação do teto ao desligar.
 
 ### P-COL-02 — O que o bot **não** faz bem na coleta
 
 **Prioridade 3.** São dois buracos distintos, e só um deles é o que parece.
 
-**(a) Não ajusta o nível usado conforme o que está desbloqueado.**
+✅ **(a) Ajuste ao nível desbloqueado corrigido e testado em 2026-09-20.**
 Formulação do usuário: *"não ajusta sozinho quais coletas fazer com base nas
-que já estão desbloqueadas"*. Precisão necessária: o código **lê** `is_locked`
-da resposta do jogo e pula opção travada (`troopmanager.py:475` e `:533`), então
-ele não quebra nem tenta usar coleta travada. O que falta é o outro lado:
-`gather_selection` é um **teto digitado à mão** e não sobe sozinho. Desbloquear
-o nível 4 no jogo não muda nada enquanto alguém não editar a config — e o
-sintoma é mudo, porque o bot segue coletando normalmente, só que no nível 1.
-Correção provável: derivar o teto do maior nível não-travado que o próprio jogo
-reporta, mantendo `gather_selection` como limite opcional para quem quiser
-menos.
+que já estão desbloqueadas"*. `gather_selection` continua sendo um teto seguro;
+o novo modo em massa `enable_all_unlocked` grava teto 4 e, em cada leitura,
+`effective_gather_selection()` o reduz ao maior `is_locked == false` que o jogo
+publicou. Opção alta já em andamento não bloqueia uma inferior livre. No modo
+básico, a primeira opção livre recebe a tropa e o laço para, evitando reaproveitar
+as mesmas unidades em um segundo POST.
 
 **(b) Não desbloqueia coleta automaticamente.**
 Confirmado por varredura: **não existe nenhum código de desbloqueio**. O único
@@ -1233,8 +1272,11 @@ aconteceu. Isto continua sendo código que nunca despachou nobre de verdade.
 
 0. ~~**`P-CONQ-RAIO`**~~ — ✅ **feito em 2026-09-19** (§8.6). Falta só a
    validação em campo: o primeiro trem multi-origem real ainda não saiu.
-1. **`P-COL-01`** — botão de ativar coleta em todas as aldeias (§8.5).
-2. **`P-COL-02`** — teto de coleta automático e desbloqueio automático (§8.5).
+1. ~~**`P-COL-01`**~~ — ✅ **feito e testado em 2026-09-20**; falta observar o
+   próximo ciclo real (§8.5).
+2. **`P-COL-02(b)`** — desbloqueio automático continua bloqueado até captura do
+   endpoint/payload real e decisão de política de gasto. O ajuste ao maior nível
+   desbloqueado, `P-COL-02(a)`, está ✅ feito (§8.5).
 
 Depois disso, a fila anterior:
 

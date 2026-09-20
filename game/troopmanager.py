@@ -395,7 +395,65 @@ class TroopManager:
                 return True
         self.logger.info("Research of %s not yet possible", unit_type)
 
-    def gather(self, selection=1, disabled_units=[], advanced_gather=True):
+    @staticmethod
+    def effective_gather_selection(options, configured_selection=1):
+        """Return the highest unlocked option allowed by the configured cap.
+
+        ``gather_selection`` is a ceiling, not proof that the corresponding
+        option is already unlocked.  The old gather loop indexed its troop
+        split directly with that configured value and stopped at the first
+        locked option.  A village configured for option 4 could therefore do
+        no scavenging at all while options 1-3 were available.
+
+        Keep the user's ceiling, but calibrate the split to what the game
+        actually reported on this request.  Zero means that no option can be
+        used yet.  Malformed/unknown option rows are ignored conservatively.
+        """
+        try:
+            cap = max(1, min(4, int(configured_selection)))
+        except (TypeError, ValueError):
+            cap = 1
+
+        if not isinstance(options, dict):
+            return 0
+
+        unlocked = []
+        for option_id, option in options.items():
+            try:
+                option_num = int(option_id)
+            except (TypeError, ValueError):
+                continue
+            if not 1 <= option_num <= cap or not isinstance(option, dict):
+                continue
+            # Missing lock state is unknown, not evidence that the option is
+            # available.  The real scavenge payload publishes a boolean here.
+            if "is_locked" in option and not bool(option.get("is_locked")):
+                unlocked.append(option_num)
+        return max(unlocked) if unlocked else 0
+
+    @staticmethod
+    def gather_option_keys(options, selection):
+        """Option keys at or below ``selection``, highest first.
+
+        The game currently publishes the strings ``"1"`` through ``"4"``.
+        Filtering here keeps one malformed row from aborting every otherwise
+        valid gather option in the village.
+        """
+        if not isinstance(options, dict):
+            return []
+
+        ordered = []
+        for option_id in options:
+            try:
+                option_num = int(option_id)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= option_num <= selection:
+                ordered.append((option_num, option_id))
+        ordered.sort(key=lambda entry: entry[0], reverse=True)
+        return [option_id for _, option_id in ordered]
+
+    def gather(self, selection=1, disabled_units=None, advanced_gather=True):
         """
         Used for the gather resources functionality where it uses two options:
         - Basic: all troops gather on the selected gather level
@@ -409,6 +467,12 @@ class TroopManager:
             self.logger.warning("Gather: request timed out, skipping this cycle")
             return False
         village_data = Extractor.village_data(result)
+        options = (village_data or {}).get("options") or {}
+        selection = self.effective_gather_selection(options, selection)
+        if selection == 0:
+            self.logger.info("No unlocked gather operation is available yet.")
+            return True
+        disabled_units = disabled_units or []
 
         sleep = 0
         available_selection = 0
@@ -469,11 +533,11 @@ class TroopManager:
                     pass
             gather_batch = math.floor(total_carry / selection_map[selection - 1])
 
-            for option in list(reversed(sorted(village_data['options'].keys())))[4 - selection:]:
+            for option in self.gather_option_keys(options, selection):
+                option_state = options.get(option) or {}
                 self.logger.debug(
-                    f"Option: {option} Locked? {village_data['options'][option]['is_locked']} Is underway? {village_data['options'][option]['scavenging_squad'] != None}")
-                if int(option) <= selection and not village_data['options'][option]['is_locked'] and not \
-                village_data['options'][option]['scavenging_squad'] != None:
+                    f"Option: {option} Locked? {option_state.get('is_locked')} Is underway? {option_state.get('scavenging_squad') is not None}")
+                if not option_state.get('is_locked', True) and option_state.get('scavenging_squad') is None:
                     available_selection = int(option)
                     self.logger.info(f"Gather operation {available_selection} is ready to start.")
 
@@ -523,15 +587,16 @@ class TroopManager:
                     self.last_gather = int(time.time())
                     self.logger.info(f"Using troops for gather operation: {available_selection}")
                 else:
-                    # Gathering already exists or locked
-                    break
+                    # A higher option being locked or already underway does
+                    # not make the lower unlocked options unusable.
+                    continue
 
         else:
-            for option in reversed(sorted(village_data['options'].keys())):
+            for option in self.gather_option_keys(options, selection):
+                option_state = options.get(option) or {}
                 self.logger.debug(
-                    f"Option: {option} Locked? {village_data['options'][option]['is_locked']} Is underway? {village_data['options'][option]['scavenging_squad'] != None}")
-                if int(option) <= selection and not village_data['options'][option]['is_locked'] and not \
-                village_data['options'][option]['scavenging_squad'] != None:
+                    f"Option: {option} Locked? {option_state.get('is_locked')} Is underway? {option_state.get('scavenging_squad') is not None}")
+                if not option_state.get('is_locked', True) and option_state.get('scavenging_squad') is None:
                     available_selection = int(option)
                     self.logger.info(f"Gather operation {available_selection} is ready to start.")
                     selection = available_selection
@@ -568,9 +633,15 @@ class TroopManager:
                         )
                         self.last_gather = int(time.time())
                         self.logger.info(f"Using troops for gather operation: {selection}")
+                        # Basic mode assigns the whole available army to one
+                        # option.  Trying a second option would reuse the same
+                        # counts and ask the server to spend troops that have
+                        # just left the village.
+                        break
                 else:
-                    # Gathering already exists or locked
-                    break
+                    # Try the next lower unlocked/idle option instead of
+                    # aborting the village's whole gather pass.
+                    continue
         self.logger.info("All gather operations are underway.")
         return True
 

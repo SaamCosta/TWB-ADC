@@ -22,7 +22,35 @@
   <div class="twb-health-item"><span class="twb-health-label">Gerenciadas no cache</span><span class="twb-health-value">{{ data.bot | length }}</span><span class="twb-health-meta">Snapshots encontrados nesta leitura.</span></div>
   <div class="twb-health-item"><span class="twb-health-label">Exceções observadas</span><span class="twb-health-value">{{ ns.under_attack }}</span><span class="twb-health-meta">Aldeias marcadas como sob ataque.</span></div>
   <div class="twb-health-item"><span class="twb-health-label">Dados incompletos</span><span class="twb-health-value">{{ ns.missing }}</span><span class="twb-health-meta">Sem observação ou recursos no snapshot.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Coleta configurada</span><span class="twb-health-value" id="gather-enabled-count">{{ data.gather.enabled }}/{{ data.gather.total }}</span><span class="twb-health-meta">Configuração persistida; execução ainda não confirmada.</span></div>
 </section>
+
+<section class="twb-panel mb-3" aria-labelledby="titulo-coleta-em-massa">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-coleta-em-massa">Coleta em todas as aldeias</h2><span class="twb-status twb-status--warning">Altera configuração real</span></div>
+  <div class="twb-panel-body">
+    <p>O bot relê esta configuração a cada ciclo. A resposta confirma a gravação, mas não prova que uma coleta foi enviada ou aceita pelo jogo.</p>
+    <dl class="twb-confirmation-model">
+      <div><dt>Habilitadas</dt><dd><strong id="gather-enabled-detail">{{ data.gather.enabled }}</strong> de {{ data.gather.total }} aldeias configuradas.</dd></div>
+      <div><dt>Com teto na opção 4</dt><dd><strong id="gather-options-detail">{{ data.gather.all_options }}</strong> preservam essa preferência mesmo quando a coleta está desligada; níveis bloqueados são ignorados.</dd></div>
+    </dl>
+    <div class="twb-form-actions mt-3">
+      <button class="btn btn-primary" type="button" data-gather-action="enable">Ativar em todas</button>
+      <button class="btn btn-outline-primary" type="button" data-gather-action="enable_all_unlocked">Ativar e usar todas as desbloqueadas</button>
+      <button class="btn btn-outline-danger" type="button" data-gather-action="disable">Desativar em todas</button>
+      <span class="twb-sr-live" id="gather-bulk-message" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+</section>
+
+<dialog class="twb-confirm-dialog" id="gather-bulk-dialog" aria-labelledby="gather-dialog-title" aria-describedby="gather-dialog-description">
+  <div class="twb-confirm-dialog-body">
+    <span class="twb-status twb-status--warning">Alteração em massa</span>
+    <h2 id="gather-dialog-title">Confirmar coleta em todas as aldeias?</h2>
+    <p id="gather-dialog-description">A proposta ainda não foi enviada.</p>
+    <div class="twb-inline-alert twb-inline-alert--warning"><strong>Escopo:</strong> todas as aldeias existentes em <code>config.json</code>, inclusive as não gerenciadas. Aldeias não gerenciadas continuam sem executar o ciclo do bot.</div>
+  </div>
+  <div class="twb-confirm-dialog-actions"><button class="btn btn-outline-secondary" type="button" data-gather-cancel>Cancelar</button><button class="btn btn-danger" type="button" data-gather-confirm>Persistir alteração</button></div>
+</dialog>
 
 <div class="twb-filter-bar mb-3" role="search" aria-label="Filtrar aldeias">
   <div class="twb-filter flex-grow-1">
@@ -142,6 +170,76 @@
   if (search) search.addEventListener('input', applyFilters);
   if (state) state.addEventListener('change', applyFilters);
   if (profile) profile.addEventListener('change', applyFilters);
+})();
+
+(function () {
+  var dialog = document.getElementById('gather-bulk-dialog');
+  var description = document.getElementById('gather-dialog-description');
+  var confirmButton = dialog && dialog.querySelector('[data-gather-confirm]');
+  var cancelButton = dialog && dialog.querySelector('[data-gather-cancel]');
+  var message = document.getElementById('gather-bulk-message');
+  var trigger = null;
+  var pendingAction = null;
+  var labels = {
+    enable: 'Habilitar gather_enabled sem alterar o teto atual de cada aldeia.',
+    enable_all_unlocked: 'Habilitar a coleta e definir gather_selection=4. O backend reduz esse teto ao maior nível realmente desbloqueado em cada leitura.',
+    disable: 'Desabilitar gather_enabled em todas as aldeias. Coletas já em andamento não são canceladas.'
+  };
+
+  function closeDialog() {
+    if (dialog && dialog.open) dialog.close();
+    if (trigger && !trigger.disabled) trigger.focus();
+  }
+
+  function submit() {
+    if (!pendingAction) return;
+    var action = pendingAction;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-gather-action]'), function (button) { button.disabled = true; });
+    confirmButton.disabled = true;
+    message.textContent = 'Solicitação enviada; persistência e efeito ainda não reconciliados.';
+    closeDialog();
+    fetch('/app/gather/bulk', {
+      method: 'POST',
+      headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+      body: JSON.stringify({action: action})
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status));
+        return body;
+      });
+    }).then(function (body) {
+      var summary = body.gather || {};
+      document.getElementById('gather-enabled-count').textContent = (summary.enabled || 0) + '/' + (summary.total || 0);
+      document.getElementById('gather-enabled-detail').textContent = summary.enabled || 0;
+      document.getElementById('gather-options-detail').textContent = summary.all_options || 0;
+      message.textContent = 'Persistência confirmada para ' + (summary.total || 0) + ' aldeias. O efeito será observado somente em ciclos posteriores.';
+    }).catch(function (error) {
+      message.textContent = 'Resultado desconhecido: ' + error.message + '. Atualize a página antes de repetir.';
+    }).finally(function () {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-gather-action]'), function (button) { button.disabled = false; });
+      confirmButton.disabled = false;
+      if (trigger) trigger.focus();
+      pendingAction = null;
+      trigger = null;
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('[data-gather-action]'), function (button) {
+    button.addEventListener('click', function () {
+      trigger = button;
+      pendingAction = button.getAttribute('data-gather-action');
+      description.textContent = labels[pendingAction] || 'Alterar a coleta em massa.';
+      if (dialog && typeof dialog.showModal === 'function') {
+        dialog.showModal();
+        cancelButton.focus();
+      } else if (window.confirm(description.textContent)) {
+        submit();
+      }
+    });
+  });
+  if (cancelButton) cancelButton.addEventListener('click', function () { pendingAction = null; closeDialog(); });
+  if (confirmButton) confirmButton.addEventListener('click', submit);
+  if (dialog) dialog.addEventListener('cancel', function (event) { event.preventDefault(); pendingAction = null; closeDialog(); });
 })();
 </script>
 {% endblock %}

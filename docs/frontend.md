@@ -23,9 +23,11 @@
 
 ## 1. Fronteira e princípio de trabalho
 
-A migração atua **somente** em Jinja, CSS, JS de apresentação e nesta
-documentação. Não altera `webmanager/server.py`, `webmanager/utils.py`, managers,
-cache, contratos de domínio ou endpoints.
+A migração visual atua **somente** em Jinja, CSS, JS de apresentação e nesta
+documentação. Ela não altera managers, cache nem contratos de domínio. Evoluções
+de produto feitas depois da migração são registradas separadamente — a primeira
+é o controle de coleta em massa da §2.2, que introduziu endpoint próprio e foi
+testado como mudança de backend, não disfarçado de trabalho visual.
 
 O princípio que organiza tudo o que segue:
 
@@ -51,7 +53,7 @@ abaixo. A sétima fechou exclusivamente `config.html`.
 |---:|---|---|---|
 | 1 | `main.html` | shell, tokens, navegação por intenção | ✅ |
 | 2 | `bot.html` | verdade operacional e exceções | ✅ |
-| 3 | `villages.html` | tabela comparável e filtros | ✅ |
+| 3 | `villages.html` | tabela comparável, filtros e coleta em massa | ✅ |
 | 4 | `logs.html` | diagnóstico e filtros acessíveis | ✅ |
 | 5 | `reports.html` | evidência, fonte e veredito | ✅ |
 | 6 | `resource_sharing.html` | tentativa / aceitação / falha / unknown | ✅ |
@@ -89,6 +91,21 @@ acessíveis.
 
 O JS de apresentação faz **formatação**, nunca **criação de valor**: ele formata
 `last_run` em idade, mas não inventa `last_run`.
+
+### 2.2 Evolução operacional pós-migração — coleta em massa (2026-09-20)
+
+`villages.html` agora mostra o estado agregado de coleta e três ações explícitas:
+habilitar preservando o teto atual, habilitar com teto 4 (o backend usa apenas
+níveis realmente desbloqueados) e desabilitar. Antes de qualquer POST, um
+`dialog` descreve alcance e consequência; teclado, Escape, devolução de foco,
+duplo clique bloqueado e `aria-live` fazem parte do fluxo.
+
+O recibo de `POST /app/gather/bulk` diz `persisted: true` e
+`effect: pending_next_cycle`. A primeira afirmação é reconciliação da escrita
+atômica em `config.json`; a segunda impede a UI de chamar isso de coleta enviada
+ou aceita pelo jogo. Falha ou timeout vira **resultado desconhecido**, sem retry
+automático. O resumo tolera valor legado malformado e inclui também aldeias não
+gerenciadas, deixando claro que elas não executam o ciclo do bot.
 
 ---
 
@@ -434,6 +451,12 @@ Limites dependentes do backend: falta schema tipado de campo/validação/risco;
 recibo com versão e erro tipado; confirmação do efeito no consumidor; contrato de
 frescor; e suporte formal a dicionários. Correspondem a `backend.md` §7.4
 (`FND-01`, `FND-02`, `FND-04`, `FND-05`) e §8. Não foram simulados no frontend.
+
+O endpoint específico de coleta em massa fecha uma parte estreita dessa lacuna:
+tem método POST, erro HTTP, recibo de persistência e efeito explicitamente
+pendente. Ele **não** é ainda o contrato genérico versionado de ação/efeito e não
+confirma execução no jogo; serve como fatia de referência para a futura migração
+de `/app/config/set`.
 
 Backlog visual preservado para `bot.html`: (1) a faixa superior nasce do render
 inicial e não acompanha o polling; (2) parar processo detectado/adotado fora do

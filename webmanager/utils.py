@@ -8,6 +8,8 @@ import time
 
 import psutil
 
+from core.filemanager import FileManager
+
 
 def village_display_name(entry, vid, fallback=None):
     """
@@ -86,8 +88,7 @@ class DataReader:
 
     @staticmethod
     def config_grab():
-        with open(os.path.join(os.path.dirname(__file__), "..", "config.json"), 'r') as f:
-            return json.load(f)
+        return FileManager.load_json_file("config.json")
 
     @staticmethod
     def config_set(parameter, value):
@@ -98,9 +99,9 @@ class DataReader:
                 parsed_value = json.loads(value)
             except Exception:
                 parsed_value = value
-        config_file_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
-        with open(config_file_path, 'r') as config_file:
-            template = json.load(config_file, object_pairs_hook=collections.OrderedDict)
+        template = FileManager.load_json_file(
+            "config.json", object_pairs_hook=collections.OrderedDict
+        )
         if "." in parameter:
             parts = parameter.split('.')
             if len(parts) == 3:
@@ -113,9 +114,8 @@ class DataReader:
                     template[section][param] = parsed_value
         else:
             template[parameter] = parsed_value
-        with open(config_file_path, 'w') as newcf:
-            json.dump(template, newcf, indent=2, sort_keys=False)
-            return True
+        FileManager.save_json_file(template, "config.json")
+        return True
 
     @staticmethod
     def village_config_set(village_id, parameter, value):
@@ -126,15 +126,73 @@ class DataReader:
                 parsed_value = json.loads(value)
             except (json.decoder.JSONDecodeError, TypeError):
                 parsed_value = value
-        config_file_path = os.path.join(os.path.dirname(__file__), "..", "config.json")
-        with open(config_file_path, 'r') as config_file:
-            template = json.load(config_file, object_pairs_hook=collections.OrderedDict)
+        template = FileManager.load_json_file(
+            "config.json", object_pairs_hook=collections.OrderedDict
+        )
         if village_id not in template['villages']:
             return False
         template['villages'][str(village_id)][parameter] = parsed_value
-        with open(config_file_path, 'w') as newcf:
-            json.dump(template, newcf, indent=2, sort_keys=False)
-            return True
+        FileManager.save_json_file(template, "config.json")
+        return True
+
+    @staticmethod
+    def gather_config_summary(config=None):
+        """Aggregate the persisted per-village scavenging configuration."""
+        config = config if config is not None else DataReader.config_grab()
+        if not isinstance(config, dict):
+            config = {}
+        villages = config.get("villages") or {}
+        if not isinstance(villages, dict):
+            villages = {}
+
+        def selection_uses_all_options(village):
+            if not isinstance(village, dict):
+                return False
+            try:
+                return int(village.get("gather_selection", 1) or 1) >= 4
+            except (TypeError, ValueError):
+                return False
+
+        enabled = sum(
+            1 for village in villages.values()
+            if isinstance(village, dict) and village.get("gather_enabled") is True
+        )
+        all_options = sum(
+            1 for village in villages.values() if selection_uses_all_options(village)
+        )
+        managed = sum(
+            1 for village in villages.values()
+            if isinstance(village, dict) and village.get("managed", True) is not False
+        )
+        return {
+            "total": len(villages),
+            "managed": managed,
+            "enabled": enabled,
+            "all_options": all_options,
+        }
+
+    @staticmethod
+    def gather_bulk_set(enabled, use_all_unlocked=False):
+        """Update every configured village in one atomic config write.
+
+        ``gather_selection = 4`` remains a ceiling.  TroopManager calibrates it
+        to the highest option the game actually reports as unlocked, so this
+        does not attempt locked options and automatically grows into newly
+        unlocked ones.
+        """
+        config = FileManager.load_json_file(
+            "config.json", object_pairs_hook=collections.OrderedDict
+        )
+        if not isinstance(config, dict) or not isinstance(config.get("villages"), dict):
+            raise ValueError("config.json não contém um mapa de aldeias válido")
+        for village in config["villages"].values():
+            if not isinstance(village, dict):
+                continue
+            village["gather_enabled"] = bool(enabled)
+            if use_all_unlocked:
+                village["gather_selection"] = 4
+        FileManager.save_json_file(config, "config.json")
+        return DataReader.gather_config_summary(config)
 
     @staticmethod
     def template_save(template_name, rows):

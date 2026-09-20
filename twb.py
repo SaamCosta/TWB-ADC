@@ -142,6 +142,14 @@ class TWB:
         self.villages = []
         self.found_villages = []
 
+    def _new_village(self, village_id):
+        """Create an isolated village state object on the shared HTTP wrapper.
+
+        The wrapper is deliberately shared: it owns the authenticated session,
+        cookies, connection pool and the latest CSRF hash for the account.
+        """
+        return Village(wrapper=self.wrapper, village_id=village_id)
+
     @staticmethod
     def internet_online():
         """
@@ -552,8 +560,13 @@ class TWB:
             return
         self.wrapper.headers["user-agent"] = config["bot"]["user_agent"]
         for vid in config["villages"]:
-            v = Village(wrapper=self.wrapper, village_id=vid)
-            self.villages.append(copy.deepcopy(v))
+            # Village(...) already creates a fresh instance.  Deep-copying it
+            # cloned the whole shared WebWrapper graph as well (requests
+            # session, cookies, connection pool and last_response) once per
+            # village.  Besides the large memory/startup cost, those private
+            # session snapshots miss cookie rotations and CSRF updates made by
+            # another village.  Every village must keep this same live wrapper.
+            self.villages.append(self._new_village(vid))
         # setup additional builder
         rm = None
         defense_states = {}
@@ -607,13 +620,12 @@ class TWB:
                 # self.villages, so `processing_order = list(self.villages)`
                 # below never contains it and it's never actually managed
                 # (no building, no troops, no farm) until the bot process is
-                # manually restarted. Mirrors the exact Village(...) +
-                # copy.deepcopy(v) construction used in the startup loop.
+                # manually restarted. Mirrors the direct Village(...)
+                # construction used in the startup loop.
                 existing_vids = {v.village_id for v in self.villages}
                 for vid in config["villages"]:
                     if vid not in existing_vids:
-                        new_village = Village(wrapper=self.wrapper, village_id=vid)
-                        self.villages.append(copy.deepcopy(new_village))
+                        self.villages.append(self._new_village(vid))
                         logging.info(
                             "Village %s added to config mid-run, now included in processing", vid
                         )

@@ -5,6 +5,8 @@ sys.path.insert(0, "../")
 
 from flask import Flask, jsonify, send_from_directory, request, render_template, redirect, url_for
 
+from core.exceptions import InvalidJSONException
+
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
     from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader
@@ -207,7 +209,9 @@ def get_map():
 
 @app.route('/villages', methods=['GET'])
 def get_village_overview():
-    return render_template('villages.html', data=sync())
+    data = sync()
+    data["gather"] = DataReader.gather_config_summary(data.get("config"))
+    return render_template('villages.html', data=data)
 
 @app.route('/building_templates', methods=['GET', 'POST'])
 def get_building_templates():
@@ -290,6 +294,39 @@ def config_set():
         if param.startswith("village."): param = param.replace("village.", "")
         DataReader.village_config_set(village_id=vid, parameter=param, value=request.args.get("value", None))
     return jsonify(sync())
+
+
+@app.route('/app/gather/bulk', methods=['POST'])
+def gather_bulk_set():
+    """Apply the explicit scavenging choice to every configured village.
+
+    One request produces one atomic ``config.json`` replacement.  This avoids
+    a half-updated empire if the browser disconnects in the middle of a loop
+    of per-village writes.  The response confirms persistence only; the bot
+    observes the new values on a later cycle.
+    """
+    payload = request.get_json(silent=True) or request.form
+    action = payload.get("action")
+    choices = {
+        "enable": (True, False),
+        "disable": (False, False),
+        "enable_all_unlocked": (True, True),
+    }
+    if action not in choices:
+        return jsonify({"error": "ação de coleta inválida"}), 400
+    enabled, use_all_unlocked = choices[action]
+    try:
+        summary = DataReader.gather_bulk_set(
+            enabled=enabled,
+            use_all_unlocked=use_all_unlocked,
+        )
+    except (InvalidJSONException, OSError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({
+        "persisted": True,
+        "effect": "pending_next_cycle",
+        "gather": summary,
+    })
 
 @app.route('/logs', methods=['GET'])
 def get_logs():

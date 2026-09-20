@@ -688,6 +688,20 @@ puxa o fio.**
   compará-las é diagnóstico de graça. O painel já contava pelo snapshot
   (`ConquestReader.area_of_interest`) e o bot pelo scan local; os dois números
   divergiam havia semanas e ninguém tinha posto um ao lado do outro.
+- ⚠️ **Vigésimo quinto padrão, achado em 2026-09-20: fazer `deepcopy` de um
+  objeto novo que aponta para um serviço vivo compartilhado.** O startup fazia
+  `copy.deepcopy(Village(wrapper=self.wrapper, ...))` para cada aldeia. A
+  `Village` já era nova; o que a cópia profunda acrescentava era clonar o grafo
+  do `WebWrapper`: `requests.Session`, cookies, pool e `last_response`. Isso
+  multiplicava memória por aldeia e, pior, criava snapshots de sessão que não
+  recebiam uma rotação de cookie/CSRF feita por outra aldeia. O fork
+  `TWBOT_LazyTurtle` encontrou o mesmo defeito e mediu aproximadamente 767 MB
+  contra 85 MB em 41 aldeias depois de removê-lo. Aqui `TWB._new_village()`
+  agora cria objetos de aldeia distintos apontando para **a mesma identidade**
+  de wrapper, com regressão em `tests/test_gather_controls.py`. A regra: só
+  copiar o estado que precisa ser independente; sessão HTTP, lock, conexão,
+  logger e outros recursos vivos devem ser injetados e compartilhados
+  explicitamente. Testar identidade (`is`), não apenas igualdade.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do
