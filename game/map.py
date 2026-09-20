@@ -48,8 +48,32 @@ class Map:
         """
         if self.last_fetch + (self.fetch_delay * 3600) > time.time():
             return
+        # A janela de 8h so se fecha com leitura BEM-SUCEDIDA. A instancia de
+        # Map sobrevive entre ciclos (village.py:945), entao marcar o horario
+        # antes de saber o resultado faz uma falha de rede de 14 segundos apagar
+        # o mapa por 8 HORAS, em silencio -- e sem mapa nao ha farm nem eleicao
+        # de alvo de conquista. Restaurar o valor anterior mantem a janela
+        # aberta (so se chega aqui quando ela ja venceu) e custa no maximo uma
+        # requisicao no proximo ciclo, porque ha um unico chamador por ciclo:
+        # Village.ensure_map_loaded().
+        previous_fetch = self.last_fetch
         self.last_fetch = time.time()
         res = self.wrapper.get_action(village_id=self.village_id, action="map")
+        if res is None:
+            # Segundo padrao do CLAUDE.md: `get_url()` devolve None em QUALQUER
+            # excecao, e este caminho estava sem guarda. Em 2026-09-20 12:15 um
+            # `getaddrinfo failed` transitorio derrubou o processo inteiro
+            # daqui (AttributeError em Extractor.game_state, que faz res.text
+            # direto), levando com ele o ciclo das 28 aldeias e o
+            # BarbarianTrainPlanner, que roda por ultimo. A rede voltou 14s
+            # depois -- 12:16:01 respondeu 200. Ver docs/backend.md 8.8.
+            self.last_fetch = previous_fetch
+            logging.warning(
+                "Map: a tela de mapa nao respondeu para a aldeia %s, mantendo o "
+                "mapa anterior e tentando de novo no proximo ciclo",
+                self.village_id,
+            )
+            return False
         game_state = Extractor.game_state(res)
         self.map_data = Extractor.map_data(res)
         # `TWMap.sectorPrefech` traz so o que a tela de mapa desenha de cara --
@@ -92,13 +116,34 @@ class Map:
 
                         self.build_cache_entry(location=coords, entry=entry)
                 if not self.my_location:
-                    self.my_location = [
-                        game_state["village"]["x"],
-                        game_state["village"]["y"],
-                    ]
+                    self.my_location = self._fallback_location(game_state)
         if not self.map_data or not self.villages:
-            return self.get_map_old(game_state=game_state)
+            parsed = self.get_map_old(game_state=game_state)
+            if not parsed:
+                # Leitura falhou (sessao expirada, bot protection, markup novo):
+                # nao conta como fetch bem-sucedido, mesmo motivo do res=None.
+                self.last_fetch = previous_fetch
+            return parsed
         return True
+
+    def _fallback_location(self, game_state):
+        """
+        Coordenada da propria aldeia, para quando ela nao apareceu nos setores
+        lidos.
+
+        Devolve None em vez de levantar quando o game_state nao veio: a resposta
+        pode ser 200 sem ser a tela de mapa (sessao expirada, bot protection,
+        markup novo) e `Extractor.game_state` tem `return None` implicito nesse
+        caso -- segundo padrao do CLAUDE.md. Os consumidores de `my_location` ja
+        tratam None (`attack.py:1210`, `conquest_planner.py:265`), enquanto
+        indexar None aqui derruba o ciclo inteiro.
+        """
+        if not isinstance(game_state, dict):
+            return None
+        try:
+            return [game_state["village"]["x"], game_state["village"]["y"]]
+        except (KeyError, TypeError):
+            return None
 
     def get_map_old(self, game_state):
         """
@@ -122,10 +167,7 @@ class Map:
                     except:
                         raise
             if not self.my_location:
-                self.my_location = [
-                    game_state["village"]["x"],
-                    game_state["village"]["y"],
-                ]
+                self.my_location = self._fallback_location(game_state)
         if not self.map_data or not self.villages:
             logging.warning(
                 "Error reading map state for village %s, farming might not work properly",

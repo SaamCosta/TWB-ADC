@@ -124,7 +124,7 @@ usa o template como base e descarta chave que só exista no config do usuário
 
 ### 2.5 Testes
 
-38 arquivos `test_*.py` em `tests/`, cada um roda sozinho sem `pytest`:
+43 arquivos `test_*.py` em `tests/`, cada um roda sozinho sem `pytest`:
 
 ```powershell
 foreach ($t in (Get-ChildItem tests/test_*.py)) { python $t.FullName }
@@ -138,7 +138,9 @@ limite de ataque falso, venda na bolsa premium, templates de builder, comandos
 recebidos, gate de urgência do apoio, bônus do "Sinal da Aflição", alcance do
 mapa, perfis de farm, guarda do log de sessão, integridade da config, política de
 bandeira, `ReportReader`, `BotManager`, lote de ataques, suspensão do farm por
-PvP, defaults da API.
+PvP, defaults da API, e a degradação do mapa quando a rede cai
+(`test_map_fetch_guard.py`, §8.8 — inclui a parte que se erra sozinha: falha de
+leitura **não** pode fechar a janela de 8 h de `fetch_delay`).
 O arquivo `test_gather_controls.py` acrescenta seleção dinâmica de coleta,
 fallback por opção ocupada/travada, escrita atômica em massa, contrato HTTP e a
 garantia de que todas as aldeias compartilhem a mesma sessão autenticada.
@@ -1804,13 +1806,75 @@ Estado em 2026-09-20 — ✅ = coberto por teste, ⏳ = falta campo.
   estava na 28ª aldeia quando o bot parou. Ou seja, "a reserva própria não
   apareceu como bloqueio" é verdade e **vazio**: nada foi bloqueado porque nada
   foi avaliado.
-- ⚠️ **Crash não relacionado, achado na mesma leitura** (`session_latest.log`,
-  12:15): uma falha de DNS transitória (`getaddrinfo failed`) derrubou o
-  processo inteiro em `Village.ensure_map_loaded()` → `Map.get_map()` →
-  `Extractor.game_state(res)` com `res=None`. É o **2º padrão** do `CLAUDE.md`
-  num caminho quente e sem guarda: `map.py:53`. Enquanto isso não for fechado,
-  qualquer soluço de rede no meio do laço custa o ciclo inteiro — e com ele o
-  planejador de conquista, que é o último a rodar.
+- ✅ **Crash "não relacionado" que era a causa de o gate nunca rodar — corrigido
+  em 2026-09-20.** Ver §8.8.
+
+---
+
+## 8.8 ✅ `P-MAPA-REDE` — 14 segundos de DNS custavam o ciclo inteiro (2026-09-20)
+
+**Escolhido como próxima implementação porque não era um item de backlog: era o
+motivo pelo qual três features prontas seguiam sem validação em campo.** A §8.7
+o classificava como "crash não relacionado". Ele é o oposto de não relacionado —
+o `BarbarianTrainPlanner` roda **depois** do laço de aldeias, então qualquer
+exceção no meio do laço mata justamente o que estava esperando observação.
+
+### O incidente
+
+`session_latest.log`, 2026-09-20:
+
+```
+12:15:47 - Requests - WARNING - GET .../screen=map: ... [Errno 11001] getaddrinfo failed
+I crashed :(   'NoneType' object has no attribute 'text'
+  game/village.py:950  in ensure_map_loaded -> self.area.get_map()
+  game/map.py:53       in get_map           -> Extractor.game_state(res)
+  core/extractors.py:144 in game_state      -> res = res.text
+12:16:01 - Requests - DEBUG - GET .../screen=overview [200]
+```
+
+**A rede voltou 14 segundos depois.** O custo foi o ciclo das 28 aldeias, o
+planejador de conquista e, por tabela, a validação de `P-CONQ-RAIO`,
+`P-CONQ-MAPA` e do gate de reservas. É o **2º padrão** em caminho quente:
+`get_action` devolve `None` em qualquer exceção e ninguém guardava.
+
+### A segunda metade, que é onde a correção ingênua erraria
+
+`Map.fetch_delay` é **8 h** e a instância de `Map` **sobrevive entre ciclos**
+(`village.py:945`), enquanto `last_fetch` era estampado **antes** de saber o
+resultado (`map.py:51`). Um `if res is None: return False` seco teria trocado o
+crash por um **apagão silencioso de 8 horas**: bot vivo, sem mapa, logo sem farm
+e sem eleição de alvo, e nada no log dizendo isso depois da primeira linha —
+exatamente o 15º padrão (detector que não detecta) com outra máscara. A janela
+agora só fecha com **leitura bem-sucedida**; restaurar o valor anterior é seguro
+porque só se chega à requisição quando ela já venceu, e há um único chamador por
+ciclo.
+
+### O que mudou
+
+- `Map.get_map()` — guarda de `res is None` com WARNING nomeando a consequência,
+  retorno `False` (o falsy que `attack.py:1210` e `conquest_planner.py:265` já
+  tratavam) e `last_fetch` restaurado;
+- idem quando a leitura falha por outro motivo (200 de login/bot protection):
+  `get_map_old()` devolvendo `False` também não fecha a janela;
+- `Map._fallback_location()` — os dois pontos que indexavam
+  `game_state["village"]["x"]` sem guarda. `Extractor.game_state` tem
+  `return None` implícito, então um 200 fora da tela de mapa derrubaria o ciclo
+  aqui também. Degrada para `my_location = None`, que os consumidores tratam.
+
+**Não** mexi em `Extractor.game_state`: guardar lá esconderia a mesma classe de
+falha nos ~20 outros consumidores, que querem saber. A guarda fica no chamador.
+
+### Testes
+
+`tests/test_map_fetch_guard.py`, com o recorte do log real na motivação. Os seis
+casos foram rodados **contra a versão pré-correção** (cópia do `HEAD` numa árvore
+temporária, sem stash destrutivo): **12 asserções falham lá e passam aqui**,
+incluindo o `AttributeError` idêntico ao de produção. Guarda que não pode falhar
+é o 21º padrão de cabeça para baixo.
+
+⏳ **Falta campo:** o próximo ciclo completo tem que alcançar o
+`BarbarianTrainPlanner`. O sinal de que esta correção funcionou não é ausência de
+crash — é a **presença** de linhas `Conquest:` no log, que nunca apareceram.
 
 ---
 
@@ -1845,7 +1909,11 @@ Estado em 2026-09-20 — ✅ = coberto por teste, ⏳ = falta campo.
    Candidatos 96 → 387 e o alvo eleito inalterado. De brinde, 38 bárbaras-fantasma
    do cache local deixaram de ser elegíveis. **⏳ Nenhum trem montado com esse
    pool ainda.**
-5. **Itens 1–3 da fila tática da §7.10** — captcha/sessão sem `input()`,
+5. ~~**`P-MAPA-REDE`**~~ — ✅ **feito em 2026-09-20** (§8.8). Era o que impedia o
+   ciclo de chegar ao planejador de conquista, e portanto o pré-requisito das
+   validações de campo dos itens 0, 3 e 4 acima. **⏳ O aceite é ver linha
+   `Conquest:` no log de um ciclo completo.**
+6. **Itens 1–3 da fila tática da §7.10** — captcha/sessão sem `input()`,
    `InstanceLock` por conta, e o `try/except` que falta no `Notification.send`.
    Os três são locais, sem rede e sem medição prévia; o primeiro é o que ainda
    obriga o bot a subir em console visível.
