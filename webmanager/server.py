@@ -544,8 +544,7 @@ def get_inventory():
     )
 
 
-@app.route('/pvp_conquest', methods=['GET'])
-def get_pvp_conquest():
+def _render_pvp_conquest(error=None):
     config = DataReader.config_grab()
     enabled = config.get("pvp_conquest", {}).get("enabled", False)
     pvp_cfg = config.get("pvp_conquest", {})
@@ -558,18 +557,30 @@ def get_pvp_conquest():
         targets=targets,
         managed_villages=managed_villages,
         pvp_cfg=pvp_cfg,
+        error=error,
     )
+
+
+@app.route('/pvp_conquest', methods=['GET'])
+def get_pvp_conquest():
+    return _render_pvp_conquest()
 
 
 @app.route('/pvp_conquest/add', methods=['POST'])
 def pvp_conquest_add():
+    # Erros de validação são exibidos inline, como na conquista bárbara
+    # (/conquest): nada é escrito em cache/pvp_conquest se PvpConquestReader.add
+    # recusar o alvo ou a data.
     target_id = request.form.get("target_id", "").strip()
     arrival_raw = request.form.get("arrival_time", "").strip()
     arrival_str = arrival_raw.replace("T", " ")
     if len(arrival_str) == 16:
         arrival_str += ":00"
     clear_vid = request.form.get("clear_village_id", "").strip() or None
-    PvpConquestReader.add(target_id, arrival_str, clear_village_id=clear_vid)
+    try:
+        PvpConquestReader.add(target_id, arrival_str, clear_village_id=clear_vid)
+    except ValueError as e:
+        return _render_pvp_conquest(error=str(e)), 400
     return redirect(url_for("get_pvp_conquest"))
 
 

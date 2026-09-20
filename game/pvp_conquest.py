@@ -211,6 +211,14 @@ class PvpConquestManager:
             if str(target_id) in pos:
                 location = pos[str(target_id)]
                 break
+        if not location:
+            # Gravada no cadastro pelo painel (PvpConquestReader.add resolve o
+            # alvo contra cache/villages). Sem esta linha, um alvo fora do
+            # prefetch de mapa das aldeias gerenciadas chega ao quadro de
+            # reservas sem coordenada, e a metade do casamento que usa o
+            # "(x|y)" do nome nunca dispara -- falha silenciosa, alvo passa
+            # como livre.
+            location = data.get("target_location")
 
         matched = manual_exclusion(self.config, target_id, location)
         claim = board.claimed_by_other(target_id, location) if board else None

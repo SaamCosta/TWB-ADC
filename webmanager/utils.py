@@ -37,6 +37,68 @@ def village_display_name(entry, vid, fallback=None):
     return name or fallback or ("#%s" % vid)
 
 
+def villages_cache_dir():
+    return os.path.join(os.path.dirname(__file__), "..", "cache", "villages")
+
+
+def resolve_village_identifier(identifier):
+    """
+    Aceita um ID de aldeia puro ("12345") ou coordenadas
+    ("512|487", "512,487", "512 487") e devolve `(village_id, dados)`.
+    Resolve consultando cache/villages/ (populado pelo fetch de mapa de
+    qualquer aldeia gerenciada -- ver game/map.py::Map.build_cache_entry).
+    Lanca ValueError com mensagem amigavel se nao encontrar; nunca inventa
+    dados.
+
+    Vive no nivel de modulo porque duas telas precisam dele: a conquista
+    barbara (Feature 15) e a conquista PvP. Ate 2026-09-20 so a primeira
+    tinha, e o formulario da segunda gravava o texto digitado direto como
+    nome de arquivo -- coordenadas geravam
+    `OSError: [Errno 22] '...\\557|293.json'` (500 na cara do usuario) porque
+    `|` e ilegal em nome de arquivo no Windows.
+    """
+    identifier = (identifier or "").strip()
+    if not identifier:
+        raise ValueError("Informe um ID de aldeia ou coordenadas (ex: 512|487).")
+
+    v_dir = villages_cache_dir()
+    os.makedirs(v_dir, exist_ok=True)
+
+    if identifier.isdigit():
+        path = os.path.join(v_dir, "%s.json" % identifier)
+        if not os.path.exists(path):
+            raise ValueError(
+                "Aldeia #%s não encontrada no cache local. Aguarde o bot "
+                "mapear essa região (cache/villages/) e tente novamente." % identifier
+            )
+        with open(path, "r", encoding="utf-8") as f:
+            return identifier, json.load(f)
+
+    m = re.match(r"^\s*(\d+)\D+(\d+)\s*$", identifier)
+    if not m:
+        raise ValueError(
+            "Formato inválido. Use um ID de aldeia (ex: 12345) ou "
+            "coordenadas (ex: 512|487)."
+        )
+    x, y = int(m.group(1)), int(m.group(2))
+    for fname in os.listdir(v_dir):
+        if not fname.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(v_dir, fname), "r", encoding="utf-8") as f:
+                vdata = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        loc = vdata.get("location")
+        if loc and len(loc) == 2 and int(loc[0]) == x and int(loc[1]) == y:
+            return fname.replace(".json", ""), vdata
+
+    raise ValueError(
+        "Nenhuma aldeia encontrada em %d|%d no cache local. Aguarde o bot "
+        "mapear essa região e tente novamente." % (x, y)
+    )
+
+
 class DataReader:
     @staticmethod
     def cache_grab(cache_location):
@@ -1062,7 +1124,7 @@ class ConquestReader:
 
     @staticmethod
     def _villages_dir():
-        return os.path.join(os.path.dirname(__file__), "..", "cache", "villages")
+        return villages_cache_dir()
 
     @staticmethod
     def _conquest_dir():
@@ -1070,54 +1132,8 @@ class ConquestReader:
 
     @staticmethod
     def _resolve_identifier(identifier):
-        """
-        Aceita um ID de aldeia puro ("12345") ou coordenadas
-        ("512|487", "512,487", "512 487"). Resolve consultando
-        cache/villages/ (populado pelo fetch de mapa de qualquer aldeia
-        gerenciada — ver game/map.py::Map.build_cache_entry). Lança
-        ValueError com mensagem amigável se não encontrar; nunca inventa
-        dados.
-        """
-        identifier = (identifier or "").strip()
-        if not identifier:
-            raise ValueError("Informe um ID de aldeia ou coordenadas (ex: 512|487).")
-
-        v_dir = ConquestReader._villages_dir()
-        os.makedirs(v_dir, exist_ok=True)
-
-        if identifier.isdigit():
-            path = os.path.join(v_dir, "%s.json" % identifier)
-            if not os.path.exists(path):
-                raise ValueError(
-                    "Aldeia #%s não encontrada no cache local. Aguarde o bot "
-                    "mapear essa região (cache/villages/) e tente novamente." % identifier
-                )
-            with open(path, "r", encoding="utf-8") as f:
-                return identifier, json.load(f)
-
-        m = re.match(r"^\s*(\d+)\D+(\d+)\s*$", identifier)
-        if not m:
-            raise ValueError(
-                "Formato inválido. Use um ID de aldeia (ex: 12345) ou "
-                "coordenadas (ex: 512|487)."
-            )
-        x, y = int(m.group(1)), int(m.group(2))
-        for fname in os.listdir(v_dir):
-            if not fname.endswith(".json"):
-                continue
-            try:
-                with open(os.path.join(v_dir, fname), "r", encoding="utf-8") as f:
-                    vdata = json.load(f)
-            except (OSError, json.JSONDecodeError):
-                continue
-            loc = vdata.get("location")
-            if loc and len(loc) == 2 and int(loc[0]) == x and int(loc[1]) == y:
-                return fname.replace(".json", ""), vdata
-
-        raise ValueError(
-            "Nenhuma aldeia encontrada em %d|%d no cache local. Aguarde o bot "
-            "mapear essa região e tente novamente." % (x, y)
-        )
+        """Alias historico de `resolve_village_identifier()` (nivel de modulo)."""
+        return resolve_village_identifier(identifier)
 
     @staticmethod
     def add_manual_target(identifier):
@@ -1839,14 +1855,40 @@ class PvpConquestReader:
 
     @staticmethod
     def add(target_id, arrival_str, clear_village_id=None):
+        """
+        Registra um alvo PvP. `target_id` aceita ID ou coordenadas -- e
+        sempre resolvido contra cache/villages antes de virar nome de
+        arquivo (`resolve_village_identifier()`), entao o que chega em disco
+        e sempre o ID numerico do jogo.
+
+        Levanta ValueError (sem escrever nada) se o alvo nao resolver, se a
+        data nao for valida ou se ja existir operacao para o mesmo alvo --
+        antes isso devolvia False em silencio e a rota descartava o retorno,
+        ou estourava 500 no `open()`.
+        """
+        resolved_id, village_data = resolve_village_identifier(target_id)
+
         try:
             arrival_ts = datetime.datetime.strptime(
                 arrival_str, PvpConquestReader.DATETIME_FMT
             ).timestamp()
         except ValueError:
-            return False
+            raise ValueError(
+                "Chegada desejada inválida (%s). Informe data e hora completas."
+                % (arrival_str or "vazia")
+            )
+
+        path = os.path.join(PvpConquestReader._dir(), "%s.json" % resolved_id)
+        if os.path.exists(path):
+            raise ValueError(
+                "Já existe uma operação PvP para a aldeia #%s. Exclua a "
+                "operação atual antes de registrar outra." % resolved_id
+            )
+
         data = {
-            "target_id":        str(target_id),
+            "target_id":        resolved_id,
+            "target_name":      village_display_name(village_data, resolved_id),
+            "target_location":  village_data.get("location"),
             "arrival_time":     arrival_ts,
             "arrival_str":      arrival_str,
             "status":           "pending_scout",
@@ -1854,8 +1896,8 @@ class PvpConquestReader:
             "created_at":        int(datetime.datetime.now().timestamp()),
             "scout_override":    False,
         }
-        PvpConquestReader._save(str(target_id), data)
-        return True
+        PvpConquestReader._save(resolved_id, data)
+        return resolved_id
 
     @staticmethod
     def delete(target_id):

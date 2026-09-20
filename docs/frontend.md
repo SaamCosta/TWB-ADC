@@ -107,6 +107,38 @@ ou aceita pelo jogo. Falha ou timeout vira **resultado desconhecido**, sem retry
 automático. O resumo tolera valor legado malformado e inclui também aldeias não
 gerenciadas, deixando claro que elas não executam o ciclo do bot.
 
+### 2.3 Cadastro de operação PvP aceita coordenadas (2026-09-20)
+
+`POST /pvp_conquest/add` gravava o texto digitado **direto como nome de
+arquivo**. Com coordenadas (`557|293`) o `open()` estourava
+`OSError: [Errno 22] Invalid argument` — 500 na tela, nada escrito, operação
+perdida; o usuário teve que despachar o trem na mão para não deixar nobres
+presos. Não era regressão: o formulário nunca aceitou coordenadas, e o texto de
+ajuda dizia que elas "não substituem este campo".
+
+O resolvedor já existia **uma classe acima**, usado só pela conquista bárbara
+(`ConquestReader._resolve_identifier`, Feature 15). Virou
+`resolve_village_identifier()` no nível de módulo de `webmanager/utils.py`, e as
+duas telas passam a compartilhá-lo: ID puro ou coordenada em qualquer separador
+(`|`, `,`, espaço), resolvida contra `cache/villages`, e **o que chega em disco é
+sempre o ID numérico do jogo**.
+
+Três coisas vieram junto:
+
+- `PvpConquestReader.add()` agora levanta `ValueError` em vez de devolver `False`
+  em silêncio — alvo que não resolve, data em formato errado, e alvo duplicado
+  (que antes sobrescrevia o registro existente). A rota renderiza o erro inline
+  com HTTP 400, como `/conquest` já fazia; nenhuma recusa escreve em disco.
+- O cadastro grava `target_name` e `target_location` resolvidos, então a página
+  deixa de mostrar "Aldeia-alvo" genérico.
+- `PvpConquestManager._block_if_reserved()` usa `target_location` como fallback
+  quando o alvo não está no prefetch de mapa de nenhuma aldeia gerenciada. Sem
+  isso, a metade do casamento do quadro de reservas que usa o `(x|y)` do nome
+  nunca dispararia para esses alvos — falha silenciosa, alvo reservado por
+  companheiro de tribo passando como livre.
+
+Regressão em `tests/test_pvp_conquest_add.py` (18 checagens, tmpdir, sem rede).
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)
