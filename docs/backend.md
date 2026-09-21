@@ -1463,12 +1463,18 @@ que uma feature nova disputa esse orçamento com o farm.
 
 Três lacunas vistas no fork principal, em ordem de valor:
 
-1. **Não sabemos quanto a coleta rende.** E não há como descobrir depois: o
-   relatório de coleta concluída **não carrega saque**. A única janela é o
-   instante do despacho, onde saque esperado = capacidade do esquadrão ×
-   `{I: 0.10, II: 0.25, III: 0.50, IV: 0.75}`. Registrar isso num
-   `cache/scavenge_log.json` é o que torna possível a pergunta "a coleta rendeu
-   mais que o farm nas últimas 24 h", que hoje não tem resposta.
+1. **Não sabemos quanto a coleta rende** — ⚠️ **parcialmente falsificado em
+   2026-09-21, ver §8.13.** O que continua verdade: o relatório de coleta
+   concluída **não carrega saque**, e a única janela *por operação* é o instante
+   do despacho, onde saque esperado = capacidade do esquadrão ×
+   `{I: 0.10, II: 0.25, III: 0.50, IV: 0.75}`. O que era falso: a frase
+   original dizia que "não há como descobrir depois". Há — a tela
+   `screen=info_player&mode=stats_own` publica a série **`Coletado`** por dia,
+   separada por recurso, nos últimos 7 dias, e com ela a pergunta "a coleta
+   rendeu mais que o farm nas últimas 24 h" **já tem resposta hoje**, porque a
+   mesma tela traz `Saqueado` ao lado. O `cache/scavenge_log.json` segue valendo,
+   mas por outro motivo: granularidade (qual aldeia, qual operação, qual opção)
+   e retenção além de 7 dias — não por ausência total do dado.
 2. **Não dimensionamos a corrida pelo tempo.** A duração é
    `((carry² × 100 × fator²)^0,45 + 1800) × world_speed^-0,55` — fórmula da
    comunidade que eles verificaram contra uma corrida real de opção IV: 39.160 de
@@ -2680,6 +2686,100 @@ têm ≥5 espiões, os máximos são **80** (34597 a 35,0 campos e 35059 a 38,4)
 primeira da ordem de id é a **32056** (50 espiões, 34,7 campos). A aldeia com
 mais espiões é **mais distante** que a escolhida hoje — então a regra nova
 tende a **aumentar** o tempo da espia, não a diminuir.
+
+---
+
+## 8.13 `P-STATS-JOGO` — o jogo já publica a série histórica, e ninguém lia (2026-09-21)
+
+Levantado pelo usuário em 2026-09-21: *"o próprio jogo já fornece uma tela de
+estatísticas"*. **Não estava registrado em lugar nenhum** — `mode=stats_own` não
+aparecia no repositório, e `screen=info_player` só existia como *link* dentro de
+outros parsers. Capturado no mesmo dia por `tests/smoke_capture_stats_own.py`.
+
+### O que a tela entrega
+
+`game.php?village=<vid>&screen=info_player&mode=stats_own`, 1 GET, ~90 KB.
+
+**Os números estão no HTML, server-side.** Não é canvas nem XHR: vêm embutidos
+como arrays JS (`InfoPlayer.Stats.createGraph(...)` e blocos `data.push({label,
+data, details})`). Um `re` resolve — não precisa de navegador. Isso é o oposto
+do `StatuePage` (quinta metade do quinto padrão), onde o texto só existia depois
+do JS: aqui a resposta HTTP já traz tudo.
+
+| Série | Forma | Resolução | Janela |
+|---|---|---|---|
+| Pontos do jogador | linha | 6 h | 14,2 d |
+| Aldeias do jogador | linha | 6 h | 14,2 d |
+| Classificação do jogador | linha | 6 h | 14,2 d |
+| Pontos da tribo | linha | 6 h | 14,2 d |
+| Aldeias saqueadas | barra | 24 h | 13 d |
+| Unidades mortas (inimigas) | barra | 24 h | 13 d |
+| Unidades ganhas / perdidas | barra | 24 h | 13 d |
+| **Recursos saqueados**: `Saqueado`, `Coletado` | barra rica | 24 h | 7 d |
+| **Recursos gastos**: `Unidades`, `Edifícios`, `Notabilidade`, `Pesquisa`, `Coleta de Recursos`, `Comércio` | barra rica | 24 h | 7 d |
+
+As duas séries ricas trazem `wood`/`stone`/`iron`/`total`/`percent` por dia.
+**Semântica medida, não suposta** (o smoke verifica as duas em toda execução, em
+todos os dias): `total == wood + stone + iron`, e `percent` é a **participação
+daquela série no total do dia**, não no período nem no máximo da janela —
+`Saqueado 25,997%` + `Coletado 74,003%` fecham 100% em 21/09. Confundir esse
+campo com "% de aproveitamento" seria o quinto padrão outra vez (número real,
+lido do servidor, do campo errado).
+
+### Por que isso vale mais do que parece
+
+**É a única fonte do sistema que enxerga o que o usuário faz na mão.** O nono
+padrão diz que o log registra as ações do *bot*, não o estado do mundo. Esta
+tela registra o **resultado**, venha de onde vier — e a captura já provou o
+ponto: a série `Coleta de Recursos` (gasto) mostra **204.240 em 20/09 e 105.600
+em 21/09** desbloqueando níveis de coleta, enquanto o `gather_unlock_enabled`
+está `false` no `config.json` e o `session_latest.log` tem **zero** linhas
+`Unlock:`. Os dois fatos são compatíveis e a conclusão é direta: foi o usuário,
+manualmente. Nenhuma outra fonte do repositório teria mostrado isso.
+
+Segundo uso, barato e imediato: **conferência cruzada de graça** (corolário do
+vigésimo quarto padrão). O saque diário medido pelo nosso `ReportReader` e o
+`Saqueado` desta tela respondem a mesma pergunta por caminhos independentes; se
+divergirem, um dos dois está errado e hoje ninguém saberia qual.
+
+### O que ela **não** resolve — e é o que decide o desenho
+
+1. **É conta inteira, não por aldeia.** Nenhuma série é segmentada. Não
+   substitui `ReportReader` nem `farmscores` para decisão por alvo ou por
+   aldeia; serve de **agregado de controle**, não de instrumento operacional.
+2. **Retenção curta.** 7 dias nas séries ricas, ~14 nas demais. Para série mais
+   longa que isso, é preciso **acumular localmente** — o que transforma a tela de
+   "fonte" em "semeadora" de um histórico nosso.
+3. **Não tem atribuição de causa.** `Saqueado` é um total; não separa por
+   template, capacidade ou alvo. Portanto **não serve para `CAL-01`** e não
+   resolve a censura do décimo primeiro padrão — o baseline exigido pela §9.3
+   continua dependendo dos relatórios.
+4. **É saldo, não evento.** Não dá `observed_at` por operação, não fecha
+   `FND-01`/`FND-02` e não diz nada sobre o que está *em voo*.
+
+### Correção que isto obriga
+
+O item 1 da §8.5 `P-COL-03` afirmava que **"não sabemos quanto a coleta rende, e
+não há como descobrir depois"**. Isso está **falsificado no nível de conta/dia**:
+a série `Coletado` publica exatamente isso, separado por recurso, para os
+últimos 7 dias — e mostra `0` em 19/09 contra `274.159` em 20/09 e `413.448` em
+21/09, ou seja, a coleta aparece ligando na janela em que `P-COL-01` entrou. A
+parte da afirmação que **continua de pé** é a granularidade: o jogo não diz
+*qual aldeia*, *qual operação* nem *qual opção* rendeu, e é isso que o
+`cache/scavenge_log.json` proposto resolveria. Texto da §8.5 corrigido no mesmo
+passo (décimo sexto padrão).
+
+Décimo sexto padrão de novo, sobre o método: a afirmação "não há como descobrir
+depois" foi escrita a partir do **relatório de coleta**, que de fato não carrega
+saque. A conclusão pulou de "esta tela não tem" para "o servidor não tem" — que
+é exatamente a quarta metade do quinto padrão, e desta vez a fonte que faltava
+nem era obscura: é um item do menu do próprio perfil do jogador.
+
+### Estado
+
+Capturado e medido; **nada consumido pelo bot ainda**. Candidato de painel
+registrado em `frontend.md` §6.1.2, item 6. Não entra na fila da §9 sem decisão
+do usuário.
 
 ---
 

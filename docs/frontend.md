@@ -407,9 +407,14 @@ realistas para uma fatia futura.
   nosso `ReportReader`, que já faz filtro dinâmico de tipo — o `_report_kind`
   deles deduz tipo por presença de campo, que é mais frágil.
 - **Estado do saque previsto da coleta** (`LazyTurtleStyle`, `scavenge_log.json`).
-  Depende do `P-COL-03` do backend existir primeiro: hoje o painel não tem como
-  responder "a coleta rendeu quanto", porque o dado não é gravado em lugar nenhum
-  (o relatório de coleta concluída não carrega saque).
+  Depende do `P-COL-03` do backend existir primeiro — ⚠️ **mas a justificativa
+  original estava errada e foi corrigida em 2026-09-21** (`backend.md` §8.13). A
+  frase dizia que "o dado não é gravado em lugar nenhum"; o jogo publica a série
+  **`Coletado`** por dia e por recurso em `screen=info_player&mode=stats_own`.
+  O que o `scavenge_log.json` acrescenta é **granularidade** (qual aldeia, qual
+  operação, qual opção) e retenção além dos 7 dias do jogo — não a existência do
+  número. Para a pergunta agregada "a coleta rendeu mais que o farm nas últimas
+  24 h", o painel poderia responder hoje.
 - **Senha no painel** (`Trojanekkk`, ~40 linhas): hook `before_request`, rotas
   isentas, `hmac.compare_digest` contra senha vinda de `.env`, e — o detalhe bom —
   **503 com tela explicativa quando não há senha configurada**, em vez de abrir
@@ -456,6 +461,7 @@ mockup como especificação de layout.
 | 3 | **Prazo por linha** (deles: coluna *Next Run*) | `FND-01` p/ frescor; útil degradado sem ele | S |
 | 4 | **Strip de recursos persistente no topo** | nada | S |
 | 5 | **Recrutamento em massa** reusando o padrão da §2.2 | nada — padrão já estabelecido | M |
+| 6 | **Série histórica embarcada do próprio jogo** (2026-09-21) | nada — HTML já traz os números | S |
 
 **1. Painel "Em voo" — o mais valioso, e o único que não é cosmético.** Uma
 lista do que está *no ar agora*: trem de nobre, apoio, farm, ataque — origem →
@@ -499,6 +505,25 @@ testado pela coleta em massa (§2.2): `dialog` com alcance e consequência antes
 do POST, recibo separando `persisted` de `effect`, falha/timeout virando
 **resultado desconhecido** sem retry. Os *sliders* do mockup, não — quantidade
 de tropa se digita.
+
+**6. Série histórica embarcada do próprio jogo** (levantado pelo usuário em
+2026-09-21, medido em `backend.md` §8.13). Esta chegou depois da lista acima e
+muda a economia do item "gráfico" inteiro: `screen=info_player&mode=stats_own`
+publica pontos, aldeias, classificação, saque e gasto **já agregados por dia,
+server-side, dentro do HTML** — sem canvas, sem XHR, um GET de 90 KB. Para os
+cards de tendência, isso é ordens de grandeza mais barato que derivar do nosso
+cache, e é a única fonte que enxerga o que o **usuário fez na mão** (a captura
+provou: 204.240 + 105.600 gastos desbloqueando coleta com o gate do bot
+desligado e zero linhas no log).
+⚠️ **Contratos a preservar, e eles limitam o uso a "agregado de controle":**
+(a) é **conta inteira, nunca por aldeia** — não substitui `ReportReader` nem
+`farmscores` para decisão operacional; (b) retenção é **7 dias** nas séries
+ricas e ~14 nas demais, então qualquer janela maior exige acumular localmente e
+o card precisa dizer que a série começa onde o jogo corta; (c) o campo
+`percent` é **participação no total do dia** (medido, não suposto — `Saqueado`
+25,997% + `Coletado` 74,003% fecham 100%), e rotulá-lo como "aproveitamento"
+seria o quinto padrão do `CLAUDE.md`; (d) é **saldo, não evento** — não tem
+`observed_at` por operação e não alimenta o painel "Em voo" do item 1.
 
 **Deliberadamente fora:** o gráfico de saque por hora. O dado existe nos
 `TWB_*`, mas o décimo primeiro padrão manda segmentar por template/capacidade e
