@@ -186,6 +186,7 @@ help_file = {
     'village.trade_for_premium': 'Trade left-over resources for premium points (requires global option)',
     'village.gather_enabled': 'Use left-over units to gather additional resources',
     'village.gather_selection': 'The gather operation to perform (must be unlocked first)',
+    'village.gather_unlock_enabled': 'Automatically unlock scavenging options, cheapest pending one first, at most one per cycle. Only spends when the village can pay the full unlock_cost read from the game screen, and skips the village entirely while any unlock is already running (the game allows one at a time, which is also what keeps the bot from competing with manual unlocks). Respects keep_resources. Requires gather_enabled, since it rides on the same page request',
     'village.snobs': 'Number of nobles to maintain in this village',
     'village.mint_coins': 'Mint gold coins without ever recruiting a noble (only applies when snobs is 0). Coins belong to the account, nobles cost this village\'s population - this is what a watchtower village should do. Only mints from surplus - the priority order is buildings, then troops, then coins: it never mints while the build queue still lacks resources or while the village is below its troop template (support losses included), and it never requests resources from the market',
     'village.evacuate_fragile_units_on_attack': 'Automatically evacuate fragile units (axe, noble) to nearby safe villages when under attack',

@@ -1040,6 +1040,13 @@ class Village:
         self.units.can_gather = self.get_village_config(
             self.village_id, parameter="gather_enabled", default=False
         )
+        self.units.can_unlock_scavenge = self.get_village_config(
+            self.village_id, parameter="gather_unlock_enabled", default=False
+        )
+        keep = self.get_village_config(
+            self.village_id, parameter="keep_resources", default={}
+        )
+        self.units.keep_resources = keep if isinstance(keep, dict) else {}
         if not self.def_man or not self.def_man.under_attack:
             self.units.gather(
                 selection=self.get_village_config(

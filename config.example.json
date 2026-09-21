@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.2",
+    "version": "4.3",
     "author": "stefan2200"
   },
   "server": {
@@ -102,6 +102,7 @@
     "trade_for_premium": false,
     "gather_enabled": false,
     "gather_selection": 1,
+    "gather_unlock_enabled": false,
     "advanced_gather": true,
     "snobs": 0,
     "mint_coins": false,

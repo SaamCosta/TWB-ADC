@@ -136,6 +136,29 @@ class Extractor:
             return json.loads(data, strict=False)
 
     @staticmethod
+    def scavenge_config(res):
+        """
+        Config das opções de coleta, do 1º argumento de `new ScavengeScreen(`.
+
+        É a tabela do MUNDO (custo e duração de desbloqueio, `loot_factor`,
+        `prerequisite_option_ids`), não o estado da aldeia -- este último vem
+        do 2º argumento e sai por `village_data()`.
+
+        Existe para que o desbloqueio (P-COL-02(b)) leia o preço da própria
+        tela em vez de carregar uma tabela chumbada: o custo é do servidor e
+        varia por mundo, e um número copiado para cá é uma foto que expira sem
+        avisar (14º padrão do CLAUDE.md).
+
+        O `\\s*` no padrão não é enfeite: o jogo quebra a linha e indenta entre
+        o `(` e o `{`, e `balanced_slice` exige o índice exato da abertura --
+        sem ele isto devolve None em toda chamada, que é a falha muda do 15º
+        padrão. Fixture verbatim do br143 em tests/test_scavenge_unlock.py.
+        """
+        if type(res) != str:
+            res = res.text
+        return Extractor.js_object_after(res, r"new ScavengeScreen\(\s*")
+
+    @staticmethod
     def game_state(res):
         """
         Detects the game state that is available on most pages

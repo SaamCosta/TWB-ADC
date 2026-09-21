@@ -1231,7 +1231,10 @@ publicou. Opção alta já em andamento não bloqueia uma inferior livre. No mod
 básico, a primeira opção livre recebe a tropa e o laço para, evitando reaproveitar
 as mesmas unidades em um segundo POST.
 
-**(b) Não desbloqueia coleta automaticamente.**
+**(b) Não desbloqueia coleta automaticamente.** ✅ **Implementado em 2026-09-21
+com o gate desligado** — ver "Implementado" mais abaixo. O diagnóstico original
+segue registrado aqui porque é ele que explica as escolhas.
+
 Confirmado por varredura: **não existe nenhum código de desbloqueio**. O único
 uso de `scavenge_api` é `send_squads` (`troopmanager.py:517` e `:565`) — enviar
 tropa para coletar. Não há chamada para iniciar o desbloqueio de um nível.
@@ -1384,6 +1387,41 @@ para a implementação:
   `village.keep_resources` declarado — a mesma armadilha da Feature 9.
 - Não precisa de config de "quando": precisa de um gate de liga/desliga
   (default off até rodar em campo) e de nada mais.
+
+#### ✅ Implementado em 2026-09-21 — gate desligado, nenhum POST disparado ainda
+
+O desbloqueio existe em código e está coberto por teste, mas
+`gather_unlock_enabled` nasce `false` em todas as aldeias: **nada foi gasto no
+jogo por esta feature até agora.** Ligar é decisão do usuário.
+
+Peças:
+
+| Peça | Onde | O que faz |
+|---|---|---|
+| `Extractor.scavenge_config()` | `core/extractors.py` | 1º argumento de `new ScavengeScreen(` — custo, duração e `prerequisite_option_ids` por opção |
+| `TroopManager.choose_scavenge_unlock()` | `game/troopmanager.py` | decisão pura: qual opção desbloquear, ou `None` |
+| `TroopManager.unlock_scavenge()` | `game/troopmanager.py` | o POST, montado por `get_api_action` |
+| `gather_unlock_enabled` | `config.example.json` + `helpfile.py` | gate por aldeia, default `false` |
+
+Três decisões que a captura mudou em relação ao plano:
+
+- **`prerequisite_option_ids` existe na config do mundo** (`4→[3]`, `3→[2]`,
+  `2→[1]`) e a decisão usa esse campo em vez de assumir que a ordem numérica
+  basta. Hoje as duas coincidem; o campo é o que o servidor publica.
+- **`unlock_time` é o timestamp de CONCLUSÃO**, não de início — medido: a
+  BBM 029 marcava `1789998457` = 10:47:37, exatamente as 3h do canário disparado
+  às 07:47. É o 6º padrão em dado publicado: o jogo já separa "mandei" de
+  "termina", e a guarda de "um por vez" lê esse campo.
+- **O campo é limpo ao terminar**, então a guarda não trava a aldeia para
+  sempre. Evidência: a BBM 001 tem as quatro opções destrancadas e
+  `unlock_time: None` nas quatro.
+
+**Zero GET extra**: `unlock_scavenge()` recebe a resposta que `gather()` já
+baixou, por causa do limite de taxa por conta descrito abaixo. O custo máximo da
+feature é **um POST por ciclo por aldeia**, e só quando há algo a pagar.
+
+Como consequência de ler a mesma página, o desbloqueio está preso a
+`gather_enabled` — intencional, e registrado no `helpfile`.
 
 ⚠️ **Limite de taxa observado no mesmo dia, e ele restringe qualquer automação
 aqui.** Sondando pelo navegador com o bot rodando, o servidor devolveu
@@ -2437,6 +2475,33 @@ pela §6.3. A validação das 3 trocas continua aberta e agora tem um segundo
 indicador: `flags_read_this_cycle` em `cache/managed` separa "não trocou porque
 estava certo" de "não trocou porque não leu".
 
+**Parcial de 2026-09-21 08:00, com o bot no ar desde 07:13 — 6 de 30 aldeias.**
+O ciclo está levando ~8 min por aldeia, então o quadro só fecha perto das 11:15;
+o que existe até agora **não** decide nada. Estado: 6 leituras, 6 linhas de
+oferta zerada, **0 `Setting flag`**, e `flags_read_this_cycle: true` no
+`cache/managed` das seis — ou seja, o silêncio é "não trocou porque estava
+certo", não "porque não leu". O indicador novo está funcionando.
+
+⚠️ **Mas a previsão da §6.3 já não bate, e vale conferir antes de contá-la como
+validada.** A **BBM 003** (44683) é uma das três trocas previstas e foi
+processada às 07:36 **sem trocar**. O motivo está no código e é legítimo: ela já
+usa `current_flag: [7, 4]`, que é o **topo** da preferência dela (`[7, 1, 2, 6,
+8]`), e a guarda de rebaixamento (`defence_manager.py:642`) a segura. A previsão
+das 3 trocas foi escrita em 2026-08-31, contra um inventário que mudou desde
+então — é o 16º padrão outra vez (documento é memória, não especificação), com o
+agravante de que aqui o documento é o **critério de aceite**. Reconferir o
+previsto contra o `cache/managed` atual antes de tratar "3 trocas" como o número
+certo.
+
+⚠️ **Achado de lambuja: a linha de log mente sobre o que vai acontecer.**
+`_log_unmet_preference()` roda **antes** da guarda de rebaixamento, então ela
+escreve `usando tipo 2 nível 1` para uma aldeia que vai **continuar com o tipo
+7**. As 6 linhas observadas dizem isso, e nenhuma delas descreve uma ação real.
+Não é bug de comportamento — o bot faz a coisa certa — mas é uma mensagem que
+induz o leitor a contar trocas que não houve, exatamente na validação que
+depende de contar trocas. Corrigir a redação (ou mover a chamada para depois da
+guarda) antes da próxima leitura de log.
+
 ---
 
 ## 9. Próximos passos
@@ -2453,15 +2518,16 @@ estava certo" de "não trocou porque não leu".
    `Using troops for gather operation: 2`, `Gather operation 1 is ready to
    start` e `Current Haul: 60855 = Gather Batch (4057) * Batch Multiplier 1
    (15)` — o saque previsto logado era o aceite. **Fechado.**
-2. **`P-COL-02(b)`** — **captura ✅ feita em 2026-09-21** (§8.5): endpoint e
-   payload saíram do bundle JS público e de `TribalWars.post`, o
-   `get_api_action` atual já os monta, e a varredura das 30 aldeias deu os
-   números da política (opções 1 e 2 destrancadas em todas; a 3 falta em 3
-   aldeias e a 4 em 19, 608k de recurso para fechar tudo). **Restam duas
-   coisas, ambas do usuário:** autorizar o canário de 1.000/1.200/1.000 na
-   49709 (payload de fonte é hipótese até alguém mandar — 13º padrão) e
-   decidir a política de gasto. O ajuste ao maior nível desbloqueado,
-   `P-COL-02(a)`, está ✅ feito.
+2. ~~**`P-COL-02(b)`**~~ — ✅ **implementado e testado em 2026-09-21** (§8.5),
+   com o gate `gather_unlock_enabled` **desligado**: nenhum recurso foi gasto
+   por esta feature. Captura, canário, política do usuário e código estão
+   fechados; `P-COL-02(a)` já estava ✅.
+   **Resta uma coisa, e é do usuário: ligar o gate em uma aldeia e observar.**
+   A candidata natural é uma das 3 que só têm a opção 3 pendente (1.000/1.200/
+   1.000, 3h) em vez de uma das 19 da opção 4 (10k/12k/10k, 6h) — mesmo custo
+   de aprendizado, um décimo do recurso. O sinal no log é
+   `Unlock: iniciada coleta N (...)`, e a confirmação independente é
+   `unlock_time` aparecendo na tela no ciclo seguinte.
 
 **Acrescentado em 2026-09-20, depois do estudo dos forks:**
 

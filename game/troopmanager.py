@@ -23,6 +23,7 @@ class TroopManager:
     can_scout = True
     can_farm = True
     can_gather = True
+    can_unlock_scavenge = False
     can_fix_queue = True
     randomize_unit_queue = True
 
@@ -89,6 +90,11 @@ class TroopManager:
         # Respected by AttackManager (farm, via total_conquest_reserve()) and
         # gather() below so reserved troops are never spent by either.
         self.conquest_reserve = {}
+        # `village.keep_resources`: recurso poupado que o desbloqueio de
+        # coleta não pode comer. Dict mutável, logo mora aqui e não no corpo
+        # da classe -- há uma instância deste manager por aldeia, e um dict de
+        # classe seria compartilhado por todas (1º padrão do CLAUDE.md).
+        self.keep_resources = {}
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
@@ -432,6 +438,98 @@ class TroopManager:
         return max(unlocked) if unlocked else 0
 
     @staticmethod
+    def choose_scavenge_unlock(scavenge_config, options, resources, keep=None):
+        """Qual opção de coleta desbloquear agora, ou None.
+
+        Política decidida pelo usuário em 2026-09-21 (docs/backend.md §8.5):
+        *"desbloqueia quando der"* -- sem gate de excedente e sem escalonamento
+        por maturidade. A única condição é poder pagar.
+
+        Regras, todas lidas do jogo e não presumidas:
+
+        - **Uma por vez.** `unlock_time` preenchido em QUALQUER opção significa
+          que a aldeia já está desbloqueando algo, e o jogo só permite um. É
+          também o que faz o bot conviver com os desbloqueios manuais do
+          usuário em vez de competir com eles. Medido no br143: a opção 3 da
+          BBM 029 tinha `unlock_time` durante o desbloqueio, e as opções já
+          concluídas (BBM 001, as quatro) têm `unlock_time: None` -- então o
+          campo é limpo ao terminar e esta guarda não trava a aldeia para
+          sempre.
+        - **Mais baixa pendente**, e só se os pré-requisitos dela já estiverem
+          destrancados. `prerequisite_option_ids` vem da config do mundo; não
+          assumimos que a ordem numérica basta, mesmo que hoje ela baste.
+        - **Poder pagar os três recursos**, com `unlock_cost` lido da tela.
+
+        `keep` é `village.keep_resources`: recurso poupado (para nobre, tipicamente)
+        que o desbloqueio não pode comer. Mesma semântica da Feature 9 --
+        explícito, porque `required_resources` registra o que *falta* e some
+        justamente quando a reserva mais importa.
+
+        Dado malformado é ignorado de forma conservadora: na dúvida não gasta.
+        """
+        if not isinstance(scavenge_config, dict) or not isinstance(options, dict):
+            return None
+
+        keep = keep if isinstance(keep, dict) else {}
+        resources = resources if isinstance(resources, dict) else {}
+
+        def state(option_id):
+            entry = options.get(str(option_id)) or options.get(int(option_id))
+            return entry if isinstance(entry, dict) else None
+
+        # "Ocupada" é uma propriedade da ALDEIA, não da opção: basta um
+        # desbloqueio em andamento em qualquer opção para não tentar nada.
+        for entry in options.values():
+            if isinstance(entry, dict) and entry.get("unlock_time") is not None:
+                return None
+
+        for option_id in sorted(
+            (int(k) for k in scavenge_config if str(k).isdigit())
+        ):
+            current = state(option_id)
+            if current is None or "is_locked" not in current:
+                # Sem estado publicado não dá para saber se está trancada.
+                continue
+            if not bool(current.get("is_locked")):
+                continue
+
+            entry = scavenge_config.get(str(option_id)) or {}
+            if not isinstance(entry, dict):
+                continue
+
+            prereqs = entry.get("prerequisite_option_ids") or []
+            if not isinstance(prereqs, (list, tuple)):
+                continue
+            blocked = False
+            for prereq in prereqs:
+                prereq_state = state(prereq)
+                if prereq_state is None or bool(prereq_state.get("is_locked", True)):
+                    blocked = True
+                    break
+            if blocked:
+                # Mais baixa pendente com pré-requisito preso: as acima dela
+                # também estarão, porque dependem desta.
+                return None
+
+            cost = entry.get("unlock_cost")
+            if not isinstance(cost, dict) or not cost:
+                continue
+            try:
+                affordable = all(
+                    int(resources.get(res, 0)) - int(keep.get(res, 0)) >= int(amount)
+                    for res, amount in cost.items()
+                )
+            except (TypeError, ValueError):
+                continue
+            if not affordable:
+                # Não pode pagar a mais baixa. Pular para uma mais cara seria
+                # gastar fora de ordem -- e o pré-requisito a impediria.
+                return None
+            return option_id
+
+        return None
+
+    @staticmethod
     def gather_option_keys(options, selection):
         """Option keys at or below ``selection``, highest first.
 
@@ -453,6 +551,67 @@ class TroopManager:
         ordered.sort(key=lambda entry: entry[0], reverse=True)
         return [option_id for _, option_id in ordered]
 
+    def unlock_scavenge(self, result, options):
+        """Desbloqueia a coleta mais baixa pendente, se der para pagar.
+
+        Recebe a resposta que `gather()` **já** baixou em vez de buscar a tela
+        de novo: o limite de taxa é da CONTA, e em 2026-09-21 o servidor já
+        respondeu *"você está fazendo muitos pedidos"* -- uma feature nova
+        disputa orçamento de requisição com o farm. Por isso o desbloqueio
+        custa zero GET extra e no máximo um POST por ciclo por aldeia.
+
+        Como só roda de dentro de `gather()`, fica implicitamente preso a
+        `gather_enabled`. Isso é intencional: desbloquear coleta numa aldeia
+        que não coleta não rende nada.
+        """
+        if not self.can_unlock_scavenge:
+            return False
+
+        scavenge_config = Extractor.scavenge_config(result)
+        if not scavenge_config:
+            self.logger.warning(
+                "Unlock: config de coleta não encontrada na tela -- sessão "
+                "expirada ou markup novo? Nada desbloqueado neste ciclo."
+            )
+            return False
+
+        option_id = self.choose_scavenge_unlock(
+            scavenge_config, options, self.resman.actual if self.resman else {},
+            keep=self.keep_resources,
+        )
+        if not option_id:
+            return False
+
+        entry = scavenge_config.get(str(option_id)) or {}
+        cost = entry.get("unlock_cost") or {}
+        res = self.wrapper.get_api_action(
+            self.village_id,
+            action="start_unlock",
+            params={"screen": "scavenge_api"},
+            data={"village_id": self.village_id, "option_id": option_id},
+        )
+        if res is None:
+            self.logger.warning(
+                "Unlock: coleta %s não confirmada pelo servidor (sem resposta)",
+                option_id,
+            )
+            return False
+
+        # "Mandei" e "termina" são momentos diferentes (6º padrão): o jogo
+        # publica a conclusão em `unlock_time` na PRÓXIMA leitura da tela, e é
+        # ela que a guarda de "uma por vez" consulta -- não este log.
+        self.logger.info(
+            "Unlock: iniciada coleta %s (%s) na aldeia %s por %s, %s s",
+            option_id, entry.get("name"), self.village_id, cost,
+            entry.get("unlock_duration_seconds"),
+        )
+        if self.resman:
+            for resource, amount in cost.items():
+                self.resman.actual[resource] = max(
+                    0, int(self.resman.actual.get(resource, 0)) - int(amount)
+                )
+        return True
+
     def gather(self, selection=1, disabled_units=None, advanced_gather=True):
         """
         Used for the gather resources functionality where it uses two options:
@@ -468,6 +627,10 @@ class TroopManager:
             return False
         village_data = Extractor.village_data(result)
         options = (village_data or {}).get("options") or {}
+        # Antes do teto efetivo de propósito: quando NADA está destrancado,
+        # `selection` é 0 e o método retorna -- e é exatamente aí que
+        # desbloquear é a única coisa útil a fazer.
+        self.unlock_scavenge(result, options)
         selection = self.effective_gather_selection(options, selection)
         if selection == 0:
             self.logger.info("No unlocked gather operation is available yet.")

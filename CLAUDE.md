@@ -103,7 +103,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   disco por fixtures, então não depende do `cache/` real) e a elegibilidade de
   alvo do trem multi-origem (`tests/test_conquest_target_reach.py` — pool de
   candidatos e alcance por origem, com as coordenadas reais do bolsão oeste do
-  K25; ver o vigésimo quarto padrão) e a trava de instância única
+  K25; ver o vigésimo quarto padrão) e o desbloqueio de coleta
+  (`tests/test_scavenge_unlock.py` — parse da config de mundo com recorte
+  verbatim do br143, decisão de gasto sob a política "desbloqueia quando der",
+  e a forma do POST contra um wrapper de mentira; inclui um teste que roda o
+  padrão **sem** o `\s*` e exige que ele falhe, e a guarda foi provada
+  quebrando o parser de propósito) e a trava de instância única
   (`tests/test_instance_lock.py` — recusa cross-process com subprocessos de
   verdade, porque trava de arquivo é **reentrante no mesmo processo** e um teste
   in-process não distinguiria trava real de no-op; `docs/backend.md` §8.10).
