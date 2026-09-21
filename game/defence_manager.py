@@ -143,6 +143,23 @@ class DefenceManager:
         self.supported = []
         self.attacks = []
         self.flags = {}
+        # {flag_type: {level: quantidade}} -- a OFERTA, que `self.flags` joga
+        # fora. `self.flags` colapsa o inventário em {tipo: maior nível com
+        # quantidade > 0}, então "tenho uma" e "tenho cinco" ficam
+        # indistinguíveis. Bandeira é inventário DE CONTA (medido em
+        # 2026-09-20: `setFlagCounts` publica zero para os tipos 1, 2 e 7
+        # enquanto 28 das 30 aldeias usam justamente um desses -- ou seja,
+        # bandeira equipada SAI do inventário), então dar uma à aldeia B é
+        # tirá-la da aldeia A. Ver docs/backend.md §6.3.
+        self.flag_supply = {}
+        # True só enquanto o inventário acima foi lido do servidor NESTE
+        # `update()`. Ver a guarda em flag_logic().
+        self._flags_fresh = False
+        # {(village_id, tuple(wanted)): True} -- já avisei que a preferência
+        # desta aldeia não tem oferta. Existe para o aviso sair UMA vez por
+        # processo em vez de em todo ciclo: alerta que nunca cala é
+        # indistinguível de alerta quebrado (15º padrão do CLAUDE.md).
+        self._unmet_logged = set()
         # flag_index, flag_level
         self.current_flag = []
         # list of village_id, attack_state
@@ -305,6 +322,10 @@ class DefenceManager:
 
     def update(self, main, with_defence=False):
         ok = True
+        # Zerado ANTES da leitura: o frescor vale para este `update()` e para
+        # mais nenhum. `manage_flags()` o levanta de volta só se a leitura
+        # chegar ao fim.
+        self._flags_fresh = False
         self.manage_flags()
         self.runs += 1
         # Lido em todo ciclo, com ou sem ataque: o item pode ser ativado a
@@ -366,6 +387,13 @@ class DefenceManager:
 
             self.under_attack = True
             ok = False
+            # Sob ataque a bandeira de defesa não pode esperar o próximo
+            # ciclo de leitura (a randomização de manage_flags pula 3 a 8
+            # runs, e aqui isso seria horas). Relê agora: é uma requisição, só
+            # quando há ataque de verdade, e é o que permite o gate de frescor
+            # de flag_logic() ser uma guarda e não um bloqueio.
+            if not self._flags_fresh:
+                self.manage_flags(force=True)
             self.flag_logic(self.set_flag_under_attack)
             if self.auto_evacuate and with_defence and urgent:
                 self.evacuate()
@@ -587,6 +615,14 @@ class DefenceManager:
                 )
             return
 
+        # Oferta zerada para os tipos ACIMA do escolhido: é o `unmet` do
+        # inventário de conta, e sem ele o rebaixamento é mudo. Em 2026-09-20
+        # os tipos 7, 1 e 2 estavam todos em zero e as 30 aldeias caíam para o
+        # tipo 6 sem uma linha de log dizendo por quê. Uma vez por aldeia por
+        # processo, não por ciclo.
+        if chosen != wanted[0]:
+            self._log_unmet_preference(wanted, chosen, chosen_level)
+
         if self.current_flag:
             already_correct = self.current_flag[0] == chosen
             already_best = self.current_flag[1] >= chosen_level
@@ -612,6 +648,35 @@ class DefenceManager:
                 )
                 return
 
+        # --- Daqui para baixo a bandeira MUDA de aldeia. -------------------
+        # `flag_set` não copia bandeira: ele MOVE a que está no inventário da
+        # conta. Decidir isso a partir de uma leitura velha é o 6º padrão do
+        # CLAUDE.md (reconferir a premissa no momento de agir, não no de
+        # decidir): `manage_flags()` só lê de fato a cada 3 a 8 runs, por
+        # causa da randomização, e o `DefenceManager` sobrevive entre ciclos
+        # (village.py: `if not self.def_man`). Entre a leitura e este ponto,
+        # OUTRA aldeia pode ter levado a mesma bandeira -- e aí este
+        # `flag_set` a arranca de lá, a aldeia roubada volta a pedir no ciclo
+        # seguinte, e o vaivém é o Bug 1 de volta (docs/backend.md §6.3).
+        #
+        # Evidência de que a crença envelhece errado, medida em 2026-09-20: o
+        # `cache/managed` da BBM 029 dizia `6: 7` enquanto o servidor já não
+        # tinha nenhuma bandeira tipo 6 acima do nível 4 -- a de nível 7 havia
+        # sido equipada pela BBM 030.
+        #
+        # O erro é assimétrico, e é por isso que a guarda fecha só de um lado:
+        # agir com inventário velho tira bandeira de uma aldeia que estava
+        # certa; não agir custa esperar o próximo ciclo de leitura, contra um
+        # cooldown de troca que já é de 24 h. Na dúvida, não age.
+        if not self._flags_fresh:
+            self.logger.debug(
+                "Village %s adiaria trocar para tipo %s nível %s, mas o "
+                "inventário de bandeiras não foi lido neste ciclo -- "
+                "esperando a próxima leitura para não roubar bandeira de "
+                "outra aldeia", self.village_id, chosen, chosen_level
+            )
+            return
+
         if not self._can_change_flag:
             if not self._sf_logged:
                 self.logger.info(
@@ -628,6 +693,37 @@ class DefenceManager:
             "Setting flag %d level %d for village %s",
             chosen, chosen_level, self.village_id
         )
+
+    def _log_unmet_preference(self, wanted, chosen, chosen_level):
+        """
+        Avisa UMA vez que os tipos preferidos desta aldeia não têm oferta.
+
+        A pergunta da §6.3 do docs/backend.md é "se dez aldeias quiserem um
+        tipo do qual possuímos três, o que acontece?". A resposta do código é
+        "cai silenciosamente para o próximo tipo da lista" -- correto, e
+        invisível. Esta linha é o que torna a escassez observável sem virar
+        ruído de todo ciclo.
+        """
+        key = (self.village_id, tuple(wanted))
+        if key in self._unmet_logged:
+            return
+        self._unmet_logged.add(key)
+        missing = wanted[:wanted.index(chosen)]
+        self.logger.info(
+            "Village %s: preferência de bandeira %s sem oferta no inventário "
+            "da conta (%s); usando tipo %s nível %s",
+            self.village_id,
+            missing,
+            ", ".join(
+                "tipo %s: %d disponível(is)" % (t, self.flag_type_supply(t))
+                for t in missing
+            ) or "inventário vazio",
+            chosen, chosen_level,
+        )
+
+    def flag_type_supply(self, flag_type):
+        """Quantas bandeiras deste tipo estão SOBRANDO no inventário da conta."""
+        return sum(int(n) for n in (self.flag_supply.get(int(flag_type)) or {}).values())
 
     def flag_upgrade(self, flag, level):
         return self.wrapper.get_api_action(
@@ -654,11 +750,21 @@ class DefenceManager:
             return None
         return self.flags[flag_id]
 
-    def manage_flags(self):
+    def manage_flags(self, force=False):
+        """
+        Lê o inventário de bandeiras da conta a partir da tela `screen=flags`.
+
+        `force=True` pula a randomização. Dois chamadores precisam disso: o
+        caminho de ataque em `update()` (decidir a bandeira de defesa com
+        inventário velho não pode esperar 3 a 8 runs) e a releitura logo após
+        um upgrade bem-sucedido -- que antes re-sorteava a randomização e
+        podia pular, deixando `self.flags` com a contagem anterior ao upgrade
+        que a releitura existia para refletir.
+        """
         if not self.manage_flags_enabled:
             return
         # Randomize flag runs
-        if self.runs != 0 and self.runs % random.randint(3, 8) != 0:
+        if not force and self.runs != 0 and self.runs % random.randint(3, 8) != 0:
             return
         self.logger.info("Managing flags")
 
@@ -719,6 +825,7 @@ class DefenceManager:
         upgraded = 0
         raw_flags = json.loads(get_flag_data.group(1))
         self.flags = {}
+        self.flag_supply = {}
         for flag_type in raw_flags:
             for level in raw_flags[flag_type]:
                 for amount in raw_flags[flag_type][level]:
@@ -743,6 +850,11 @@ class DefenceManager:
                                     flag_type, level, attempts + 1
                                 )
                     if int(amount) > 0:
+                        # A quantidade, que `self.flags` descarta. O jogo
+                        # publica uma LISTA de amounts por nível, então
+                        # acumula em vez de atribuir.
+                        by_level = self.flag_supply.setdefault(int(flag_type), {})
+                        by_level[int(level)] = by_level.get(int(level), 0) + int(amount)
                         if int(flag_type) not in self.flags or self.flags[
                             int(flag_type)
                         ] < int(level):
@@ -751,7 +863,15 @@ class DefenceManager:
             # Da tempo do inventario do servidor refletir o upgrade antes
             # de reler o HTML, evitando reler a mesma contagem obsoleta.
             time.sleep(2)
-            return self.manage_flags()
+            # force: sem ele a releitura re-sorteia a randomizacao do topo e
+            # pode simplesmente nao acontecer, deixando self.flags com a
+            # contagem PRE-upgrade -- exatamente o que este bloco evita.
+            return self.manage_flags(force=True)
+
+        # A leitura foi ate o fim: este e o unico ponto que autoriza
+        # flag_logic() a mover bandeira neste ciclo. Fica no fim de proposito
+        # -- cada `return` acima e uma leitura que nao aconteceu.
+        self._flags_fresh = True
 
     def support(self, vid, troops=None):
         # P2-38: a validacao da posicao vinha depois do GET da praca, entao a

@@ -1608,6 +1608,20 @@ class Village:
             "can_change_flag": self.def_man._can_change_flag,
             "manage_flags_enabled": self.def_man.manage_flags_enabled,
             "available_flags": self.def_man.flags,
+            # A OFERTA por (tipo, nível), que `available_flags` descarta ao
+            # colapsar em "maior nível com alguma". Sem ela o painel não
+            # distingue "tenho uma sobrando" de "tenho cinco", e bandeira é
+            # inventário de conta -- ver docs/backend.md §6.3. Chaves viram
+            # string porque JSON não tem chave inteira.
+            # Nome escolhido para NÃO colidir com método de dict no Jinja2
+            # (items/keys/values/get/pop/update/copy) -- 8º padrão do CLAUDE.md.
+            "flag_supply": {
+                str(flag_type): {str(level): count for level, count in by_level.items()}
+                for flag_type, by_level in self.def_man.flag_supply.items()
+            },
+            # False = o inventário não foi relido neste ciclo, então a política
+            # se absteve de mover bandeira de propósito.
+            "flags_read_this_cycle": self.def_man._flags_fresh,
             # Política em vigor nesta aldeia, para o /flags mostrar POR QUE ela
             # está com a bandeira que está. has_academy None = ainda não lido,
             # e nesse caso a política se abstém (preferred_flags devolve []).

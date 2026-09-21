@@ -49,7 +49,7 @@ REAL_INVENTORY = {2: 7, 3: 7, 4: 6, 5: 7, 6: 7, 7: 4, 8: 7}
 
 
 def make(has_academy=False, current=None, inventory=None, can_change=True,
-         confirmed=True):
+         confirmed=True, flags_fresh=True, supply=None):
     d = DefenceManager(village_id="99999", wrapper=None)
     d.logger = logging.getLogger("test-flags")
     d.manage_flags_enabled = True
@@ -58,6 +58,11 @@ def make(has_academy=False, current=None, inventory=None, can_change=True,
     d.flags = dict(REAL_INVENTORY if inventory is None else inventory)
     d._can_change_flag = can_change
     d._flag_state_confirmed = confirmed
+    # Default True porque todo teste abaixo descreve a politica DADO um
+    # inventario -- e `flag_logic` so move bandeira sobre leitura do ciclo.
+    # O caso stale tem testes proprios mais abaixo.
+    d._flags_fresh = flags_fresh
+    d.flag_supply = dict(supply or {})
     d.sent = []
     d.flag_set = lambda flag, level: d.sent.append((flag, level)) or True
     return d
