@@ -146,7 +146,7 @@ from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
 from game.pvp_conquest import PvpConquestManager
-from game.reservations import ReservationBoard
+from game.reservations import ReservationBoard, ReservationWriter
 from game.world_villages import WorldVillages
 from manager import VillageManager
 from pages.overview import OverviewPage
@@ -189,6 +189,10 @@ class TWB:
     # reservas valer de verdade. Imutavel como default de classe (o objeto e
     # criado sob demanda), mesma forma do `hunter` acima.
     reservation_board = None
+    # Feature 35 / Fase 2: idem, e por um motivo a mais -- o orcamento de
+    # escrita por ciclo (`begin_cycle`) so significa alguma coisa se o objeto
+    # nao nascer de novo a cada ciclo.
+    reservation_writer = None
     # Feature 36: idem -- sobrevive entre ciclos para o TTL de 6h da lista do
     # mundo valer, e para o arquivo de 6,3 MB nao ser reparseado por ciclo.
     world_villages = None
@@ -752,6 +756,23 @@ class TWB:
                     if reservation_board.enabled and managed_villages_dict:
                         reservation_board.refresh(sorted(managed_villages_dict)[0])
 
+                # Feature 35 / Fase 2: escrita no quadro. Vive fora do `if`
+                # acima porque depende do quadro JA ter sido lido -- o token
+                # CSRF e a aldeia do formulario saem daquela mesma resposta.
+                # Instanciado mesmo com o gate desligado: `enabled` e checado
+                # em cada escrita, e assim um religar do config vale no ciclo
+                # seguinte sem reiniciar o bot.
+                reservation_writer = None
+                if reservation_board is not None:
+                    if not self.reservation_writer:
+                        self.reservation_writer = ReservationWriter(
+                            wrapper=self.wrapper, config=config,
+                            board=self.reservation_board,
+                        )
+                    self.reservation_writer.config = config
+                    self.reservation_writer.board = self.reservation_board
+                    reservation_writer = self.reservation_writer
+
                 # Feature 36: UMA lista de aldeias do mundo por ciclo, pelo
                 # mesmo motivo do quadro acima -- o conteudo e global e mede
                 # 6,3 MB. Construir aqui nao vai a rede: o download e
@@ -917,6 +938,7 @@ class TWB:
                         hunter=self.hunter,
                         reservation_board=reservation_board,
                         world_villages=world_villages,
+                        reservation_writer=reservation_writer,
                     ).run()
 
                 sleep = 0

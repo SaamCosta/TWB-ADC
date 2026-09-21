@@ -691,6 +691,42 @@ class Extractor:
     RESERVATION_ROW_RE = re.compile(r'<tr id="reservation_(\d+)">(.*?)</tr>', re.S)
     RESERVATION_CELL_RE = re.compile(r"<td[^>]*>(.*?)</td>", re.S)
 
+    # Fase 2: o token CSRF das acoes de escrita. Sai do `action` do proprio
+    # formulario de criar reserva, e nao de um `h` solto na pagina -- ha varios
+    # formularios na tela (`action=submit`, `save_page_size`,
+    # `new_reservation`, `save_reservation_settings`) e todos carregam `h`,
+    # mas so este e o que a Fase 2 pode disparar. Ancorar no formulario certo
+    # evita que uma mudanca de ordem na pagina troque o token por acidente.
+    RESERVATION_CSRF_RE = re.compile(
+        r'<form action="[^"]*mode=reservations[^"]*action=new_reservation'
+        r'[^"]*?h=([a-f0-9]+)',
+        re.I,
+    )
+
+    # A linha NAO traz o TEXTO do comentario, so um flag binario; o texto vem
+    # de um POST em `ajax=load_comment`, um por reserva. O flag e o que torna
+    # essa leitura barata -- so vale pedir o texto de quem tem um.
+    #
+    # ⚠️ O sinal e a IMAGEM, nao o link. A primeira versao deste regex casava
+    # `id="show_reservation_comment_<id>"`, e isso estava errado de um jeito
+    # que so a captura de 2026-09-21 mostrou: nas reservas DA PROPRIA CONTA o
+    # jogo renderiza esse link sempre, mesmo sem comentario nenhum, porque o
+    # dono pode EDITAR. Medido nas 441 linhas do quadro: o link casava 16
+    # linhas e so 13 tinham comentario, e as 3 falsas positivas eram
+    # exatamente as 3 reservas da conta -- ou seja, 100% de erro justamente
+    # nas linhas de que a procedencia depende (15o padrao). As duas imagens
+    # sao exaustivas e exclusivas (13 + 428 = 441).
+    RESERVATION_HAS_COMMENT_RE = re.compile(r"show_comment\.png")
+
+    # Link "Apagar" que o jogo renderiza SO nas reservas da propria conta
+    # (medido: 3 linhas em 441, que sao exatamente as 3 da conta). E uma
+    # afirmacao DO SERVIDOR sobre quem pode remover o que, e por isso vale
+    # mais que qualquer URL montada aqui: o href ja vem com `h`, `page`,
+    # `sort`, `order` e `filter` da propria leitura.
+    RESERVATION_DELETE_HREF_RE = re.compile(
+        r'href="([^"]*action=delete_reservations[^"]*)"', re.I
+    )
+
     @staticmethod
     def tribe_reservations(res):
         """
@@ -770,6 +806,7 @@ class Extractor:
                 r'info_player&(?:amp;)?id=(\d+)[^>]*>(.*?)</a>', cells[3], re.S
             )
             tribe = re.search(r"\[([^\]]+)\]", cells[3])
+            delete = Extractor.RESERVATION_DELETE_HREF_RE.search(row)
 
             reservations.append({
                 "reservation_id": reservation_id,
@@ -781,8 +818,65 @@ class Extractor:
                 "reserved_by_name": " ".join(player.group(2).split()) if player else "",
                 "reserved_by_tribe": tribe.group(1) if tribe else "",
                 "expires_text": " ".join(re.sub(r"<[^>]+>", " ", cells[4]).split()),
+                # Flag binario, nao o texto -- ver RESERVATION_HAS_COMMENT_RE.
+                "has_comment": bool(Extractor.RESERVATION_HAS_COMMENT_RE.search(row)),
+                # Presente so nas reservas desta conta. `None` nas dos outros,
+                # e e por isso que ele e uma guarda de procedencia e nao so uma
+                # conveniencia: sem href nao ha como remover.
+                "delete_href": (
+                    delete.group(1).replace("&amp;", "&") if delete else None
+                ),
             })
         return reservations
+
+    @staticmethod
+    def reservation_csrf(res):
+        """
+        Token `h` das acoes de escrita do quadro, lido do formulario de criar
+        reserva. `None` quando a resposta nao e a tela (sessao expirada) --
+        e sem ele a Fase 2 nao escreve nada, em vez de postar sem token e
+        tratar a recusa como sucesso.
+        """
+        if res is None:
+            return None
+        html = res if isinstance(res, str) else getattr(res, "text", "") or ""
+        match = Extractor.RESERVATION_CSRF_RE.search(html)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def reservation_comment(res):
+        """
+        Resposta de `ajax=load_comment` / `ajaxaction=save_comment`.
+
+        O contrato NAO foi deduzido do HTML: veio do proprio
+        `ReservationManager.js` que a tela carrega (buscado do CDN estatico
+        `dsbr.innogamescdn.com`, que nao tem sessao e por isso nao gasta o
+        limite de taxa da conta). O `success` do jQuery trata a resposta como
+
+            {"code": <truthy>, "id": <reservation_id>, "comment": "<texto>",
+             "rights": "write"|...}
+
+        e o proprio JS so considera a chamada boa quando `code` e truthy
+        (`e.code||alert(...)`) -- entao a guarda aqui e a mesma que o jogo usa,
+        nao uma inventada.
+
+        Devolve o dict cru, ou `None` quando nao deu para ler. `None` e
+        "nao sei o que esta escrito ali", e quem consome NUNCA pode ler isso
+        como "nao e do bot": e com base nesse texto que se decide remover, e
+        remover reserva alheia e o incidente da 8.7 ao contrario.
+        """
+        if res is None:
+            return None
+        if isinstance(res, dict):
+            payload = res
+        else:
+            try:
+                payload = res.json()
+            except Exception:
+                return None
+        if not isinstance(payload, dict) or not payload.get("code"):
+            return None
+        return payload
 
     @staticmethod
     def own_player_id(res):

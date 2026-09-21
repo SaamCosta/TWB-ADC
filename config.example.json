@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.3",
+    "version": "4.4",
     "author": "stefan2200"
   },
   "server": {
@@ -140,6 +140,9 @@
     "escort_reserve_min_progress": 0.5,
     "respect_tribe_reservations": true,
     "reservation_cache_seconds": 600,
+    "reserve_targets": false,
+    "reserve_max_slots": 1,
+    "reserve_comment": "Conquista em andamento -- trem a caminho",
     "excluded_targets": [],
     "use_world_village_list": true,
     "world_village_list_ttl": 21600

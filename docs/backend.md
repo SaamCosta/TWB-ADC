@@ -209,7 +209,7 @@ Ordem histórica de implementação:
 | 32 | Bandeira por **perfil** (parte 1) | ✅ 2026-08-31 | ⚠️ **1 de 18** — ver §6.3 |
 | 32b | Bandeira por **fase** da aldeia (parte 2) | ⬜ pendente | falta definir o sinal de fase |
 | 33 | Cunhagem automática nativa | ⬜ pendente | — |
-| 34 | Troca Premium | ✅ itens 1,2,3,5 (2026-08-20) | ⚠️ envio nunca rodou em pt-BR — §4.5 |
+| 34 | Troca Premium | ⛔ **morta (2026-09-21)** — código mantido, gate off | nunca validada e não será — §4.5 |
 
 ### 3.1 Notas que não cabem na tabela
 
@@ -390,6 +390,26 @@ precisaria casar. A segunda condição passou a existir: a BBM 002 tem torre
 nível 8.
 
 ### 4.5 Troca premium
+
+> ⛔ **MORTA — o usuário encerrou a Feature 34 em 2026-09-21.** Não há mais
+> interesse em vender na bolsa premium, em nenhum mundo, inclusive em mundo
+> novo. Isto **cancela** o gatilho que estava registrado ("esperar abrir mundo
+> novo para validar o envio em pt-BR") e retira a linha correspondente da §6.2.
+>
+> **O código NÃO foi removido, de propósito.** `do_premium_stuff`,
+> `PremiumExchange`, `_premium_extract_rate_hash()` e os configs
+> `premium_exchange.*` / `trade_for_premium` continuam onde estavam — arrancá-los
+> tocaria `game/resources.py`, que é caminho quente de mercado, e o risco de
+> quebrar o bot é maior que o ganho de faxina. O que impede execução são os dois
+> gates, **medidos no `config.json` em 2026-09-21**: `world.trade_for_premium`
+> é `false` e `village.trade_for_premium` é `false` nas 30 aldeias. O caminho
+> exige os dois ligados (§6.4 do `frontend.md`), então está duplamente morto.
+>
+> **O que isso custa saber:** `exchange_begin`/`exchange_confirm` continuam sem
+> nunca terem rodado em pt-BR, e agora nunca vão rodar. Se alguém religar o gate
+> um dia, trate o caminho de envio como **não validado** — é o perfil exato da
+> Feature 9, onde o envio inteiro estava errado por nunca ter sido exercitado.
+> O texto abaixo fica como registro do que foi medido, não como trabalho pendente.
 
 **Fórmula da taxa** (confere com o servidor; já implementada em
 `PremiumExchange.calculate_marginal_price()`):
@@ -593,7 +613,7 @@ reaparecer, é aqui que se puxa o fio.**
 | Feature 27 (reserva cruzada na conquista bárbara) | próxima conquista bárbara com PvP ativo |
 | Trem PvP falhado → `status: "failed"` | só no próximo train que realmente falhar |
 | `support_others` | ligar em **uma** aldeia e observar `[Support] ... duration` |
-| Venda na bolsa premium | exige bolsa com espaço — mundo novo |
+| ~~Venda na bolsa premium~~ | ⛔ **cancelada em 2026-09-21** — Feature 34 morta, §4.5 |
 | Marcas da torre de vigia na tela de chegadas | a BBM 002 já tem torre nível 8; falta capturar o markup |
 
 ### 6.3 Bandeiras — validação 1 de 18
@@ -2012,16 +2032,93 @@ override; com a leitura oficial funcionando, tende a ficar vazia.
 Registrar em `cache/conquest/*.json` **por que** o alvo foi barrado e **quem**
 reservou — sem isso, daqui a um mês ninguém sabe se a exclusão ainda vale.
 
-**Fase 2 — escrita, com gate próprio e canário.**
-Ao assumir um alvo sem reserva, criar uma em nome da conta; liberar ao abortar,
-perder ou concluir, e **só o que o bot criou**. Como isso é visível para outras
-pessoas da tribo:
+**Fase 2 — escrita, com gate próprio e canário.** ✅ **Implementada em
+2026-09-21, com o gate DESLIGADO — falta o canário.**
+`game/reservations.py::ReservationWriter`, configs
+`conquest.reserve_targets` (default **false**), `conquest.reserve_max_slots`
+(default **1**) e `conquest.reserve_comment`. Testes:
+`tests/test_reservation_writer.py` (25 casos, fixtures verbatim de 2026-09-21).
 
-- config próprio (`conquest.reserve_targets`), **default off**;
-- primeira execução é canário de **uma** reserva, conferida a olho no jogo antes
-  de liberar o resto — o mesmo protocolo da validação de bandeiras;
-- falha do POST nunca vira sucesso presumido; sem confirmação, o alvo **não**
-  conta como reservado.
+#### As três medições que decidiram o desenho
+
+**1. Renovação não tem cliente, e o problema real é o inverso.** A janela entre
+`scheduled_at` e a conquista foi de **7,21 h** (alvo 49709) e **10,68 h**
+(52755) — os dois únicos registros de `cache/conquest` que têm os dois
+timestamps — contra os **72 h** de validade. E há um argumento estrutural que
+não depende do n=2: `ConquestPlanner.run()` (`conquest_planner.py:145`)
+**retorna antes** de `_pick_target()` quando o império tem menos de 4 nobres, ou
+seja a espera por nobre acontece **antes** de existir alvo. Por isso a reserva
+nasce no agendamento do trem, inclusive para alvo manual, e **não há renovação**
+— que exigiria remover e recriar, com uma janela entre os dois POSTs em que o
+alvo fica livre para outra pessoa.
+
+O que a medição achou no lugar: o intervalo mediano entre duas conquistas é de
+**~37 h** (22 gaps, de 3,6 h a 128,6 h). Uma reserva sobrevive ao motivo dela
+por ~60 h, então **deixar expirar sozinha faria o bot segurar ~2 das 5 vagas em
+regime permanente**. Remoção ativa ao concluir é número, não faxina.
+
+**2. Teto de vagas.** `ConquestPlanner` mantém um trem bárbaro por vez no
+império (`active_conquests()`), então **1 vaga basta** e é o default. Sem teto o
+bot encheria o quadro e o dono da conta não conseguiria reservar nada — sem
+erro, só recusa.
+
+**3. Procedência: o jogo publica a resposta, e o cache local não precisava ser
+a fonte.** A captura de 2026-09-21 (441 reservas, 3 da conta) mostrou que a
+linha da reserva **própria** traz um link
+`action=delete_reservations&id=<reserva>&…&h=<csrf>` que **não existe** nas dos
+outros — 3 linhas em 441, exatamente as da conta. É uma afirmação **do
+servidor** sobre quem pode remover o quê, e a Fase 2 a usa em vez de montar URL
+(o POST em lote `action=submit`+`ids[]`+`delete_claims`, que a captura anterior
+tinha achado, ficou **de fora**: aceita vários ids de uma vez e só ampliaria o
+estrago de um bug). O que separa "do bot" de "do usuário" continua sendo o
+**comentário**, lido de volta do jogo por `ajax=load_comment` — contrato tirado
+do `ReservationManager.js`, buscado do CDN estático (sem sessão, logo sem gastar
+o limite de taxa da conta).
+
+#### ⚠️ A captura pegou um bug meu antes de ele rodar
+
+A primeira versão do flag "tem comentário" casava
+`id="show_reservation_comment_<id>"`. Medido nas 441 linhas: o link casa **16** e
+só **13** têm comentário — e as 3 falsas positivas são **exatamente as 3
+reservas da conta**, porque nas próprias o jogo renderiza esse link mesmo sem
+comentário (o dono pode *editar*). Ou seja, 100% de erro nas únicas linhas de
+que a procedência depende: 15º padrão, detector que dispara onde não devia. O
+sinal certo é a imagem (`show_comment.png` × `show_comment_disabled.png`, 13 +
+428 = 441). Guarda em `test_flag_de_comentario_nao_casa_o_link`, que roda o
+regex **errado** contra o markup real e exige que ele erre.
+
+**A mesma captura fechou o ⏳ da fixture derivada** (era item de aceite da Fase
+1): a linha #76156 foi substituída pela #79340 real, e a inventada errava três
+coisas — sem link de tribo na célula do reservante, sem link de apagar, e a
+tribo da conta hoje é "Os Randolinhos" e não "SQUAD 02".
+
+#### Orçamento de requisição, e o que não foi feito
+
+Uma escrita por ciclo (`MAX_WRITES_PER_CYCLE`), porque o limite de taxa é da
+conta e a Fase 2 disputa requisição com o farm. Ciclo completo de uma conquista
+= 1 POST + 1 GET (criar) + 1 GET + 1 GET (remover), a cada ~37 h. A varredura
+custa **zero requisição** no caso normal: reserva sem comentário é descartada
+sem perguntar nada ao servidor.
+
+**PvP conquest ficou fora da escrita** (continua respeitando a leitura):
+`cache/pvp_conquest/` está vazio, o ciclo `pending_scout → pending_sim →
+scheduled` é semi-manual e pode durar dias — é justamente ali que os 3 dias
+poderiam morder, e não há **uma única** medição para calibrar. Escrever
+renovação especulativa para um caminho sem dado seria inventar o limiar que o
+18º padrão proíbe.
+
+**Regras respeitadas:** `reservation_limit` / `reservation_time` /
+`reservation_cooldown` e o tamanho de página **nunca** são escritos — são
+configuração da aliança inteira (21º padrão); a leitura usa `page=all` na
+querystring.
+
+#### ⏳ Falta o canário
+
+Nada foi escrito no quadro ainda. Protocolo, o mesmo da validação de bandeiras:
+ligar `conquest.reserve_targets`, deixar **uma** reserva ser criada, conferir a
+olho no jogo (linha presente, comentário visível, vaga contabilizada), e só
+então deixar rodar. Sinais no log: `Reservations: alvo X (x|y) reservado no
+quadro da alianca` e, ao concluir, `reserva N de X liberada`.
 
 ### Aceite
 
@@ -2041,13 +2138,11 @@ Estado em 2026-09-20 — ✅ = coberto por teste, ⏳ = falta campo.
   segundo é o que mais fácil se escreveria errado.
 - ✅ Teste sem rede cobrindo os cinco caminhos, exclusão por coordenada além de
   por id, e "reservado por mim" contra "reservado por outro".
-- ⚠️ Fixture: **duas das três linhas são verbatim.** A terceira ("reservado por
-  mim") é derivada — a captura dela foi interrompida. O que é medido: o filtro
-  `[Sua]` devolve exatamente 1 linha, logo a conta tem uma reserva própria e o
-  jogo a identifica por `creator_id=5955651`. O que não foi observado: essa linha
-  renderizada. **Trocar pela real na próxima captura**, porque markup suposto é o
-  que fez `loyalty_from_report()` falhar. Está anotado no topo do arquivo de
-  teste, não só aqui.
+- ✅ Fixture: **as três linhas são verbatim desde 2026-09-21.** A terceira
+  ("reservado por mim") era derivada e foi trocada pela real (#79340) na captura
+  da Fase 2. A linha inventada errava três coisas, todas do lado que importa —
+  ver o bloco da Fase 2 acima. Era exatamente o risco que a nota anterior aqui
+  antecipava, e ele se realizou nos três pontos.
 - ✅/⏳ **Primeira observação em campo: 2026-09-20, dois ciclos (10:03 e
   12:16).** Dos três sinais previstos:
   1. ✅ `Reservations: 480 reservas no quadro da tribo (1 minhas, 479 de

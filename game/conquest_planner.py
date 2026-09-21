@@ -85,13 +85,16 @@ class BarbarianTrainPlanner:
     ARRIVAL_MARGIN_SECONDS = 600
 
     def __init__(self, wrapper, villages, config, hunter=None, reservation_board=None,
-                 world_villages=None):
+                 world_villages=None, reservation_writer=None):
         self.wrapper = wrapper
         self.villages = villages or {}
         self.config = config or {}
         self.logger = logger
         self._hunter = hunter
         self.reservation_board = reservation_board
+        # Feature 35 / Fase 2. Opcional: None = o bot le o quadro mas nao
+        # escreve nele, que e exatamente o comportamento da Fase 1.
+        self.reservation_writer = reservation_writer
         # Feature 36: compartilhada, como o quadro de reservas. Opcional para
         # os testes e chamadas antigas -- None devolve o pool de duas fontes.
         self.world_villages = world_villages
@@ -114,6 +117,9 @@ class BarbarianTrainPlanner:
         # desligar `hunter.enabled` com um trem ja agendado deixaria esse trem
         # em "train_scheduled" para sempre -- e, como esse status reserva o
         # alvo, a conquista do imperio inteiro travava junto, sem log.
+        if self.reservation_writer:
+            self.reservation_writer.begin_cycle()
+
         self._promote_scheduled_trains()
         # Feature 35: antes de soltar as orfas, de proposito -- cancelar um
         # trem agendado tira o alvo de "train_scheduled", e e justamente isso
@@ -121,6 +127,11 @@ class BarbarianTrainPlanner:
         # inversa a reserva sobreviveria mais um ciclo inteiro.
         self._cancel_reserved_targets()
         self._release_orphan_reserves()
+        # Fase 2, e DEPOIS das tres acima de proposito: sao elas que levam um
+        # alvo de "em andamento" para um status terminal. Varrer antes soltaria
+        # a reserva de ALVO um ciclo tarde demais -- e, pior, num ciclo em que
+        # o registro ainda diria "train_scheduled".
+        self._release_finished_target_claims()
 
         if not self.config.get("hunter", {}).get("enabled", False):
             self.logger.warning(
@@ -543,6 +554,14 @@ class BarbarianTrainPlanner:
             "target_location": target_meta.get("location"),
         })
 
+        # Fase 2: avisa a alianca DEPOIS de o trem estar agendado, nunca antes.
+        # Se reservasse primeiro e o agendamento falhasse, sobraria reserva sem
+        # trem -- exatamente o "sentar em vaga que nunca vira conquista" que a
+        # 8.7 diz ser tao mal visto quanto furar reserva alheia. A ordem
+        # inversa so arrisca um trem nao anunciado, que e o comportamento da
+        # Fase 1 e nao ofende ninguem.
+        self._claim_target_on_board(target_id, target_meta.get("location"))
+
         self.logger.info(
             "Conquest: trem de %d nobres agendado contra %s, chegada comum %s "
             "(origens: %s)",
@@ -556,6 +575,30 @@ class BarbarianTrainPlanner:
             % (target_id, arrival_str, per_source),
         )
         return target_id
+
+    def _claim_target_on_board(self, target_id, location):
+        """
+        Registra no `cache/conquest` o que foi de fato confirmado no quadro.
+
+        Grava so quando a reserva EXISTE no quadro relido. Sem confirmacao o
+        campo nao aparece, e a ausencia dele significa "o bot nao reservou
+        isto" -- que e o que o resto do sistema precisa para nunca remover
+        reserva que nao e dele. Falha de POST nao vira sucesso presumido em
+        lugar nenhum desta cadeia.
+        """
+        writer = self.reservation_writer
+        if not writer or not writer.enabled:
+            return
+        claim = writer.claim_target(target_id, location)
+        if not claim:
+            return
+        data = ConquestCache.get(target_id) or {}
+        data["target_claim"] = {
+            "reservation_id": claim.get("reservation_id"),
+            "created_at": int(time.time()),
+            "expires_text": claim.get("expires_text"),
+        }
+        ConquestCache.set(target_id, data)
 
     @staticmethod
     def _sched_key(target_id, arrival_str):
@@ -711,6 +754,46 @@ class BarbarianTrainPlanner:
                 "blocked_reason": reason,
                 "blocked_at": int(time.time()),
             })
+
+    def _release_finished_target_claims(self):
+        """
+        Fase 2: devolve a vaga do quadro da alianca quando a conquista acabou.
+
+        NAO e uma reavaliacao de "interesse": o gatilho e o mesmo conjunto que
+        ja governa a invariante de um trem por vez -- `active_conquests()`.
+        Alvo que saiu dali resolveu (conquistado, perdido, bloqueado,
+        cancelado) e a reserva nao tem mais o que defender. Inventar aqui uma
+        segunda nocao de "o bot ainda quer este alvo" criaria uma politica
+        paralela para divergir em silencio da primeira.
+
+        Por que remover em vez de deixar expirar, e isso e medida e nao gosto:
+        a validade e de 3 dias e a conquista dura ~9 h, entao a reserva
+        sobrevive ao motivo dela por ~60 h -- mais que o intervalo mediano
+        entre duas conquistas (~37 h, medido nos 23 registros de
+        cache/conquest). Sem remocao o bot seguraria vaga por uma conquista que
+        ja acabou enquanto monta a seguinte.
+
+        Custo por ciclo: zero requisicao quando nao ha nada a soltar, porque
+        `my_claims()` sai do quadro que ja foi lido e reserva sem comentario e
+        descartada sem perguntar nada ao servidor.
+        """
+        writer = self.reservation_writer
+        if not writer or not writer.enabled:
+            return
+        board = self.reservation_board
+        if not board or not board.is_readable():
+            return
+
+        active = set(ConquestCache.active_conquests())
+        for claim in board.my_claims():
+            target_id = str(claim.get("village_id"))
+            if target_id in active:
+                continue
+            # Reserva sem carimbo e do usuario (ou de procedencia perdida):
+            # `release_claim` se recusa sozinha, e e la que a regra mora.
+            if not claim.get("has_comment"):
+                continue
+            writer.release_claim(claim, reason="conquista resolvida")
 
     def _release_orphan_reserves(self):
         """

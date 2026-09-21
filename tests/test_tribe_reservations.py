@@ -16,20 +16,29 @@ como se pergunta).
           por terceiro COM tribo -> dois links na celula do reservante.
   #74922  VERBATIM. Aldeia de JOGADOR reservada por terceiro -> tem link
           `info_player` na celula do dono TAMBEM, que e a armadilha.
-  #76156  ⚠️ NAO VERBATIM -- DERIVADA. Barbara reservada por MIM.
+  #79340  VERBATIM desde 2026-09-21. Barbara reservada por MIM.
 
-Sobre a #76156, para ninguem confiar nela mais do que ela merece: a captura da
-linha real foi bloqueada no meio da sessao, entao esta linha foi montada a
-partir da #75920 trocando o id do reservante pelo meu (5955651) e a tribo pela
-minha ([SQUAD 02], ally 987 do game_state). O que E fato medido: o filtro
-"[Sua]" da propria tela (`group_id=creator_id&filter=5955651`) devolveu
-EXATAMENTE 1 linha, ou seja a conta tem uma reserva propria e o jogo a
-identifica por esse id; e a estrutura da celula nao depende de quem reservou.
-O que NAO foi observado: essa linha renderizada. Se o jogo marcar a reserva
-propria de forma diferente (um botao de remover a mais, por exemplo), o parse
-posicional continua valendo -- ele le `info_player` dentro da celula 3 -- mas
-**trocar esta linha pela real na proxima captura e barato e deve ser feito**,
-porque markup suposto e exatamente o que fez `loyalty_from_report()` falhar.
+Sobre a #79340: ate 2026-09-21 esta linha era DERIVADA -- montada a partir da
+#75920 trocando o reservante pelo meu id, porque a captura da real tinha sido
+interrompida. A Fase 2 finalmente a capturou, e a linha inventada errava tres
+coisas, todas do lado que importa:
+
+  1. Na reserva PROPRIA nao ha link de tribo na celula do reservante. A
+     derivada tinha `[SQUAD 02]` + player (dois links); a real tem so
+     `info_player`. De quebra a tribo da conta hoje e "Os Randolinhos", nao
+     "SQUAD 02".
+  2. A linha propria traz um link "Apagar"
+     (`action=delete_reservations&id=79340&...&h=...`) que a derivada nao
+     tinha, e que existe SO nas reservas desta conta -- 3 linhas em 441,
+     medido. E essa a guarda de procedencia da Fase 2.
+  3. A linha propria traz `<a id="show_reservation_comment_79340">` MESMO SEM
+     comentario (o dono pode editar), envolvendo a imagem
+     `show_comment_disabled.png`. Um parser que use o link como flag de
+     "tem comentario" acerta as linhas de terceiros e erra 100% das proprias
+     -- ver test_flag_de_comentario_nao_casa_o_link.
+
+Era exatamente o risco anotado aqui antes ("se o jogo marcar a reserva propria
+de forma diferente..."), e ele se realizou nos tres pontos.
 
 Rodar: python tests/test_tribe_reservations.py
 """
@@ -95,25 +104,23 @@ ROWS = '''
             </td>
 </tr>
 
-<tr id="reservation_76156">
+<tr id="reservation_79340">
     <td>
-                <input type="checkbox" name="ids[]" value="76156"/>
+                <input type="checkbox" name="ids[]" value="79340"/>
 
-                <span class="village_anchor" data-player="0" data-id="40314"><a href="/game.php?village=32056&amp;screen=info_village&amp;id=40314" >Aldeia de bárbaros (575|303) K35</a></span>
+                <span class="village_anchor" data-player="0" data-id="51540"><a href="/game.php?village=32056&amp;screen=info_village&amp;id=51540" >Aldeia-bonus (582|289) K25</a></span>
             </td>
-    <td>1104</td>
+    <td>1007</td>
     <td>---</td>
     <td>
-                    <a href="/game.php?village=32056&amp;screen=info_ally&amp;&amp;id=987">
-                [SQUAD 02]
-            </a>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=5955651"  title="SQUAD 02">sccj</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=5955651"  title="Os Randolinhos">sccj</a>
     </td>
-    <td>hoje às 11:02</td>
+    <td>em 24.09. às 07:49</td>
     <td style="white-space:nowrap;">
-        <img id="img_load_76156" src="/graphic/throbber18.gif" style="display:none;" alt="carregando..." />
-                    <img src="/graphic/show_comment_disabled.png" alt="Nenhum comentário disponível" title="Nenhum comentário disponível" />
-                <a href="/game.php?village=32056&amp;screen=map&amp;x=575&amp;y=303&amp;beacon"><img src="/graphic/map_center.png" alt="Centralizar mapa" title="Centralizar mapa" /></a>
+        <img id="img_load_79340" src="/graphic/throbber18.gif" style="display:none;" alt="carregando..." />
+        <a id="show_reservation_comment_79340" href="#" onclick="ReservationManager.toggleComment(79340);return false;">            <img src="/graphic/show_comment_disabled.png" alt="Nenhum comentário disponível" title="Nenhum comentário disponível" />
+        </a>        <a href="/game.php?village=32056&amp;screen=map&amp;x=582&amp;y=289&amp;beacon"><img src="/graphic/map_center.png" alt="Centralizar mapa" title="Centralizar mapa" /></a>
+                    <a href="/game.php?village=32056&amp;screen=ally&amp;action=delete_reservations&amp;id=79340&amp;page=&amp;group_id=all&amp;sort=expires_at&amp;order=ASC&amp;filter=&amp;h=32afa79e"><img src="/graphic/delete.png" alt="Apagar" title="Apagar" /></a>
             </td>
 </tr>
 '''
@@ -159,7 +166,7 @@ def test_coordenada_e_dono_saem_da_linha():
     assert barbara["owner"] == "0", "barbara tem data-player=0"
     assert jogador["location"] == (516, 304)
     assert jogador["owner"] == "920036122"
-    assert minha["location"] == (575, 303)
+    assert minha["location"] == (582, 289)
 
 
 def test_reservante_e_o_jogador_e_nao_a_tribo():
@@ -188,6 +195,59 @@ def test_nao_confunde_reservante_com_proprietario():
     assert jogador["owner"] == "920036122"
     assert jogador["reserved_by_id"] == "492673"
     assert jogador["reserved_by_id"] != jogador["owner"]
+
+
+def test_flag_de_comentario_nao_casa_o_link():
+    """
+    O flag "tem comentario" sai da IMAGEM, nao do link que a abre.
+
+    A primeira versao do parser da Fase 2 casava
+    `id="show_reservation_comment_<id>"`, e o quadro real mostrou por que isso
+    e um detector que dispara onde nao devia (15o padrao): nas reservas DA
+    PROPRIA CONTA o jogo renderiza esse link sempre, mesmo sem comentario
+    nenhum, porque o dono pode editar. Medido nas 441 linhas de 2026-09-21: o
+    link casava 16 linhas e so 13 tinham comentario, e as 3 falsas positivas
+    eram exatamente as 3 reservas da conta -- 100% de erro nas unicas linhas
+    de que a procedencia depende.
+
+    Este teste roda o regex ERRADO contra o markup real e exige que ele erre,
+    para o bug nao voltar calado -- mesma forma da guarda do regex antigo de
+    `incoming_commands`.
+    """
+    import re
+
+    minha = Extractor.tribe_reservations(PAGE)[2]
+    assert minha["has_comment"] is False, (
+        "a reserva 79340 nao tem comentario -- a imagem dela e "
+        "show_comment_disabled.png"
+    )
+    linha = re.search(r'<tr id="reservation_79340">.*?</tr>', ROWS, re.S).group(0)
+    assert re.search(r'id="show_reservation_comment_\d+"', linha), (
+        "o link EXISTE nesta linha, e e por isso que usa-lo como flag daria "
+        "um falso positivo -- se esta asercao falhar, o markup mudou e a "
+        "licao acima precisa ser remedida, nao apagada"
+    )
+    assert "show_comment_disabled.png" in linha
+
+
+def test_reserva_propria_traz_link_de_apagar():
+    """
+    O jogo renderiza `action=delete_reservations` SO nas reservas da propria
+    conta (3 linhas em 441, medido). E uma afirmacao do SERVIDOR sobre quem
+    pode remover o que, e a Fase 2 a usa como guarda de procedencia em vez de
+    montar a URL de remocao na mao.
+    """
+    barbara, jogador, minha = Extractor.tribe_reservations(PAGE)
+    assert barbara["delete_href"] is None, "reserva de terceiro nao tem link"
+    assert jogador["delete_href"] is None
+    assert minha["delete_href"], "a reserva propria tem link de apagar"
+    assert "action=delete_reservations" in minha["delete_href"]
+    assert "id=79340" in minha["delete_href"], (
+        "o `id` do link e o da RESERVA (79340), nao o da aldeia (51540)"
+    )
+    assert "&amp;" not in minha["delete_href"], (
+        "o href sai desescapado, senao o GET levaria `&amp;` literal"
+    )
 
 
 def test_validade_fica_crua():
@@ -268,8 +328,8 @@ def test_barra_reserva_de_terceiro_e_nao_a_minha():
     alheia = board.claimed_by_other("40808")
     assert alheia and alheia["reserved_by_name"] == "Conde Strahd von Zarovch"
 
-    assert board.claimed_by_other("40314") is None, (
-        "40314 esta reservada por mim (5955651) -- barrar aqui faria o bot "
+    assert board.claimed_by_other("51540") is None, (
+        "51540 esta reservada por mim (5955651) -- barrar aqui faria o bot "
         "recusar o proprio alvo"
     )
     assert board.claimed_by_other("99999") is None, "alvo livre nao e barrado"
