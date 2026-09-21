@@ -561,10 +561,16 @@ class PvpConquestManager:
         elif waited_too_long:
             reason = "teto de espera atingido"
         else:
+            # Says how many sources went into the number, not just the
+            # number: a source that could not be read is simply missing from
+            # the measurement, and without the count the percentage looks
+            # like it describes the whole operation when it does not.
+            expected = len(self._source_village_ids(data))
             logger.info(
                 "PvpConquest: target %s holding — %.1f%% of the source army is "
-                "home (need %.0f%%), farm/gather suspended in %s",
+                "home (need %.0f%%), measured in %d/%d source village(s): %s",
                 target_id, ratio * 100, required * 100,
+                len(sources), expected,
                 ", ".join(sorted(s["village_id"] for s in sources)) or "-",
             )
             return
@@ -596,13 +602,7 @@ class PvpConquestManager:
         of a parser must not look like a legitimate answer -- sixth pattern
         in CLAUDE.md).
         """
-        source_ids = []
-        if data.get("clear_village_id"):
-            source_ids.append(str(data["clear_village_id"]))
-        for vid in (data.get("noble_villages") or []):
-            if str(vid) not in source_ids:
-                source_ids.append(str(vid))
-
+        source_ids = self._source_village_ids(data)
         sources = []
         home_total = 0
         owned_total = 0
@@ -633,6 +633,23 @@ class PvpConquestManager:
         if owned_total <= 0:
             return None, sources
         return home_total / owned_total, sources
+
+    @staticmethod
+    def _source_village_ids(data):
+        """
+        Distinct source villages of an operation, clear village first.
+
+        `noble_villages` holds one entry per noble *attack*, so the same
+        village legitimately repeats there; anything counting villages has to
+        de-duplicate, anything counting attacks must not.
+        """
+        source_ids = []
+        if data.get("clear_village_id"):
+            source_ids.append(str(data["clear_village_id"]))
+        for vid in (data.get("noble_villages") or []):
+            if str(vid) not in source_ids:
+                source_ids.append(str(vid))
+        return source_ids
 
     @classmethod
     def _population(cls, troops):

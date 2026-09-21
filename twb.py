@@ -605,17 +605,32 @@ class TWB:
             source_ids.update(str(vid) for vid in (data.get("noble_villages") or []))
 
         primed = 0
+        missed = []
         for vid in sorted(source_ids):
             village = managed_villages.get(vid)
             if not village:
+                missed.append(vid)
                 continue
             if village.prime_for_conquest(config=config):
                 primed += 1
+            else:
+                missed.append(vid)
         if source_ids:
             logging.info(
                 "PvpConquest: primed %d/%d source village(s) before the cycle",
                 primed, len(source_ids),
             )
+            if missed:
+                # Naming them matters: a village that failed to prime is
+                # simply absent from the troop measurement, so the readiness
+                # percentage silently describes a smaller army than the
+                # operation actually depends on. Usually a request timeout
+                # (get_url returns None), and it retries next cycle.
+                logging.warning(
+                    "PvpConquest: no live troop/map data for source village(s) %s "
+                    "-- they are excluded from this cycle's readiness check",
+                    ", ".join(missed),
+                )
         return primed
 
     def run(self):
