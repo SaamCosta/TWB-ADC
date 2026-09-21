@@ -41,6 +41,57 @@ import sys as _sys
 import re as _re
 
 if __name__ == "__main__":
+    # --- Trava de instância única -------------------------------------------
+    # ANTES do tee abaixo, e não junto do resto do startup, por um motivo
+    # concreto: o `open(..., "w")` do tee TRUNCA o log da sessão. Um segundo
+    # `python twb.py` destruiria o log do bot que já está rodando antes de
+    # qualquer verificação mais adiante -- exatamente o estrago do 20º padrão.
+    # A chave é o endpoint da conta, lido do config.json com o `json` da
+    # stdlib para não depender de nenhum import de projeto neste ponto.
+    # Este e o UNICO import de projeto acima do tee, e ele custa um pedaco da
+    # garantia do bloco abaixo: um erro de sintaxe em core/instance_lock.py nao
+    # seria capturado no arquivo de log. O modulo e pequeno, so stdlib e coberto
+    # por teste, e a alternativa (verificar depois do tee) deixaria um segundo
+    # bot truncar o log antes de ser recusado. O traceback vai para o console e
+    # a falha e FECHADA: sem poder garantir unicidade, nao se roda a conta.
+    import json as _json
+
+    try:
+        from core.instance_lock import InstanceLock as _InstanceLock
+    except Exception:
+        import traceback as _traceback
+
+        _traceback.print_exc()
+        print("TWB: a trava de instancia unica nao pode ser carregada; abortando.")
+        _sys.exit(1)
+
+    _REPO_DIR = _os.path.dirname(_os.path.realpath(__file__))
+    try:
+        with open(_os.path.join(_REPO_DIR, "config.json"), encoding="utf-8") as _cf:
+            _lock_key = _json.load(_cf)["server"]["endpoint"]
+    except (OSError, ValueError, KeyError, TypeError):
+        # Sem config legível (primeiro run, ou arquivo corrompido) ainda vale
+        # travar: a chave vira o diretório do repositório, que cobre o caso
+        # real de dois `cmd` na mesma pasta.
+        _lock_key = _REPO_DIR
+
+    _instance_lock = _InstanceLock(_lock_key)  # precisa viver o processo inteiro
+    if not _instance_lock.acquire():
+        print("TWB: recusando iniciar -- ja existe um bot nesta conta.")
+        print(_instance_lock.describe_holder())
+        print(
+            "Dois bots na mesma conta significam duas sequencias de requisicoes "
+            "concorrentes (risco de ban) e duas escritas no mesmo cache/."
+        )
+        _sys.exit(1)
+    if _instance_lock.degraded:
+        print(
+            "TWB: AVISO -- nao foi possivel usar a trava de instancia unica (%s). "
+            "Seguindo mesmo assim; confira na mao que so ha um bot rodando."
+            % _instance_lock.error
+        )
+    # --- Fim da trava --------------------------------------------------------
+
     _LOG_DIR = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "cache", "logs")
     _os.makedirs(_LOG_DIR, exist_ok=True)
     _session_log_file = open(

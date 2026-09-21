@@ -125,8 +125,15 @@ def test_tee_still_installs_when_run_as_main():
                 "print('tee ok')\n"
                 "assert os.path.exists(os.path.join(_LOG_DIR, 'session_latest.log'))\n"
             )
+        # PYTHONPATH=ROOT porque o cabecalho passou a importar
+        # core.instance_lock (a trava de instancia unica precisa vir ANTES do
+        # open(...,"w") do tee, senao um segundo bot trunca o log do primeiro
+        # antes de ser recusado). O twb.py de verdade sempre roda da raiz do
+        # repositorio, onde `core` e importavel; o probe roda num tmp, entao
+        # precisa do caminho explicito.
+        env = dict(os.environ, PYTHONPATH=ROOT)
         proc = subprocess.run([sys.executable, probe], cwd=tmp,
-                              capture_output=True, timeout=60)
+                              capture_output=True, timeout=60, env=env)
         check(proc.returncode == 0,
               "o bloco de captura nao funciona mais quando rodado como script: "
               f"{proc.stderr.decode('utf-8', 'replace')[:400]}")

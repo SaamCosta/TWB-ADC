@@ -59,7 +59,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   — cada arquivo roda sozinho, sem depender de `pytest` instalado. Os
   `tests/smoke_*.py` ficam **fora** desse glob de propósito: vão à rede ou
   abrem processo de verdade, e se rodam na mão (`smoke_bot_manager.py`,
-  `smoke_conquest_reach.py`).
+  `smoke_conquest_reach.py`, `smoke_instance_lock_twb.py`).
+  ⚠️ **Ao rodar a suíte no PowerShell, checar `$LASTEXITCODE`, não `$?`.**
+  Vários testes escrevem WARNING em stderr, e no PowerShell 5.1 qualquer saída
+  em stderr de executável nativo torna `$?` falso mesmo com código 0 — um laço
+  com `if (-not $?)` reportou 15 falhas inexistentes numa suíte 100% verde em
+  2026-09-20.
   Cobertura atual: conquista bárbara (nobre em voo, lealdade do relatório,
   alvo perdido, semântica de status, faixa de queda), encoding do
   `FileManager`, alocação de torre de vigia, limiares de slot de Paladino
@@ -98,7 +103,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   disco por fixtures, então não depende do `cache/` real) e a elegibilidade de
   alvo do trem multi-origem (`tests/test_conquest_target_reach.py` — pool de
   candidatos e alcance por origem, com as coordenadas reais do bolsão oeste do
-  K25; ver o vigésimo quarto padrão).
+  K25; ver o vigésimo quarto padrão) e a trava de instância única
+  (`tests/test_instance_lock.py` — recusa cross-process com subprocessos de
+  verdade, porque trava de arquivo é **reentrante no mesmo processo** e um teste
+  in-process não distinguiria trava real de no-op; `docs/backend.md` §8.10).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever

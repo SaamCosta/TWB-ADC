@@ -1005,7 +1005,7 @@ Três correções de fato sobre a §7.9, porque mudam decisão:
 | # | Item | Origem | Esf. | Medir antes |
 |---|---|---|---|---|
 | 1 | ~~Captcha auto-resume + sessão lida de arquivo~~ ✅ **feito em 2026-09-20 (§8.9)** | LT `core/request.py:242,333,388` | S | nada, é lógica local |
-| 2 | `InstanceLock` por endpoint da conta | LT `core/instance_lock.py` | S | nada |
+| 2 | ~~`InstanceLock` por endpoint da conta~~ ✅ **feito em 2026-09-20 (§8.10)** — reescrito com `msvcrt`, não transplantado | LT `core/instance_lock.py` | S | nada |
 | 3 | ~~`Notification`: config lazy + `try/except` no `send`~~ ✅ **feito em 2026-09-20 (§8.9)**; categorias ficaram de fora (exigem config nova → merge no config vivo) | LT `core/notification.py:22,74` | S | nada |
 | 4 | Ler `map/village.txt` e `map/player.txt` do mundo | LT `game/worldvillages.py` | S | o arquivo responde 200 e traz > 100 linhas |
 | 5 | Verificar os quatro bugs da auditoria deles (abaixo) | LT `CODE_REVIEW.md` | S | leitura |
@@ -2003,6 +2003,104 @@ retomando` no `session_latest.log`, sem intervenção. O caminho de
 
 ---
 
+## 8.10 ✅ `P-TRAVA-INSTANCIA` — dois `twb.py` na mesma conta (2026-09-20)
+
+Item 2 da fila tática da §7.10 e item 7 da §9. **Local, sem rede.**
+
+### O buraco que sobrou
+
+O 22º padrão fechou "o painel sobe um segundo bot": `BotManager.is_running()`
+varre `psutil.process_iter` pelo cwd do repositório, então um bot iniciado no
+`cmd` é detectado e o botão Iniciar não sobe outro. O que ele **não** cobre é o
+caminho sem painel — dois `cmd` abertos na mão, ou um `python twb.py` novo com o
+anterior minimizado. Aí rodam duas sequências de requisições concorrentes na
+mesma conta (risco de ban, que é o que o P2-32 existia para matar) e dois
+processos escrevendo no mesmo `cache/`.
+
+### Por que não dá para transplantar a do fork
+
+`attack_scheduler.py::_Lock` do fork principal faz `if fcntl is None: return
+self`. No Windows `fcntl` não existe, então a trava é **no-op** — uma guarda que
+nunca dispara, que é o 15º padrão de cabeça para baixo. Reescrita aqui com
+`msvcrt.locking` no Windows e `fcntl.flock` no resto.
+
+### Desenho, e as três decisões que não são óbvias
+
+`core/instance_lock.py`. A trava é uma **região de 1 byte** de um arquivo,
+travada pelo SO.
+
+1. **Região do SO, não PID file.** O SO solta a trava quando o processo morre,
+   inclusive em `kill -9`. PID file precisa de detecção de staleness, que erra
+   nos dois sentidos: PID reciclado = trava eterna, processo vivo mal lido =
+   dois bots. Coberto por `test_lock_dies_with_the_process_even_without_release`,
+   que mata o dono com `os._exit(0)`.
+2. **Metadados a partir do byte 1**, fora da região travada. No Windows uma
+   trava exclusiva impede até a **leitura** da região — medido: um `f.read()`
+   do arquivo inteiro levanta `PermissionError(13)`, e `f.seek(1); f.read()`
+   funciona. É isso que permite ao segundo processo dizer *quem* está segurando
+   (pid, hora de início, cwd) em vez de só "ocupado".
+3. **Arquivo no temp do usuário, não em `cache/locks/`.** A trava é *por conta*;
+   se morasse no checkout, dois clones apontando para a mesma conta não se
+   enxergariam — e a chave ser o endpoint viraria decoração, porque só existe um
+   `config.json` por checkout. O temp do usuário é o menor escopo que cobre
+   "mesma pessoa, mesma conta, qualquer pasta".
+
+**Política de falha, deliberadamente assimétrica:** conflito de trava **fecha**
+(`sys.exit(1)` com o dono identificado); erro inesperado de I/O na própria trava
+**abre** com WARNING, porque um mecanismo de guarda quebrado não pode ser o que
+impede o bot de rodar. `acquire()` distingue os dois (`degraded`).
+
+### Onde a verificação entra — e por que no topo do arquivo
+
+No `if __name__ == "__main__":` de `twb.py`, **antes do tee de log**. Não é
+estética: o tee abre `cache/logs/session_latest.log` com `open(..., "w")`, que
+**trunca**. Verificação mais adiante deixaria um segundo `python twb.py`
+destruir o log do bot que está rodando antes de ser recusado — o estrago do 20º
+padrão entrando por outra porta. Custo aceito e registrado no código: é o único
+import de projeto acima do tee, então um erro de sintaxe nele não apareceria no
+arquivo de log; o módulo é só stdlib, é coberto por teste, e o import falha
+**fechado**.
+
+### Medido, não suposto
+
+- Conflito no Windows 10 / Python 3.13 devolve `PermissionError(errno 13)`, sem
+  `winerror` — **não** o `EDEADLOCK (36)` que a documentação do CRT sugere. Os
+  dois entram no `except`, mas 13 é o observado com dois processos reais.
+- A suíte (46 arquivos) passa. `tests/test_instance_lock.py` cobre slug,
+  recusa cross-process, isolamento entre contas diferentes, release, morte do
+  dono, reaquisição no mesmo processo (o `main()` recria `TWB` até 3 vezes) e a
+  ordem trava-antes-do-tee no fonte de `twb.py`.
+- **A guarda foi provada capaz de falhar** (21º padrão): com
+  `_lock_first_byte` neutralizado numa cópia do módulo, os dois processos
+  adquirem — que é exatamente o no-op do fork. Sem esse passo, um teste verde
+  não distinguiria "funciona" de "não faz nada".
+
+### Testes
+
+`tests/test_instance_lock.py` (na suíte; usa subprocessos locais e
+`tempfile`, nunca `cache/locks`). Trava de arquivo é **reentrante dentro do
+mesmo processo**, então teste in-process não conseguiria distinguir trava real
+de no-op — subprocesso não é luxo aqui.
+
+`tests/smoke_instance_lock_twb.py` (**fora** do glob `test_*.py`, rodar na mão):
+ponta a ponta contra o `twb.py` de verdade. Copia o repositório para um temp,
+toma a trava da conta real, roda `python twb.py -i` **na cópia** e verifica
+código 1, mensagem com o pid do dono, e uma sentinela intacta no log de sessão
+da cópia. A cópia existe justamente para não rodar `twb.py` no repositório real:
+o tee truncaria o log do bot em produção, ou seja o teste seria a própria coisa
+que ele existe para impedir (21º padrão). O que a cópia **não** isola é a trava,
+e esse é o ponto — passar prova que ela atravessa pastas diferentes.
+
+### ⏳ Limitação de transição, que vale enquanto o bot atual não reiniciar
+
+O bot em execução no momento da mudança (pid 11936, iniciado antes) **não segura
+trava nenhuma**. Até o próximo restart, a proteção não vale para ele: um
+`python twb.py` agora adquiriria a trava normalmente e subiria o segundo bot.
+O aceite é reiniciar o bot e confirmar que um segundo `python twb.py` é recusado
+citando o pid do primeiro.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -2044,12 +2142,14 @@ retomando` no `session_latest.log`, sem intervenção. O caminho de
    caminho de runtime** — o único que resta é o `twb.py::manual_config`, que só
    roda quando não existe `config.json`. **⏳ Falta campo:** nenhum captcha real
    desde a mudança, e a sessão atual ainda não venceu.
-7. **Item 2 da fila tática da §7.10** — `InstanceLock` por endpoint da conta.
-   Local, sem rede. O 22º padrão já fechou "o painel sobe um segundo bot"
-   varrendo os processos com `psutil`; o que falta é a trava do lado do próprio
-   bot, para o caso de dois `python twb.py` no `cmd`. ⚠️ A `_Lock` do fork é
-   **no-op no Windows** (`if fcntl is None: return self`), então a trava tem que
-   ser reescrita com `msvcrt.locking` ou rename atômico com retry.
+7. ~~**Item 2 da fila tática da §7.10**~~ — ✅ **feito em 2026-09-20** (§8.10):
+   `core/instance_lock.py`, trava de região de 1 byte pelo SO (`msvcrt.locking`
+   no Windows, `fcntl.flock` no resto), chave = endpoint da conta, arquivo no
+   temp do usuário, verificação **antes** do tee de log em `twb.py`. A `_Lock`
+   do fork era no-op no Windows e não foi transplantada. Smoke ponta a ponta em
+   `tests/smoke_instance_lock_twb.py`. **⏳ Falta campo:** o bot que está
+   rodando subiu antes da mudança e não segura trava; o aceite é reiniciá-lo e
+   ver um segundo `python twb.py` ser recusado citando o pid do primeiro.
 
 Depois disso, a fila anterior:
 
