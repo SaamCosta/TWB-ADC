@@ -1276,6 +1276,87 @@ duas coisas dele respondem às perguntas acima:
   de numa corrida. Continua sendo escolha do usuário; a contribuição aqui é que
   a escolha tem forma conhecida.
 
+#### ✅ Captura feita em 2026-09-21 — o endpoint saiu da fonte, não de palpite
+
+O candidato do fork acima **confere**, e agora tem procedência. A tela
+`screen=place&mode=scavenge` não contém o endpoint; ele está no bundle público
+`JsModuleBundles/Scavenging.dd2ec0.js`, servido pela CDN **sem autenticação**.
+Recorte verbatim:
+
+```js
+startUnlockingOption:function(e,a,i,n){
+  a={village_id:e.village_id,option_id:a};
+  TribalWars.post("scavenge_api",{ajaxaction:"start_unlock"},a,
+                  function(a){e.update(a.village,a.time_generated_ms) ...
+```
+
+E `TribalWars.post`, lido de `merged/game.d7017c.js`, faz três coisas que
+decidem a implementação:
+
+```js
+post:function(a,e,t,...){ a=this.buildURL("POST",a,e), e=a.match(/&h=([a-z0-9]+)/);
+  e&&... (a=a.replace(/&h=([a-z0-9]+)/,""), t.h=e[1]) , this.request("POST",a,t,...)}
+request:... n={"TribalWars-Ajax":1}; $.ajax({url:e,data:t,type:a,dataType:"json",headers:n,...})
+```
+
+1. o `h` (csrf) **sai da URL e vai para o corpo**;
+2. form-encoded (default do `$.ajax`), não JSON;
+3. cabeçalho `TribalWars-Ajax: 1`.
+
+É exatamente o que `WebWrapper.get_api_action` já monta (`core/request.py:369`),
+inclusive o `h` vindo de `last_h`. **Nenhum método novo é necessário:**
+
+```python
+wrapper.get_api_action(village_id, "start_unlock",
+                       params={"screen": "scavenge_api"},
+                       data={"village_id": village_id, "option_id": option_id})
+```
+
+**A config do mundo também é server-side**, no 1º argumento de
+`new ScavengeScreen(...)` na própria tela — custo e duração por opção, sem
+precisar de tabela chumbada:
+
+| opção | nome | `loot_factor` | `unlock_cost` | `unlock_duration_seconds` |
+|---|---|---|---|---|
+| 1 | Pequena Coleta | 0,10 | 25 / 30 / 25 | 30 |
+| 2 | Média Coleta | 0,25 | 250 / 300 / 250 | 3.600 |
+| 3 | Grande Coleta | 0,50 | 1.000 / 1.200 / 1.000 | 10.800 |
+| 4 | Extrema Coleta | 0,75 | 10.000 / 12.000 / 10.000 | 21.600 |
+
+O 2º argumento (`var village`) traz `options[N].is_locked`, `unlock_time` e
+`scavenging_squad` **por aldeia** — é o que o `(a)` já consome.
+
+#### O que a varredura das 30 aldeias diz sobre a política de gasto
+
+Medido em 2026-09-21, com a sessão do bot, uma aldeia por vez:
+
+| opção | trancada em | custo unitário | custo de fechar tudo |
+|---|---|---|---|
+| 1 e 2 | **0 aldeias** | — | — |
+| 3 | 3 aldeias | 1.000/1.200/1.000 | 3k / 3,6k / 3k |
+| 4 | **19 aldeias** | 10.000/12.000/10.000 | **190k / 228k / 190k** |
+
+Três consequências para o desenho, que a discussão anterior não tinha como ver:
+
+- **As opções baratas não existem como problema.** Qualquer política que
+  comece por "desbloquear do mais baixo para o mais alto" já nasce sem trabalho
+  a fazer aqui: o que falta é quase só a opção 4.
+- **O usuário desbloqueia na mão**, e estava desbloqueando durante a medição
+  (opção 4 em 44683, 41140, 40618; opção 3 em 46584 e 52755 — `unlock_time`
+  preenchido). A automação precisa **conviver** com isso, não competir: checar
+  `unlock_time` em qualquer opção antes de tentar (é também a regra do jogo de
+  um desbloqueio por vez, que o fork já tinha apontado).
+- **O número da decisão é 608k de recurso**, não "algum recurso". Isso é
+  comparável ao saque de um único ciclo de farm do império (~700k no log de
+  2026-09-20), o que torna a pergunta bem menos dramática do que parecia.
+
+⏳ **Falta o canário, e ele é ação irreversível no jogo.** O payload acima veio
+de fonte, e fonte é hipótese até alguém mandar a requisição (13º padrão). O
+teste mais barato existe e custa 1.000/1.200/1.000: **opção 3 na 49709**, a
+única aldeia com a opção 3 trancada e sem desbloqueio em andamento. Pendente de
+autorização explícita do usuário — gastar recurso da conta dele não é decisão
+de implementação.
+
 ### P-COL-03 — O que a coleta ainda não sabe medir nem aproveitar (2026-09-20)
 
 Três lacunas vistas no fork principal, em ordem de valor:
@@ -1705,9 +1786,63 @@ filtro `[Sua]` usa — ou seja, o jogo concorda que é esse o campo que identifi
 criador. Uma chave de config com o id errado faria o bot furar reserva alheia
 (achando que é sua) ou barrar os próprios alvos, sem nada no log denunciando.
 
-Ainda **não** capturado, e só a Fase 2 precisa: o payload de criar/remover
-(`action=new_reservation` / `action=submit`, ambos com `h=<csrf>`) e o que o jogo
-faz quando já existe reserva de outro para o mesmo alvo.
+#### ✅ Payload de escrita capturado em 2026-09-21
+
+Não precisou de DevTools nem de criar reserva nenhuma: os formulários estão no
+HTML da própria tela que a Fase 1 já baixa. Recorte verbatim de
+`screen=ally&mode=reservations&page=all`:
+
+```html
+<form action="/game.php?village=41123&screen=ally&mode=reservations
+             &action=new_reservation&group_id=all&filter=&h=32afa79e" method="post">
+  <input type="hidden" name="x[]" id="inputx">
+  <input type="hidden" name="y[]" id="inputy">
+  <input type="radio" name="target_type" value="coord" checked="checked">
+  <input type="radio" name="target_type" value="village_name">
+  <input type="radio" name="target_type" value="player_name">
+  <input type="text" name="input" class="target-input-field ...">
+  <input id="save_reservations" class="btn" type="submit" value="Reservar esta aldeia" />
+  <input class="comment_input" type="text" name="comment[]" placeholder="Comentário"/>
+</form>
+```
+
+Criar: `POST action=new_reservation&h=<csrf>` com
+`x[]`, `y[]`, `target_type=coord`, `input=`, `comment[]`. Os `[]` não são
+enfeite — a tela cria **várias** reservas de uma vez.
+
+⚠️ **Repare no formato do destino:** coordenada em campos `x`/`y` separados, e
+não um `village_id`. É a mesma forma que o envio de recursos da Feature 9
+exigia, e que custou uma reescrita inteira quando foi assumido como
+`target_village`. Vale como confirmação de que este jogo endereça aldeia por
+coordenada nos formulários de ação.
+
+Remover, de brinde no mesmo HTML: `POST action=submit` com `ids[]=<id>` (um por
+reserva) e o botão `delete_claims`. Há também `export_claims`, que exporta as
+selecionadas — possivelmente uma leitura mais barata que o HTML de 633 KB, a
+avaliar se a lista crescer.
+
+**E uma regra da tribo que ninguém tinha lido — ela muda o desenho da Fase 2.**
+O formulário `action=save_reservation_settings` publica a configuração vigente:
+
+```html
+<input id="reservation_limit"    name="reservation_limit"    value="5" />
+<input id="reservation_time"     name="reservation_time"     value="3" />
+<input id="reservation_cooldown" name="reservation_cooldown" value="0" />
+```
+
+**Limite de 5 reservas simultâneas por jogador**, validade de 3 (dias, a
+confirmar contra `/page/settings`), sem espera entre uma e outra. Ou seja, a
+Fase 2 não é "reservar o que o planejador eleger": é gastar um recurso escasso
+de 5 vagas que **expiram**, competindo com as reservas manuais do próprio
+usuário. Um gate `reserve_targets` que reservasse livremente encheria as 5
+vagas com alvos de bárbara e deixaria o usuário sem conseguir reservar nada —
+sem erro, só recusa.
+
+⏳ **O que continua sem resposta, e só um POST responde:** o que o jogo faz
+quando já existe reserva de outro para o mesmo alvo. Varri a página por texto
+de recusa (`já reservado`, `reservado por`) e **não há nenhum** — a mensagem só
+existe na resposta da tentativa. Criar uma reserva é ação real e visível para a
+tribo inteira, então fica pendente de autorização explícita do usuário.
 
 ### Faseamento
 
@@ -2247,11 +2382,15 @@ estava certo" de "não trocou porque não leu".
    `Using troops for gather operation: 2`, `Gather operation 1 is ready to
    start` e `Current Haul: 60855 = Gather Batch (4057) * Batch Multiplier 1
    (15)` — o saque previsto logado era o aceite. **Fechado.**
-2. **`P-COL-02(b)`** — desbloqueio automático continua bloqueado até captura do
-   endpoint/payload real e decisão de política de gasto. O ajuste ao maior nível
-   desbloqueado, `P-COL-02(a)`, está ✅ feito (§8.5). O estudo dos forks deu um
-   **candidato** de payload e uma forma possível para a política (§8.5,
-   P-COL-02(b), bloco de 2026-09-20) — continua exigindo captura.
+2. **`P-COL-02(b)`** — **captura ✅ feita em 2026-09-21** (§8.5): endpoint e
+   payload saíram do bundle JS público e de `TribalWars.post`, o
+   `get_api_action` atual já os monta, e a varredura das 30 aldeias deu os
+   números da política (opções 1 e 2 destrancadas em todas; a 3 falta em 3
+   aldeias e a 4 em 19, 608k de recurso para fechar tudo). **Restam duas
+   coisas, ambas do usuário:** autorizar o canário de 1.000/1.200/1.000 na
+   49709 (payload de fonte é hipótese até alguém mandar — 13º padrão) e
+   decidir a política de gasto. O ajuste ao maior nível desbloqueado,
+   `P-COL-02(a)`, está ✅ feito.
 
 **Acrescentado em 2026-09-20, depois do estudo dos forks:**
 
@@ -2261,9 +2400,16 @@ estava certo" de "não trocou porque não leu".
    (480/482 reservas, 1 própria separada corretamente), gate ainda não
    exercitado** — o planejador não foi alcançado em nenhum dos dois ciclos. Ver
    o Aceite da §8.7. **Fase 2 (o bot criar reserva) segue aberta**, com
-   gate `conquest.reserve_targets` default off e canário de uma reserva; falta
-   capturar o payload de `action=new_reservation` e descobrir o que o jogo faz
-   quando já existe reserva de outro para o mesmo alvo.
+   gate `conquest.reserve_targets` default off e canário de uma reserva.
+   **Payload ✅ capturado em 2026-09-21** (§8.7): estava no HTML da própria tela
+   que a Fase 1 já baixa — `action=new_reservation` com `x[]`/`y[]`/
+   `target_type=coord`/`comment[]`, e `action=submit` + `ids[]` +
+   `delete_claims` para remover. **Achado que muda o desenho:** a tribo limita
+   a **5 reservas simultâneas** por jogador, com validade de 3, então a Fase 2
+   gasta vaga escassa que compete com as reservas manuais do usuário — não dá
+   para reservar tudo que o planejador eleger. Continua sem resposta o que o
+   jogo faz com alvo já reservado por outro: não há texto de recusa na página,
+   só na resposta da tentativa.
 4. ~~**`P-CONQ-MAPA` — fechar o terceiro funil com `map/village.txt`**~~ —
    ✅ **feito em 2026-09-20** (§8.6, "O que foi feito"). `game/world_villages.py`,
    terceira camada em `_candidate_pool()`, recorte por caixa antes da pontuação.
