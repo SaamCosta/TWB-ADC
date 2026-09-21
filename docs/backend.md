@@ -1367,9 +1367,23 @@ csrf para o corpo. A caixa de confirmação também validou o parse da config �
 "1.000 / 1.200 / 1.000" e "3:00:00", que são o `unlock_cost` e os `10800 s` da
 tabela acima. Depois do clique, a Grande Coleta passou a contar `2:59:56`.
 
-Resta a **decisão de política de gasto**, que é do usuário. O que a medição
-oferece para ela: as opções baratas já estão todas abertas, sobra a 4 em 19
-aldeias a 32k cada, e o teto de uma por vez por aldeia já é imposto pelo jogo.
+✅ **Política de gasto decidida pelo usuário em 2026-09-21:** *"desbloqueia
+quando der, coleta dá retorno muito rápido"*. Ou seja, **sem gate de excedente
+e sem escalonamento por maturidade** — a condição é poder pagar. Implicações
+para a implementação:
+
+- Tentar o **mais baixo pendente** em cada aldeia, um por ciclo, e só quando os
+  três recursos cobrem o `unlock_cost` lido da tela (nada de tabela chumbada).
+- Respeitar o teto do jogo de **um desbloqueio por vez por aldeia** —
+  `unlock_time` preenchido em qualquer opção significa pular a aldeia. É também
+  o que faz o bot conviver com os desbloqueios manuais do usuário em vez de
+  competir com eles.
+- Interação com `keep_resources` / reserva de nobre: o desbloqueio não pode
+  comer recurso poupado para nobre. A reserva automática (`required_resources`)
+  some quando a aldeia já juntou o suficiente, então quem poupa precisa de
+  `village.keep_resources` declarado — a mesma armadilha da Feature 9.
+- Não precisa de config de "quando": precisa de um gate de liga/desliga
+  (default off até rodar em campo) e de nada mais.
 
 ⚠️ **Limite de taxa observado no mesmo dia, e ele restringe qualquer automação
 aqui.** Sondando pelo navegador com o bot rodando, o servidor devolveu
