@@ -423,6 +423,90 @@ realistas para uma fatia futura.
   É o item de maior esforço dos quatro e o único que exige rota nova + artefato
   distribuível.
 
+### 6.1.2 Candidatos de painel vindos de um mockup de identidade (2026-09-21)
+
+O usuário trouxe cinco telas de um conceito visual de terceiro ("Tribal
+Automator") e perguntou se aquela identidade ajudaria. **A identidade foi
+recusada; o conteúdo de duas telas foi aproveitado.** O registro do porquê vale
+mais que a lista, porque o mockup erra exatamente onde este projeto já decidiu:
+
+> Ele mostra `Status: Bot Active` em verde, badge verde por booleano em todo
+> card, e **nenhum timestamp em nenhuma das cinco telas**. É a linha literal da
+> §5.4 ("Não faça: 'Ativo' em verde") e o vigésimo segundo padrão do `CLAUDE.md`
+> ("pid vivo não é atividade"). Também põe `Launch Attack`, `Execute Mass
+> Recruitment` e `Start All Farm Runs` como ação primária sem diálogo de alcance
+> nem recibo — o oposto do que a §2.2 construiu. Recusado junto: o enquadramento
+> de produto SaaS multi-conta (`v3.2.1`, dropdown de servidor, `Tribal Wars API
+> Token` — que não existe neste jogo, a autenticação é cookie de sessão), os
+> *sliders* para parâmetros de ritmo, e a paleta azul/cinza genérica, que
+> descartaria a tese da §5.1 e as onze fatias já migradas.
+
+Sinal de procedência, para quem reabrir isto: as telas são geradas, não
+desenhadas contra dado real — "Ferm Loot", "Enabied", `Aeeount/Stbtus/Pep`,
+recursos divergindo entre telas (25k/23k, Pop 16k/14k), duas barras de recurso
+empilhadas com números diferentes, e o eixo do gráfico de saque lendo
+`19.00 20.00 29.00 00.00 35.00 10.00 10.00 12.00`. Nenhum layout ali passou por
+um dado que resistisse. Isso não invalida as ideias abaixo — invalida tratar o
+mockup como especificação de layout.
+
+| # | Ideia roubada | Depende de | Esforço |
+|---:|---|---|---|
+| 1 | **Painel "Em voo"** (deles: *Deployment Status*) | `FND-02` p/ estado; ETA já existe parcial | M |
+| 2 | **Razão de exclusão do alvo de farm** | nada — o dado já é produzido e descartado | S |
+| 3 | **Prazo por linha** (deles: coluna *Next Run*) | `FND-01` p/ frescor; útil degradado sem ele | S |
+| 4 | **Strip de recursos persistente no topo** | nada | S |
+| 5 | **Recrutamento em massa** reusando o padrão da §2.2 | nada — padrão já estabelecido | M |
+
+**1. Painel "Em voo" — o mais valioso, e o único que não é cosmético.** Uma
+lista do que está *no ar agora*: trem de nobre, apoio, farm, ataque — origem →
+destino, **hora de chegada absoluta** e a fonte dessa hora. É o sexto padrão do
+`CLAUDE.md` virando interface ("separar quando eu mandei de quando isso
+acontece"), e é o buraco de observabilidade que deixou o `_get_my_conquest()`
+devolver `None` com quatro nobres no ar sem ninguém ver (§6.1 do `backend.md`).
+Também é a única forma de olhar e responder se um apoio chega antes do impacto
+— hoje o gate `support_lead_time_sec` decide isso e não mostra a conta.
+⚠️ **Contratos a preservar, os dois inegociáveis:** (a) a barra de progresso
+genérica do mockup **não serve** — o que se lê é hora de chegada, e ela precisa
+dizer se veio **confirmada** do overview ou **estimada** por
+`Extractor.attack_duration()`, que devolve `0` quando o regex falha e faz o
+nobre nascer "já pousado"; (b) nunca derivar a lista de `status` no cache de
+conquista — foi justamente o campo que mentia (`"complete"` com quatro nobres
+voando), e a trava que segurou foi construída sobre tempo de chegada.
+
+**2. Razão de exclusão do alvo de farm.** O mockup expõe as regras em linguagem
+de domínio (*Ignore Villages < 100 pts*, *Ignore Barbarians with Wall Lvl > 5*).
+O que vale copiar não são os toggles — é a **legibilidade do motivo**: hoje o
+bot ignora e recusa alvos por caminhos invisíveis ao painel (`ignored` /
+`_unknown_ignored`, o limite de ataque falso do mundo via `min_attack_population`,
+o motivo real da recusa já lido por `Extractor.error_box_text`). É o item de
+melhor razão valor/esforço da lista, porque **o dado já é produzido e jogado
+fora** — e foi a ausência dele que fez uma aldeia ter 100% dos ataques recusados
+sem diagnóstico até alguém instrumentar a falha (décimo terceiro e décimo quarto
+padrões).
+
+**3. Prazo por linha.** A coluna *Next Run* das listas de farm, generalizada:
+toda linha que representa algo agendado mostra o próximo prazo. Casa com
+`next_deadline` do contrato de Aldeia (§6.1). Sem `FND-01` ele é apresentado com
+frescor desconhecido, e isso é aceitável — **não** é aceitável omitir a idade.
+
+**4. Strip de recursos persistente no topo.** Densidade útil, alinhado com a
+§5.4. Da aldeia selecionada, com a idade da leitura ao lado. O mockup mostra
+*duas* barras empilhadas com números conflitantes; uma só.
+
+**5. Recrutamento em massa.** O *Recruitment Center* multi-aldeia é o próximo
+candidato natural de ação em massa, porque o padrão já está estabelecido e
+testado pela coleta em massa (§2.2): `dialog` com alcance e consequência antes
+do POST, recibo separando `persisted` de `effect`, falha/timeout virando
+**resultado desconhecido** sem retry. Os *sliders* do mockup, não — quantidade
+de tropa se digita.
+
+**Deliberadamente fora:** o gráfico de saque por hora. O dado existe nos
+`TWB_*`, mas o décimo primeiro padrão manda segmentar por template/capacidade e
+marcar como **censurado** o retorno no teto; um agregado bonito sobre amostras
+heterogêneas já inverteu o sinal de uma conclusão nossa uma vez. Se for feito,
+é sob o contrato que a §6.1.1 já escreveu para as métricas de farm 24 h / 7 d —
+não como card solto.
+
 ### 6.2 Limitações concretas achadas na sexta fatia
 
 Diagnóstico do contrato real de `/village`, que é representativo do resto:

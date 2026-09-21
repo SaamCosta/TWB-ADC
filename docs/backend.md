@@ -787,6 +787,14 @@ discriminar sítios; `COL-01` só sobe com pelo menos dois operadores recorrente
 ‡ condicional e **bloqueado por pré-requisito de medição**, não por esforço —
 `CAL-01` só é implementável depois do baseline do passo 3 da §9. Detalhe em §7.8.
 
+**Consumidor de UI registrado (2026-09-21):** `frontend.md` §6.1.2 descreve um
+painel **"Em voo"** (o que está no ar agora, com hora de chegada e proveniência
+dessa hora) que consome `FND-02` e `DEF-02`, e uma exposição da **razão de
+exclusão/recusa de alvo de farm** que não depende de contrato nenhum — o dado já
+é produzido por `Extractor.error_box_text` e `min_attack_population` e hoje é
+descartado. O painel "Em voo" é a contraparte visível da evidência que motivou
+`FND-02`: o trem duplicado da §6.1.
+
 **Detalhamento dos cinco P0:**
 
 - **`FND-01`** — envelope próprio com `event_id`, `correlation_id`, módulo,
