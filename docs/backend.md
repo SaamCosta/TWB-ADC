@@ -1350,12 +1350,34 @@ Três consequências para o desenho, que a discussão anterior não tinha como v
   comparável ao saque de um único ciclo de farm do império (~700k no log de
   2026-09-20), o que torna a pergunta bem menos dramática do que parecia.
 
-⏳ **Falta o canário, e ele é ação irreversível no jogo.** O payload acima veio
-de fonte, e fonte é hipótese até alguém mandar a requisição (13º padrão). O
-teste mais barato existe e custa 1.000/1.200/1.000: **opção 3 na 49709**, a
-única aldeia com a opção 3 trancada e sem desbloqueio em andamento. Pendente de
-autorização explícita do usuário — gastar recurso da conta dele não é decisão
-de implementação.
+✅ **Canário executado em 2026-09-21 07:47, autorizado pelo usuário.** Opção 3
+na 49709 (BBM 029), pelo **próprio cliente do jogo** no Chrome — não por um
+POST meu à mão. Isso é de propósito: quem montou a requisição foi o jogo, então
+o que se lê é o que o jogo faz, não o que eu acho que ele faz.
+
+A requisição capturada:
+
+```
+POST game.php?village=49709&screen=scavenge_api&ajaxaction=start_unlock  ->  200
+```
+
+Confere com o derivado da fonte, e traz uma confirmação independente de
+quebra: **não há `&h=` na URL**, exatamente como o `game.php` previa ao mover o
+csrf para o corpo. A caixa de confirmação também validou o parse da config —
+"1.000 / 1.200 / 1.000" e "3:00:00", que são o `unlock_cost` e os `10800 s` da
+tabela acima. Depois do clique, a Grande Coleta passou a contar `2:59:56`.
+
+Resta a **decisão de política de gasto**, que é do usuário. O que a medição
+oferece para ela: as opções baratas já estão todas abertas, sobra a 4 em 19
+aldeias a 32k cada, e o teto de uma por vez por aldeia já é imposto pelo jogo.
+
+⚠️ **Limite de taxa observado no mesmo dia, e ele restringe qualquer automação
+aqui.** Sondando pelo navegador com o bot rodando, o servidor devolveu
+*"Sua ação foi bloqueada porque você está fazendo muitos pedidos ao nosso
+servidor"*. Não foi o desbloqueio que estourou — foi o **autocomplete** de um
+campo de texto, que dispara uma requisição por tecla, somado ao tráfego normal
+do bot. Vale como lembrete de que o orçamento de requisições é da **conta**, e
+que uma feature nova disputa esse orçamento com o farm.
 
 ### P-COL-03 — O que a coleta ainda não sabe medir nem aproveitar (2026-09-20)
 
@@ -1838,11 +1860,46 @@ usuário. Um gate `reserve_targets` que reservasse livremente encheria as 5
 vagas com alvos de bárbara e deixaria o usuário sem conseguir reservar nada —
 sem erro, só recusa.
 
-⏳ **O que continua sem resposta, e só um POST responde:** o que o jogo faz
-quando já existe reserva de outro para o mesmo alvo. Varri a página por texto
-de recusa (`já reservado`, `reservado por`) e **não há nenhum** — a mensagem só
-existe na resposta da tentativa. Criar uma reserva é ação real e visível para a
-tribo inteira, então fica pendente de autorização explícita do usuário.
+#### ✅ Canário executado em 2026-09-21, e ele respondeu três coisas
+
+Autorizado pelo usuário, feito pelo cliente do jogo no Chrome.
+
+**1. Criar funciona, e o payload está certo.** `582|289` (Aldeia-bonus, 1.007
+pontos, dono `---`, bárbara de fato) foi reservada:
+
+```
+POST game.php?village=49709&screen=ally&mode=reservations
+     &action=new_reservation&group_id=all&filter=   ->  200
+```
+
+Validade `em 24.09. às 07:49`, criada às 07:49 de 21/09 — os **3 dias** de
+`reservation_time` medidos, não deduzidos.
+
+**2. Alvo já reservado é recusado pelo servidor, e a vaga NÃO é consumida.**
+Tentando `546|377`, reservada por um aliado, a resposta verbatim foi:
+
+> ⛔ **Um aliado já reservou MadaraSupremo de aldeia (546|377)!**
+
+A lista continuou com as mesmas 3 reservas. Isso é melhor do que o desenho
+assumia: a Fase 2 **não precisa** checar o quadro antes de tentar para evitar
+desperdiçar vaga — o jogo é a autoridade e recusa de graça. O quadro continua
+valendo para *não gastar requisição* e para escolher alvo, mas deixa de ser uma
+trava de correção. Note o "aliado": a mensagem para alvo de companheiro da
+própria tribo pode ter outra redação, e um parser que case só esta frase erra
+o outro caso (15º padrão ao contrário — detector que nunca dispara).
+
+**3. O quadro é da ALIANÇA, não da tribo.** A tela informa
+*"Sistema de reservas compartilhado com: Os Randola, Inquisition"*. A §8.7
+inteira fala em "companheiro de tribo"; o conjunto real de gente cuja reserva
+nos bloqueia é maior que isso.
+
+⚠️ **E o argumento de que "o bot não encheria as 5 vagas" não sobreviveu à
+medição.** No momento do canário o usuário **já tinha 2 reservas manuais**
+(JULIET 557|293 e 000 555|288); com a do canário, **3 de 5 ocupadas**, e as
+três expiram sozinhas em até 3 dias. A Fase 2 não entra num quadro vazio —
+entra num quadro que já está 60% cheio de decisões manuais do próprio usuário.
+Qualquer gate precisa de teto próprio (ex.: o bot nunca ocupa mais que N vagas)
+e de respeito à expiração, senão ele compete com o dono da conta.
 
 ### Faseamento
 
