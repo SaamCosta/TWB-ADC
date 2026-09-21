@@ -2599,6 +2599,82 @@ guarda) antes da próxima leitura de log.
 
 ---
 
+## 8.12 Ajustes decididos em 2026-09-21, ainda não implementados
+
+Dois itens aprovados pelo usuário nesta sessão. Ficam aqui, e não num documento
+novo, porque foi a proliferação de arquivos que enterrou uma lição verdadeira
+antes (8º padrão do `CLAUDE.md`).
+
+### `P-TMPL-SCOUT` — o estágio de espião gateado no ferreiro da cavalaria pesada
+
+`templates/troops/watchtower_support.txt` (reescrito pelo usuário em 2026-09-13
+para que as aldeias de torre produzam **espião** em vez de apoio rápido) tem o
+primeiro estágio que constrói alguma coisa gateado em **`smith:15`**:
+
+```json
+{"building": "smith", "level": 15, "upgrades": {"spy": 1},
+ "build": {"stable": {"spy": 440}}}
+```
+
+**O 15 não é requisito do Explorador — é o da cavalaria pesada**, herdado do
+template anterior. Medido na captura real da tela do ferreiro
+(`cache/_smith_br143.html`, recorte verbatim):
+
+```
+Ferreiro (Nível 7) ... Explorador  Pesquisado
+Cavalaria pesada    Requisitos em falta: Ferreiro (15)
+Catapulta           Requisitos em falta: Oficina (2) Ferreiro (12)
+```
+
+Ou seja, com ferreiro **7** o Explorador já está pesquisado. Isso prova que o
+requisito real é **≤ 7**; o mínimo exato não foi medido e não precisa ser para
+concluir que 15 está errado.
+
+**Consequência esperada, e é do tipo que não faz barulho:** aldeia abaixo de
+ferreiro 15 não bate em nenhum estágio construível e produz **zero** espiões,
+sem erro no log. A candidata a sofrer isso é a **52755**, conquistada em
+2026-09-19 e hoje com 0 espiões — contra ~2.550 nas outras duas de torre, que
+passaram do estágio quando o ferreiro delas já era alto. Confirmar essa
+consequência contra a semântica do consumidor de template antes de tratar como
+fato: aqui está medido o *requisito*, não o comportamento do motor.
+
+É o **12º padrão** outra vez — "ao adicionar mais um de algo, ler os irmãos
+antes" —, agora com a variação de que o irmão lido foi o *próprio arquivo na
+versão anterior*, e o número herdado veio junto.
+
+### `P-PVP-SCOUT` — a espia deve sair da aldeia com mais espiões, e no máximo
+
+**Decisão do usuário, 2026-09-21.** Hoje `PvpConquestManager._step_scout()`
+(`game/pvp_conquest.py:451`) itera `self.villages.items()` e pega a **primeira**
+aldeia com `spy >= scout_amount` que tenha o alvo no `map_pos`, enviando
+exatamente `scout_amount` (5, do config). Não é a que tem mais espiões, não é a
+mais próxima: é a primeira da ordem do dict.
+
+O que passa a valer:
+
+- **origem** = a aldeia com o maior número de espiões (entre as que alcançam o
+  alvo), não a primeira encontrada;
+- **quantidade** = o máximo disponível, não o `scout_amount` fixo.
+
+Racional da quantidade: 5 exploradores contra aldeia de jogador defendida
+morrem sem relatório, e relatório que não chega é o que faz o alvo cair em
+`scout_deadline_missed`. Ao implementar, decidir o que fazer com
+`pvp_conquest.scout_amount` — ele vira piso, ou chave morta? Remover sem
+responder isso seria o 4º padrão.
+
+⚠️ **Isto mexe numa conta que já foi usada.** O agendamento do alvo PvP 44155
+(555|288, chegada 2026-09-23 10:00) foi dimensionado com a folga da espia
+calculada sobre a escolha **atual**: pior caso elegível a 42,0 campos = 6h30, e
+a proposta inicial (22/09 19:00) tinha só 6,3 h de folga — foi essa medição que
+empurrou a chegada para 23/09 10:00, com 19,7 h. Trocar a regra de origem muda
+a distância da espia e, portanto, esse número. Medido no dia: das 30 aldeias, 29
+têm ≥5 espiões, os máximos são **80** (34597 a 35,0 campos e 35059 a 38,4), e a
+primeira da ordem de id é a **32056** (50 espiões, 34,7 campos). A aldeia com
+mais espiões é **mais distante** que a escolhida hoje — então a regra nova
+tende a **aumentar** o tempo da espia, não a diminuir.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -2633,6 +2709,14 @@ guarda) antes da próxima leitura de log.
    exercitado** — o planejador não foi alcançado em nenhum dos dois ciclos. Ver
    o Aceite da §8.7. **Fase 2 (o bot criar reserva) segue aberta**, com
    gate `conquest.reserve_targets` default off e canário de uma reserva.
+   **✅ Fase 2 implementada em 2026-09-21** (§8.7), e o **gate foi LIGADO no
+   `config.json` no mesmo dia** — `reserve_targets: true`, `reserve_max_slots: 1`.
+   Ligar já é o canário: com teto de 1, o bot não consegue criar uma segunda
+   reserva nem se quisesse. **⏳ Ainda não exercitado:** o único alvo bárbaro na
+   fila (582|289) **já está reservado à mão pelo usuário**, e nesse caso
+   `claim_target()` devolve `None` sem postar nada. O primeiro exercício real
+   será o próximo alvo sem reserva prévia. Sinal no log:
+   `Reservations: alvo X (x|y) reservado no quadro da alianca`.
    **Payload ✅ capturado em 2026-09-21** (§8.7): estava no HTML da própria tela
    que a Fase 1 já baixa — `action=new_reservation` com `x[]`/`y[]`/
    `target_type=coord`/`comment[]`, e `action=submit` + `ids[]` +
@@ -2676,6 +2760,18 @@ guarda) antes da próxima leitura de log.
    releitura pós-upgrade (bug latente achado no caminho), `flag_supply` com a
    quantidade que o código descartava, e aviso único de oferta zerada.
    **⏳ Falta campo:** as linhas de oferta zerada e a contagem de trocas.
+
+**Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
+
+9. **`P-TMPL-SCOUT`** — tirar o `smith:15` do estágio de 440 espiões de
+   `templates/troops/watchtower_support.txt`. O 15 é o requisito da cavalaria
+   pesada, não do Explorador, que já aparece `Pesquisado` com ferreiro 7 na
+   captura real do ferreiro. Suspeita a confirmar: a 52755 (conquistada em
+   19/09, 0 espiões hoje) não constrói nenhum por causa disso, sem erro no log.
+10. **`P-PVP-SCOUT`** — a espia do PvP deve sair da aldeia com **mais**
+   espiões e levar o **máximo** possível, não a primeira da ordem do dict com
+   5 (`pvp_conquest.py:451`). Cuidado ao implementar: isso altera o tempo de
+   viagem da espia, que é o número que dimensionou a chegada do alvo 44155.
 
 Depois disso, a fila anterior:
 
