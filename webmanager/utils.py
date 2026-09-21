@@ -501,6 +501,14 @@ class BotManager:
        painel dizendo "rodando". O `bot_output.log` de 30/06/2026 registra
        exatamente isso duas vezes seguidas: as duas tentativas morreram no
        prompt do cookie.
+
+       ⚠️ **Atualizado em 2026-09-20: o prompt do cookie nao existe mais.**
+       Sessao vencida passou a ser resolvida por `cache/cookies.txt` (o bot
+       espera o arquivo aparecer e retoma sozinho) e o captcha e reconferido em
+       laco em vez de esperar tecla -- ver `core/request.py::start` e
+       `_await_captcha_clear`. O console continua necessario **so** para o
+       primeiro run (`twb.py::manual_config`, que so roda quando nao existe
+       `config.json`): a decisao fica de pe, com um motivo a menos.
     2. **`is_running()` adota qualquer twb.py do repo**, tenha sido iniciado
        pelo painel ou pelo `cmd`. O P2-32 persistiu o pid em disco para cobrir
        o restart do webmanager, mas o caso comum aqui e o usuario rodar
@@ -661,9 +669,11 @@ class BotManager:
         """
         Sobe o bot num console proprio e visivel. Devolve o dict de status.
 
-        O console nao e enfeite: o bot faz `input()` quando a sessao expira
-        (cookie do navegador) e no primeiro run (URL / user-agent). Sem janela
-        nao ha como responder e o processo fica parado sem sinal nenhum.
+        O console nao e enfeite: o bot faz `input()` no primeiro run (URL /
+        user-agent, `twb.py::manual_config`). Sem janela nao ha como responder e
+        o processo fica parado sem sinal nenhum. O outro motivo -- cookie do
+        navegador quando a sessao expira -- deixou de existir em 2026-09-20:
+        agora vem de `cache/cookies.txt`, sem prompt.
         """
         if self.is_running():
             return self.status()

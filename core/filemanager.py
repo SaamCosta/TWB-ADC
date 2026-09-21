@@ -64,14 +64,21 @@ class FileManager:
             raise FileNotFoundException
 
     @staticmethod
-    def read_file(path):
-        """Reads the contents of a file and returns the data. Returns None if the file does not exist."""
+    def read_file(path, encoding=None):
+        """Reads the contents of a file and returns the data. Returns None if the file does not exist.
+
+        `encoding=None` mantem o comportamento historico (locale; cp1252 no
+        Windows pt-BR). Passe `encoding="utf-8-sig"` para arquivo que o usuario
+        edita no Bloco de Notas: o BOM gravado por ele vira tres caracteres
+        invisiveis no inicio do texto quando lido como cp1252 -- o que, num
+        arquivo de cookies, corrompe silenciosamente o nome do primeiro cookie.
+        """
         full_path = os.path.join(FileManager.get_root(), path)
 
         if not FileManager.path_exists(full_path):
             return None
 
-        with FileManager.__open_file(full_path) as file:
+        with FileManager.__open_file(full_path, encoding=encoding) as file:
             return file.read()
 
     @staticmethod

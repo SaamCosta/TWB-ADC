@@ -647,6 +647,17 @@ puxa o fio.**
   perguntar quem mais pode criá-lo — se a resposta inclui o usuário, a
   detecção tem que ser por **varredura do estado real do SO** (aqui
   `psutil.process_iter` + cwd do repo, 5 ms), não por registro próprio.
+  **Fechamento, 2026-09-20 (`docs/backend.md` §8.9):** os dois `input()` de
+  `core/request.py` não existem mais — sessão vencida vem de
+  `cache/cookies.txt` (o bot espera o arquivo aparecer e retoma sozinho) e o
+  captcha é reconferido em laço. Sobrou **um** prompt no repositório,
+  `twb.py::manual_config`, que só roda quando não existe `config.json`. Duas
+  coisas que a regra acima não dizia e que apareceram ao consertar: o console
+  **não era** o canal certo nem quando existia (o buffer de linha do `cmd.exe`
+  é menor que um cookie do jogo, então colar ali trunca em silêncio); e a
+  varredura por `input()` precisa ir **além do prompt**, porque a mesma tela
+  bloqueada chegava pelo `post_url` sem prompt nenhum e era tratada como ação
+  aceita.
 - ⚠️ **Vigésimo terceiro padrão, cometido em 2026-09-14, e com dano real: tratar
   "está no repositório" como "está versionado".** Ao consolidar a documentação em
   dois arquivos, apaguei doze documentos confiando em que o git guardaria o

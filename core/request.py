@@ -20,6 +20,9 @@ from core.reporter import ReporterObject
 # but prevents the bot from blocking indefinitely.
 REQUEST_TIMEOUT = (15, 45)
 
+# Marcador que o jogo coloca na pagina quando exige captcha ("bot protection").
+BOT_PROTECT_MARKER = 'data-bot-protect="forced"'
+
 
 class WebWrapper:
     """
@@ -39,6 +42,16 @@ class WebWrapper:
     auth_endpoint = None
     reporter = None
     delay = 1.0
+
+    # Espera entre duas reconferencias de captcha. Nao precisa ser curto: quem
+    # resolve o captcha e uma pessoa no navegador, e o custo de descobrir um
+    # minuto depois e um minuto.
+    CAPTCHA_POLL_SECONDS = 60
+    # Espera entre duas leituras de cache/cookies.txt enquanto nao ha sessao.
+    COOKIE_POLL_SECONDS = 15
+    # De quanto em quanto tempo a instrucao de como destravar e reimpressa.
+    COOKIE_REMIND_SECONDS = 600
+    COOKIE_FILE = "cache/cookies.txt"
 
     def __init__(self, url, server=None, endpoint=None, reporter_enabled=False, reporter_constr=None):
         self.web = requests.session()
@@ -71,13 +84,10 @@ class WebWrapper:
             res = self.web.get(url=url, headers=headers, timeout=REQUEST_TIMEOUT)
             self.logger.debug("GET %s [%d]", url, res.status_code)
             self.post_process(res)
-            if 'data-bot-protect="forced"' in res.text:
-                self.logger.warning("Bot protection hit! cannot continue")
-                self.reporter.report(
-                    0, "TWB_RECAPTCHA", "Stopping bot, press any key once captcha has been solved")
-                Notification.send("Bot protection hit! cannot continue")
-                input("Press any key...")
-                return self.get_url(url, headers)
+            if BOT_PROTECT_MARKER in res.text:
+                # GET e idempotente: da para repetir a propria requisicao
+                # bloqueada e devolver a resposta boa ao chamador.
+                return self._await_captcha_clear(probe_url=url, headers=headers)
             return res
         except Exception as e:
             self.logger.warning("GET %s: %s", url, str(e))
@@ -97,41 +107,215 @@ class WebWrapper:
             res = self.web.post(url=url, data=data, headers=headers, timeout=REQUEST_TIMEOUT)
             self.logger.debug("POST %s %s [%d]", url, enc, res.status_code)
             self.post_process(res)
+            if BOT_PROTECT_MARKER in res.text:
+                # Construcao, recrutamento, coleta e envio de ataque passam por
+                # aqui. Antes desta guarda um captcha durante um POST era
+                # *invisivel*: a pagina de bot protection voltava com 200 e o
+                # chamador a tratava como "acao aceita" -- decimo quinto padrao,
+                # um detector que nunca dispara.
+                #
+                # A acao **nao** e repetida depois que o captcha sai. Reenviar
+                # um POST as cegas duplicaria ataque/construcao, que e o tipo de
+                # estrago que a §8.7 documenta; `None` e o valor de falha que os
+                # chamadores ja tratam.
+                self._await_captcha_clear(
+                    probe_url="game.php?screen=overview", headers=self.headers)
+                self.logger.warning(
+                    "POST %s foi bloqueado por bot protection e NAO foi refeito; "
+                    "a acao sera retentada no proximo ciclo", url)
+                return None
             return res
         except Exception as e:
             self.logger.warning("POST %s %s: %s", url, enc, str(e))
             return None
 
-    def start(self):
-        session_data = FileManager.load_json_file("cache/session.json")
-        if session_data:
-            self.web.cookies.update(session_data['cookies'])
-            get_test = self.get_url("game.php?screen=overview")
-            if get_test and "game.php" in get_test.url:
-                return True
-            self.logger.warning("Current session cache not valid")
+    def _await_captcha_clear(self, probe_url, headers=None):
+        """Espera o captcha ("bot protection") sair, reconferindo a pagina.
 
-        self.web.cookies.clear()
-        cinp = input("Enter browser cookie string> ")
+        Substitui o `input("Press any key...")` que existia aqui. O prompt era
+        inutil em tres situacoes distintas e todas reais:
+
+        - o bot subido pelo painel nao tem console, entao ninguem podia
+          responder: o processo ficava **vivo, com pid valido e parado para
+          sempre** enquanto o painel dizia "rodando" (vigesimo segundo padrao);
+        - quem resolve o captcha resolve **no navegador**, nao no console do
+          bot, e a tecla so era apertada quando alguem passava na frente da
+          maquina;
+        - o `input()` estava dentro do `try`, entao um stdin fechado levantava
+          `EOFError` e virava um `GET falhou` generico no log -- o motivo real
+          sumia.
+
+        Agora o proprio bot descobre sozinho quando o bloqueio saiu. A espera e
+        **sem limite** de proposito: desistir devolveria `None` para todo mundo
+        e faria os managers decidirem sobre dado ausente, e o captcha nao se
+        resolve sozinho. Cada tentativa loga, entao a idade da ultima linha do
+        log -- o unico sinal honesto de atividade (vigesimo segundo padrao) --
+        continua andando enquanto o bot espera.
+
+        Devolve a resposta ja limpa de `probe_url`, ou `None` se a reconferencia
+        nunca chegar a acontecer por erro de rede persistente (esse caminho so
+        existe no laco, que nao sai sem sucesso).
+        """
+        started = time.time()
+        self.logger.warning(
+            "Bot protection! Resolva o captcha no navegador (mesma sessao); "
+            "o bot volta sozinho quando sair. Reconferindo a cada %ds.",
+            self.CAPTCHA_POLL_SECONDS)
+        self.reporter.report(
+            0, "TWB_RECAPTCHA",
+            "Bot protection: resolva o captcha no navegador, o bot retoma sozinho")
+        Notification.send(
+            "Bot protection! Resolva o captcha no navegador da mesma sessao - "
+            "o bot retoma sozinho quando sair.")
+
+        probe_url = urljoin(self.endpoint if self.endpoint else self.auth_endpoint, probe_url)
+        if not headers:
+            headers = self.headers
+        while True:
+            time.sleep(self.CAPTCHA_POLL_SECONDS)
+            try:
+                res = self.web.get(url=probe_url, headers=headers, timeout=REQUEST_TIMEOUT)
+            except Exception as exc:
+                self.logger.warning("Reconferencia de captcha falhou: %s", exc)
+                continue
+            waited = int(time.time() - started)
+            if BOT_PROTECT_MARKER in res.text:
+                # De proposito sem `post_process`: a pagina de captcha nao tem
+                # csrf-token nem `&h=`, e processa-la jogaria fora os que valem.
+                self.logger.warning(
+                    "Ainda bloqueado por bot protection (%ds esperando)", waited)
+                continue
+            self.post_process(res)
+            self.logger.info("Bot protection saiu apos %ds, retomando", waited)
+            Notification.send("Captcha resolvido, o bot retomou.")
+            return res
+
+    @staticmethod
+    def _parse_cookie_string(raw):
+        """Converte um `k=v; k2=v2` de navegador em dict.
+
+        Tolera o BOM do Bloco de Notas, quebras de linha e o prefixo `cookie:`
+        (quem copia do DevTools copia o cabecalho inteiro). Par sem `=` e
+        ignorado em vez de virar chave de valor vazio.
+        """
         cookies = {}
-        cinp = cinp.strip()
-        for itt in cinp.split(';'):
-            itt = itt.strip()
-            kvs = itt.split("=")
-            k = kvs[0]
-            v = '='.join(kvs[1:])
-            cookies[k] = v
-        self.web.cookies.update(cookies)
-        self.logger.info("Game Endpoint: %s", self.endpoint)
+        raw = (raw or "").replace(chr(0xFEFF), "").replace("\n", "").replace("\r", "").strip()
+        if raw.lower().startswith("cookie:"):
+            raw = raw.split(":", 1)[1].strip()
+        for item in raw.split(";"):
+            item = item.strip()
+            if not item or "=" not in item:
+                continue
+            key, value = item.split("=", 1)
+            key = key.strip()
+            if key:
+                cookies[key] = value
+        return cookies
 
-        for c in self.web.cookies:
-            cookies[c.name] = c.value
-
+    def _persist_session(self):
+        """Grava a sessao **ja provada**. Nunca chamar antes do teste passar."""
         FileManager.save_json_file({
             'endpoint': self.endpoint,
             'server': self.server,
-            'cookies': cookies
+            'cookies': {c.name: c.value for c in self.web.cookies}
         }, "cache/session.json")
+
+    def _session_works(self, cookies):
+        """Carrega os cookies e diz se eles dao uma pagina de jogo logada.
+
+        Nada e persistido antes da prova, entao um cookie vencido colado por
+        engano nao sobrescreve um `cache/session.json` que funcionava.
+        """
+        if not cookies:
+            return False
+        self.web.cookies.clear()
+        self.web.cookies.update(cookies)
+        test = self.get_url("game.php?screen=overview")
+        if not test or "game.php" not in test.url:
+            return False
+        self._persist_session()
+        return True
+
+    def start(self):
+        """Obtem uma sessao utilizavel. Nunca pergunta nada no console.
+
+        Ordem: `cache/session.json` -> `cache/cookies.txt` -> espera o arquivo
+        aparecer. O `input("Enter browser cookie string> ")` que existia aqui
+        saiu por dois motivos independentes:
+
+        1. **Sem console nao ha resposta.** Bot subido pelo painel ficava parado
+           para sempre nesse prompt, com o painel dizendo "rodando" -- e o
+           `bot_output.log` guardava a prova disso desde 30/06/2026 (vigesimo
+           segundo padrao).
+        2. **Console trunca linha longa.** Um cookie de Tribal Wars e maior que
+           o buffer de linha do `cmd.exe`, entao colar ali corta a string em
+           silencio: o bot aceita, o servidor nao, e todo ciclo seguinte diz
+           "sessao invalida" sem dizer por que. Essa e a observacao do fork
+           LazyTurtle, e e o motivo de o prompt nao ter sido mantido nem quando
+           existe console.
+
+        Um arquivo nao tem limite de linha e pode ser escrito de fora do
+        processo -- inclusive com o bot ja rodando e esperando.
+        """
+        session_data = FileManager.load_json_file("cache/session.json")
+        if session_data and session_data.get("cookies"):
+            if self._session_works(session_data["cookies"]):
+                self.logger.info("Game Endpoint: %s", self.endpoint)
+                return True
+            self.logger.warning("Current session cache not valid")
+
+        raw = FileManager.read_file(self.COOKIE_FILE, encoding="utf-8-sig")
+        if raw and raw.strip():
+            if self._session_works(self._parse_cookie_string(raw)):
+                self.logger.info(
+                    "Sessao carregada de %s. Game Endpoint: %s",
+                    self.COOKIE_FILE, self.endpoint)
+                return True
+            self.logger.warning(
+                "O cookie em %s nao autenticou (vencido ou incompleto)",
+                self.COOKIE_FILE)
+
+        return self._wait_for_session(tried=raw)
+
+    def _session_instructions(self):
+        return (
+            "Sem sessao utilizavel.\n"
+            "Cole a string de cookie do navegador (o cabecalho 'cookie:' inteiro) "
+            "no arquivo:\n"
+            "    %s\n"
+            "Salve como UTF-8 e o bot comeca sozinho em ate %ds -- nao precisa "
+            "reiniciar.\n"
+            "NAO cole no console: ele corta linha longa e o cookie chega "
+            "truncado."
+            % (FileManager.get_path(self.COOKIE_FILE), self.COOKIE_POLL_SECONDS)
+        )
+
+    def _wait_for_session(self, tried=None):
+        """Espera um cookie utilizavel aparecer em `cache/cookies.txt`."""
+        message = self._session_instructions()
+        print(message)
+        self.logger.warning("Esperando uma sessao (cole o cookie em %s)", self.COOKIE_FILE)
+        Notification.send(
+            "TWB esta sem sessao: cole a string de cookie em cache/cookies.txt")
+        last_reminder = time.time()
+        while True:
+            time.sleep(self.COOKIE_POLL_SECONDS)
+            raw = FileManager.read_file(self.COOKIE_FILE, encoding="utf-8-sig")
+            # `raw != tried` evita reprovar em laco o mesmo texto ja recusado --
+            # cada tentativa custa uma requisicao ao jogo.
+            if raw and raw.strip() and raw != tried:
+                tried = raw
+                if self._session_works(self._parse_cookie_string(raw)):
+                    self.logger.info(
+                        "Sessao aceita. Game Endpoint: %s", self.endpoint)
+                    Notification.send("TWB: sessao aceita, iniciando.")
+                    return True
+                self.logger.warning(
+                    "O cookie colado nao deu uma sessao logada; copie o cabecalho "
+                    "'cookie:' inteiro de novo")
+            if time.time() - last_reminder > self.COOKIE_REMIND_SECONDS:
+                print(message)
+                last_reminder = time.time()
 
     def get_action(self, village_id, action):
         url = "game.php?village=%s&screen=%s" % (village_id, action)

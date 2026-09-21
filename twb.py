@@ -559,7 +559,6 @@ class TWB:
             reporter_constr=config["reporting"]["connection_string"],
         )
 
-        self.wrapper.start()
         if not config["bot"].get("user_agent", None):
             print(
                 "No custom user agent was supplied, this will likely get you banned."
@@ -567,7 +566,14 @@ class TWB:
                 "Just google what is my user agent"
             )
             return
+        # Antes o user-agent era aplicado *depois* de start(), entao a unica
+        # requisicao que valida a sessao saia com o UA falso do default da
+        # classe -- justamente a requisicao que o jogo usa para carimbar a
+        # sessao. Setimo padrao: sondar com o cliente errado. Como start() agora
+        # emite ate tres requisicoes (teste do cache, teste do cookies.txt e
+        # cada nova tentativa da espera), isso deixou de ser detalhe.
         self.wrapper.headers["user-agent"] = config["bot"]["user_agent"]
+        self.wrapper.start()
         for vid in config["villages"]:
             # Village(...) already creates a fresh instance.  Deep-copying it
             # cloned the whole shared WebWrapper graph as well (requests

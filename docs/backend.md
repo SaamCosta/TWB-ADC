@@ -124,7 +124,7 @@ usa o template como base e descarta chave que só exista no config do usuário
 
 ### 2.5 Testes
 
-43 arquivos `test_*.py` em `tests/`, cada um roda sozinho sem `pytest`:
+45 arquivos `test_*.py` em `tests/`, cada um roda sozinho sem `pytest`:
 
 ```powershell
 foreach ($t in (Get-ChildItem tests/test_*.py)) { python $t.FullName }
@@ -144,6 +144,10 @@ leitura **não** pode fechar a janela de 8 h de `fetch_delay`).
 O arquivo `test_gather_controls.py` acrescenta seleção dinâmica de coleta,
 fallback por opção ocupada/travada, escrita atômica em massa, contrato HTTP e a
 garantia de que todas as aldeias compartilhem a mesma sessão autenticada.
+`test_session_and_captcha.py` e `test_notification_safety.py` cobrem a §8.9
+(sessão por arquivo, auto-resume de captcha e o `Notification` à prova de falha)
+— os dois foram rodados contra o `HEAD` anterior numa árvore temporária, onde
+falham 19 e 5 checagens respectivamente.
 
 `tests/smoke_bot_manager.py` fica fora do glob de propósito (abre console de
 verdade). **A maior parte do bot segue sem cobertura** — em especial tudo que faz
@@ -1000,9 +1004,9 @@ Três correções de fato sobre a §7.9, porque mudam decisão:
 
 | # | Item | Origem | Esf. | Medir antes |
 |---|---|---|---|---|
-| 1 | Captcha auto-resume + sessão lida de arquivo (tirar os dois `input()` de `core/request.py`) | LT `core/request.py:242,333,388` | S | nada, é lógica local |
+| 1 | ~~Captcha auto-resume + sessão lida de arquivo~~ ✅ **feito em 2026-09-20 (§8.9)** | LT `core/request.py:242,333,388` | S | nada, é lógica local |
 | 2 | `InstanceLock` por endpoint da conta | LT `core/instance_lock.py` | S | nada |
-| 3 | `Notification`: config lazy + `try/except` no `send` + categorias | LT `core/notification.py:22,74` | S | nada |
+| 3 | ~~`Notification`: config lazy + `try/except` no `send`~~ ✅ **feito em 2026-09-20 (§8.9)**; categorias ficaram de fora (exigem config nova → merge no config vivo) | LT `core/notification.py:22,74` | S | nada |
 | 4 | Ler `map/village.txt` e `map/player.txt` do mundo | LT `game/worldvillages.py` | S | o arquivo responde 200 e traz > 100 linhas |
 | 5 | Verificar os quatro bugs da auditoria deles (abaixo) | LT `CODE_REVIEW.md` | S | leitura |
 | 6 | `ServerClock` + `GameClock` | LT `core/server_clock.py:54,137` | M | formato de data do rodapé do br143 |
@@ -1878,6 +1882,127 @@ crash — é a **presença** de linhas `Conquest:` no log, que nunca apareceram.
 
 ---
 
+## 8.9 ✅ `P-SESSAO-INPUT` — os dois `input()` do caminho quente (2026-09-20)
+
+Itens **1 e 3** da fila tática da §7.10, feitos juntos porque o segundo é
+pré-requisito silencioso do primeiro (ver "Por que os dois juntos" abaixo).
+
+### O defeito
+
+`core/request.py` tinha dois `input()` num programa que o painel sobe sem
+console:
+
+```
+core/request.py:79   input("Press any key...")               # captcha
+core/request.py:115  input("Enter browser cookie string> ")  # sessão vencida
+```
+
+O segundo tem prova em disco desde **30/06/2026**: o `bot_output.log` registra
+duas tentativas seguidas de iniciar pelo painel, ambas terminando na linha
+`Enter browser cookie string> ` com o processo **vivo, com pid válido e parado
+para sempre** — e o painel, que só olhava o pid, dizendo "rodando" (22º padrão).
+Ninguém leu porque o sintoma visível era "iniciar pelo painel não é confiável", e
+não um erro.
+
+O do captcha era pior por três razões independentes:
+
+1. **Quem resolve o captcha resolve no navegador**, não no console do bot. A
+   tecla só era apertada quando alguém passava na frente da máquina — o prompt
+   não observava a coisa que dizia esperar.
+2. O `input()` estava **dentro do `try`**, então um stdin fechado levantava
+   `EOFError`, era engolido pelo `except Exception` e virava `GET ...: EOF when
+   reading a line` no log. O motivo real (captcha) sumia — 2º padrão com outra
+   máscara.
+3. **O POST não tinha guarda nenhuma.** Construção, recrutamento, coleta e envio
+   de ataque passam por `post_url`, e a página de bot protection volta com
+   **200**: o chamador a tratava como ação aceita. Um captcha durante um ciclo
+   era um no-op silencioso em toda ação de escrita — 15º padrão na forma de
+   detector que nunca dispara.
+
+### O que mudou
+
+**Captcha → `WebWrapper._await_captcha_clear()`.** O bot reconfere a página a
+cada `CAPTCHA_POLL_SECONDS` (60 s) e retoma sozinho. A espera é **sem limite** de
+propósito: desistir devolveria `None` para todo mundo e faria os managers
+decidirem sobre dado ausente, e o captcha não se resolve sozinho. Cada tentativa
+loga, então a idade da última linha do log — o único sinal honesto de atividade
+(22º padrão) — continua andando enquanto o bot espera.
+
+Duas decisões que a versão ingênua erraria:
+
+- **A página bloqueada não passa por `post_process()`.** Ela não tem
+  `csrf-token` nem `&h=`, e o `elif` do `post_process` **apaga** o token quando
+  não acha um — o bot voltaria do captcha sem conseguir agir.
+- **O POST bloqueado devolve `None` e a ação NÃO é refeita.** As duas
+  alternativas são erradas em direções opostas: devolver a página de captcha faz
+  o chamador achar que a ação foi aceita; reenviar o POST às cegas duplica ataque
+  ou construção — exatamente o estrago da §8.7. `None` é o valor de falha que os
+  chamadores já tratam, e a ação fica para o próximo ciclo.
+
+**Sessão → `cache/cookies.txt`.** Ordem: `cache/session.json` →
+`cache/cookies.txt` → espera o arquivo aparecer (poll de 15 s, instrução
+reimpressa a cada 10 min). Nada é persistido antes de a sessão ser **provada**
+com um GET logado, então um cookie vencido colado por engano não sobrescreve mais
+o `session.json` que funcionava — a versão antiga gravava incondicionalmente logo
+depois do `input()`.
+
+O prompt não foi mantido nem para quem tem console, e o motivo é do fork
+LazyTurtle: **o buffer de linha do `cmd.exe` é menor que um cookie de Tribal
+Wars**, então colar ali trunca a string em silêncio — o bot aceita, o servidor
+não, e todo ciclo seguinte diz "sessão inválida" sem dizer por quê. Arquivo não
+tem limite de linha, pode ser escrito de fora do processo e é lido como
+`utf-8-sig` (o BOM do Bloco de Notas corromperia o **primeiro** cookie, e só
+ele). O parser tolera o prefixo `cookie:` colado inteiro do DevTools.
+
+**De brinde, o user-agent.** `twb.py` aplicava `headers["user-agent"]` **depois**
+de `start()`, então a única requisição que validava a sessão saía com o UA falso
+do default da classe — 7º padrão, sondar com o cliente errado. Agora o UA é
+aplicado antes, o que importa mais do que antes porque `start()` passou a poder
+emitir várias requisições.
+
+### Por que os dois juntos
+
+O caminho de captcha **chama** `Notification.send`, e ele está dentro do `try` do
+`get_url`. Com o `send` propagando — e ele propagava: não havia `try/except`
+nenhum e `telegram` faz rede —, um timeout do Telegram no instante do captcha
+viraria um "GET falhou" genérico e a espera inteira seria pulada. Corrigir o item
+1 sem o 3 seria construir a guarda em cima do mesmo alçapão.
+
+`core/notification.py` ficou: config **preguiçoso** (nada de I/O no `import`, que
+é o 20º padrão — o módulo instancia o objeto no corpo, e `twb.py`, o webmanager e
+vários testes o importam) e `send()` que **nunca** propaga. O outro chamador é
+`twb.py`, que notifica de dentro de um `except` no handler de crash: uma exceção
+secundária ali escapa do laço de retry e o bot **sai** em vez de reiniciar. O
+fork registra isso acontecendo em 2026-08-03. Efeito colateral bom da preguiça:
+`notifications.enabled` passou a valer **ao vivo**, sem reiniciar o bot.
+
+**Não** implementado de propósito: o filtro por categoria (`notify_<categoria>`)
+que o fork tem. Ele exige chaves novas em `config.example.json` e, por tabela,
+bump de `build.version` — o que dispara o merge no `config.json` vivo de 27
+aldeias, e `merge_configs()` descarta chave global que só exista lá. Fatia
+própria, não brinde desta.
+
+### Testes
+
+`tests/test_session_and_captcha.py` (19 checagens) e
+`tests/test_notification_safety.py` (5). Sem rede, sem relógio real e sem tocar
+`cache/session.json` ou `cache/cookies.txt` reais — `FileManager`, `time` e
+`Notification` são substituídos no namespace do módulo (21º padrão: um teste não
+obtém sua verificação escrevendo no artefato de produção).
+
+Rodados **contra a versão pré-correção**, numa árvore temporária do `HEAD`:
+falham **19 e 5** checagens lá e passam aqui. Entre elas, as duas que são o
+incidente em pessoa: `o caminho de captcha chamou input(): ['Press any key...']`
+e `test_start_espera_arquivo_aparecer levantou EOFError: stdin fechado (bot sem
+console)`.
+
+⏳ **Falta campo:** nenhum captcha real aconteceu desde a mudança. O sinal de que
+funciona é a sequência `Bot protection!` … `Bot protection saiu apos Ns,
+retomando` no `session_latest.log`, sem intervenção. O caminho de
+`cache/cookies.txt` também só será exercitado quando a sessão atual vencer.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -1913,10 +2038,18 @@ crash — é a **presença** de linhas `Conquest:` no log, que nunca apareceram.
    ciclo de chegar ao planejador de conquista, e portanto o pré-requisito das
    validações de campo dos itens 0, 3 e 4 acima. **⏳ O aceite é ver linha
    `Conquest:` no log de um ciclo completo.**
-6. **Itens 1–3 da fila tática da §7.10** — captcha/sessão sem `input()`,
-   `InstanceLock` por conta, e o `try/except` que falta no `Notification.send`.
-   Os três são locais, sem rede e sem medição prévia; o primeiro é o que ainda
-   obriga o bot a subir em console visível.
+6. ~~**Itens 1 e 3 da fila tática da §7.10**~~ — ✅ **feitos em 2026-09-20**
+   (§8.9): captcha com auto-resume, sessão lida de `cache/cookies.txt` e
+   `Notification.send` à prova de falha. Com isso **nenhum `input()` sobrou no
+   caminho de runtime** — o único que resta é o `twb.py::manual_config`, que só
+   roda quando não existe `config.json`. **⏳ Falta campo:** nenhum captcha real
+   desde a mudança, e a sessão atual ainda não venceu.
+7. **Item 2 da fila tática da §7.10** — `InstanceLock` por endpoint da conta.
+   Local, sem rede. O 22º padrão já fechou "o painel sobe um segundo bot"
+   varrendo os processos com `psutil`; o que falta é a trava do lado do próprio
+   bot, para o caso de dois `python twb.py` no `cmd`. ⚠️ A `_Lock` do fork é
+   **no-op no Windows** (`if fcntl is None: return self`), então a trava tem que
+   ser reescrita com `msvcrt.locking` ou rename atômico com retry.
 
 Depois disso, a fila anterior:
 
