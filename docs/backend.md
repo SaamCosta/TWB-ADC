@@ -149,9 +149,15 @@ garantia de que todas as aldeias compartilhem a mesma sessão autenticada.
 — os dois foram rodados contra o `HEAD` anterior numa árvore temporária, onde
 falham 19 e 5 checagens respectivamente.
 
-`tests/smoke_bot_manager.py` fica fora do glob de propósito (abre console de
-verdade). **A maior parte do bot segue sem cobertura** — em especial tudo que faz
-requisição.
+`test_flag_supply.py` cobre a §8.11: oferta por `(tipo, nível)` lida de fixture
+verbatim do br143, o gate de frescor do inventário e o aviso único de oferta
+zerada.
+
+Fora do glob de propósito: `tests/smoke_bot_manager.py` (abre console de
+verdade), `tests/smoke_flag_inventory.py` (lê o inventário real de bandeiras) e
+`tests/smoke_flag_stale_probe.py` (instrumento de comparação entre duas árvores
+— ver §8.11). **A maior parte do bot segue sem cobertura** — em especial tudo
+que faz requisição.
 
 **Fixture de markup do jogo se copia do servidor, não se inventa.** Cookies em
 `cache/session.json`, user-agent em `config.json` → `bot`; um `requests.session()`
@@ -609,6 +615,11 @@ campo e o cooldown de 24h está sendo respeitado.
 Ao retomar: `grep -a` (o log tem bytes NUL) por `Current village flag` e
 `Setting flag` em `cache/logs/session_latest.log`.
 
+✅ **A pergunta abaixo foi RESPONDIDA e corrigida em 2026-09-20 — ver §8.11.**
+Resposta curta: a política **não** contava a oferta, e o que segurava o Bug 1
+não era ela. O texto original fica abaixo porque o raciocínio dele continua
+valendo; o que mudou é que agora há medição no lugar da hipótese.
+
 ⚠️ **Pergunta a responder ANTES de fechar esta validação (2026-09-20).** O fork
 principal reescreveu bandeiras do zero justamente por causa do nosso Bug 1, e o
 diagnóstico dele é mais fundo que o nosso: **bandeira não é config por aldeia, é
@@ -1012,7 +1023,7 @@ Três correções de fato sobre a §7.9, porque mudam decisão:
 | 6 | `ServerClock` + `GameClock` | LT `core/server_clock.py:54,137` | M | formato de data do rodapé do br143 |
 | 7 | Auto-desbloqueio de coleta por nível de EP; saque previsto logado | LT `troopmanager.py:13,486` | M | §8.5 |
 | 8 | Consolidação noturna da coleta | LT `village.py:800` | M | depende de 7 |
-| 9 | Bandeiras: a nossa política conta **oferta**? | LT `game/flags.py:356` | M | §6.3 |
+| 9 | ~~Bandeiras: a nossa política conta **oferta**?~~ ✅ **respondido e corrigido em 2026-09-20 (§8.11)** — não contava; a causa real era decidir sobre leitura velha | LT `game/flags.py:356` | M | §6.3 |
 | 10 | `mode=call`: ler do servidor o que já está a caminho | LT `balancer.py:355` | M | fixture verbatim |
 | 11 | Velocidade de mercador medida na página de confirmação | LT `balancer.py:683` | M | mesma fixture |
 | 12 | Ícones A/B/C do `am_farm` + `data-units-forecast` | LT `attack.py:152` | M | br143 renderiza o atributo? |
@@ -2101,14 +2112,141 @@ citando o pid do primeiro.
 
 ---
 
+## 8.11 ✅ `P-BAND-OFERTA` — a política de bandeira não contava a oferta (2026-09-20)
+
+Item 9 da fila tática da §7.10, e a pergunta que a §6.3 marcava como
+pré-requisito para fechar a validação de bandeiras. **Local depois da medição;
+a decisão que mudou é qual dado autoriza mover uma bandeira.**
+
+### As duas medições que responderam a pergunta
+
+**1. Bandeira equipada SAI do inventário.** `setFlagCounts` do br143, lido ao
+vivo em 2026-09-20 (`tests/smoke_flag_inventory.py`):
+
+```
+tipo 1 (produção)  -> todos os níveis "0"
+tipo 2 (recrut.)   -> todos os níveis "0"
+tipo 7 (cunhagem)  -> todos os níveis "0"
+tipo 6 (população) -> nível 2: 1, nível 3: 2, nível 4: 1
+```
+
+E, no mesmo instante, **28 das 30 aldeias usam justamente um dos tipos 1, 2 ou
+7**. Os dois fatos só fecham de um jeito: o que a tela publica é a **sobra**, e
+`flag_set` não copia bandeira — ele **move** a única que existe. O fork estava
+certo no diagnóstico de fundo (§6.3): bandeira é inventário **de conta**, então
+dar uma à aldeia B é tirá-la da aldeia A.
+
+**2. O bot descartava a quantidade.** `manage_flags()` colapsava o inventário em
+`{tipo: maior nível com amount > 0}`. "Tenho uma sobrando" e "tenho cinco" eram
+o mesmo dado — e a resposta à pergunta "dez aldeias querem um tipo do qual
+possuímos três" era *cair em silêncio para o próximo tipo da lista*.
+
+### O que realmente segurava o Bug 1, e por que isso é frágil
+
+Com o inventário real, **as 30 aldeias escolhem o mesmo `(tipo 6, nível 4)`** —
+e existe exatamente **uma** bandeira tipo 6 nível 4 na conta. O único motivo de
+não haver vaivém hoje é a **guarda de rebaixamento**: quase toda aldeia já usa
+um tipo mais alto na preferência, e por isso retorna antes. Não é a oferta que
+protege; é um acidente da alocação atual. Uma aldeia recém-conquistada (sem
+bandeira) ou uma usando tipo fora da preferência cai direto no `flag_set`.
+
+### A causa real não era a quantidade — era decidir sobre leitura velha
+
+O servidor **já é** o ledger de oferta, justamente porque a bandeira equipada
+sai do inventário. O que faltava era não decidir sobre uma foto antiga dele:
+`manage_flags()` só lê de fato a cada 3 a 8 runs (randomização) e o
+`DefenceManager` **sobrevive entre ciclos** (`village.py`: `if not self.def_man`),
+enquanto `flag_logic()` roda **todo** ciclo.
+
+Evidência de que a crença envelhece **errado**, medida no `cache/managed` real:
+
+```
+BBM 029 acreditava: tipo 6 -> nível 7 disponível
+servidor no mesmo dia: tipo 6 não passa do nível 4
+onde foi parar a de nível 7: equipada na BBM 030
+```
+
+Agir sobre essa crença arrancaria a bandeira da BBM 030, que voltaria a pedir no
+ciclo seguinte. É o **6º padrão** (reconferir a premissa no momento de agir, não
+no de decidir) num recurso que outra aldeia pode levar no meio do caminho.
+
+### O que mudou
+
+- **Gate de frescor em `flag_logic()`** — `flag_set` só é alcançado se o
+  inventário foi lido **neste `update()`**. `_flags_fresh` é zerado no topo de
+  `update()` e só levantado no **fim** de `manage_flags()`, depois do parse
+  completo; cada `return` antecipado (randomização, `result is None`, regex que
+  não casou, gestão desligada) é por construção uma leitura que não aconteceu.
+  Erro assimétrico e a guarda fecha só de um lado: agir com inventário velho
+  tira bandeira de quem estava certo; **não** agir custa esperar a próxima
+  leitura, contra um cooldown de troca que já é de 24 h.
+- **`manage_flags(force=True)`** — dois chamadores precisam furar a
+  randomização. O caminho de **ataque** em `update()` (a bandeira de defesa não
+  pode esperar 3 a 8 runs, que aqui são horas) e a **releitura pós-upgrade**,
+  que antes re-sorteava a randomização e podia simplesmente não acontecer,
+  deixando `self.flags` com a contagem **anterior** ao upgrade que a releitura
+  existia para refletir. Esse segundo era um bug latente, achado ao mexer.
+- **`self.flag_supply`** — a oferta por `(tipo, nível)`, acumulando a lista de
+  amounts que o jogo publica em vez de sobrescrever. Mais `flag_type_supply()`.
+- **Aviso de oferta zerada, uma vez por aldeia por processo** — hoje as 30
+  aldeias caem do tipo 7/1/2 para o 6 sem uma linha dizendo por quê. Agora sai
+  `preferência [7, 1, 2] sem oferta no inventário da conta (tipo 7: 0
+  disponível(is), …)`. Uma vez, não por ciclo: alerta que nunca cala é
+  indistinguível de alerta quebrado (15º padrão).
+- **`cache/managed`** ganha `flag_supply` e `flags_read_this_cycle`. O nome
+  `flag_supply` foi escolhido para não colidir com método de dict no Jinja2
+  (8º padrão). ⚠️ **Publicado e ainda não consumido:** `flags.html` é a fatia 16
+  da migração e não foi tocada aqui.
+
+**Não** implementado de propósito: um ledger de oferta compartilhado entre
+aldeias. Seria um segundo mecanismo de reserva (§8.2) para um recurso cujo
+dono autoritativo já é o servidor — a leitura fresca resolve com zero estado
+novo. Reavaliar só se aparecer vaivém com o gate ativo.
+
+### Testes
+
+`tests/test_flag_supply.py` (18 casos, sem rede; fixture **verbatim** do
+`setFlagCounts` do br143, inclusive os tipos 1/2/7 zerados que são a prova da
+medição 1). `tests/test_flag_policy.py` teve só o helper ajustado, porque a
+política ganhou uma entrada nova.
+
+**A guarda foi provada capaz de falhar** (21º padrão), e isso importa aqui mais
+que o normal: um gate que apenas desligasse a troca de bandeira passaria em
+todo teste de "não trocou". `tests/smoke_flag_stale_probe.py` roda as quatro
+asserções comportamentais sem usar nenhuma API nova, então roda igual numa
+árvore do `HEAD` anterior:
+
+```
+ARVORE ATUAL          4 de 4 passaram
+ARVORE PRE-CORRECAO   2 de 4 falharam  (inventario velho movia a bandeira)
+```
+
+Os **controles** ("inventário fresco move a bandeira") passam nas **duas**
+árvores — é isso que separa "guarda funcionando" de "feature desligada".
+
+⏳ **Falta campo.** O sinal esperado no `session_latest.log`: as linhas
+`preferência [...] sem oferta no inventário da conta` aparecendo uma vez por
+aldeia, e a contagem de `Setting flag` **não** subindo em relação ao previsto
+pela §6.3. A validação das 3 trocas continua aberta e agora tem um segundo
+indicador: `flags_read_this_cycle` em `cache/managed` separa "não trocou porque
+estava certo" de "não trocou porque não leu".
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 
 0. ~~**`P-CONQ-RAIO`**~~ — ✅ **feito em 2026-09-19** (§8.6). Falta só a
    validação em campo: o primeiro trem multi-origem real ainda não saiu.
-1. ~~**`P-COL-01`**~~ — ✅ **feito e testado em 2026-09-20**; falta observar o
-   próximo ciclo real (§8.5).
+   **Motivo medido em 2026-09-20 23:00**, e não é código: o log diz
+   `Conquest: 1/4 nobres no imperio inteiro (74690:1) -- aguardando`. Falta
+   **nobre**; o planejador está sendo alcançado e decidindo certo.
+1. ~~**`P-COL-01`**~~ — ✅ **feito, testado e observado em campo**
+   (2026-09-20 22:58, §8.5). O ciclo real logou
+   `Using troops for gather operation: 2`, `Gather operation 1 is ready to
+   start` e `Current Haul: 60855 = Gather Batch (4057) * Batch Multiplier 1
+   (15)` — o saque previsto logado era o aceite. **Fechado.**
 2. **`P-COL-02(b)`** — desbloqueio automático continua bloqueado até captura do
    endpoint/payload real e decisão de política de gasto. O ajuste ao maior nível
    desbloqueado, `P-COL-02(a)`, está ✅ feito (§8.5). O estudo dos forks deu um
@@ -2134,8 +2272,10 @@ citando o pid do primeiro.
    pool ainda.**
 5. ~~**`P-MAPA-REDE`**~~ — ✅ **feito em 2026-09-20** (§8.8). Era o que impedia o
    ciclo de chegar ao planejador de conquista, e portanto o pré-requisito das
-   validações de campo dos itens 0, 3 e 4 acima. **⏳ O aceite é ver linha
-   `Conquest:` no log de um ciclo completo.**
+   validações de campo dos itens 0, 3 e 4 acima. **✅ Aceite cumprido em
+   2026-09-20 23:00:42:** `ConquestPlanner - INFO - Conquest: 1/4 nobres no
+   imperio inteiro (74690:1) -- aguardando`. O ciclo completo chega ao
+   planejador. **Fechado.**
 6. ~~**Itens 1 e 3 da fila tática da §7.10**~~ — ✅ **feitos em 2026-09-20**
    (§8.9): captcha com auto-resume, sessão lida de `cache/cookies.txt` e
    `Notification.send` à prova de falha. Com isso **nenhum `input()` sobrou no
@@ -2150,6 +2290,14 @@ citando o pid do primeiro.
    `tests/smoke_instance_lock_twb.py`. **⏳ Falta campo:** o bot que está
    rodando subiu antes da mudança e não segura trava; o aceite é reiniciá-lo e
    ver um segundo `python twb.py` ser recusado citando o pid do primeiro.
+
+8. ~~**Item 9 da fila tática da §7.10**~~ — ✅ **feito em 2026-09-20** (§8.11):
+   a política de bandeira **não** contava a oferta, e a medição mostrou que o
+   que segurava o Bug 1 era a guarda de rebaixamento, não o inventário. Gate de
+   frescor em `flag_logic()`, `manage_flags(force=True)` para defesa e para a
+   releitura pós-upgrade (bug latente achado no caminho), `flag_supply` com a
+   quantidade que o código descartava, e aviso único de oferta zerada.
+   **⏳ Falta campo:** as linhas de oferta zerada e a contagem de trocas.
 
 Depois disso, a fila anterior:
 

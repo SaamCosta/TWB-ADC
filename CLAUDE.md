@@ -822,16 +822,41 @@ puxa o fio.**
   horas, não em minutos. **O número que importa continua não medido** — as 3
   trocas e o silêncio depois. Ao retomar, `grep -a` (o log tem bytes NUL, ver
   vigésimo primeiro padrão) por `Current village flag` e `Setting flag`.
+  **Atualização 2026-09-20 (`docs/backend.md` §8.11):** a pergunta que estava
+  aberta — "a política conta a **oferta**?" — foi respondida com medição:
+  **não contava**, e quem segurava o Bug 1 era a guarda de rebaixamento, não o
+  inventário. Bandeira equipada **sai** do `setFlagCounts` (tipos 1/2/7 em zero
+  com 28 das 30 aldeias usando um deles), logo `flag_set` **move** a bandeira
+  de outra aldeia. A causa real era decidir sobre leitura velha:
+  `manage_flags()` só lê a cada 3–8 runs e o `DefenceManager` sobrevive entre
+  ciclos, então `flag_logic()` decidia com foto de vários ciclos atrás — o
+  `cache/managed` da BBM 029 acreditava num tipo 6 nível 7 que já estava na
+  BBM 030. Corrigido com gate de frescor em `flag_logic()` e
+  `manage_flags(force=True)` nos dois caminhos que não podem esperar. A
+  validação das 3 trocas **continua aberta**, e agora `flags_read_this_cycle`
+  no `cache/managed` separa "não trocou porque estava certo" de "não trocou
+  porque não leu".
 - `game/defence_manager.py::DefenceManager.supported` (Bug 3 de
   `docs/backend.md`) — ✅ **corrigido no Lote 1**, movido para `__init__`.
   A condição invertida do laço em `DefenceManager.update()`, que impedia
   `support_other()` de ser chamado, foi corrigida no Lote 3 (P1-6) — junto com
   a leitura de `support_others_max_villages` do config. O suporte deixou de ser
-  código morto, mas **`support_others` segue `false` em campo**: nenhum envio
-  real jamais aconteceu e o payload `"support": "Ondersteunen"` nunca foi
-  validado em pt-BR. Ligar em uma aldeia só, observando.
-- **Feature 9 (resource sharing) desligada no `config.json` local** desde
-  2026-08-08, e **reformulada em 2026-08-11** (ver `docs/backend.md` §3.1).
+  código morto, mas **nenhum envio real jamais aconteceu** e o payload
+  `"support": "Ondersteunen"` nunca foi validado em pt-BR.
+  ⚠️ **Redação corrigida em 2026-09-21.** A anterior dizia que `support_others`
+  "segue `false` em campo" e mandava "ligar em uma aldeia só, observando".
+  Medido no `config.json`: está **`true` em 22 das 30 aldeias** (só o
+  `village_template` é `false`). A chave **não** é o bloqueio — o bloqueio é que
+  `support_other()` só roda quando outra aldeia **pede**, e pedir exige ataque
+  real chegando; o `session_latest.log` não tem uma linha
+  `Support X -> Y liberado` sequer. Ligar mais aldeias não exercita nada.
+  Para exercitar de propósito: ataque mínimo de uma aldeia própria **distante**
+  contra outra com `request_support_on_attack: true` — distante porque o gate
+  exige o apoio **chegar** antes do impacto e `support_lead_time_sec` é 7200,
+  então um ataque de 10 min é recusado por "tarde demais" e não prova nada
+  (18º padrão).
+- **Feature 9 (resource sharing)** — **reformulada em 2026-08-11**
+  (ver `docs/backend.md` §3.1).
   A versão anterior tinha uma regra só — doadora era quem passasse de
   `threshold_pct` da **própria** capacidade — e contra os dados reais da conta
   ela não movia nada: as duas aldeias de armazém grande precisariam de 8× mais
@@ -846,6 +871,12 @@ puxa o fio.**
   jogo respondia "Modo inválido"), o destino é por coordenada em campos `x`/`y`
   e não por `target_village`, e o envio tem uma **segunda etapa** de
   confirmação sem a qual nada sai.
+  ✅ **Ligada e movendo recurso** — `resource_sharing.enabled` é `true` no
+  `config.json` e o log de 2026-09-20 tem envios reais das duas regras
+  (`{'stone': 1240} de 37318 → 49709 (regra: need)` e `{'stone': 8000} ...
+  (regra: overflow)`). A redação anterior desta entrada dizia "desligada no
+  `config.json` local desde 2026-08-08" e estava velha — 16º padrão: nota é
+  memória, o `config.json` é o fato.
   ⚠️ **Não existe gate por aldeia** — `resource_sharing.enabled` é global e
   vale para todas as aldeias gerenciadas de uma vez. Notas antigas que falavam
   em "ligar em uma aldeia só" descreviam algo que o código nunca ofereceu.
