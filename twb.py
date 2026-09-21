@@ -145,7 +145,7 @@ from game.hunter import Hunter
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
-from game.pvp_conquest import PvpConquestManager
+from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
 from game.world_villages import WorldVillages
 from manager import VillageManager
@@ -581,6 +581,43 @@ class TWB:
             lo, hi = hi, lo
         return random.randint(lo, hi)
 
+    @staticmethod
+    def prime_conquest_sources(managed_villages, config):
+        """
+        Load live troop/map data for the villages an active PvP operation
+        depends on, before the normal village loop starts.
+
+        Only the clear village and the noble villages of targets that are
+        still being prepared -- typically two to five villages, roughly four
+        requests each. The whole empire is never primed: that would double
+        the cycle's request count to answer a question about a handful of
+        villages.
+
+        Returns the number of villages successfully primed.
+        """
+        source_ids = set()
+        for data in PvpConquestCache.all().values():
+            status = data.get("status", "pending_scout")
+            if status not in PvpConquestManager.PREPARING_STATUSES:
+                continue
+            if data.get("clear_village_id"):
+                source_ids.add(str(data["clear_village_id"]))
+            source_ids.update(str(vid) for vid in (data.get("noble_villages") or []))
+
+        primed = 0
+        for vid in sorted(source_ids):
+            village = managed_villages.get(vid)
+            if not village:
+                continue
+            if village.prime_for_conquest(config=config):
+                primed += 1
+        if source_ids:
+            logging.info(
+                "PvpConquest: primed %d/%d source village(s) before the cycle",
+                primed, len(source_ids),
+            )
+        return primed
+
     def run(self):
         """
         Run the bot
@@ -813,6 +850,33 @@ class TWB:
                     _v.pvp_conquest_manager = pvp_manager
                     _v.hunter_service_callback = hunter_callback
                     _v.reservation_board = reservation_board
+
+                # Feature 13 (2026-09-21): a conquista PvP decide UMA vez no
+                # inicio do ciclo, antes de qualquer aldeia gastar tropa.
+                #
+                # Ate aqui a maquina de estados so rodava dentro de
+                # village.run(), uma vez por aldeia. Isso dava prioridade
+                # sobre o farm *daquela* aldeia, mas nao resolvia o problema
+                # de fundo: `units` e `area` so existem depois que a aldeia
+                # roda, entao o alvo #44155 passou o ciclo inteiro logando
+                # "clear village 39472 has no troop data" e foi simulado no
+                # minuto arbitrario em que a vez daquela aldeia chegou -- com
+                # 3% do exercito em casa. Um ciclo completo mediu ~4h em
+                # 2026-09-21 (13:42 -> 17:56, 30 aldeias): agendamento que
+                # nao pode falhar nao pode ficar refem dessa ordem.
+                #
+                # Roda em dois tempos de proposito: a primeira chamada escolhe
+                # e trava as origens (usando o snapshot de cache/managed, sem
+                # rede), o prime le aldeia por aldeia as origens escolhidas, e
+                # a segunda chamada ja decide com numero vivo de tropa e
+                # consegue sondar os tempos de viagem.
+                if pvp_manager:
+                    pvp_manager.run()
+                    primed = self.prime_conquest_sources(
+                        managed_villages_dict, config
+                    )
+                    if primed:
+                        pvp_manager.run()
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):

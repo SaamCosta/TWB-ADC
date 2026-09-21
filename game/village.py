@@ -908,6 +908,66 @@ class Village:
             )
         pvp.run()
 
+    def prime_for_conquest(self, config=None):
+        """
+        Minimal per-village init so a conquest module can read this village
+        BEFORE its turn in the normal processing order.
+
+        Why this exists (2026-09-21): `units` (TroopManager) and `area` (Map)
+        are only created partway through `run()`, so any module that asks
+        "how many troops does village X have at home, and how long is the
+        trip from X to the target" could only get a real answer once X's own
+        `run()` had happened.  With 30 villages a full cycle measured ~4h
+        (13:42 -> 17:56 in session_latest.log), so PvpConquestManager spent
+        the whole cycle logging "clear village 39472 has no troop data" and
+        then simulated at whatever arbitrary minute that village came up.
+        `_prepare_departure_deadlines()` never produced anything at all,
+        because it bails unless *every* source village already has `units`.
+
+        Deliberately does NOT spend anything: no builder, no recruitment, no
+        market, no farm, no gather, no defence flags.  It only reads.  Cost is
+        about four requests per village (overview, reports, units, map), and
+        it is meant to be called for the handful of villages that are sources
+        of an active operation -- not for the whole empire.
+
+        Returns True when `units` and `area` ended up usable.
+        """
+        if config is not None:
+            self.config = config
+        if not self.config:
+            return False
+
+        try:
+            self.village_init()
+            if not self.game_data:
+                return False
+            if not self.get_config(section="villages", parameter=self.village_id):
+                return False
+            if not self.get_village_config(
+                    self.village_id, parameter="managed", default=False
+            ):
+                return False
+
+            self.set_world_config()
+            self.update_pre_run()
+            self.units_get_template()
+            self.units.update_totals()
+            # Read before ensure_attack_manager(), which copies both fields
+            # onto the AttackManager every time it runs.
+            self.check_forced_peace()
+            self.ensure_map_loaded()
+            self.ensure_attack_manager()
+        except Exception as e:
+            # self.logger is a class-level None until village_init() names it,
+            # and village_init() is exactly what can raise here -- logging on
+            # the error path must not itself be the error (Lote 4 corollary).
+            (self.logger or logging.getLogger("Village")).warning(
+                "Could not prime village %s for conquest: %s", self.village_id, e
+            )
+            return False
+
+        return bool(self.units and self.area)
+
     def _pvp_troop_spending_suspended(self):
         """
         Whether this village is an assigned source for an active PvP target.

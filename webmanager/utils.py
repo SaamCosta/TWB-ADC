@@ -1627,6 +1627,7 @@ class EmpireReader:
 
     PVP_STATUS_LABEL_PREFIX = {
         "pending_scout": "PvP: Aguardando Scout",
+        "pending_troops": "PvP: Aguardando Tropa",
         "pending_sim":   "PvP: Aguardando Simulação",
         "scheduled":     "PvP: Agendado",
         "complete":      "PvP: Conquistado",
@@ -1719,18 +1720,20 @@ class PvpConquestReader:
     DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
 
     STATUS_LABELS = {
-        "pending_scout": "Aguardando Scout",
-        "pending_sim":   "Aguardando Simulação",
-        "scheduled":     "Agendado",
-        "complete":      "Conquistado",
-        "failed":        "Falhou",
+        "pending_scout":  "Aguardando Scout",
+        "pending_troops": "Aguardando Tropa",
+        "pending_sim":    "Aguardando Simulação",
+        "scheduled":      "Agendado",
+        "complete":       "Conquistado",
+        "failed":         "Falhou",
     }
     STATUS_COLORS = {
-        "pending_scout": "secondary",
-        "pending_sim":   "warning",
-        "scheduled":     "primary",
-        "complete":      "success",
-        "failed":        "danger",
+        "pending_scout":  "secondary",
+        "pending_troops": "info",
+        "pending_sim":    "warning",
+        "scheduled":      "primary",
+        "complete":       "success",
+        "failed":         "danger",
     }
     FAIL_REASON_LABELS = {
         "no_clear_village":  "Nenhuma aldeia ofensiva disponível para limpeza.",
@@ -1821,6 +1824,27 @@ class PvpConquestReader:
                 ) if first_send_time else ""
             )
 
+            # Horários de saída já formatados aqui, e não no Jinja2: o
+            # template recebia o timestamp cru e imprimia o número.  Cada
+            # entrada ganha "source_village_id" -> nome legível pelo mesmo
+            # caminho que o resto da página usa.
+            departures = []
+            for d in (data.get("departure_deadlines") or []):
+                send_ts = d.get("send_time")
+                duration = d.get("duration_seconds") or 0
+                entry = dict(d)
+                entry["send_str"] = (
+                    datetime.datetime.fromtimestamp(float(send_ts)).strftime(
+                        "%d/%m %H:%M:%S"
+                    ) if send_ts else ""
+                )
+                dh, drem = divmod(int(duration), 3600)
+                dm, ds = divmod(drem, 60)
+                entry["duration_fmt"] = "%dh%02dm%02ds" % (dh, dm, ds) if duration else ""
+                entry["is_late"] = bool(send_ts) and float(send_ts) < now
+                departures.append(entry)
+            departures.sort(key=lambda e: e.get("send_time") or 0)
+
             out.append({
                 "target_id":           tid,
                 "target_name":         data.get("target_name", ""),
@@ -1840,7 +1864,14 @@ class PvpConquestReader:
                 "first_send_time":      first_send_time,
                 "first_send_str":       first_send_str,
                 "time_to_first_send":   time_to_first_send,
-                "departure_deadlines":  data.get("departure_deadlines", []),
+                "departure_deadlines":  departures,
+                # Estágio "aguardando tropa": quanto do exército das origens
+                # está em casa.  None = ainda não medido (nenhuma origem com
+                # dados), diferente de 0.0 = medido e o exército está fora.
+                "troops_home_pct":      data.get("troops_home_pct"),
+                "troops_home_sources":  data.get("troops_home_sources", []),
+                "troop_wait_started_at": data.get("troop_wait_started_at"),
+                "troops_wait_forced_reason": data.get("troops_wait_forced_reason"),
                 "scout_override":       bool(data.get("scout_override")),
                 "scout_override_at":    data.get("scout_override_at"),
                 "scout_village_id":    data.get("scout_village_id"),
@@ -1859,7 +1890,10 @@ class PvpConquestReader:
                 "failed_at":           data.get("failed_at"),
             })
 
-        order = {"pending_scout": 0, "pending_sim": 1, "scheduled": 2, "failed": 3, "complete": 4}
+        order = {
+            "pending_scout": 0, "pending_troops": 1, "pending_sim": 2,
+            "scheduled": 3, "failed": 4, "complete": 5,
+        }
         out.sort(key=lambda x: (order.get(x["status"], 9), x["arrival_ts"]))
         return out
 
@@ -1941,7 +1975,7 @@ class PvpConquestReader:
         with open(path) as f:
             data = json.load(f)
         if data.get("status", "pending_scout") not in (
-                "pending_scout", "pending_sim"):
+                "pending_scout", "pending_troops", "pending_sim"):
             return False
         first_send = data.get("first_send_time")
         if first_send and datetime.datetime.now().timestamp() >= float(first_send):

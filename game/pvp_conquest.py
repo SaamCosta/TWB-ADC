@@ -3,6 +3,8 @@ Feature 13 — Conquista PvP semi-manual
 
 Fluxo por alvo:
   pending_scout   → bot envia scout de qualquer aldeia com espiões
+  pending_troops  → farm/coleta suspensos nas origens; espera o exército voltar
+                    para casa antes de deixar o Simulator julgar a operação
   pending_sim     → relatório chegou; Simulator avalia se a limpeza é viável
   scheduled       → Hunter agendou clear + noble train com chegada simultânea
   complete        → conquista concluída (loyalty ≤ 0 ou aldeia ownership confirmada)
@@ -18,6 +20,7 @@ import time
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+from core.templates import UNIT_POP
 from core.world_config import WorldConfig
 from game.hunter import Hunter
 from game.reservations import manual_exclusion
@@ -109,8 +112,15 @@ class PvpConquestManager:
     # Real transitions are pending_scout -> pending_sim -> scheduled, plus
     # the completion check once scheduled. 4 gives headroom without risking
     # a runaway loop if a future step is added carelessly.
-    MAX_STEPS_PER_CALL = 4
-    FARM_SUSPEND_STATUSES = {"pending_scout", "pending_sim", "scheduled"}
+    MAX_STEPS_PER_CALL = 5
+    FARM_SUSPEND_STATUSES = {
+        "pending_scout", "pending_troops", "pending_sim", "scheduled",
+    }
+    # Statuses where the operation is still choosing/holding its sources and
+    # nothing has been committed to Hunter yet.  Several preparation steps
+    # gate on exactly this set; keeping it named means adding a future stage
+    # does not mean hunting down four separate literal tuples (P2-22).
+    PREPARING_STATUSES = ("pending_scout", "pending_troops", "pending_sim")
 
     def run(self):
         # Always rebuild this process-local view.  In particular, disabling
@@ -171,6 +181,8 @@ class PvpConquestManager:
                     status = data.get("status", "pending_scout")
                     if status == "pending_scout":
                         self._step_scout(target_id, data)
+                    elif status == "pending_troops":
+                        self._step_wait_troops(target_id, data)
                     elif status == "pending_sim":
                         self._step_simulate(target_id, data)
                     elif status == "scheduled":
@@ -258,8 +270,7 @@ class PvpConquestManager:
         ``noble_villages`` fields, so the lock cannot drift from the eventual
         commands.
         """
-        if data.get("status", "pending_scout") not in (
-                "pending_scout", "pending_sim"):
+        if data.get("status", "pending_scout") not in self.PREPARING_STATUSES:
             return
 
         changed = False
@@ -315,8 +326,7 @@ class PvpConquestManager:
 
     def _prepare_departure_deadlines(self, target_id, data):
         """Probe and persist the first exact departure required by this target."""
-        if data.get("status", "pending_scout") not in (
-                "pending_scout", "pending_sim"):
+        if data.get("status", "pending_scout") not in self.PREPARING_STATUSES:
             return
         if data.get("departure_deadlines"):
             return
@@ -398,8 +408,7 @@ class PvpConquestManager:
 
     def _fail_if_scout_deadline_missed(self, target_id, data):
         """Fail safely when valid intel did not arrive before first departure."""
-        if data.get("status", "pending_scout") not in (
-                "pending_scout", "pending_sim"):
+        if data.get("status", "pending_scout") not in self.PREPARING_STATUSES:
             return False
         first_send = data.get("first_send_time")
         if not first_send or time.time() < float(first_send):
@@ -427,22 +436,25 @@ class PvpConquestManager:
     def _step_scout(self, target_id, data):
         """
         Find any managed village with spies and send a scout to the target.
-        Marks status → pending_sim once the scout is sent.
-        If a recent scout report already exists, skip straight to simulation.
+        Marks status → pending_troops once the scout is sent.
+        If a recent scout report already exists, skip straight to the wait.
         """
         if data.get("scout_override"):
             logger.warning(
                 "PvpConquest: operator authorized target %s without a valid scout",
                 target_id,
             )
-            data["status"] = "pending_sim"
+            data["status"] = "pending_troops"
             PvpConquestCache.set(target_id, data)
             return
 
         # Check if there's already a usable scout report
         if self._find_scout_report(target_id):
-            logger.info("PvpConquest: scout report already available for %s, skipping to sim", target_id)
-            data["status"] = "pending_sim"
+            logger.info(
+                "PvpConquest: scout report already available for %s, "
+                "waiting for troops to come home", target_id
+            )
+            data["status"] = "pending_troops"
             PvpConquestCache.set(target_id, data)
             return
 
@@ -463,13 +475,177 @@ class PvpConquestManager:
                     "PvpConquest: scout sent from %s → %s (%d spies)",
                     vid, target_id, scout_amount
                 )
-                data["status"] = "pending_sim"
+                data["status"] = "pending_troops"
                 data["scout_village_id"] = vid
                 data["scout_sent_at"] = int(time.time())
                 PvpConquestCache.set(target_id, data)
                 return
 
         logger.warning("PvpConquest: no village with spies available to scout %s", target_id)
+
+    # ------------------------------------------------------------------
+    # Step 1.5 — Wait for the army to come home
+    # ------------------------------------------------------------------
+
+    # Units that never take part in the clear wave or the escorts, so their
+    # presence at home says nothing about whether the operation is ready.
+    # Same exclusions as _build_clear_units()/_build_noble_attacks(): spies
+    # are scouts, the Paladin never leaves automatically, and nobles are
+    # counted separately by _select_noble_attack_plan().
+    NON_COMBAT_UNITS = ("spy", "snob", "knight")
+
+    def _step_wait_troops(self, target_id, data):
+        """
+        Hold the operation until the source villages' army is actually home.
+
+        Why this stage exists (2026-09-21, target #44155).  The simulator is
+        fed by `_build_clear_units()`, which reads `units.troops` -- troops
+        **in the village right now**, not troops owned.  Suspending farm and
+        gather (Village.run_farming/do_gather via
+        `_pvp_troop_spending_suspended`) stops the bot sending *more* troops
+        away, but it cannot recall the ones already flying: a farm run
+        dispatched before the operator registered the target is still hours
+        from landing back.
+
+        So the old flow judged viability against whatever happened to be
+        standing at home the minute the clear village's TroopManager first
+        existed.  For #44155 that was 46 axes and 16 light cavalry out of
+        1.486 and 739 owned -- roughly 3% of the army -- and the operation
+        was declared `simulation_failed` and closed forever, with the other
+        97% landing back home over the following hours with nothing to do.
+
+        The wait is bounded from both ends: it ends early when the army is
+        home, and it ends anyway when the first departure is close enough
+        that there is no more time to spend waiting (a late simulation is
+        worse than a pessimistic one -- `_fail_if_scout_deadline_missed()`
+        would otherwise kill the target outright).
+        """
+        cfg = self.config.get("pvp_conquest", {})
+        required = float(cfg.get("troops_home_ratio", 0.9))
+        lead = float(cfg.get("sim_lead_seconds", 1800))
+        max_wait = float(cfg.get("max_troop_wait_hours", 6)) * 3600
+
+        started = data.get("troop_wait_started_at")
+        if not started:
+            started = int(time.time())
+            data["troop_wait_started_at"] = started
+            PvpConquestCache.set(target_id, data)
+
+        ratio, sources = self._home_troop_ratio(data)
+        if sources:
+            data["troops_home_pct"] = round(ratio * 100, 1)
+            data["troops_home_sources"] = sources
+            PvpConquestCache.set(target_id, data)
+
+        now = time.time()
+        first_send = data.get("first_send_time")
+        out_of_time = bool(first_send) and now >= float(first_send) - lead
+        waited_too_long = now - float(started) >= max_wait
+
+        if ratio is None:
+            # No usable troop numbers for any source yet -- typically the
+            # very first pass, before prime_for_conquest()/village.run() has
+            # populated a TroopManager.  Waiting is the safe answer, but the
+            # deadline still applies so this cannot stall forever.
+            if not (out_of_time or waited_too_long):
+                logger.info(
+                    "PvpConquest: target %s waiting for troop data from its sources",
+                    target_id,
+                )
+                return
+            reason = "sem dados de tropa"
+        elif ratio >= required:
+            reason = None
+        elif out_of_time:
+            reason = "prazo de saída próximo"
+        elif waited_too_long:
+            reason = "teto de espera atingido"
+        else:
+            logger.info(
+                "PvpConquest: target %s holding — %.1f%% of the source army is "
+                "home (need %.0f%%), farm/gather suspended in %s",
+                target_id, ratio * 100, required * 100,
+                ", ".join(sorted(s["village_id"] for s in sources)) or "-",
+            )
+            return
+
+        data["status"] = "pending_sim"
+        data["troops_wait_ended_at"] = int(now)
+        data["troops_wait_forced_reason"] = reason
+        PvpConquestCache.set(target_id, data)
+        if reason:
+            logger.warning(
+                "PvpConquest: target %s leaving the troop wait early (%s) with "
+                "%s of the army home",
+                target_id, reason,
+                "%.1f%%" % (ratio * 100) if ratio is not None else "desconhecido",
+            )
+        else:
+            logger.info(
+                "PvpConquest: target %s has %.1f%% of its source army home, simulating",
+                target_id, ratio * 100,
+            )
+
+    def _home_troop_ratio(self, data):
+        """
+        Population of the source armies standing at home / population owned.
+
+        Returns ``(ratio, sources)``.  ``ratio`` is None when not a single
+        source village could be measured -- distinguishable from 0.0, which
+        means "measured, and the army really is all out" (the failure value
+        of a parser must not look like a legitimate answer -- sixth pattern
+        in CLAUDE.md).
+        """
+        source_ids = []
+        if data.get("clear_village_id"):
+            source_ids.append(str(data["clear_village_id"]))
+        for vid in (data.get("noble_villages") or []):
+            if str(vid) not in source_ids:
+                source_ids.append(str(vid))
+
+        sources = []
+        home_total = 0
+        owned_total = 0
+        for vid in source_ids:
+            village = self.villages.get(vid)
+            if not village or not village.units:
+                continue
+            home = self._population(village.units.troops)
+            owned = self._population(village.units.total_troops)
+            if owned <= 0:
+                # total_troops is only filled in when can_recruit is true
+                # (TroopManager.update_totals returns early otherwise), so an
+                # empty dict here means "not read", not "no army".
+                cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+                owned = self._population(cached.get("troops") or {})
+            if owned <= 0:
+                continue
+            home = min(home, owned)
+            home_total += home
+            owned_total += owned
+            sources.append({
+                "village_id": vid,
+                "home_pop": home,
+                "total_pop": owned,
+                "pct": round(home / owned * 100, 1),
+            })
+
+        if owned_total <= 0:
+            return None, sources
+        return home_total / owned_total, sources
+
+    @classmethod
+    def _population(cls, troops):
+        """Farm population of a troop dict, ignoring non-combat units."""
+        total = 0
+        for unit, qty in (troops or {}).items():
+            if unit in cls.NON_COMBAT_UNITS:
+                continue
+            try:
+                total += int(qty) * UNIT_POP.get(unit, 0)
+            except (TypeError, ValueError):
+                continue
+        return total
 
     # ------------------------------------------------------------------
     # Step 2 — Simulate & Schedule

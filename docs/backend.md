@@ -2783,6 +2783,110 @@ do usuário.
 
 ---
 
+## 8.14 ✅ `P-PVP-TROPA` — a simulação julgava o exército que estava fora (2026-09-21)
+
+### O incidente
+
+Alvo PvP **#44155** ("000", 555|288), cadastrado às 13:42 com chegada desejada
+para 23/09 10:00 e limpeza pela **BBM 018 (#39472)**. Às 14:18 o bot escreveu
+`fail_reason: "simulation_failed"` e fechou a operação para sempre. A
+simulação registrada:
+
+| campo | valor |
+|---|---|
+| `att_power` | 3.192 |
+| `att_total` / `att_losses` | 144 / 144 |
+| `def_total` / `def_losses` | 16.398 / 6 |
+
+144 tropas atacando 16.398 — perda total, muralha 20 intacta. Só que a
+**BBM 018 tem 1.486 machados, 739 cavalarias leves e 120 aríetes**. O que a
+simulação viu foi `available_troops`: `{axe: 46, spy: 59, light: 16, ram: 120}`.
+`_build_clear_units()` aplica `clear_ratio` 0.8 sobre isso e dá exatamente
+`36 + 12 + 96 = 144`. **O número bate à unidade**: a viabilidade foi decidida
+contra ~3% do exército, com os outros 97% no ar, em ataques de farm.
+
+### Por que a suspensão existente não segurou
+
+`FARM_SUSPEND_STATUSES` + `Village.run_farming()`/`do_gather()` já paravam farm
+e coleta nas aldeias de origem — isso funciona e não era o bug. O que a
+suspensão **não faz é trazer tropa de volta**: um farm despachado antes de o
+alvo ser cadastrado ainda tem horas de viagem. E a máquina de estados simulava
+no mesmo instante em que conseguia ler a tropa, sem esperar nada.
+
+Duas causas em série, e a segunda é de ordem de execução:
+
+1. **`units` e `area` só existem depois que a aldeia roda.** `PvpConquestManager`
+   só era chamado de dentro de `village.run()`, uma vez por aldeia. Com 30
+   aldeias o ciclo mediu **~4h** em 2026-09-21 (13:42 → 17:56 no
+   `session_latest.log`), e o log tem cinco
+   `clear village 39472 has no troop data` seguidos — o alvo esperou a vez
+   daquela aldeia e foi julgado no minuto arbitrário em que ela chegou.
+2. **`_prepare_departure_deadlines()` nunca produziu nada**, porque ela desiste
+   se *qualquer* aldeia de origem ainda não tem `units`. Por isso o
+   `departure_deadlines` não existia no cache e o painel mostrava
+   "Não calculada" — a funcionalidade de horário de saída por aldeia estava
+   escrita e inalcançável.
+
+Isto é o sexto padrão do `CLAUDE.md` outra vez: decidir num instante sobre um
+estado que muda durante horas. E o décimo primeiro: a média ("tropa da aldeia")
+misturava dois conjuntos, tropa em casa e tropa possuída, que o código já
+publica separados (`units.troops` vs `units.total_troops`).
+
+### O que foi feito
+
+- **Estágio novo `pending_troops`**, entre `pending_scout` e `pending_sim`
+  (`game/pvp_conquest.py::_step_wait_troops`). Segura a simulação enquanto a
+  população de combate em casa das origens estiver abaixo de
+  `pvp_conquest.troops_home_ratio` (0.9). Sai por três portas: exército em
+  casa, `sim_lead_seconds` (1800) antes da primeira saída obrigatória, ou
+  `max_troop_wait_hours` (6). As duas últimas gravam
+  `troops_wait_forced_reason` — a espera nunca vira impasse silencioso, e
+  simular tarde seria pior que simular pessimista, porque
+  `_fail_if_scout_deadline_missed()` mata o alvo quando a saída vence.
+- **`Village.prime_for_conquest()`** — init mínimo e somente-leitura
+  (`village_init` → `update_pre_run` → `units.update_totals` →
+  `ensure_map_loaded` → `ensure_attack_manager`), sem builder, recrutamento,
+  mercado, farm ou coleta.
+- **`TWB.prime_conquest_sources()` + PvP no início do ciclo** (`twb.py`). Roda
+  em dois tempos: `run()` escolhe e trava as origens usando o snapshot de
+  `cache/managed` (sem rede), o prime lê **só** as origens escolhidas
+  (~4 requisições por aldeia, tipicamente 2 a 5 aldeias), e o segundo `run()`
+  decide com número vivo e consegue sondar os tempos de viagem. A chamada por
+  aldeia continua existindo — é ela que dá prioridade sobre o farm daquela
+  aldeia.
+- **Painel**: estágio novo com rótulo/cor/ordem, bloco "Exército em casa" com o
+  percentual por aldeia de origem, e a seção "Deadlines de saída" finalmente
+  alimentada, com horário formatado e duração da viagem por comando.
+
+### Medição do gate
+
+O `_home_troop_ratio()` mede **população de combate** (`UNIT_POP`), excluindo
+espião, nobre e paladino — as mesmas exclusões de `_build_clear_units()`. Três
+cuidados que já custaram bug neste repositório:
+
+- devolve `None`, não `0.0`, quando nenhuma origem tinha leitura — valor de
+  falha distinguível de resposta legítima (sexto padrão);
+- `total_troops` só é preenchido quando `can_recruit` é verdadeiro
+  (`TroopManager.update_totals()` retorna antes), então dicionário vazio
+  significa "não lido" e cai no snapshot de `cache/managed`, não em "sem
+  exército";
+- `home` é limitado por `owned`: apoio estacionado na aldeia podia pôr a razão
+  acima de 1.0 e satisfazer qualquer limiar em silêncio.
+
+### Estado
+
+Código e testes prontos (`tests/test_pvp_troop_wait.py`, 16 casos, incluindo o
+snapshot real do #44155). Config em `pvp_conquest`: `troops_home_ratio`,
+`max_troop_wait_hours`, `sim_lead_seconds` — `build.version` 4.4 → **4.5** só
+no `config.example.json`, para o merge injetar a seção no `config.json` vivo.
+O alvo #44155 foi recadastrado em `pending_scout`.
+
+**Não validado em campo ainda.** O que observar no próximo ciclo: o alvo
+passando por `pending_troops`, o `troops_home_pct` subindo entre ciclos, e o
+`departure_deadlines` finalmente aparecendo no cache e no painel.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**

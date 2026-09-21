@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.4",
+    "version": "4.5",
     "author": "stefan2200"
   },
   "server": {
@@ -248,7 +248,10 @@
     "arrival_buffer_seconds": 2,
     "scout_amount": 5,
     "scout_max_age_hours": 24,
-    "dynamic_moral_night_bonus": false
+    "dynamic_moral_night_bonus": false,
+    "troops_home_ratio": 0.9,
+    "max_troop_wait_hours": 6,
+    "sim_lead_seconds": 1800
   },
   "statue": {
     "enabled": false
