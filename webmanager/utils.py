@@ -1809,6 +1809,177 @@ class PlayerStatsReader:
         }
 
 
+class InFlightReader:
+    """
+    Le `cache/in_flight.json` (Feature 38, `game/in_flight.py`) — todo comando
+    que esta no ar saindo desta conta, com a hora de chegada calculada pelo
+    SERVIDOR, lida de `screen=overview_villages&mode=commands`.
+
+    Contexto: docs/frontend.md 6.1.2, item 1 ("Painel Em voo"), descrito la
+    como o mais valioso e o unico nao cosmetico da lista.
+
+    OS DOIS CONTRATOS QUE O TEMPLATE TAMBEM PRECISA RESPEITAR:
+      (a) o que se le e HORA DE CHEGADA, nao barra de progresso generica, e
+          ela precisa dizer de onde veio. Aqui vem toda do overview do jogo
+          (`source: "overview"`), nunca de `Extractor.attack_duration()` —
+          que devolve 0 quando o regex falha e faz o nobre nascer "pousado";
+      (b) a lista NAO e derivada de `status` nenhum do cache de conquista —
+          foi esse campo que dizia "complete" com quatro nobres voando.
+
+    ⚠️ O QUE ESTE READER FAZ DE DIFERENTE DOS OUTROS, E POR QUE:
+    o dado envelhece entre a leitura do bot e o carregamento da pagina, porque
+    comandos POUSAM. Um comando cuja chegada ja passou pode ter chegado — ou o
+    bot pode so nao ter relido ainda. Como nao da para saber qual, ele vai
+    para um balde PROPRIO (`landed`), nunca somado aos que ainda voam nem
+    escondido. Esconder seria mentir por omissao; deixar em "no ar" seria
+    mentir por afirmacao. A idade da leitura sai junto para a conta poder ser
+    refeita por quem olha.
+    """
+
+    CACHE_PATH = os.path.join(
+        os.path.dirname(__file__), "..", "cache", "in_flight.json"
+    )
+
+    # Rotulo pt-BR por unidade. Chave = nome do icone servido pelo jogo, que e
+    # o mesmo sinal independente de idioma usado no extractor.
+    UNIT_LABELS = {
+        "spear": "Lanceiro", "sword": "Espadachim", "axe": "Bárbaro",
+        "archer": "Arqueiro", "spy": "Explorador", "light": "Cavalaria leve",
+        "marcher": "Arqueiro a cavalo", "heavy": "Cavalaria pesada",
+        "ram": "Aríete", "catapult": "Catapulta", "knight": "Paladino",
+        "snob": "Nobre",
+    }
+
+    # `attack`/`support` saem daqui; `return`/`back` sao tropa VOLTANDO, que e
+    # uma leitura diferente (nao ha nada a fazer a respeito) e por isso ganham
+    # rotulo proprio em vez de virarem "ataque" na tela.
+    TYPE_LABELS = {
+        "attack": "Ataque",
+        "support": "Apoio",
+        "return": "Retorno",
+        "back": "Retirada",
+    }
+
+    OUTBOUND_TYPES = ("attack", "support")
+
+    @staticmethod
+    def _fmt_eta(seconds):
+        """"3h 41m" / "12m 03s". Sem valor absoluto disfarcado de relativo."""
+        seconds = int(seconds)
+        sign = "-" if seconds < 0 else ""
+        seconds = abs(seconds)
+        hours, rest = divmod(seconds, 3600)
+        minutes, secs = divmod(rest, 60)
+        if hours:
+            return "%s%dh %02dm" % (sign, hours, minutes)
+        return "%s%dm %02ds" % (sign, minutes, secs)
+
+    @staticmethod
+    def load(now=None):
+        """
+        `now` e injetavel para o teste nao depender do relogio da maquina.
+        """
+        now = int(now if now is not None else time.time())
+        empty = {
+            "available": False,
+            "fetched_at": None,
+            "fetched_at_fmt": "—",
+            "age_seconds": None,
+            "age_fmt": "—",
+            "flying": [],
+            "landed": [],
+            "unknown": [],
+            "nobles_flying": 0,
+            "totals": {},
+        }
+        if not os.path.exists(InFlightReader.CACHE_PATH):
+            return empty
+        try:
+            with open(InFlightReader.CACHE_PATH, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return empty
+
+        flying, landed, unknown = [], [], []
+        totals = {}
+        for cmd in data.get("commands") or []:
+            arrival = cmd.get("arrival_ts")
+            units = cmd.get("units") or {}
+            row = {
+                "command_id": cmd.get("command_id"),
+                "command_type": cmd.get("command_type"),
+                "type_label": InFlightReader.TYPE_LABELS.get(
+                    cmd.get("command_type"), cmd.get("command_type") or "—"),
+                "is_outbound": cmd.get("command_type") in InFlightReader.OUTBOUND_TYPES,
+                "icon_hint": cmd.get("icon_hint"),
+                "label": cmd.get("label"),
+                "origin_label": cmd.get("origin_label"),
+                "origin_coords": cmd.get("origin_coords"),
+                "origin_village_id": cmd.get("origin_village_id"),
+                "target_coords": cmd.get("target_coords"),
+                "arrival_ts": arrival,
+                "arrival_text": cmd.get("arrival_text"),
+                "arrival_error": cmd.get("arrival_error"),
+                # Procedencia da hora, exigida pelo contrato (a). Hoje e
+                # sempre "overview" porque nao ha outra fonte ligada -- o
+                # campo existe para que, no dia em que alguem acrescentar uma
+                # estimativa, a tela nao passe a misturar as duas caladas.
+                "source": "overview",
+                "has_snob": bool(cmd.get("has_snob")),
+                "units": units,
+                "units_fmt": ", ".join(
+                    "%s %s" % (v, InFlightReader.UNIT_LABELS.get(k, k))
+                    for k, v in sorted(units.items(), key=lambda kv: -kv[1])
+                ) or "—",
+            }
+            if arrival is None:
+                unknown.append(row)
+                continue
+            row["eta_seconds"] = arrival - now
+            row["eta_fmt"] = InFlightReader._fmt_eta(arrival - now)
+            try:
+                row["arrival_fmt"] = datetime.datetime.fromtimestamp(
+                    arrival).strftime("%d/%m %H:%M:%S")
+            except (OSError, OverflowError, ValueError):
+                row["arrival_fmt"] = "—"
+            if arrival > now:
+                flying.append(row)
+                for unit, count in units.items():
+                    totals[unit] = totals.get(unit, 0) + count
+            else:
+                landed.append(row)
+
+        flying.sort(key=lambda r: r["arrival_ts"])
+        landed.sort(key=lambda r: r["arrival_ts"], reverse=True)
+
+        fetched_at = data.get("fetched_at")
+        fetched_fmt, age_seconds, age_fmt = "—", None, "—"
+        if fetched_at:
+            try:
+                fetched_fmt = datetime.datetime.fromtimestamp(
+                    fetched_at).strftime("%d/%m %H:%M:%S")
+                age_seconds = now - int(fetched_at)
+                age_fmt = InFlightReader._fmt_eta(age_seconds)
+            except (OSError, OverflowError, ValueError):
+                pass
+
+        return {
+            "available": bool(flying or landed or unknown),
+            "fetched_at": fetched_at,
+            "fetched_at_fmt": fetched_fmt,
+            "age_seconds": age_seconds,
+            "age_fmt": age_fmt,
+            "flying": flying,
+            "landed": landed,
+            "unknown": unknown,
+            "nobles_flying": sum(1 for r in flying if r["has_snob"]),
+            "totals": {
+                InFlightReader.UNIT_LABELS.get(k, k): v
+                for k, v in sorted(totals.items(), key=lambda kv: -kv[1])
+            },
+        }
+
+
 class PvpConquestReader:
     """
     Lê, cria e deleta alvos PvP em cache/pvp_conquest/*.json.

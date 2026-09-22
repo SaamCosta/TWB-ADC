@@ -211,6 +211,7 @@ Ordem histórica de implementação:
 | 33 | Cunhagem automática nativa | ⬜ pendente | — |
 | 34 | Troca Premium | ⛔ **morta (2026-09-21)** — código mantido, gate off | nunca validada e não será — §4.5 |
 | 37 | Painel: série Saqueado/Coletado do próprio jogo | ✅ 2026-09-22 | ⚠️ não — ver §8.17 |
+| 38 | Painel "Em voo" (comandos no ar, hora do servidor) | ✅ 2026-09-22 | ⚠️ não — ver §8.18 |
 
 ### 3.1 Notas que não cabem na tabela
 
@@ -3298,6 +3299,130 @@ e o card de `/empire` deixando de mostrar "sem leitura ainda".
 
 ---
 
+## 8.18 ✅ `P-VOO-PAINEL` (Feature 38) — o que está no ar virou painel (2026-09-22)
+
+Item 1 da §6.1.2 do `frontend.md`, descrito lá como **"o mais valioso, e o
+único que não é cosmético"**, e o buraco de observabilidade que deixou o
+`_get_my_conquest()` devolver `None` com quatro nobres no ar sem ninguém ver
+(§6.1). Até aqui nada no bot lia a tela de comandos do jogo.
+
+### A decisão de fonte, que é o que faz os dois contratos se resolverem sozinhos
+
+Os contratos do item 1 são: (a) a hora precisa ser **de chegada**, dizendo se
+veio confirmada ou estimada; (b) a lista **nunca** pode sair do campo `status`
+do cache de conquista — foi esse campo que dizia `"complete"` com quatro
+nobres voando.
+
+Ler `screen=overview_villages&mode=commands` resolve os dois sem esforço: o
+que volta é o que o **jogo** diz que está no ar, com a hora que o **servidor**
+calculou. Não há opinião nossa no meio, e `cache/conquest` não é aberto em
+momento algum. A alternativa — estimar com `Extractor.attack_duration()` —
+seria construir o painel sobre a função que devolve **0** quando o regex
+falha, fazendo o nobre nascer "já pousado" (sexto padrão).
+
+### As três coisas que a captura real ensinou, e que não são óbvias no markup
+
+**1. A tela é paginada e o contador do cabeçalho mente.** Sem `page=-1` vieram
+**25 linhas, e o `<th>` dizia "Comando (25)"** — o contador conta a *página*,
+não o total. Com `page=-1` vieram **65**: 40 comandos (62%) eram invisíveis no
+default, e nada na resposta denunciava isso. Um painel "Em voo" que esconde a
+maioria do que voa é pior que nenhum, porque ele parece completo. É o 26º
+padrão, e aqui ele quase entrou pela porta da frente: eu tinha aberto a tela e
+escrito o regex da linha **antes** de contar quantas linhas existiam.
+Consequência de desenho: `declared` **não** é exposto como total. Ele vira
+guarda contra o *parser* perder linha (divergência = warning), que é a única
+coisa que ele de fato detecta.
+
+**2. As colunas de unidade variam por mundo.** br143 não tem arqueiro, então
+são **10** colunas (`spear sword axe spy light heavy ram catapult knight
+snob`). Num mundo com arqueiro são 12. Qualquer ordem chumbada passaria a
+rotular tropa errada **em silêncio** — e o teste mede o caso concreto: com a
+ordem do br143 aplicada a um mundo com arqueiro, o `zip` trunca, o arqueiro
+some e `snob` recebe o valor da 10ª célula. O painel anunciaria trem de
+conquista que não existe. Por isso a ordem é lida do próprio cabeçalho, pelo
+nome do ícone `unit_<X>.webp` — o mesmo sinal independente de idioma que
+`INCOMING_SUPPORT_SPEED_ICON` já usava.
+
+**3. Não existe timestamp absoluto aqui.** Ao contrário do widget de comandos
+*recebidos* (que traz `data-endtime`), esta tela só tem texto renderizado
+("hoje às 16:24:23"). Logo a hora é resolvida contra o relógio do **servidor**,
+publicado na própria página em `#serverDate`/`#serverTime`. Usar o relógio da
+máquina "funcionaria" no br143 — os dois coincidem — e quebraria calado num
+mundo de outro fuso: é o 17º padrão, em que o ambiente de medição não separa
+as duas hipóteses, então vale a que é estruturalmente correta. Sem relógio na
+página, `arrival_ts` sai **`None`**, nunca 0.
+
+### Um achado de brinde: o jogo marca nobre duas vezes
+
+A contagem crua deu **69** `data-command-type` para **65** linhas. As 4 extras
+não eram lixo: são exatamente as 4 linhas de nobre, que ganham um **segundo**
+`<span class="own_command">` com `data-icon-hint="Com nobre"` e ícone
+`snob.webp`. Como os dois atributos são idênticos (mesmo tipo, mesmo id), ler
+o primeiro é seguro — mas o ícone é uma **leitura independente** do fato mais
+caro de errar neste painel. `has_snob` passou a ser `coluna OR ícone`, e
+**discordância entre os dois vira warning** em vez de um lado vencer calado.
+Efeito colateral útil, coberto por teste: com a coluna de tropa quebrada, o
+nobre continua visível pelo ícone.
+
+### O que foi escrito
+
+- **`Extractor.own_commands(res)`** e **`Extractor.server_clock(res)`**
+  (`core/extractors.py`). `own_commands` devolve `None` quando a tabela não
+  existe (login, bot-protection, markup novo) e **lista vazia** quando não há
+  comandos — duas coisas diferentes, e "nada no ar" é legítimo e comum.
+- **`game/in_flight.py::InFlight`** — uma instância por processo (como
+  `WorldVillages`/`PlayerStats`: a resposta é da conta inteira), TTL curto
+  (`in_flight.cache_seconds`, default **600**) e leitura ruim que nunca apaga
+  a boa anterior. Escreve `cache/in_flight.json`.
+- **`TWB.in_flight`** (`twb.py`) — `refresh()` no **início** do ciclo, antes do
+  laço de aldeias: assim a leitura descreve o estado com que o ciclo começou,
+  e não um meio-termo entre o que já foi enviado neste ciclo e o que não foi.
+- **`webmanager/utils.py::InFlightReader`** + card de largura cheia em
+  `/empire`.
+- **Config**: seção `in_flight` (`enabled`, `cache_seconds`) em
+  `config.example.json` e `helpfile.py`; `build.version` 4.6 → **4.7** só no
+  exemplo. **Merge simulado antes de bumpar** (o passo que a §8.17 registrou
+  ter feito na ordem errada): 0 chaves descartadas, 1 seção acrescentada.
+
+### ⚠️ Escopo deliberado: isto é observabilidade, não decisão
+
+Nada aqui muda o que o bot faz, e a tentação de mudar é real — este é
+exatamente o dado que faltava quando `_get_my_conquest()` devolveu `None`.
+Cruzar a lista com `ConquestManager` para uma segunda trava de nobre em voo
+**não foi feito**: mexer ali mexe em tropa real, e a trava atual por tempo de
+chegada já funciona. O valor desta feature é alguém **olhar e ver**.
+
+### O dado que envelhece mais rápido do cache inteiro
+
+Todo o resto do `cache/` descreve estado que muda em horas; este descreve
+coisas que **pousam**. Um comando cuja chegada já passou pode ter chegado — ou
+o bot pode só não ter relido. Como não dá para saber qual, ele vai para um
+balde próprio (`landed`), **nunca somado aos que voam nem escondido**:
+esconder seria mentir por omissão, deixar em "no ar" seria mentir por
+afirmação. A idade da leitura é publicada junto e fica vermelha acima de 30
+min. Pelo mesmo motivo, "tropa no ar" soma só o que ainda voa.
+
+### Testes
+
+`tests/test_own_commands_extractor.py` (58 checagens, fixture **verbatim** das
+linhas de farm, de nobre e de retirada, mais o caso do mundo com arqueiro, a
+guarda da ordem chumbada, a discordância dos dois sinais de nobre e a
+exigência de que a falha de hora seja `None` e não 0) e
+`tests/test_in_flight.py` (50 checagens, wrapper de mentira, `CACHE_PATH`
+temporário nos dois lados, `page=-1` verificado **na URL pedida** — é o único
+parâmetro cuja ausência quebraria a feature sem quebrar nenhum teste de
+parser). Suíte inteira (59 arquivos) verde. `/empire` renderizado por
+`app.test_client()` nos **dois** ramos (com dado real da captura: 64 no ar, 1
+pousado, 4 nobres; e sem arquivo: "sem leitura ainda").
+
+**Não validado em campo ainda.** O que observar no próximo ciclo: a linha
+`InFlight: N comando(s) no ar (M com nobre)` no `session_latest.log`, e o card
+de `/empire` com idade de leitura baixa. O `cache/in_flight.json` atual foi
+gerado da captura de 2026-09-22 pelo caminho de escrita real, para validar o
+render — o bot o sobrescreve no primeiro ciclo.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -3421,6 +3546,15 @@ e o card de `/empire` deixando de mostrar "sem leitura ainda".
    conta inteira) + card em `/empire`. **⏳ Falta campo:** a linha
    `PlayerStats: N dia(s) de ... lidos` no log e o card deixando de mostrar
    "sem leitura ainda".
+
+13. ~~**`P-VOO-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.18, Feature 38). O
+   item 1 da §6.1.2 do `frontend.md` ("o mais valioso, e o único que não é
+   cosmético"). `Extractor.own_commands()` + `game/in_flight.py` + card em
+   `/empire`, com a hora de chegada vinda do **servidor**. Três achados de
+   captura: a tela é paginada e o contador do cabeçalho conta a página (25 de
+   65), as colunas de tropa variam por mundo, e o jogo marca nobre um segundo
+   vez por ícone. **⏳ Falta campo:** a linha `InFlight: N comando(s) no ar` no
+   log e a idade de leitura baixa no card.
 
 Depois disso, a fila anterior:
 

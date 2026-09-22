@@ -198,6 +198,27 @@ próprio nomeando a config que liga a leitura, em vez de tabela vazia muda.
 `percent` não chegou ao template: o webmanager não repassa o campo (ver
 `backend.md` §8.17), então não há como a página inventar um rótulo para ele.
 
+### 2.6 `/empire` ganha o painel "Em voo" (2026-09-22)
+
+Item 1 da §6.1.2 — o mais valioso da lista. Backend em `backend.md` §8.18.
+
+Card de largura cheia **acima** do card de Saqueado × Coletado, porque
+responde a pergunta mais urgente da página (o que está acontecendo agora)
+contra a mais analítica (como foi ontem). Tabela ordenada pela chegada mais
+próxima, com origem, alvo, **hora absoluta** de chegada, quanto falta e as
+tropas.
+
+O que se lê é hora, nunca barra de progresso: a §6.1.2 já marcava a barra do
+mockup como inaceitável, e o motivo fica explícito no `title` de cada célula
+de chegada, que mostra o texto cru da página do jogo e a procedência
+(`overview`). O contrato "diga se é confirmada ou estimada" está no dado, não
+só na legenda.
+
+Estado ausente tem texto próprio nomeando a config que liga a leitura, e diz
+a frase que o resto do painel não diz em lugar nenhum: **lista vazia depois de
+uma leitura significa "nada no ar", que é diferente de "não li"**. Os dois
+casos foram renderizados pelo test client antes de fechar.
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)
@@ -515,7 +536,7 @@ mockup como especificação de layout.
 
 | # | Ideia roubada | Depende de | Esforço |
 |---:|---|---|---|
-| 1 | **Painel "Em voo"** (deles: *Deployment Status*) | `FND-02` p/ estado; ETA já existe parcial | M |
+| 1 | ~~**Painel "Em voo"**~~ ✅ 2026-09-22 | nada — o jogo publica a lista pronta | M |
 | 2 | ~~**Razão de exclusão do alvo de farm**~~ ✅ 2026-09-22 | nada — o dado já era produzido e descartado | S |
 | 3 | **Prazo por linha** (deles: coluna *Next Run*) | `FND-01` p/ frescor; útil degradado sem ele | S |
 | 4 | **Strip de recursos persistente no topo** | nada | S |
@@ -530,6 +551,36 @@ acontece"), e é o buraco de observabilidade que deixou o `_get_my_conquest()`
 devolver `None` com quatro nobres no ar sem ninguém ver (§6.1 do `backend.md`).
 Também é a única forma de olhar e responder se um apoio chega antes do impacto
 — hoje o gate `support_lead_time_sec` decide isso e não mostra a conta.
+
+✅ **Implementado em 2026-09-22** (`backend.md` §8.18, Feature 38), e a coluna
+"Depende de" acima estava **errada**: não precisou de `FND-02` nenhum. A
+premissa era que o estado teria de ser reconstruído do nosso cache — mas o
+jogo publica a lista inteira, pronta e com a hora que ele mesmo calculou, em
+`screen=overview_villages&mode=commands`. É a mesma economia que o item 6
+descobriu para as séries históricas, e pela mesma razão: **antes de projetar
+o schema que derivaria um dado, vale conferir se o jogo já o serve.** O
+esforço M sobrou quase todo para os casos de borda da captura, não para o
+estado.
+
+Os dois contratos foram preservados por construção, não por disciplina: (a) a
+hora vem do servidor e cada linha carrega `source`, para que no dia em que
+alguém acrescentar uma estimativa a tela não passe a misturar as duas caladas
+— nada de barra de progresso genérica; (b) `cache/conquest` não é aberto em
+lugar nenhum do caminho.
+
+O que a tela mostra além do previsto no parágrafo acima, e por quê:
+- **Três baldes, não uma lista.** `flying` (chegada no futuro), `landed`
+  (chegada já passou desde a leitura, dentro de um `<details>` fechado) e
+  `unknown` (hora ilegível, num alerta). Comando pousa entre a leitura do bot
+  e o carregamento da página; esconder o vencido seria mentir por omissão e
+  deixá-lo em "no ar" seria mentir por afirmação.
+- **A idade da leitura é a informação mais importante do card**, fica em
+  vermelho acima de 30 min, e vem com a frase que explica por que ela importa
+  aqui mais que em qualquer outro card do painel.
+- **"Tropa no ar" soma só o que ainda voa** — incluir o retorno já vencido
+  contaria tropa que provavelmente está em casa.
+- **Linha com nobre é destacada** e o contador de nobres sobe para o título,
+  porque foi um trem de 4 nobres invisível que originou o pedido.
 ⚠️ **Contratos a preservar, os dois inegociáveis:** (a) a barra de progresso
 genérica do mockup **não serve** — o que se lê é hora de chegada, e ela precisa
 dizer se veio **confirmada** do overview ou **estimada** por

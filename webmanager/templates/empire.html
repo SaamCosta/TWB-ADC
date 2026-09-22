@@ -130,6 +130,125 @@
   </div>
 
   <div class="row">
+    <!-- Em voo: o que esta no ar AGORA, direto da tela de comandos (Feature 38).
+         O que se le e HORA DE CHEGADA, nunca barra de progresso -- e a hora vem
+         do servidor, nao de attack_duration() (docs/frontend.md 6.1.2 item 1). -->
+    <div class="col-12 mb-3">
+      <div class="card h-100" style="border-color:#c8a96e;">
+        <div class="card-body">
+          <h6 class="card-title mb-1">
+            Em voo
+            {% if in_flight.available %}
+            <span class="badge bg-dark">{{ in_flight.flying|length }} no ar</span>
+            {% if in_flight.nobles_flying %}
+            <span class="badge bg-danger" title="Comandos carregando pelo menos um nobre.">{{ in_flight.nobles_flying }} com nobre</span>
+            {% endif %}
+            {% endif %}
+          </h6>
+          <small class="text-muted d-block mb-2">
+            Lido de <code>screen=overview_villages&amp;mode=commands</code> — a hora de chegada é
+            a que o <strong>servidor</strong> calculou, não uma estimativa nossa. Conta inteira.
+          </small>
+
+          {% if in_flight.available %}
+          <small class="d-block mb-2 {% if in_flight.age_seconds and in_flight.age_seconds > 1800 %}text-danger{% else %}text-muted{% endif %}">
+            Leitura de {{ in_flight.fetched_at_fmt }} — <strong>{{ in_flight.age_fmt }} atrás</strong>.
+            Comandos pousam: quanto mais velha a leitura, mais desta lista já chegou.
+          </small>
+
+          {% if in_flight.totals %}
+          <small class="text-muted d-block mb-2">
+            Tropa no ar:
+            {% for name, count in in_flight.totals.items() %}<span class="badge bg-secondary">{{ count }} {{ name }}</span> {% endfor %}
+          </small>
+          {% endif %}
+
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-1">
+              <thead style="background:#2c1810;color:#d4a843;">
+                <tr>
+                  <th>Tipo</th>
+                  <th>Origem</th>
+                  <th>Alvo</th>
+                  <th>Chegada</th>
+                  <th>Falta</th>
+                  <th>Tropas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for c in in_flight.flying %}
+                <tr {% if c.has_snob %}style="background:#3a1c1c;"{% endif %}>
+                  <td title="{{ c.icon_hint or '' }}">
+                    {{ c.type_label }}
+                    {% if c.has_snob %}<span class="badge bg-danger">nobre</span>{% endif %}
+                  </td>
+                  <td>{{ c.origin_label or '—' }}</td>
+                  <td>{{ c.label or c.target_coords or '—' }}</td>
+                  <td title="Texto da página: {{ c.arrival_text }} · fonte: {{ c.source }}">{{ c.arrival_fmt }}</td>
+                  <td>{{ c.eta_fmt }}</td>
+                  <td>{{ c.units_fmt }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          {% if in_flight.landed %}
+          <details class="mt-2">
+            <summary class="text-muted small">
+              {{ in_flight.landed|length }} comando(s) cuja chegada já passou desde a leitura
+            </summary>
+            <small class="text-muted d-block mb-2 mt-1">
+              Estes <strong>provavelmente</strong> pousaram — mas a única coisa medida é que a
+              hora de chegada é anterior a agora, e o bot não releu depois disso. Não estão
+              somados aos que voam, e não foram escondidos.
+            </small>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <tbody>
+                  {% for c in in_flight.landed %}
+                  <tr class="text-muted">
+                    <td>{{ c.type_label }}</td>
+                    <td>{{ c.origin_label or '—' }}</td>
+                    <td>{{ c.label or c.target_coords or '—' }}</td>
+                    <td>{{ c.arrival_fmt }}</td>
+                    <td>{{ c.units_fmt }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+          {% endif %}
+
+          {% if in_flight.unknown %}
+          <div class="alert alert-warning py-2 mt-2 mb-0">
+            <small>
+              <strong>{{ in_flight.unknown|length }} comando(s) sem hora de chegada legível.</strong>
+              Aparecem aqui em vez de sumirem — hora ausente é hora desconhecida, não zero.
+              {% for c in in_flight.unknown %}
+              <div>{{ c.type_label }} · {{ c.origin_label or '—' }} → {{ c.label or '—' }}
+                <em>({{ c.arrival_error or 'motivo não registrado' }})</em></div>
+              {% endfor %}
+            </small>
+          </div>
+          {% endif %}
+
+          {% else %}
+          <small class="text-muted">
+            Sem leitura ainda. A Feature 38 (<code>game/in_flight.py</code>) lê no máximo a cada
+            <code>in_flight.cache_seconds</code> segundos (default 600) — precisa de pelo menos um
+            ciclo do bot com <code>in_flight.enabled</code> ligado (é o padrão).
+            Lista vazia depois de uma leitura significa <em>nada no ar</em>, que é diferente
+            de <em>não li</em>.
+          </small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
     <!-- Saqueado x Coletado, direto do proprio jogo (Feature 37) -->
     <div class="col-12 mb-3">
       <div class="card h-100" style="border-color:#c8a96e;">

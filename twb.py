@@ -150,6 +150,7 @@ from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
 from game.world_villages import WorldVillages
 from game.player_stats import PlayerStats
+from game.in_flight import InFlight
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -202,6 +203,9 @@ class TWB:
     # `player_stats.cache_seconds` valer; sem isso o objeto nasceria de novo
     # a cada ciclo e nunca deixaria de reler a rede.
     player_stats = None
+    # Feature 38: idem -- sobrevive entre ciclos para o TTL de
+    # `in_flight.cache_seconds` valer.
+    in_flight = None
 
     def __init__(self):
         # Precisam ser criados por instância, não como atributo de classe:
@@ -975,6 +979,22 @@ class TWB:
                 self.player_stats.config = config
                 if managed_villages_dict:
                     self.player_stats.refresh(sorted(managed_villages_dict)[0])
+
+                # Feature 38: o que esta no ar agora, lido da visao geral de
+                # comandos do jogo (docs/frontend.md 6.1.2, item 1). Tambem e
+                # conta inteira, entao tambem basta uma aldeia de endereco.
+                # Roda ANTES do laco de aldeias de proposito: assim a leitura
+                # descreve o estado com que o ciclo comecou, em vez de um
+                # meio-termo entre o que ja foi enviado neste ciclo e o que
+                # ainda nao -- separar "quando eu mandei" de "quando isso
+                # acontece" e a razao de ser desta feature (sexto padrao).
+                if self.in_flight is None:
+                    self.in_flight = InFlight(
+                        wrapper=self.wrapper, config=config
+                    )
+                self.in_flight.config = config
+                if managed_villages_dict:
+                    self.in_flight.refresh(sorted(managed_villages_dict)[0])
 
                 pvp_manager = None
                 if config.get("pvp_conquest", {}).get("enabled", False):

@@ -150,6 +150,15 @@ help_file = {
                     'ReportReader or farmscores for per-village decisions. See docs/backend.md 8.13',
     'player_stats.enabled': 'Read the account-wide loot/gather series (default true — one cheap GET, no write, no gameplay effect)',
     'player_stats.cache_seconds': 'Minimum seconds between reads of stats_own (default 21600, i.e. 6 hours). The series resolution is daily, so re-reading every cycle would not change the numbers, only spend request budget',
+    'in_flight': 'What is in the air RIGHT NOW, read from the game\'s own command overview '
+                 '"screen=overview_villages&mode=commands" (Feature 38). Powers the "Em voo" '
+                 'panel: every outgoing attack, return, support and withdrawal, with origin, '
+                 'target, troops and the arrival time the SERVER calculated — never an estimate '
+                 'from attack_duration(), which returns 0 on a parse failure and would make a '
+                 'noble look already landed. Read-only observability: it changes nothing the bot '
+                 'does. See docs/frontend.md 6.1.2 item 1',
+    'in_flight.enabled': 'Read the command overview once per cycle (default true — one GET, no write, no gameplay effect)',
+    'in_flight.cache_seconds': 'Minimum seconds between reads of the command overview (default 600). Short on purpose, unlike player_stats: this is the fastest-ageing data in the cache, because commands LAND. It is a ceiling against re-reading within one cycle, not a rhythm — the cycle interval is what actually paces it',
     'watchtower': 'Territorial allocation of watchtower villages (Feature 30). A watchtower village is defensive by nature but is allocated by geography, not by the empire ratio — so it is excluded from the empire count. Requires the world to actually have the watchtower building',
     'watchtower.enabled': 'Allow the bot to designate newly conquered villages as ADDITIONAL watchtower villages. The first tower is never created automatically — pick an established, central village by hand and set its profile to "watchtower". Leave false on worlds without the watchtower building',
     'watchtower.min_spacing': 'Minimum distance in tiles between two watchtower villages. A conquered village farther than this from every existing tower becomes a tower itself. Default 16, just above the level-20 radius of 15.0 tiles — larger values collapse the warning time at the seams (at 26 tiles, the worst point is tagged the instant the attack lands); see docs/backend.md',

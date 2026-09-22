@@ -2,6 +2,7 @@
 File used for data extraction
 """
 
+import datetime
 import html
 import json
 import re
@@ -69,6 +70,84 @@ INCOMING_SUPPORT_SPEED_ICON = "benefit_incoming_support_speed"
 STATS_OWN_PUSH_RE = re.compile(r"data\.push\(")
 STATS_OWN_LABEL_RE = re.compile(r"label:\s*'([^']+)'")
 STATS_OWN_DETAILS_RE = re.compile(r"details:\s*")
+
+# `screen=overview_villages&mode=commands`: tudo que esta NO AR agora (saindo
+# desta conta), com a hora de chegada que o SERVIDOR calculou.
+#
+# ⚠️ TRES coisas foram medidas na captura de 2026-09-22 (br143, 65 comandos) e
+# nenhuma delas e obvia pelo markup:
+#
+# 1. A TELA E PAGINADA E O CONTADOR DO CABECALHO MENTE. Sem `page=-1` vieram
+#    25 linhas, e o `<th>` dizia "Comando (25)" -- ou seja, o contador conta a
+#    PAGINA, nao o total. Um parser que confiasse nele concluiria que tinha
+#    tudo. Com `page=-1` vieram 65, das quais 40 (62%) eram invisiveis no
+#    default. Lista curta e indistinguivel de lista completa (26o padrao), e
+#    aqui o efeito seria um painel "Em voo" que esconde a maioria do que voa.
+#
+# 2. AS COLUNAS DE UNIDADE VARIAM POR MUNDO. O br143 nao tem arqueiro, entao
+#    sao 10 colunas (spear sword axe spy light heavy ram catapult knight snob).
+#    Num mundo com arqueiro sao 12, e QUALQUER ordem chumbada passaria a
+#    rotular tropa errada em silencio -- catapulta lida como nobre e o painel
+#    anunciando trem de conquista que nao existe. Por isso a ordem e lida do
+#    proprio cabecalho, pelo nome do icone `unit_<X>.webp`, que e o mesmo sinal
+#    independente de idioma que INCOMING_SUPPORT_SPEED_ICON ja usa.
+#
+# 3. NAO EXISTE TIMESTAMP ABSOLUTO AQUI. Ao contrario do widget de comandos
+#    recebidos (que traz `data-endtime`), esta tela so tem texto renderizado
+#    ("hoje as 16:24:23"). Logo a hora precisa ser resolvida contra o relogio
+#    do SERVIDOR, publicado na propria pagina em `#serverDate`/`#serverTime`,
+#    e nunca contra o relogio da maquina -- que so coincide porque o br143
+#    esta no mesmo fuso (17o padrao: o ambiente de medicao nao consegue
+#    separar as duas hipoteses, entao vale a que e estruturalmente correta).
+OWN_COMMANDS_TABLE_RE = re.compile(
+    r'id="commands_table".*?</table>', re.S
+)
+OWN_COMMAND_ROW_RE = re.compile(
+    r'<tr[^>]*class="[^"]*\bnowrap\b[^"]*"[^>]*>(.*?)</tr>', re.S
+)
+OWN_COMMAND_HEADER_UNIT_RE = re.compile(r"/unit/unit_(\w+)\.\w+")
+OWN_COMMAND_COUNT_RE = re.compile(r"<th>[^<(]*\((\d+)\)\s*</th>")
+OWN_COMMAND_UNIT_CELL_RE = re.compile(
+    r"<td[^>]*class=['\"][^'\"]*\bunit-item\b[^'\"]*['\"][^>]*>\s*([\d.]+)\s*</td>"
+)
+OWN_COMMAND_ID_RE = re.compile(r'data-command-id="(\d+)"')
+OWN_COMMAND_TYPE_RE = re.compile(r'data-command-type="([\w-]+)"')
+OWN_COMMAND_HINT_RE = re.compile(r'data-icon-hint="([^"]*)"')
+OWN_COMMAND_LABEL_RE = re.compile(
+    r'<span class="quickedit-label">\s*(.*?)\s*</span>', re.S
+)
+OWN_COMMAND_ORIGIN_RE = re.compile(
+    r'screen=info_village(?:&amp;|&)id=(\d+)"[^>]*>\s*(.*?)\s*</a>', re.S
+)
+OWN_COMMAND_COORD_RE = re.compile(r"\((\d{1,4})\|(\d{1,4})\)")
+OWN_COMMAND_TD_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.S)
+# O jogo marca a linha que leva nobre com um SEGUNDO <span class="own_command">,
+# icone `command/snob.*` e hint "Com nobre". Isso e um sinal INDEPENDENTE da
+# coluna `snob` da tabela, e e por isso que vale a pena ler os dois: "tem nobre
+# no ar" e o fato mais caro de errar neste painel -- foi um trem de 4 nobres
+# invisivel que originou o pedido da feature (docs/backend.md 6.1). Se as duas
+# leituras discordarem, a discordancia vira warning em vez de uma delas vencer
+# calada.
+OWN_COMMAND_SNOB_ICON_RE = re.compile(r"/command/snob\.\w+")
+# Relogio do servidor, no topo de qualquer tela do jogo.
+SERVER_DATE_RE = re.compile(r'id="serverDate"[^>]*>\s*(\d{2})/(\d{2})/(\d{4})')
+SERVER_TIME_RE = re.compile(r'id="serverTime"[^>]*>\s*(\d{1,2}):(\d{2}):(\d{2})')
+# "hoje as HH:MM:SS", "amanha as HH:MM:SS" ou "em DD.MM. as HH:MM:SS".
+#
+# ⚠️ O "as" da pagina e "às" (acentuado) e NAO entra no padrao de proposito:
+# ancorar em texto acentuado e depender de o decode ter dado certo, e essa
+# celula ja passou por um console que a mostrou como "�s". Os tres sinais
+# usados (hoje / amanh / DD.MM.) sao ASCII.
+#
+# ⚠️ "amanh" NAO TEM FIXTURE: a captura de 2026-09-22 so tinha "hoje" (64) e
+# "em 25.09." (1), e o unico "amanh" do HTML era o miolo de "T-amanh-o do
+# ataque". Fica sem resposta se o jogo usa "amanha as" ou "em 23.09." para o
+# dia seguinte; os dois sao aceitos aqui, entao a duvida nao muda o resultado.
+OWN_COMMAND_ARRIVAL_RE = re.compile(
+    r"(?:(hoje)|(amanh)\w*|em\s+(\d{1,2})\.(\d{1,2})\.)"
+    r"[^\d]{0,12}(\d{1,2}):(\d{2}):(\d{2})",
+    re.I,
+)
 
 
 class Extractor:
@@ -995,6 +1074,238 @@ class Extractor:
             if parsed:
                 out[label] = parsed
         return out or None
+
+    @staticmethod
+    def server_clock(res):
+        """
+        Relogio do SERVIDOR, lido do topo de qualquer tela do jogo.
+
+        Devolve (datetime_do_servidor, None) ou (None, motivo) -- nunca um
+        fallback para o relogio local. O relogio local coincide com o do br143,
+        entao usa-lo "funcionaria" aqui e quebraria calado num mundo de outro
+        fuso; e o mesmo caso do 17o padrao, em que o ambiente de medicao nao
+        distingue as duas hipoteses.
+        """
+        if type(res) != str:
+            res = res.text
+        if not res:
+            return None, "resposta vazia"
+        date_match = SERVER_DATE_RE.search(res)
+        time_match = SERVER_TIME_RE.search(res)
+        if not date_match or not time_match:
+            return None, "sem #serverDate/#serverTime na pagina"
+        try:
+            return datetime.datetime(
+                int(date_match.group(3)), int(date_match.group(2)),
+                int(date_match.group(1)), int(time_match.group(1)),
+                int(time_match.group(2)), int(time_match.group(3)),
+            ), None
+        except ValueError as exc:
+            return None, "data invalida: %s" % exc
+
+    @staticmethod
+    def _command_arrival(cell_text, server_now):
+        """
+        Traduz a celula de chegada ("hoje as 16:24:23") em epoch absoluto.
+
+        Devolve (epoch, None) ou (None, motivo). ⚠️ Devolve **None**, nunca 0,
+        quando nao consegue: `Extractor.attack_duration()` devolve 0 na falha e
+        isso ja fez nobre "nascer pousado" (sexto padrao). Zero aqui seria uma
+        chegada em 1970, que ordena como "mais atrasado de todos" e iria para o
+        topo do painel -- valor de falha disfarcado de resposta.
+        """
+        if server_now is None:
+            return None, "sem relogio do servidor"
+        match = OWN_COMMAND_ARRIVAL_RE.search(cell_text or "")
+        if not match:
+            return None, "formato de chegada nao reconhecido"
+        today, tomorrow, day, month, hour, minute, second = match.groups()
+        try:
+            clock = datetime.time(int(hour), int(minute), int(second))
+        except ValueError as exc:
+            return None, "hora invalida: %s" % exc
+
+        if today:
+            date = server_now.date()
+        elif tomorrow:
+            date = (server_now + datetime.timedelta(days=1)).date()
+        else:
+            day, month = int(day), int(month)
+            # O jogo omite o ano. Uma chegada so existe no FUTURO, entao um
+            # dia/mes que ja passou neste ano e do ano que vem -- e o caso
+            # real acontece toda virada de dezembro.
+            year = server_now.year
+            try:
+                date = datetime.date(year, month, day)
+            except ValueError as exc:
+                return None, "data invalida: %s" % exc
+            if date < server_now.date():
+                try:
+                    date = datetime.date(year + 1, month, day)
+                except ValueError as exc:
+                    return None, "data invalida: %s" % exc
+        return int(datetime.datetime.combine(date, clock).timestamp()), None
+
+    @staticmethod
+    def own_commands(res):
+        """
+        `screen=overview_villages&mode=commands&page=-1`: tudo que esta no ar
+        saindo desta conta, com hora de chegada CALCULADA PELO SERVIDOR.
+
+        Esta e a fonte do painel "Em voo" (docs/frontend.md 6.1.2 item 1), e o
+        motivo de ela ser esta tela e nao o nosso cache esta nos dois contratos
+        que o painel tem de preservar:
+          (a) a hora precisa ser a confirmada, nao a estimada por
+              `attack_duration()`, que devolve 0 na falha;
+          (b) a lista NUNCA pode sair do campo `status` do cache de conquista
+              -- foi justamente ele que dizia "complete" com quatro nobres
+              voando (docs/backend.md 6.1).
+        Aqui as duas se resolvem sozinhas: o que volta e o que o jogo diz que
+        esta no ar, sem opiniao nossa no meio.
+
+        Devolve dict com:
+          {"commands": [...], "declared": int|None, "server_time": int|None,
+           "warnings": [str, ...]}
+        ou **None** se a tabela nao existir na resposta -- login,
+        bot-protection ou markup novo. None e lista vazia sao coisas
+        diferentes: vazio e "nada no ar", que e legitimo e comum.
+
+        Cada comando: {command_id, command_type, icon_hint, label,
+        origin_village_id, origin_label, origin_coords, target_coords,
+        arrival_ts, arrival_text, arrival_error, units, has_snob}.
+
+        ⚠️ `declared` e o numero do cabecalho, que na captura de 2026-09-22
+        contava a PAGINA e nao o total (25 quando havia 65). Ele nao serve de
+        total; serve de guarda contra o parser derrubar linha em silencio --
+        divergir de len(commands) vira warning.
+        """
+        if type(res) != str:
+            res = res.text
+        if not res:
+            return None
+
+        table_match = OWN_COMMANDS_TABLE_RE.search(res)
+        if not table_match:
+            return None
+        table = table_match.group(0)
+
+        warnings = []
+        server_now, clock_error = Extractor.server_clock(res)
+        if clock_error:
+            warnings.append("relogio do servidor: %s" % clock_error)
+
+        # Ordem das colunas de unidade, lida do cabecalho (ver o comentario de
+        # OWN_COMMAND_HEADER_UNIT_RE: chumbar isso rotula tropa errada num
+        # mundo com arqueiro).
+        header_end = table.find("</tr>")
+        header = table[:header_end] if header_end != -1 else ""
+        unit_order = OWN_COMMAND_HEADER_UNIT_RE.findall(header)
+        if not unit_order:
+            warnings.append(
+                "cabecalho sem colunas de unidade -- tropas nao lidas")
+
+        declared_match = OWN_COMMAND_COUNT_RE.search(header)
+        declared = int(declared_match.group(1)) if declared_match else None
+
+        commands = []
+        body = table[header_end:] if header_end != -1 else table
+        for block in OWN_COMMAND_ROW_RE.findall(body):
+            command_id = OWN_COMMAND_ID_RE.search(block)
+            if not command_id:
+                # Linha sem id nao e comando (rodape, linha de "nenhum").
+                continue
+            type_match = OWN_COMMAND_TYPE_RE.search(block)
+            hint_match = OWN_COMMAND_HINT_RE.search(block)
+            label_match = OWN_COMMAND_LABEL_RE.search(block)
+            origin_match = OWN_COMMAND_ORIGIN_RE.search(block)
+
+            label = html.unescape(label_match.group(1)) if label_match else None
+            origin_label = (html.unescape(origin_match.group(2))
+                            if origin_match else None)
+
+            target_coords = None
+            if label:
+                coord = OWN_COMMAND_COORD_RE.search(label)
+                if coord:
+                    target_coords = "%s|%s" % (coord.group(1), coord.group(2))
+            origin_coords = None
+            if origin_label:
+                coord = OWN_COMMAND_COORD_RE.search(origin_label)
+                if coord:
+                    origin_coords = "%s|%s" % (coord.group(1), coord.group(2))
+
+            cells = OWN_COMMAND_TD_RE.findall(block)
+            arrival_text, arrival_ts, arrival_error = None, None, None
+            if len(cells) >= 3:
+                arrival_text = re.sub(r"<[^>]+>", "", cells[2])
+                arrival_text = html.unescape(arrival_text).strip()
+                arrival_ts, arrival_error = Extractor._command_arrival(
+                    arrival_text, server_now)
+            else:
+                arrival_error = "linha sem celula de chegada"
+
+            units = {}
+            raw_units = OWN_COMMAND_UNIT_CELL_RE.findall(block)
+            if unit_order and len(raw_units) == len(unit_order):
+                for name, value in zip(unit_order, raw_units):
+                    try:
+                        count = int(value.replace(".", ""))
+                    except ValueError:
+                        continue
+                    if count:
+                        units[name] = count
+            elif raw_units:
+                # Nao casar o numero de colunas e exatamente o cenario que o
+                # comentario do cabecalho descreve. Melhor NAO rotular do que
+                # rotular deslocado.
+                warnings.append(
+                    "comando %s: %d celulas de tropa para %d colunas -- "
+                    "tropas descartadas" % (command_id.group(1),
+                                            len(raw_units), len(unit_order))
+                )
+
+            # Duas leituras independentes do mesmo fato (ver
+            # OWN_COMMAND_SNOB_ICON_RE). `units` pode estar vazio porque as
+            # colunas nao casaram; o icone sobrevive a isso, entao o OR e o
+            # que mantem o nobre visivel no pior caso.
+            snob_by_column = bool(units.get("snob"))
+            snob_by_icon = bool(OWN_COMMAND_SNOB_ICON_RE.search(block))
+            if units and snob_by_column != snob_by_icon:
+                warnings.append(
+                    "comando %s: coluna de nobre diz %s e o icone diz %s"
+                    % (command_id.group(1), snob_by_column, snob_by_icon)
+                )
+
+            commands.append({
+                "command_id": command_id.group(1),
+                "command_type": type_match.group(1) if type_match else None,
+                "icon_hint": (html.unescape(hint_match.group(1)).strip()
+                              if hint_match else None),
+                "label": label,
+                "origin_village_id": (origin_match.group(1)
+                                      if origin_match else None),
+                "origin_label": origin_label,
+                "origin_coords": origin_coords,
+                "target_coords": target_coords,
+                "arrival_ts": arrival_ts,
+                "arrival_text": arrival_text,
+                "arrival_error": arrival_error,
+                "units": units,
+                "has_snob": snob_by_column or snob_by_icon,
+            })
+
+        if declared is not None and declared != len(commands):
+            warnings.append(
+                "cabecalho declara %d comandos e %d foram lidos"
+                % (declared, len(commands))
+            )
+
+        return {
+            "commands": commands,
+            "declared": declared,
+            "server_time": int(server_now.timestamp()) if server_now else None,
+            "warnings": warnings,
+        }
 
     @staticmethod
     def get_daily_reward(res):
