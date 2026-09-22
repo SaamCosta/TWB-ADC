@@ -1712,6 +1712,103 @@ class EmpireReader:
         return ordered[:limit]
 
 
+class PlayerStatsReader:
+    """
+    Le `cache/player_stats.json` (Feature 37, `game/player_stats.py`) — a
+    serie "Saqueado" x "Coletado" que o proprio jogo publica por dia, ja
+    agregada server-side em `screen=info_player&mode=stats_own`.
+
+    Contexto: docs/backend.md 8.13 (P-STATS-JOGO) e docs/frontend.md 6.1.2,
+    item 6. Existe para responder de graca a pergunta "a coleta rendeu mais
+    que o farm nas ultimas 24h" — algo que nenhuma outra fonte do painel
+    enxerga, porque tambem conta o que o USUARIO fez na mao fora do bot.
+
+    QUATRO CONTRATOS QUE O TEMPLATE PRECISA RESPEITAR (nao so este reader):
+      (a) CONTA INTEIRA — nunca rotular como "desta aldeia". As tabelas de
+          farm por aldeia continuam sendo ReportReader/FarmScoreReader;
+      (b) so os dias que o jogo mandou (ate 7) — sem acumular localmente,
+          entao uma janela maior aqui seria inventada, nao lida;
+      (c) `percent`, se algum dia for exibido, e participacao NO TOTAL DO
+          DIA (saqueado + coletado + gasto), nao "aproveitamento" — este
+          reader nem repassa o campo hoje, de proposito, para nao criar a
+          tentacao de rotula-lo errado antes de decidir a UI dele;
+      (d) SALDO por dia, nao evento — o dia mais recente pode estar parcial
+          (o jogo ainda esta acumulando), e o template mostra isso, nao
+          finge que e um total fechado.
+    """
+
+    CACHE_PATH = os.path.join(
+        os.path.dirname(__file__), "..", "cache", "player_stats.json"
+    )
+
+    @staticmethod
+    def load():
+        empty = {
+            "available": False,
+            "fetched_at": None,
+            "fetched_at_fmt": "—",
+            "days": [],
+        }
+        if not os.path.exists(PlayerStatsReader.CACHE_PATH):
+            return empty
+        try:
+            with open(PlayerStatsReader.CACHE_PATH, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            # JSON parcial: o bot grava atomicamente (FileManager.save_json_file),
+            # mas o fallback in-place existe. Ausente e honesto — nao se
+            # inventa um dia que a leitura anterior nao confirmou.
+            return empty
+
+        series = data.get("series") or {}
+        looted = {row.get("observed_at"): row for row in series.get("Saqueado") or []}
+        gathered = {row.get("observed_at"): row for row in series.get("Coletado") or []}
+        stamps = sorted(
+            {s for s in list(looted) + list(gathered) if s is not None}, reverse=True
+        )
+
+        days = []
+        for i, stamp in enumerate(stamps):
+            l = looted.get(stamp) or {}
+            g = gathered.get(stamp) or {}
+            try:
+                date_fmt = datetime.datetime.fromtimestamp(stamp).strftime("%d/%m")
+            except (OSError, OverflowError, ValueError):
+                date_fmt = "—"
+            days.append({
+                "observed_at": stamp,
+                "date_fmt": date_fmt,
+                # O dia mais recente que o jogo publica pode ainda estar
+                # acumulando (a resposta nao diz "fechado"/"em aberto") --
+                # marcado para o template avisar em vez de apresentar como
+                # total definitivo (contrato d acima).
+                "maybe_partial": i == 0,
+                "looted_total": l.get("total"),
+                "looted_wood": l.get("wood"),
+                "looted_stone": l.get("stone"),
+                "looted_iron": l.get("iron"),
+                "gathered_total": g.get("total"),
+                "gathered_wood": g.get("wood"),
+                "gathered_stone": g.get("stone"),
+                "gathered_iron": g.get("iron"),
+            })
+
+        fetched_at = data.get("fetched_at")
+        fetched_fmt = "—"
+        if fetched_at:
+            try:
+                fetched_fmt = datetime.datetime.fromtimestamp(fetched_at).strftime("%d/%m %H:%M")
+            except (OSError, OverflowError, ValueError):
+                pass
+
+        return {
+            "available": bool(days),
+            "fetched_at": fetched_at,
+            "fetched_at_fmt": fetched_fmt,
+            "days": days,
+        }
+
+
 class PvpConquestReader:
     """
     Lê, cria e deleta alvos PvP em cache/pvp_conquest/*.json.

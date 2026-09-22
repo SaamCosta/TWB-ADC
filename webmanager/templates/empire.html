@@ -130,6 +130,60 @@
   </div>
 
   <div class="row">
+    <!-- Saqueado x Coletado, direto do proprio jogo (Feature 37) -->
+    <div class="col-12 mb-3">
+      <div class="card h-100" style="border-color:#c8a96e;">
+        <div class="card-body">
+          <h6 class="card-title mb-1">Saqueado × Coletado — conta inteira</h6>
+          <small class="text-muted d-block mb-2">
+            Série publicada pelo próprio jogo em <code>screen=info_player&amp;mode=stats_own</code>
+            (docs/backend.md 8.13) — não é por aldeia, e não substitui os relatórios de farm
+            para decisão operacional. Retenção do jogo: 7 dias.
+          </small>
+          {% if player_stats.available %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-1">
+              <thead style="background:#2c1810;color:#d4a843;">
+                <tr>
+                  <th>Dia</th>
+                  <th>Saqueado</th>
+                  <th>Coletado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for d in player_stats.days %}
+                <tr>
+                  <td>
+                    {{ d.date_fmt }}
+                    {% if d.maybe_partial %}
+                    <span class="badge bg-secondary" title="O jogo ainda pode estar acumulando este dia — não é um total fechado.">parcial?</span>
+                    {% endif %}
+                  </td>
+                  <td title="Madeira {{ '{:,}'.format(d.looted_wood or 0).replace(',', '.') }} · Argila {{ '{:,}'.format(d.looted_stone or 0).replace(',', '.') }} · Ferro {{ '{:,}'.format(d.looted_iron or 0).replace(',', '.') }}">
+                    {{ '{:,}'.format(d.looted_total or 0).replace(',', '.') if d.looted_total is not none else '—' }}
+                  </td>
+                  <td title="Madeira {{ '{:,}'.format(d.gathered_wood or 0).replace(',', '.') }} · Argila {{ '{:,}'.format(d.gathered_stone or 0).replace(',', '.') }} · Ferro {{ '{:,}'.format(d.gathered_iron or 0).replace(',', '.') }}">
+                    {{ '{:,}'.format(d.gathered_total or 0).replace(',', '.') if d.gathered_total is not none else '—' }}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <small class="text-muted">Lido em {{ player_stats.fetched_at_fmt }}.</small>
+          {% else %}
+          <small class="text-muted">
+            Sem leitura ainda. A Feature 37 (<code>game/player_stats.py</code>) lê no máximo a
+            cada <code>player_stats.cache_seconds</code> segundos (default 6h) — precisa de pelo
+            menos um ciclo do bot com <code>player_stats.enabled</code> ligado (é o padrão).
+          </small>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
     <!-- Mapa de calor de farm -->
     <div class="col-lg-8 mb-3">
       <div class="card h-100" style="border-color:#c8a96e;">

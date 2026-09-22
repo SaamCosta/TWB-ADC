@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.5",
+    "version": "4.6",
     "author": "stefan2200"
   },
   "server": {
@@ -61,6 +61,10 @@
   "empire": {
     "offensive_ratio": 1,
     "defensive_ratio": 3
+  },
+  "player_stats": {
+    "enabled": true,
+    "cache_seconds": 21600
   },
   "watchtower": {
     "enabled": false,

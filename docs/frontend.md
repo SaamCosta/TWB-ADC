@@ -175,6 +175,29 @@ versão própria das regras, que envelhece separado do bot.
 `tests/smoke_village_page.py` renderiza a rota pelo test client do Flask nos dois
 ramos. Fica **fora** do glob da suíte: lê o `cache/` real.
 
+### 2.5 `/empire` ganha o card Saqueado × Coletado (2026-09-22)
+
+Item 6 da §6.1.2. Backend em `backend.md` §8.17.
+
+Um card de largura cheia, novo, entre "Recursos por aldeia" e o mapa de calor
+de farm — não dentro de nenhum dos dois, porque a fonte é outra (o próprio
+jogo, conta inteira) e misturar linha com as tabelas por aldeia sugeriria que
+o número é da mesma procedência. Tabela por dia, mais recente primeiro, com a
+decomposição madeira/argila/ferro no `title` de cada célula em vez de três
+colunas — a tabela de recursos por aldeia já é a referência de "não empilhar
+número demais na tela principal" (§5.4).
+
+Os quatro contratos da §6.1.2 (conta inteira / retenção de 7 dias / `percent`
+não é aproveitamento / saldo não evento) estão escritos na legenda do próprio
+card, não só no código — é o mesmo raciocínio do `/village` acima: a página
+não pode contar com quem lê ter aberto a documentação primeiro. O dia mais
+recente carrega um badge "parcial?" com `title` explicando por quê, em vez de
+aparecer igual aos dias fechados. Estado ausente (bot ainda não leu) tem texto
+próprio nomeando a config que liga a leitura, em vez de tabela vazia muda.
+
+`percent` não chegou ao template: o webmanager não repassa o campo (ver
+`backend.md` §8.17), então não há como a página inventar um rótulo para ele.
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)
@@ -497,7 +520,7 @@ mockup como especificação de layout.
 | 3 | **Prazo por linha** (deles: coluna *Next Run*) | `FND-01` p/ frescor; útil degradado sem ele | S |
 | 4 | **Strip de recursos persistente no topo** | nada | S |
 | 5 | **Recrutamento em massa** reusando o padrão da §2.2 | nada — padrão já estabelecido | M |
-| 6 | **Série histórica embarcada do próprio jogo** (2026-09-21) | nada — HTML já traz os números | S |
+| 6 | ~~**Série histórica embarcada do próprio jogo**~~ ✅ 2026-09-22 | nada — HTML já traz os números | S |
 
 **1. Painel "Em voo" — o mais valioso, e o único que não é cosmético.** Uma
 lista do que está *no ar agora*: trem de nobre, apoio, farm, ataque — origem →
@@ -561,6 +584,17 @@ o card precisa dizer que a série começa onde o jogo corta; (c) o campo
 25,997% + `Coletado` 74,003% fecham 100%), e rotulá-lo como "aproveitamento"
 seria o quinto padrão do `CLAUDE.md`; (d) é **saldo, não evento** — não tem
 `observed_at` por operação e não alimenta o painel "Em voo" do item 1.
+
+✅ **Implementado em 2026-09-22** (`backend.md` §8.17, Feature 37) — só
+`Saqueado`/`Coletado`, não a lista inteira de séries. `Extractor.stats_own_series()`
+parseia por `label`, não por ordem; `game/player_stats.py::PlayerStatsReader`
+relê no máximo a cada `player_stats.cache_seconds` (default 6h) e nunca deixa
+uma leitura ruim apagar a boa anterior; card novo em `/empire` com os quatro
+contratos acima escritos na própria legenda do card, e o dia mais recente
+marcado como possivelmente parcial em vez de apresentado como total fechado.
+`percent` **não** foi repassado ao webmanager — sem um consumidor decidido
+para ele, expô-lo seria convite para alguém rotulá-lo errado depois.
+**⏳ Falta campo:** nenhuma leitura real aconteceu ainda fora dos testes.
 
 **Deliberadamente fora:** o gráfico de saque por hora. O dado existe nos
 `TWB_*`, mas o décimo primeiro padrão manda segmentar por template/capacidade e

@@ -210,6 +210,7 @@ Ordem histórica de implementação:
 | 32b | Bandeira por **fase** da aldeia (parte 2) | ⬜ pendente | falta definir o sinal de fase |
 | 33 | Cunhagem automática nativa | ⬜ pendente | — |
 | 34 | Troca Premium | ⛔ **morta (2026-09-21)** — código mantido, gate off | nunca validada e não será — §4.5 |
+| 37 | Painel: série Saqueado/Coletado do próprio jogo | ✅ 2026-09-22 | ⚠️ não — ver §8.17 |
 
 ### 3.1 Notas que não cabem na tabela
 
@@ -3172,6 +3173,131 @@ descobrir isso é metade do valor da feature.
 
 ---
 
+## 8.17 ✅ `P-STATS-PAINEL` (Feature 37) — a série que o jogo publica virou card (2026-09-22)
+
+Item 6 da §6.1.2 do `frontend.md`, sobre a medição da §8.13 (`P-STATS-JOGO`):
+o jogo já agrega `Saqueado`/`Coletado` por dia, conta inteira, dentro do HTML
+de `screen=info_player&mode=stats_own` — e até aqui nada do bot consumia isso.
+
+### O que foi escrito
+
+- **`Extractor.stats_own_series(res)`** (`core/extractors.py`) — parseia os
+  blocos `data.push({label: '...', ..., details: [...]})` por label (não por
+  ordem, que a §8.13 já registrava como não garantida). Devolve `None` quando
+  a página não tem nenhum bloco reconhecível — login, bot-protection, ou
+  markup que mudou — para o chamador distinguir "sem série" de "erro de
+  rede". Cada linha malformada é pulada sem derrubar a série inteira, e cada
+  bloco com JSON quebrado é pulado sem derrubar os outros blocos.
+- **`game/player_stats.py::PlayerStats`** — lê a tela no máximo a cada
+  `player_stats.cache_seconds` (default 6h: a resolução da série é diária,
+  reler por ciclo só gastaria orçamento de requisição da conta, mesmo
+  raciocínio do TTL do `WorldVillages`, §8.6). Guarda só `Saqueado`/`Coletado`
+  — as séries de gasto (`Unidades`, `Edifícios`, ...) não têm consumidor
+  ainda, e gravá-las seria dado morto no cache. **Uma leitura ruim nunca
+  apaga uma leitura boa anterior**: falha de rede, markup irreconhecível ou
+  resposta sem as séries de interesse deixam `_series` intocado — mesmo
+  raciocínio de `WorldVillages.rows()` (§8.6), para um soluço do servidor não
+  fazer o painel regredir de "tenho dado de ontem" para "sem dado nenhum".
+  Escreve `cache/player_stats.json` (`FileManager.save_json_file`, atômico).
+- **`TWB.player_stats`** (`twb.py`) — instanciado uma vez por processo, como
+  `WorldVillages`/`ReservationBoard`, e `refresh()`ado no início de cada
+  ciclo com qualquer aldeia gerenciada como endereço do GET (a resposta é da
+  conta inteira, não daquela aldeia). Gate `player_stats.enabled` (default
+  **true** — é leitura pura, sem efeito de jogo, ao contrário da maioria dos
+  gates deste projeto que nascem `false`).
+- **`webmanager/utils.py::PlayerStatsReader`** — lê
+  `cache/player_stats.json` e formata por dia, mais recente primeiro. O dia
+  mais recente é marcado `maybe_partial`: a resposta não diz se aquele dia já
+  fechou, e apresentar como total definitivo violaria o contrato (d) da
+  §6.1.2 do `frontend.md` ("é saldo, não evento").
+- **Card em `/empire`** (`empire.html`) — tabela Saqueado × Coletado por dia,
+  com decomposição por recurso no `title` de cada célula. Legenda no próprio
+  card repete os contratos (a)/(b) da §6.1.2: conta inteira, não substitui os
+  relatórios de farm, retenção de 7 dias.
+- **Config**: seção `player_stats` nova (`enabled`, `cache_seconds`) em
+  `config.example.json` e `webmanager/helpfile.py`, `build.version` 4.5 →
+  **4.6** só no exemplo, para o merge injetar a seção no `config.json` vivo.
+
+### O que a captura real ensinou, e o que ficou de fora
+
+O fixture de `Extractor.stats_own_series` é recorte **verbatim** de
+`cache/debug/stats_own.html` (capturado em 2026-09-21 pela §8.13), inclusive
+os três dias com `Coletado.total == 0` de antes da Feature "coleta em massa"
+ligar — confirma que `0` sobrevive ao parse como inteiro, não vira `None` nem
+é descartado por engano (`if not total` teria apagado exatamente o dado mais
+interessante da série). A participação no total do dia (`percent`) **não** é
+repassada ao webmanager: ela soma com as séries de gasto que este card não
+lê, e expor o campo sem consumidor certo seria convite para alguém rotulá-lo
+"aproveitamento" mais tarde — o quinto padrão do `CLAUDE.md` outra vez.
+
+### ⚠️ O que a revisão do mesmo dia achou, e que os testes originais não pegavam
+
+A primeira versão foi escrita e "aprovada" com 83 checagens verdes. Uma
+releitura crítica no mesmo dia achou **três defeitos**, e o primeiro é do tipo
+que este repositório mais paga caro.
+
+**1. O parser pareava `label` com `details` atravessando blocos.** A
+formulação era uma varredura do documento inteiro:
+
+```
+label:\s*'([^']+)'.*?details:\s*(\[\{.*?\}\])     (re.S)
+```
+
+Um bloco com `label:` e **sem** `details:` — que é exatamente a forma de uma
+série de *linha* (pontos, aldeias, classificação) — faz o `.*?` pular a
+fronteira e casar aquele label com os números do bloco **seguinte**; e o label
+legítimo **desaparece**, porque o match já o consumiu. Medido contra um caso
+construído: `Saqueado` sumiu e os números dele saíram rotulados `Pontos`.
+Nenhum erro, nenhum log — o card de `/empire` mostraria coletado como se fosse
+saqueado, **invertendo a única pergunta que ele existe para responder**.
+
+Na página de hoje os 8 blocos têm os dois campos e o pareamento sai certo —
+por sorte, não por construção. Corrigido recortando um bloco `data.push(...)`
+por vez **antes** de procurar os campos, o que torna o vazamento
+estruturalmente impossível. De quebra, `details` passou a sair por
+`balanced_slice` em vez de `\[\{.*?\}\]`: o lazy para no primeiro `}]` e
+truncaria a lista se o jogo aninhasse um objeto por ponto — e o docstring do
+`balanced_slice`, neste mesmo arquivo, existe por causa dessa armadilha.
+Guarda em `test_o_regex_antigo_erra_este_caso_a_guarda_pode_falhar`, que roda
+a formulação **antiga** contra o markup e exige que ela erre.
+
+**2. Convenção de nome inventada.** A classe do bot chamava-se
+`PlayerStatsReader`, igual à do webmanager, e o comentário dizia que isso
+seguia "a mesma convenção". Medido: era o **único** nome de classe duplicado
+entre `game/`+`core/` e `webmanager/` em todo o repositório — a convenção real
+é o oposto (`ConquestManager`/`ConquestReader`,
+`DefenceManager`/`FlagReader`, `FarmExclusionLog`/`FarmExclusionReader`).
+Renomeada para **`PlayerStats`**, seguindo `WorldVillages`, que é o análogo
+direto. É o 16º padrão aplicado ao próprio comentário recém-escrito: uma
+afirmação sobre o código que soa forte por citar um precedente, e que ninguém
+tinha conferido.
+
+**3. O merge do `build.version` não tinha sido simulado** antes de bumpar —
+passo que o `CLAUDE.md` exige explicitamente, porque `merge_configs()` usa o
+template como base e **descarta chave global que só exista no `config.json`
+vivo**. Simulado depois, contra o config real: **0 chaves descartadas, 1 seção
+acrescentada** (`player_stats`). O resultado é o melhor possível; o problema é
+que ele foi descoberto depois de já ter bumpado, não antes.
+
+O que os três têm em comum: os testes verdes mediam o caminho feliz com o
+markup de hoje. Nenhum deles teria falhado com o parser quebrado da forma do
+item 1, porque a fixture real não exercita o caso.
+
+### Testes
+
+`tests/test_stats_own_extractor.py` (37 checagens, fixture verbatim + os três
+casos adversariais do item 1 acima), `tests/test_player_stats_reader.py` (33
+checagens, TTL/gate/degradação com wrapper falso) e
+`tests/test_player_stats_webmanager.py` (19 checagens, `CACHE_PATH` trocado
+por arquivo temporário, nunca toca `cache/` real). Suíte inteira (57 arquivos)
+verde; `/empire` renderizado via `app.test_client()` sem crash.
+
+**Não validado em campo ainda.** O que observar no próximo ciclo: a linha
+`PlayerStats: N dia(s) de Coletado/Saqueado lidos` no `session_latest.log`,
+e o card de `/empire` deixando de mostrar "sem leitura ainda".
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -3288,6 +3414,13 @@ descobrir isso é metade do valor da feature.
    "nem alcançado" ao mesmo tempo, e `scout()` falhando por falta de espião sem
    que nenhum dos três chamadores olhasse o retorno. **⏳ Falta campo:** o
    arquivo só nasce depois de um ciclo de farm com o bot reiniciado.
+12. ~~**`P-STATS-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.17, Feature 37).
+   A série `Saqueado`/`Coletado` que o jogo já publica por dia
+   (`screen=info_player&mode=stats_own`, medida em §8.13) virou
+   `Extractor.stats_own_series()` + `PlayerStatsReader` (bot, TTL de 6h,
+   conta inteira) + card em `/empire`. **⏳ Falta campo:** a linha
+   `PlayerStats: N dia(s) de ... lidos` no log e o card deixando de mostrar
+   "sem leitura ainda".
 
 Depois disso, a fila anterior:
 

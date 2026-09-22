@@ -9,10 +9,10 @@ from core.exceptions import InvalidJSONException
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -640,6 +640,7 @@ def get_empire():
         resource_totals=EmpireReader.resource_totals(resources),
         heatmap=EmpireReader.farm_heatmap(data["attacks"], data["villages"], managed),
         timeline=EmpireReader.conquest_timeline(conquest_targets, pvp_targets, data["villages"]),
+        player_stats=PlayerStatsReader.load(),
     )
 
 

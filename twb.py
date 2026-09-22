@@ -149,6 +149,7 @@ from game.inventory_manager import InventoryManager
 from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
 from game.world_villages import WorldVillages
+from game.player_stats import PlayerStats
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion
@@ -197,6 +198,10 @@ class TWB:
     # Feature 36: idem -- sobrevive entre ciclos para o TTL de 6h da lista do
     # mundo valer, e para o arquivo de 6,3 MB nao ser reparseado por ciclo.
     world_villages = None
+    # Feature 37: idem -- sobrevive entre ciclos para o TTL de
+    # `player_stats.cache_seconds` valer; sem isso o objeto nasceria de novo
+    # a cada ciclo e nunca deixaria de reler a rede.
+    player_stats = None
 
     def __init__(self):
         # Precisam ser criados por instância, não como atributo de classe:
@@ -956,6 +961,20 @@ class TWB:
                         self.world_villages = WorldVillages(config=config)
                     self.world_villages.config = config
                     world_villages = self.world_villages
+
+                # Feature 37: a serie Saqueado/Coletado que o proprio jogo
+                # publica (docs/backend.md 8.13), relida no maximo uma vez por
+                # `player_stats.cache_seconds` (default 6h -- a resolucao da
+                # serie e diaria, reler por ciclo so gastaria requisicao).
+                # Qualquer aldeia gerenciada serve de endereco do GET: a
+                # resposta e da conta inteira.
+                if self.player_stats is None:
+                    self.player_stats = PlayerStats(
+                        wrapper=self.wrapper, config=config
+                    )
+                self.player_stats.config = config
+                if managed_villages_dict:
+                    self.player_stats.refresh(sorted(managed_villages_dict)[0])
 
                 pvp_manager = None
                 if config.get("pvp_conquest", {}).get("enabled", False):

@@ -142,6 +142,14 @@ help_file = {
     'empire': 'Empire-wide offensive/defensive village ratio (Feature 7). Villages with the "watchtower" profile are excluded from this count entirely (Feature 30)',
     'empire.offensive_ratio': 'Offensive side of the ratio. With offensive_ratio 1 and defensive_ratio 3 the empire targets 1 offensive village for every 3 defensive ones',
     'empire.defensive_ratio': 'Defensive side of the ratio (default 3, i.e. a defensive-leaning empire)',
+    'player_stats': 'Account-wide loot/gather history read from the game\'s own '
+                    '"screen=info_player&mode=stats_own" page (Feature 37). The game already '
+                    'aggregates "Saqueado" (looted) and "Coletado" (gathered) resources per day, '
+                    'server-side — this is the only source that sees what the player did by hand '
+                    'outside the bot. Whole-account only, 7-day retention; does not replace '
+                    'ReportReader or farmscores for per-village decisions. See docs/backend.md 8.13',
+    'player_stats.enabled': 'Read the account-wide loot/gather series (default true — one cheap GET, no write, no gameplay effect)',
+    'player_stats.cache_seconds': 'Minimum seconds between reads of stats_own (default 21600, i.e. 6 hours). The series resolution is daily, so re-reading every cycle would not change the numbers, only spend request budget',
     'watchtower': 'Territorial allocation of watchtower villages (Feature 30). A watchtower village is defensive by nature but is allocated by geography, not by the empire ratio — so it is excluded from the empire count. Requires the world to actually have the watchtower building',
     'watchtower.enabled': 'Allow the bot to designate newly conquered villages as ADDITIONAL watchtower villages. The first tower is never created automatically — pick an established, central village by hand and set its profile to "watchtower". Leave false on worlds without the watchtower building',
     'watchtower.min_spacing': 'Minimum distance in tiles between two watchtower villages. A conquered village farther than this from every existing tower becomes a tower itself. Default 16, just above the level-20 radius of 15.0 tiles — larger values collapse the warning time at the seams (at 26 tiles, the worst point is tagged the instant the attack lands); see docs/backend.md',

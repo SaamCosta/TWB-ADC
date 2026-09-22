@@ -47,6 +47,29 @@ EFFECT_PERCENT_RE = re.compile(r"<b>\s*\+?(\d+)\s*%\s*</b>")
 # icone nao.
 INCOMING_SUPPORT_SPEED_ICON = "benefit_incoming_support_speed"
 
+# `screen=info_player&mode=stats_own`: series "ricas" (recurso por dia) que o
+# jogo embute no HTML como `data.push({label: 'Saqueado', ..., details: [...]})`.
+# O label identifica a serie -- nao ha id no bloco, e a ORDEM nao e garantia
+# (docs/backend.md 8.13).
+#
+# ⚠️ O RECORTE E POR BLOCO, e isso NAO e preciosismo -- a primeira versao
+# escaneava o documento inteiro com
+#
+#     label:\s*'([^']+)'.*?details:\s*(\[\{.*?\}\])     (re.S)
+#
+# e um `label:` SEM `details:` no proprio bloco fazia o `.*?` atravessar a
+# fronteira e casar aquele label com os numeros do bloco SEGUINTE. Medido em
+# 2026-09-22 contra um caso construido: `Saqueado` desapareceu e os numeros
+# dele sairam rotulados `Pontos`. Nenhum erro, nenhum log -- so a resposta
+# errada, que e a forma exata do decimo quinto padrao do CLAUDE.md. Na pagina
+# de hoje os 8 blocos tem os dois campos e o pareamento sai certo por sorte;
+# basta o jogo acrescentar UMA serie de linha (que tem label e nao tem
+# details) antes de "Saqueado" para o card de /empire passar a mostrar
+# coletado como se fosse saqueado.
+STATS_OWN_PUSH_RE = re.compile(r"data\.push\(")
+STATS_OWN_LABEL_RE = re.compile(r"label:\s*'([^']+)'")
+STATS_OWN_DETAILS_RE = re.compile(r"details:\s*")
+
 
 class Extractor:
     """
@@ -898,6 +921,80 @@ class Extractor:
         state = Extractor.game_state(res) or {}
         player_id = (state.get("player") or {}).get("id")
         return str(player_id) if player_id else None
+
+    @staticmethod
+    def stats_own_series(res):
+        """
+        `screen=info_player&mode=stats_own`: series "ricas" de recurso por dia
+        (`Saqueado`, `Coletado`, e as de gasto), ja agregadas server-side.
+
+        Devolve {label: [{"observed_at", "wood", "stone", "iron", "total",
+        "percent"}, ...]} na mesma ordem do jogo (mais recente primeiro) ou
+        None se a tela nao trouxer nenhuma serie reconhecivel -- resposta de
+        login/bot-protection, ou markup que mudou.
+
+        Contratos MEDIDOS em docs/backend.md 8.13, nao supostos, e que quem
+        consome isto precisa preservar:
+          (a) e CONTA INTEIRA, nunca por aldeia;
+          (b) so os dias que a resposta trouxe (retencao curta do jogo) --
+              esta funcao nao acumula nada, so traduz o que veio;
+          (c) `percent` e a participacao daquela serie no total DAQUELE DIA
+              (confere: `Saqueado` 25,997% + `Coletado` 74,003% = 100% em
+              21/09), nao "aproveitamento";
+          (d) e SALDO, nao evento -- um `observed_at` por DIA, nao por
+              operacao.
+
+        O laco recorta um bloco `data.push(...)` por vez ANTES de procurar
+        label e details, para que um bloco sem details nao possa se apropriar
+        dos numeros do bloco seguinte -- ver o comentario de
+        STATS_OWN_PUSH_RE, que registra a medicao desse defeito. `details` sai
+        por `balanced_slice` e nao por `\\[\\{.*?\\}\\]`: o lazy para no
+        primeiro `}]` e truncaria a lista se o jogo aninhasse um objeto dentro
+        de cada ponto -- e o proprio docstring de `balanced_slice` existe por
+        causa dessa armadilha.
+        """
+        if type(res) != str:
+            res = res.text
+        if not res:
+            return None
+
+        bounds = [m.start() for m in STATS_OWN_PUSH_RE.finditer(res)]
+        out = {}
+        for i, start in enumerate(bounds):
+            end = bounds[i + 1] if i + 1 < len(bounds) else len(res)
+            block = res[start:end]
+
+            label_match = STATS_OWN_LABEL_RE.search(block)
+            details_match = STATS_OWN_DETAILS_RE.search(block)
+            if not label_match or not details_match:
+                # Bloco sem um dos dois campos: e uma serie de outro tipo
+                # (linha, legenda). Pular sem deixar vazar para o proximo.
+                continue
+            label = label_match.group(1)
+
+            raw = Extractor.balanced_slice(block, details_match.end())
+            if raw is None:
+                continue
+            try:
+                rows = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            parsed = []
+            for row in rows:
+                try:
+                    parsed.append({
+                        "observed_at": int(row["time"]) // 1000,
+                        "wood": int(row["wood"]),
+                        "stone": int(row["stone"]),
+                        "iron": int(row["iron"]),
+                        "total": int(row["total"]),
+                        "percent": float(row["percent"]),
+                    })
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if parsed:
+                out[label] = parsed
+        return out or None
 
     @staticmethod
     def get_daily_reward(res):
