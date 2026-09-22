@@ -6,8 +6,8 @@
     "farm": []
   },
   {
-    "building": "smith",
-    "level": 15,
+    "building": "stable",
+    "level": 3,
     "upgrades": {
       "spy": 1
     },

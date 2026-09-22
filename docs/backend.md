@@ -2613,11 +2613,15 @@ guarda) antes da próxima leitura de log.
 
 ---
 
-## 8.12 Ajustes decididos em 2026-09-21, ainda não implementados
+## 8.12 ✅ Ajustes decididos em 2026-09-21, implementados em 2026-09-22
 
 Dois itens aprovados pelo usuário nesta sessão. Ficam aqui, e não num documento
 novo, porque foi a proliferação de arquivos que enterrou uma lição verdadeira
 antes (8º padrão do `CLAUDE.md`).
+
+**Os dois foram implementados em 2026-09-22** — o que mudou, e o que a
+implementação descobriu que o diagnóstico não sabia, está no fim de cada
+subseção.
 
 ### `P-TMPL-SCOUT` — o estágio de espião gateado no ferreiro da cavalaria pesada
 
@@ -2656,6 +2660,48 @@ fato: aqui está medido o *requisito*, não o comportamento do motor.
 antes" —, agora com a variação de que o irmão lido foi o *próprio arquivo na
 versão anterior*, e o número herdado veio junto.
 
+#### ✅ O que foi feito (2026-09-22)
+
+**A consequência era exatamente a prevista, e agora está medida no consumidor,
+não deduzida.** `TroopManager.get_template_action()`
+(`game/troopmanager.py:232`) percorre os estágios **em ordem** e devolve `last`
+no **primeiro** cujo nível exigido não foi atingido — não pula estágio. Com
+ferreiro abaixo de 15, a aldeia para no estágio 0 (`stable:1`, `build: {}`),
+pede zero unidade, e nada é logado. Os estágios `watchtower:10`/`watchtower:20`
+ficam inalcançáveis **mesmo se a torre já estiver alta**, porque o `smith:15`
+está antes deles na lista.
+
+O gate passou de `smith:15` para **`stable:3`**. Por que `stable:3` e não outro
+número: é onde **todos os sete templates irmãos** de `templates/troops/` põem o
+primeiro estágio que constrói espião, e nenhum deles gateia espião em `smith`.
+O requisito de ferreiro medido é ≤ 7 e as três aldeias de torre estão em 9, 20 e
+20 — ou seja, o ferreiro deixou de ser a variável que decide.
+
+Estado real das três aldeias de torre, lido de `cache/managed/*.json` em
+2026-09-22 (a chave é `buidling_levels`, com o typo do código):
+
+| id | nome | estábulo | ferreiro | torre | espiões | estágio antes → depois |
+|---|---|---:|---:|---:|---:|---|
+| 38409 | BBM 002 | 20 | 20 | 10 | 2.790 | `watchtower:10` (1.500) → igual |
+| 38412 | BBM 023 | 12 | 20 | 0 | 2.597 | 1º estágio (440) → igual |
+| 52755 | BBM 030 | 5 | 9 | 0 | **0** | estágio 0 (**zero**) → 1º estágio (440) |
+
+Só a 52755 muda de comportamento, e é a que estava em zero. As outras duas
+entram na tabela porque a correção **não pode rebaixar ninguém** — quem já
+alcançava um estágio alto continua alcançando.
+
+Regressão em `tests/test_watchtower_spy_gate.py`, com quatro testes: os níveis
+reais das três aldeias pedindo espião; o template **antigo** (único diff:
+`smith:15` no lugar de `stable:3`) rodado contra os mesmos níveis exigindo que a
+52755 pare no estágio 0 — sem isso, o teste principal passaria também com o
+template quebrado se alguém subisse o ferreiro da aldeia, e a asserção viraria
+verdadeira pelo motivo errado (é a mesma técnica do regex antigo em
+`tests/test_incoming_commands.py`); a propriedade "nenhum estágio que constrói
+espião é gateado em `smith`"; e a monotonicidade da progressão.
+
+**Não validado em campo ainda.** O que observar: a 52755 logando recrutamento
+de espião no `stable`, e `spy` saindo de 0 no `cache/managed/52755.json`.
+
 ### `P-PVP-SCOUT` — a espia deve sair da aldeia com mais espiões, e no máximo
 
 **Decisão do usuário, 2026-09-21.** Hoje `PvpConquestManager._step_scout()`
@@ -2686,6 +2732,79 @@ têm ≥5 espiões, os máximos são **80** (34597 a 35,0 campos e 35059 a 38,4)
 primeira da ordem de id é a **32056** (50 espiões, 34,7 campos). A aldeia com
 mais espiões é **mais distante** que a escolhida hoje — então a regra nova
 tende a **aumentar** o tempo da espia, não a diminuir.
+
+#### ✅ O que foi feito (2026-09-22)
+
+`_step_scout()` virou três partes: `_scout_candidates()` monta e **ordena** as
+origens, `_scout_floor()` isola a leitura da config, e o passo em si tenta as
+melhores em ordem. Ordem = **mais espiões primeiro, empate desfeito pela menor
+distância** — a distância entra como desempate, não como peso, porque foi isso
+que a decisão diz: entre duas origens que mandam a mesma quantidade, a mais
+perto entrega a informação mais cedo. A consequência medida acima (a origem nova
+é mais distante que a antiga) está codificada como asserção em
+`tests/test_pvp_scout_origin.py::test_o_recorte_real_das_30_aldeias`, com as
+coordenadas que reproduzem 34,7 / 35,0 / 38,4 campos.
+
+**`pvp_conquest.scout_amount` virou PISO, não chave morta.** Ele sempre foi as
+duas coisas ao mesmo tempo — `if spies < scout_amount: continue` era o filtro de
+elegibilidade e `troops={"spy": scout_amount}` era o envio. Passando a enviar o
+máximo, só um dos dois papéis podia sobrar; o piso preserva o significado da
+chave ("menos que isto não vale a viagem") em vez de deixá-la inerte, que é o
+4º padrão. O texto em `webmanager/helpfile.py` foi reescrito para dizer isso em
+voz alta — a redação antiga ("número de espiões usados no scout") passaria a
+descrever algo que o código não faz mais.
+
+**Três coisas que a implementação obrigou e o diagnóstico não previa.**
+
+1. **A contagem tem que ser relida ao vivo antes de enviar, senão a mudança
+   troca uma espia lenta por NENHUMA espia.** Os objetos `Village` sobrevivem
+   entre ciclos e este passo **abre** o ciclo (§8.14), então `units.troops` aqui
+   é a foto do fim do ciclo passado — até ~4h de idade com 30 aldeias. Mandar 5
+   de uma contagem velha quase nunca falha; mandar "todos os 80" de uma contagem
+   velha falha **sempre que o farm scout gastou algum no meio**, e o jogo recusa
+   o ataque **inteiro** em vez de mandar menos. `units.update_totals()` custa
+   duas requisições e é feita só para a origem escolhida; se ela caiu abaixo do
+   piso, a próxima da lista assume. É o 6º padrão (separar "quando eu decidi" de
+   "quando isso acontece", e reconferir a premissa no momento de agir) numa
+   latência de horas em vez de minutos.
+2. **A elegibilidade antiga era mais estrita que o próprio envio.** O teste era
+   `target_id not in village.area.map_pos`, mas `AttackManager._resolve_position()`
+   tem uma **segunda fonte**: a coordenada do snapshot compartilhado
+   `cache/villages`, usada quando o alvo está fora do prefetch daquela aldeia.
+   Com `farms.map_sector_radius = 0` (o valor em campo) e `SECTOR_SIZE = 20`, o
+   prefetch cobre pouco mais de um bloco de 20×20 alinhado — a BBM 030 (572|289)
+   cai no setor (560,280) e o alvo 44155 (555|288) no setor (540,280), **setores
+   diferentes**. Ou seja, "a aldeia com mais espiões" podia nunca ser
+   considerada por um motivo que não tem nada a ver com alcance, e isso tornaria
+   a regra nova quase indistinguível da antiga. O alcance passou a ser resolvido
+   uma única vez por `_target_location()`, extraído de `_block_if_reserved()`,
+   que já fazia exatamente essa busca de duas fontes.
+3. **A reserva de conquista é descontada.** Hoje nenhum dono reserva `spy`
+   (`_build_clear_units()` e `_build_noble_attacks()` excluem espião), então a
+   subtração é inócua no estado atual — mas enviar *o máximo disponível* é
+   precisamente o caminho que transformaria uma reserva futura de espião em
+   tropa gasta sem aviso.
+
+Teto de **5 tentativas** (`SCOUT_MAX_ATTEMPTS`). Cada tentativa custa duas
+requisições de leitura mais duas de envio, e as origens estão em ordem
+decrescente de espião: se as cinco primeiras falharem, o problema não é "esta
+aldeia" e varrer as outras 25 só gasta orçamento num ciclo que já vai terminar
+sem espia. O log passou a dizer quantas origens eram elegíveis, as três
+melhores com espiões e campos, e quantas foram tentadas — antes ele dizia só
+"no village with spies available", que não separa "nenhuma candidata" de "todas
+recusadas".
+
+**⚠️ O que isto faz com o alvo 44155, que já está agendado.** A chegada
+(2026-09-23 10:00) foi dimensionada contra a escolha antiga. Com a regra nova a
+origem passa a ser a 34597 (80 espiões, 35,0 campos) em vez da 32056 (50
+espiões, 34,7 campos) — 0,3 campo **mais longe**, dentro do ruído da folga de
+19,7 h que a §8.12 mediu. O pior caso elegível citado lá (42,0 campos) não muda,
+porque o teto de tentativas só percorre as cinco com mais espiões.
+
+**Não validado em campo ainda.** O que observar no `session_latest.log`:
+`PvpConquest: N origem(ns) elegivel(is) para espiar ...` com a lista das três
+melhores, e em seguida `scout sent from ... (N spies, X.X campos)` com `N` bem
+acima de 5. Regressão em `tests/test_pvp_scout_origin.py` (13 testes).
 
 ---
 
@@ -2887,6 +3006,80 @@ passando por `pending_troops`, o `troops_home_pct` subindo entre ciclos, e o
 
 ---
 
+## 8.15 `P-CONQ-INICIO` — a conquista bárbara passa a abrir o ciclo (2026-09-22)
+
+Mesma mudança de posição que a §8.14 fez na conquista PvP, agora na bárbara.
+
+### O que estava acontecendo
+
+`BarbarianTrainPlanner` já rodava **uma vez por ciclo**, mas no *rabo* do
+`while` de `twb.py`, depois do laço das 30 aldeias. A posição resolvia a
+visibilidade de graça — quando o laço termina, toda aldeia já tem `units` e
+`area` — e deixava dois problemas de pé:
+
+1. **A reserva de tropa do trem nascia tarde demais.** `_reserve()` grava em
+   `units.conquest_reserve` para farm e coleta não gastarem a escolta entre o
+   agendamento e o disparo do Hunter. Gravando no fim do ciclo, ela só passava
+   a valer no ciclo **seguinte** — ou seja, no ciclo em que o trem foi montado
+   a escolta ficou desprotegida o tempo todo. O mesmo valia para
+   `_reserve_toward_escort()`, que existe justamente para a aldeia *juntar*
+   escolta.
+2. **Acompanhamento e agendamento aconteciam num minuto arbitrário.** Um ciclo
+   completo mediu ~4h com 30 aldeias em 2026-09-21 (§8.14). O planejador
+   disparava quando o laço terminasse, fosse lá quando fosse.
+
+### O que mudou
+
+- `TWB.run_barbarian_conquest()` roda no início do ciclo, logo depois do bloco
+  da conquista PvP, e faz **acompanhar → planejar**, nessa ordem.
+- `TWB.prime_barbarian_sources()` faz a leitura mínima (o mesmo
+  `Village.prime_for_conquest()` da §8.14) das aldeias que a decisão depende,
+  antes do planejador. Quem entra: a aldeia `reserved_by` de um registro ativo
+  em `cache/conquest`, mais toda aldeia que **pode** ter nobre livre.
+- `Village.run_conquest()` saiu de `Village.run()`. Continua existindo e
+  continua sendo chamado — por `run_barbarian_conquest()`, e só para as
+  âncoras.
+- `BarbarianTrainPlanner` deixou de ser construído no fim do `while`.
+
+### Duas decisões que não são detalhe
+
+**A ordem "acompanhar antes de planejar" virou explícita.**
+`BarbarianTrainPlanner.run()` desiste cedo quando `active_conquests()` não está
+vazio (um trem por vez no império), e quem tira um alvo dali é o
+acompanhamento: posse confirmada, alvo perdido para outro jogador, alvo
+reservado pela tribo. No modelo antigo o laço de aldeias rodava antes do
+planejador e essa ordem valia **por acidente** de layout. Invertida, uma
+conquista que acabou de terminar bloquearia a próxima por um ciclo inteiro — e
+um ciclo aqui mede horas.
+
+**A lista do prime é um superconjunto de propósito.** O planejador conta nobre
+por `village.units.troops`, e no início do ciclo esse número é a foto do fim do
+ciclo passado (os objetos `Village` sobrevivem entre ciclos). Por isso o
+candidato sai da **união** de duas fontes: o que o objeto em memória ainda
+carrega e o `troops` do snapshot `cache/managed/{vid}.json`. A assimetria é o
+argumento: aldeia que entra na lista e não tem mais nobre é corrigida pela
+leitura viva e sai sozinha; aldeia que fica **de fora** nunca é corrigida e
+some da contagem em silêncio. Errar para o lado de primar demais custa ~4
+requisições; errar para o outro adia um trem inteiro por um ciclo.
+
+**Chamar `run_conquest()` só para as âncoras não é amostragem.**
+`ConquestManager._get_my_conquest()` casa exatamente por `reserved_by`, então
+as outras 29 aldeias que chamavam o método dentro do laço sempre saíam no
+primeiro `return False`. Manter a chamada dentro de `run()` *além* da nova
+daria, para a âncora, um segundo passe de `_handle_existing()` no mesmo ciclo —
+um segundo caminho capaz de comprometer nobre pelo mesmo alvo, que é a classe
+de bug que custou 527 tropas e uma moeda em 2026-08-12.
+
+### Estado
+
+Suíte inteira verde. **Não validado em campo ainda.** O que observar no próximo
+ciclo, no `session_latest.log`: a linha `Conquest: primed N/M source village(s)
+before the cycle` aparecendo **antes** da primeira aldeia rodar, e as linhas do
+`ConquestPlanner` (escolha de alvo, escolta, agendamento) no mesmo ponto — não
+mais depois de `Village cycle done` da última aldeia.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -2975,15 +3168,23 @@ passando por `pending_troops`, o `troops_home_pct` subindo entre ciclos, e o
 
 **Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
 
-9. **`P-TMPL-SCOUT`** — tirar o `smith:15` do estágio de 440 espiões de
-   `templates/troops/watchtower_support.txt`. O 15 é o requisito da cavalaria
-   pesada, não do Explorador, que já aparece `Pesquisado` com ferreiro 7 na
-   captura real do ferreiro. Suspeita a confirmar: a 52755 (conquistada em
-   19/09, 0 espiões hoje) não constrói nenhum por causa disso, sem erro no log.
-10. **`P-PVP-SCOUT`** — a espia do PvP deve sair da aldeia com **mais**
-   espiões e levar o **máximo** possível, não a primeira da ordem do dict com
-   5 (`pvp_conquest.py:451`). Cuidado ao implementar: isso altera o tempo de
-   viagem da espia, que é o número que dimensionou a chegada do alvo 44155.
+9. ~~**`P-TMPL-SCOUT`**~~ — ✅ **feito em 2026-09-22** (§8.12). Gate do estágio
+   de 440 espiões de `smith:15` → `stable:3`. A suspeita sobre a 52755 foi
+   **confirmada contra o consumidor**: `get_template_action()` devolve o
+   estágio anterior no primeiro nível não atingido e não pula estágio, então
+   com ferreiro 9 a aldeia parava no estágio 0 (`build: {}`) e pedia zero
+   unidade, sem nada no log. Regressão em `tests/test_watchtower_spy_gate.py`.
+   **⏳ Falta campo:** `spy` sair de 0 no `cache/managed/52755.json`.
+10. ~~**`P-PVP-SCOUT`**~~ — ✅ **feito em 2026-09-22** (§8.12). Origem = maior
+   número de espiões (empate pela menor distância), quantidade = o máximo em
+   casa menos a reserva, `scout_amount` virou **piso**. Três coisas apareceram
+   ao implementar: a contagem precisa ser relida ao vivo antes de enviar (senão
+   o jogo recusa o ataque inteiro e a mudança troca espia lenta por nenhuma
+   espia), a elegibilidade antiga por `map_pos` era mais estrita que o próprio
+   envio, e a reserva de conquista tinha de ser descontada. O efeito no alvo
+   44155 é +0,3 campo, dentro do ruído da folga de 19,7 h. Regressão em
+   `tests/test_pvp_scout_origin.py`. **⏳ Falta campo:** a linha
+   `scout sent from ... (N spies, X.X campos)` com `N` bem acima de 5.
 
 Depois disso, a fila anterior:
 

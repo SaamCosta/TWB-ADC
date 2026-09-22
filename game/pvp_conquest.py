@@ -202,6 +202,29 @@ class PvpConquestManager:
                 # preserves the lock for an active target.
                 self._sync_source_locks(target_id, data)
 
+    def _target_location(self, target_id, data):
+        """
+        Coordenada `[x, y]` do alvo, ou None quando nenhuma fonte a conhece.
+
+        Duas fontes, nesta ordem: o `map_pos` de qualquer aldeia gerenciada
+        (prefetch de mapa daquela aldeia) e o `target_location` gravado no
+        cadastro. A segunda existe porque o painel (`PvpConquestReader.add`)
+        resolve o alvo contra `cache/villages`, que e o snapshot compartilhado:
+        sem ela, um alvo fora do prefetch das aldeias gerenciadas chega ao
+        quadro de reservas sem coordenada e a metade do casamento que usa o
+        "(x|y)" do nome nunca dispara -- falha silenciosa, alvo passa como
+        livre.
+
+        Com `farms.map_sector_radius = 0` (o valor em campo) o prefetch de cada
+        aldeia cobre pouco mais de um setor de 20x20, entao a primeira fonte
+        falha com frequencia e a segunda e a que responde na pratica.
+        """
+        for village in self.villages.values():
+            pos = getattr(getattr(village, "area", None), "map_pos", {}) or {}
+            if str(target_id) in pos:
+                return pos[str(target_id)]
+        return data.get("target_location")
+
     def _block_if_reserved(self, target_id, data):
         """
         True (e marca "failed") quando o alvo PvP esta reservado por outra
@@ -217,20 +240,7 @@ class PvpConquestManager:
         if data.get("status") in ("complete", "failed"):
             return False
         board = self.reservation_board
-        location = None
-        for village in self.villages.values():
-            pos = getattr(getattr(village, "area", None), "map_pos", {}) or {}
-            if str(target_id) in pos:
-                location = pos[str(target_id)]
-                break
-        if not location:
-            # Gravada no cadastro pelo painel (PvpConquestReader.add resolve o
-            # alvo contra cache/villages). Sem esta linha, um alvo fora do
-            # prefetch de mapa das aldeias gerenciadas chega ao quadro de
-            # reservas sem coordenada, e a metade do casamento que usa o
-            # "(x|y)" do nome nunca dispara -- falha silenciosa, alvo passa
-            # como livre.
-            location = data.get("target_location")
+        location = self._target_location(target_id, data)
 
         matched = manual_exclusion(self.config, target_id, location)
         claim = board.claimed_by_other(target_id, location) if board else None
@@ -433,11 +443,99 @@ class PvpConquestManager:
     # Step 1 — Scout
     # ------------------------------------------------------------------
 
+    SCOUT_MAX_ATTEMPTS = 5
+
+    def _scout_floor(self):
+        """
+        `pvp_conquest.scout_amount` e um PISO, nao a quantidade enviada.
+
+        Ele sempre foi as duas coisas ao mesmo tempo (`if spies < scout_amount:
+        continue` era o filtro de elegibilidade e `troops={"spy":
+        scout_amount}` era o envio). Ao passar a enviar o maximo (P-PVP-SCOUT,
+        docs/backend.md 8.12), so um dos dois papeis podia sobrar; manter o
+        piso preserva o significado da chave -- "menos que isto nao vale a
+        viagem" -- em vez de deixa-la morta, que e o 4o padrao do CLAUDE.md.
+        """
+        return int(self.config.get("pvp_conquest", {}).get("scout_amount", 5) or 0)
+
+    def _scout_candidates(self, target_id, data):
+        """
+        Origens possiveis para a espia, da melhor para a pior.
+
+        Ordem: mais espioes em casa primeiro; empate resolvido pela MENOR
+        distancia. A distancia entra so como desempate, e nao como peso, porque
+        foi isso que o usuario decidiu em 2026-09-21: relatorio que nao chega e
+        o que faz o alvo cair em `scout_deadline_missed`, e 5 exploradores
+        contra aldeia de jogador defendida morrem sem relatorio. Entre duas
+        origens que mandam a mesma quantidade, porem, a mais perto entrega a
+        informacao mais cedo e sobra mais folga ate `first_send_time`.
+
+        Consequencia medida e aceita: a aldeia com mais espioes tende a ser
+        MAIS distante que a que a regra antiga escolhia (das 30 aldeias em
+        2026-09-21, os maximos eram 80 espioes a 35,0 e 38,4 campos, contra a
+        primeira da ordem de id com 50 a 34,7). A regra nova aumenta o tempo da
+        espia de proposito, trocando velocidade por chance de o relatorio
+        existir.
+
+        Dois pontos sobre o que E e o que NAO E filtrado aqui:
+
+        - A reserva de conquista e descontada (`total_conquest_reserve`). Hoje
+          nenhum dono reserva `spy` -- `_build_clear_units()` e
+          `_build_noble_attacks()` excluem espiao --, mas enviar o maximo
+          disponivel e exatamente o caminho que transformaria uma reserva
+          futura de espiao em tropa gasta sem aviso.
+        - A elegibilidade NAO usa `village.area.map_pos`, que era o teste
+          antigo. `AttackManager._resolve_position()` aceita a coordenada do
+          snapshot compartilhado `cache/villages` quando o alvo esta fora do
+          prefetch daquela aldeia, ou seja, o envio funciona para origens que o
+          teste antigo descartava. Com `map_sector_radius = 0` o prefetch cobre
+          pouco mais de um setor de 20x20, entao esse descarte era largo e
+          arbitrario -- a aldeia com mais espioes podia nunca ser considerada
+          por um motivo que nao tem a ver com alcance.
+        """
+        location = self._target_location(target_id, data)
+        if not location:
+            return []
+
+        floor = self._scout_floor()
+        candidates = []
+        for vid, village in self.villages.items():
+            if not village.units or not village.area or not village.attack:
+                continue
+            spies = int(village.units.troops.get("spy", 0)) - int(
+                village.units.total_conquest_reserve().get("spy", 0)
+            )
+            if spies < max(floor, 1):
+                continue
+            # `my_location` e None quando a aldeia nao apareceu nos setores
+            # lidos (Map._fallback_location tambem pode falhar). Nesse caso a
+            # aldeia continua elegivel -- o envio nao depende da distancia --,
+            # mas perde todo desempate.
+            if village.area.my_location:
+                distance = village.area.get_dist(location)
+            else:
+                distance = float("inf")
+            candidates.append((vid, village, spies, distance))
+
+        candidates.sort(key=lambda item: (-item[2], item[3]))
+        return candidates
+
     def _step_scout(self, target_id, data):
         """
-        Find any managed village with spies and send a scout to the target.
+        Send a scout from the managed village with the MOST spies, carrying as
+        many as it has at home.
         Marks status → pending_troops once the scout is sent.
         If a recent scout report already exists, skip straight to the wait.
+
+        Por que a contagem e relida antes de enviar: os objetos `Village`
+        sobrevivem entre ciclos e este passo abre o ciclo (docs/backend.md
+        8.14), entao `units.troops` aqui e a foto do fim do ciclo passado -- ate
+        ~4h de idade com 30 aldeias. Enviar 5 de uma contagem velha quase nunca
+        falha; enviar "todos os 80" de uma contagem velha falha sempre que o
+        farm scout gastou algum no meio, e o jogo recusa o ataque INTEIRO em vez
+        de mandar menos. Sem a releitura, trocar 5 pelo maximo trocaria uma
+        espia lenta por nenhuma espia. `update_totals()` custa duas requisicoes
+        e e feita so para a origem escolhida.
         """
         if data.get("scout_override"):
             logger.warning(
@@ -458,30 +556,62 @@ class PvpConquestManager:
             PvpConquestCache.set(target_id, data)
             return
 
-        scout_amount = self.config.get("pvp_conquest", {}).get("scout_amount", 5)
+        floor = self._scout_floor()
+        candidates = self._scout_candidates(target_id, data)
+        if not candidates:
+            logger.warning(
+                "PvpConquest: no village with spies available to scout %s "
+                "(piso pvp_conquest.scout_amount = %d)", target_id, floor
+            )
+            return
 
-        for vid, village in self.villages.items():
-            if not village.units:
-                continue
-            spies = int(village.units.troops.get("spy", 0))
-            if spies < scout_amount:
-                continue
-            if not village.area or target_id not in village.area.map_pos:
+        logger.info(
+            "PvpConquest: %d origem(ns) elegivel(is) para espiar %s; melhor: %s",
+            len(candidates), target_id,
+            ", ".join(
+                "%s (%d espioes, %.1f campos)" % (vid, spies, distance)
+                for vid, _village, spies, distance in candidates[:3]
+            ),
+        )
+
+        # Teto de tentativas. Cada tentativa custa duas requisicoes de leitura
+        # (`update_totals`) mais duas de envio, e as origens estao em ordem
+        # decrescente de espiao: se as cinco primeiras falharem, o problema nao
+        # e "esta aldeia especifica" e varrer as outras 25 so gasta orcamento de
+        # requisicao num ciclo que ja vai terminar sem espia.
+        for vid, village, _stale_spies, distance in candidates[:self.SCOUT_MAX_ATTEMPTS]:
+            # Releitura viva. Ver o docstring: a contagem da ordenacao pode ter
+            # horas e o jogo recusa o ataque inteiro por falta de uma unidade.
+            village.units.update_totals()
+            spies = int(village.units.troops.get("spy", 0)) - int(
+                village.units.total_conquest_reserve().get("spy", 0)
+            )
+            if spies < max(floor, 1):
+                logger.info(
+                    "PvpConquest: %s caiu para %d espioes na leitura viva "
+                    "(piso %d), tentando a proxima origem",
+                    vid, spies, floor
+                )
                 continue
 
-            result = village.attack.attack(target_id, troops={"spy": scout_amount})
+            result = village.attack.attack(target_id, troops={"spy": spies})
             if result and result != "forced_peace":
                 logger.info(
-                    "PvpConquest: scout sent from %s → %s (%d spies)",
-                    vid, target_id, scout_amount
+                    "PvpConquest: scout sent from %s → %s (%d spies, %.1f campos)",
+                    vid, target_id, spies, distance
                 )
                 data["status"] = "pending_troops"
                 data["scout_village_id"] = vid
                 data["scout_sent_at"] = int(time.time())
+                data["scout_spies_sent"] = spies
                 PvpConquestCache.set(target_id, data)
                 return
 
-        logger.warning("PvpConquest: no village with spies available to scout %s", target_id)
+        logger.warning(
+            "PvpConquest: nenhuma das %d origens tentadas (de %d elegiveis) "
+            "conseguiu espiar %s",
+            min(len(candidates), self.SCOUT_MAX_ATTEMPTS), len(candidates), target_id
+        )
 
     # ------------------------------------------------------------------
     # Step 1.5 — Wait for the army to come home

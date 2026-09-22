@@ -10,6 +10,9 @@ config.bak
 # com outro nome, e as linhas acima nao as pegavam.
 config.bak.*
 config.json.*
+# Snapshot antes de um merge por build.version (ex: config.pre44.bak). Mesmo
+# conteudo, mais um nome que as duas linhas acima tambem nao pegavam.
+config.*.bak
 # Rascunho de mensagem de commit
 _commitmsg.txt
 # C extensions
