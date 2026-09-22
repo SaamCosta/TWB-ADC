@@ -3,6 +3,7 @@ import datetime
 import json
 import os
 import re
+import statistics
 import subprocess
 import time
 
@@ -1978,6 +1979,299 @@ class InFlightReader:
                 for k, v in sorted(totals.items(), key=lambda kv: -kv[1])
             },
         }
+
+
+class CycleReader:
+    """
+    Le `cache/cycles/*.json` (P-CICLO-MEDIDA, `core/cycle_meter.py`, backend
+    8.21) -- um arquivo por ciclo do bot, com tempo de parede EXCLUSIVO e
+    requisicoes por (aldeia, fase).
+
+    Existe porque a 8.21 parou de proposito na observabilidade ("o que cortar
+    vem depois de ler uns dias de cache/cycles/"), e ler 300 JSONs a mao nao e
+    leitura. Isto e o baseline da docs/backend.md 9 (item 3) virando tela.
+
+    ⚠️ O QUE ESTE READER RECUSA FAZER, E POR QUE (decimo primeiro padrao):
+      - ciclo ABORTADO (overview indisponivel) nao entra em media nenhuma --
+        ele dura segundos e puxaria a mediana para baixo. E contado a parte,
+        com o motivo;
+      - aldeia nao aparece em todo ciclo (horario ativo, pulada, perdida), entao
+        a media por aldeia e por ciclo EM QUE ELA APARECEU, e `cycles_present`
+        vai junto -- sem isso, uma aldeia que rodou 2 de 20 ciclos pareceria
+        barata;
+      - a agregacao e por fase E por aldeia, nunca so uma das duas: aldeia de
+        farm e aldeia de apoio nao sao o mesmo conjunto.
+    O balde `(sem fase)` e exibido com destaque proprio quando passa de
+    UNPHASED_WARN_PCT: e instrumentacao faltando, nao tempo explicado.
+    """
+
+    CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "cache", "cycles")
+    UNPHASED = "(sem fase)"
+    UNPHASED_WARN_PCT = 5.0
+    RECENT_ROWS = 20
+
+    # Cache de processo, mesmo raciocinio do ReportReader: a classe nunca e
+    # instanciada. Os arquivos sao nomeados pelo inicio do ciclo e escritos uma
+    # vez, mas a assinatura inclui o mtime de qualquer forma.
+    _cache = {"sig": None, "data": None}
+
+    @staticmethod
+    def _hms(seconds):
+        if seconds is None:
+            return "—"
+        seconds = int(round(seconds))
+        hours, rest = divmod(seconds, 3600)
+        minutes, secs = divmod(rest, 60)
+        if hours:
+            return "%dh %02dm" % (hours, minutes)
+        if minutes:
+            return "%dm %02ds" % (minutes, secs)
+        return "%ds" % secs
+
+    @staticmethod
+    def _fmt_ts(ts):
+        if not ts:
+            return "—"
+        try:
+            return datetime.datetime.fromtimestamp(int(ts)).strftime("%d/%m %H:%M")
+        except (OSError, OverflowError, ValueError, TypeError):
+            return "—"
+
+    @staticmethod
+    def _read_all():
+        """(ciclos ordenados por inicio, quantos arquivos nao puderam ser lidos)."""
+        sig = ReportReader._dir_signature(CycleReader.CACHE_DIR)
+        if sig is None:
+            return [], 0
+        if CycleReader._cache["sig"] == sig:
+            return CycleReader._cache["data"]
+        cycles, unreadable = [], 0
+        for name in sig[0]:
+            try:
+                with open(os.path.join(CycleReader.CACHE_DIR, name), "r",
+                          encoding="utf-8-sig") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                unreadable += 1
+                continue
+            if (not isinstance(data, dict)
+                    or not isinstance(data.get("started_at"), (int, float))
+                    or not isinstance(data.get("buckets"), list)):
+                unreadable += 1
+                continue
+            cycles.append(data)
+        cycles.sort(key=lambda c: c["started_at"])
+        result = (cycles, unreadable)
+        CycleReader._cache = {"sig": sig, "data": result}
+        return result
+
+    @staticmethod
+    def _village_key(value):
+        return None if value is None else str(value)
+
+    @staticmethod
+    def _cycle_villages(cycle):
+        return {
+            CycleReader._village_key(b.get("village"))
+            for b in cycle.get("buckets", [])
+            if b.get("village") is not None
+        }
+
+    @staticmethod
+    def _phase_rows(cycles):
+        """Fases somadas sobre `cycles`, com a participacao no tempo total."""
+        total = sum(float(c.get("total_seconds") or 0) for c in cycles) or 0.0
+        n = len(cycles) or 1
+        agg = {}
+        for c in cycles:
+            seen = set()
+            for b in c.get("buckets", []):
+                phase = b.get("phase") or CycleReader.UNPHASED
+                a = agg.setdefault(phase, {"wall": 0.0, "requests": 0, "posts": 0,
+                                           "failed": 0, "sleep": 0.0, "present": 0})
+                a["wall"] += float(b.get("wall") or 0)
+                a["requests"] += int(b.get("requests") or 0)
+                a["posts"] += int(b.get("posts") or 0)
+                a["failed"] += int(b.get("failed") or 0)
+                a["sleep"] += float(b.get("sleep") or 0)
+                seen.add(phase)
+            for phase in seen:
+                agg[phase]["present"] += 1
+        rows = []
+        for phase, a in agg.items():
+            rows.append({
+                "phase": phase,
+                "is_unphased": phase == CycleReader.UNPHASED,
+                "wall": a["wall"],
+                "share_pct": (100.0 * a["wall"] / total) if total else 0.0,
+                "wall_per_cycle_fmt": CycleReader._hms(a["wall"] / n),
+                "req_per_cycle": a["requests"] / n,
+                "requests": a["requests"],
+                "posts": a["posts"],
+                "failed": a["failed"],
+                "sec_per_req": (a["wall"] / a["requests"]) if a["requests"] else None,
+                "sleep_pct": (100.0 * a["sleep"] / a["wall"]) if a["wall"] else None,
+                "cycles_present": a["present"],
+            })
+        rows.sort(key=lambda r: -r["wall"])
+        return rows
+
+    @staticmethod
+    def _village_rows(cycles, names):
+        total = sum(float(c.get("total_seconds") or 0) for c in cycles) or 0.0
+        agg = {}
+        for c in cycles:
+            seen = set()
+            for b in c.get("buckets", []):
+                vid = CycleReader._village_key(b.get("village"))
+                a = agg.setdefault(vid, {"wall": 0.0, "requests": 0, "present": 0,
+                                         "phases": {}})
+                wall = float(b.get("wall") or 0)
+                a["wall"] += wall
+                a["requests"] += int(b.get("requests") or 0)
+                phase = b.get("phase") or CycleReader.UNPHASED
+                a["phases"][phase] = a["phases"].get(phase, 0.0) + wall
+                seen.add(vid)
+            for vid in seen:
+                agg[vid]["present"] += 1
+        rows = []
+        for vid, a in agg.items():
+            present = a["present"] or 1
+            top = sorted(a["phases"].items(), key=lambda kv: -kv[1])[:3]
+            rows.append({
+                "village_id": vid,
+                "name": ("Conta inteira" if vid is None
+                         else village_display_name(names.get(vid), vid)),
+                "is_account": vid is None,
+                "cycles_present": a["present"],
+                "wall": a["wall"],
+                "share_pct": (100.0 * a["wall"] / total) if total else 0.0,
+                "wall_per_cycle_fmt": CycleReader._hms(a["wall"] / present),
+                "req_per_cycle": a["requests"] / present,
+                "top_phases": [
+                    {"phase": p,
+                     "pct": (100.0 * w / a["wall"]) if a["wall"] else 0.0}
+                    for p, w in top if w > 0
+                ],
+            })
+        rows.sort(key=lambda r: -r["wall"])
+        return rows
+
+    @staticmethod
+    def load(days=14, managed=None, now=None):
+        """
+        `days` = janela pelo INICIO do ciclo (0 = tudo que esta em disco).
+        `managed` = cache/managed (so para nome de aldeia). `now` e injetavel
+        para o teste nao depender do relogio.
+        """
+        now = int(now if now is not None else time.time())
+        names = managed or {}
+        all_cycles, unreadable = CycleReader._read_all()
+        empty = {
+            "available": False,
+            "unreadable": unreadable,
+            "on_disk": len(all_cycles),
+            "days": days,
+            "unphased_warn_pct": CycleReader.UNPHASED_WARN_PCT,
+        }
+        if not all_cycles:
+            return empty
+
+        latest = all_cycles[-1]
+        latest_end = latest.get("ended_at") or latest["started_at"]
+        next_sleep = latest.get("next_sleep_seconds")
+        latest_info = {
+            "started_fmt": CycleReader._fmt_ts(latest["started_at"]),
+            "ended_fmt": CycleReader._fmt_ts(latest_end),
+            "age_seconds": now - int(latest_end),
+            "age_fmt": CycleReader._hms(max(0, now - int(latest_end))),
+            "aborted": latest.get("aborted"),
+            "next_start_fmt": (CycleReader._fmt_ts(latest_end + next_sleep)
+                               if next_sleep is not None and not latest.get("aborted")
+                               else None),
+        }
+
+        window = [c for c in all_cycles
+                  if not days or c["started_at"] >= now - days * 86400]
+        complete = [c for c in window if not c.get("aborted")]
+        aborted = [c for c in window if c.get("aborted")]
+        aborted_reasons = collections.Counter(str(c.get("aborted")) for c in aborted)
+
+        result = dict(empty)
+        result.update({
+            "available": True,
+            "latest": latest_info,
+            "window_count": len(window),
+            "complete_count": len(complete),
+            "aborted_count": len(aborted),
+            "aborted_reasons": sorted(aborted_reasons.items(), key=lambda kv: -kv[1]),
+            "first_fmt": CycleReader._fmt_ts(window[0]["started_at"]) if window else "—",
+            "last_fmt": CycleReader._fmt_ts(window[-1]["started_at"]) if window else "—",
+            "last": None,
+            "medians": None,
+            "phases": [],
+            "villages": [],
+            "unphased_pct": None,
+            "unphased_warn": False,
+            "recent": [],
+        })
+
+        for c in reversed(window[-CycleReader.RECENT_ROWS:]):
+            total = float(c.get("total_seconds") or 0)
+            result["recent"].append({
+                "started_fmt": CycleReader._fmt_ts(c["started_at"]),
+                "cycle": c.get("cycle"),
+                "total_fmt": CycleReader._hms(total),
+                "requests": int(c.get("requests") or 0),
+                "villages": len(CycleReader._cycle_villages(c)),
+                "sleep_pct": (100.0 * float(c.get("sleep_seconds") or 0) / total) if total else None,
+                "captcha_fmt": (CycleReader._hms(c.get("captcha_seconds"))
+                                if c.get("captcha_seconds") else None),
+                "next_sleep_fmt": (CycleReader._hms(c.get("next_sleep_seconds"))
+                                   if c.get("next_sleep_seconds") is not None else "—"),
+                "aborted": c.get("aborted"),
+            })
+
+        if not complete:
+            return result
+
+        last = complete[-1]
+        last_total = float(last.get("total_seconds") or 0)
+        result["last"] = {
+            "started_fmt": CycleReader._fmt_ts(last["started_at"]),
+            "total_fmt": CycleReader._hms(last_total),
+            "requests": int(last.get("requests") or 0),
+            "villages": len(CycleReader._cycle_villages(last)),
+            "sleep_pct": (100.0 * float(last.get("sleep_seconds") or 0) / last_total)
+                         if last_total else None,
+            "net_fmt": CycleReader._hms(last.get("net_seconds")),
+            "captcha_fmt": (CycleReader._hms(last.get("captcha_seconds"))
+                            if last.get("captcha_seconds") else None),
+            "phases": CycleReader._phase_rows([last]),
+        }
+
+        totals = [float(c.get("total_seconds") or 0) for c in complete]
+        reqs = [int(c.get("requests") or 0) for c in complete]
+        sum_wall, sum_req = sum(totals), sum(reqs)
+        result["medians"] = {
+            "total_fmt": CycleReader._hms(statistics.median(totals)),
+            "min_fmt": CycleReader._hms(min(totals)),
+            "max_fmt": CycleReader._hms(max(totals)),
+            "requests": statistics.median(reqs),
+            "villages": statistics.median(
+                [len(CycleReader._cycle_villages(c)) for c in complete]),
+            # Razao das somas, nao media das razoes: ciclo longo pesa mais,
+            # que e o que se quer ao perguntar "quanto custa uma requisicao".
+            "sec_per_req": (sum_wall / sum_req) if sum_req else None,
+            "sleep_pct": (100.0 * sum(float(c.get("sleep_seconds") or 0)
+                                      for c in complete) / sum_wall) if sum_wall else None,
+        }
+        result["phases"] = CycleReader._phase_rows(complete)
+        result["villages"] = CycleReader._village_rows(complete, names)
+        unphased = next((r for r in result["phases"] if r["is_unphased"]), None)
+        result["unphased_pct"] = unphased["share_pct"] if unphased else 0.0
+        result["unphased_warn"] = result["unphased_pct"] > CycleReader.UNPHASED_WARN_PCT
+        return result
 
 
 class PvpConquestReader:

@@ -3607,6 +3607,44 @@ registro usa `time.time()`, como o resto do arquivo. Suíte inteira verde
 **⏳ Falta campo:** o bot que está rodando subiu às 18:38 com o código antigo.
 O aceite é, depois de reiniciar, a primeira linha `Ciclo: ...` com `(sem fase)`
 pequeno e o primeiro arquivo em `cache/cycles/`.
+**Atualização 2026-09-22 19:20:** o bot foi reiniciado às 19:14 com o código
+novo, e o primeiro arquivo já nasceu — `1790115248.json`, um ciclo **abortado**
+(`overview_unavailable`, 1 requisição, 5 s) às 19:14:08, antes da sessão que
+subiu às 19:14:37. Isso prova a gravação do caminho de aborto; o aceite do
+ciclo completo continua aberto.
+
+## 8.22 ✅ `P-CICLO-PAINEL` — a medição virou página (2026-09-22)
+
+**Por que este.** Com toda a §9 em "⏳ falta campo", o próximo item é o
+baseline (item 3), e a §8.21 parou de propósito em gravar: "o que cortar vem
+depois de ler uns dias de `cache/cycles/`". Sem leitor, isso seria abrir até
+300 JSONs na mão — e agregar do jeito errado, que é o risco do décimo
+primeiro padrão.
+
+**O que foi escrito.** `webmanager/utils.py::CycleReader` + rota `/cycles` +
+`templates/cycles.html` (detalhe de tela em `frontend.md` §2.7). Só leitura:
+nenhuma chave de config, nada muda no bot. O leitor:
+- tira ciclo **abortado** de toda mediana e o conta a parte, com o motivo;
+- dá a média por aldeia **por ciclo em que ela apareceu**, com
+  `cycles_present` — aldeia fora do horário ativo não pode parecer barata;
+- agrega por fase **e** por aldeia (e "Conta inteira" para `village=None`),
+  com participação que fecha 100% porque o tempo do medidor é exclusivo;
+- segundos por requisição é **razão das somas**, não média das razões;
+- alerta `(sem fase)` acima de 5%;
+- relê o diretório só quando `(nomes, maior mtime)` muda, reaproveitando
+  `ReportReader._dir_signature`; arquivo ilegível é contado, não derruba.
+
+**Testes.** `tests/test_cycle_reader.py`: os resumos são gerados pelo
+**próprio `CycleMeter`** com relógio falso, não escritos a mão — se o formato
+do produtor mudar, o teste quebra junto. Cobre abortado fora da mediana, média
+por presença, fechamento em 100%, limiar de `(sem fase)` nos dois lados,
+janela, arquivo ilegível, invalidação de cache e a página nos três ramos.
+Provado reprovando: com o abortado dentro de `complete` e a média por aldeia
+dividida pelo total de ciclos, 6 problemas acusados. Suíte inteira verde
+(63/63).
+
+**⏳ Falta campo:** o primeiro ciclo **completo** gravado. Até lá a página
+mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
 
 ---
 
@@ -3762,6 +3800,12 @@ pequeno e o primeiro arquivo em `cache/cycles/`.
    metade do item 3 da fila abaixo (baseline): tempo e requisições por
    `(aldeia, fase)` em cada ciclo, em `cache/cycles/`. **⏳ Falta campo:**
    reiniciar o bot e juntar alguns dias antes de decidir o que cortar.
+   (Bot reiniciado às 19:14 de 2026-09-22 — o relógio dos "alguns dias"
+   começou.)
+
+17. ~~**`P-CICLO-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.22). `/cycles`
+   lê `cache/cycles/` por fase e por aldeia, com abortado fora das medianas e
+   média por presença. É onde a decisão do item 16 vai ser tomada.
 
 Depois disso, a fila anterior:
 

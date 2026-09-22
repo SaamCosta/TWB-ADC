@@ -219,6 +219,39 @@ a frase que o resto do painel não diz em lugar nenhum: **lista vazia depois de
 uma leitura significa "nada no ar", que é diferente de "não li"**. Os dois
 casos foram renderizados pelo test client antes de fechar.
 
+### 2.7 `/cycles` — para onde vai o tempo de um ciclo (2026-09-22)
+
+Página nova em **Sistema → Ciclos**, lado de leitura do `P-CICLO-MEDIDA`
+(`backend.md` §8.21, §8.22). Não estava em nenhuma lista desta seção: foi
+escolhida porque a fila inteira do backend está em "⏳ falta campo" e o
+item que sobra, o baseline da §9, dizia literalmente "o que cortar vem depois
+de ler uns dias de `cache/cycles/`" — e 300 JSONs não se leem a mão.
+
+Faixa de estado (último ciclo gravado e sua idade, contagem na janela,
+participação de `(sem fase)`), um ciclo típico (mediana de duração e
+requisições, segundos por requisição, quanto disso é sono), tabela **por
+fase**, tabela **por aldeia**, o último ciclo completo e os 20 mais recentes.
+Janela por `?days=` (1, 7, 14 ou tudo; cortado em 0–60).
+
+Três decisões que vêm do décimo primeiro padrão, e não de gosto:
+- **ciclo abortado fica fora das medianas** e é contado a parte com o motivo
+  — dura segundos e puxaria tudo para baixo;
+- a média por aldeia é **por ciclo em que ela apareceu**, e a coluna "presente
+  em N/M" vai junto — aldeia fora do horário ativo pareceria barata;
+- as duas agregações ficam na mesma página, lado a lado, porque aldeia de farm
+  e aldeia de apoio não são o mesmo conjunto.
+
+`(sem fase)` acima de 5% vira alerta: é instrumentação faltando, não tempo
+explicado. A página diz também o que ela não vê — o ciclo em andamento só
+aparece quando termina.
+
+QA: renderizada pelo test client nos ramos vazio, só-abortado e cheio
+(`tests/test_cycle_reader.py`), e em navegador com 8 ciclos sintéticos sobre
+os nomes reais de aldeia: um `h1`, IDs únicos, sem overflow no body a 1280 e
+375 px (tabelas rolam dentro do próprio contêiner). Screenshot não anexado — o
+painel do navegador não renderizou imagem nesta sessão; a verificação foi por
+DOM.
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)

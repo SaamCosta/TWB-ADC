@@ -1,0 +1,152 @@
+{% extends "main.html" %}
+{% block title %}Ciclos{% endblock %}
+
+{% block content %}
+<header class="twb-page-header">
+  <div>
+    <p class="twb-eyebrow">Sistema · medição</p>
+    <h1 class="twb-page-title">Para onde vai o tempo de um ciclo</h1>
+    <p class="twb-page-summary">Tempo de parede e requisições por fase e por aldeia, gravados pelo próprio bot ao fim de cada ciclo em <code>cache/cycles/</code>. O tempo de cada fase é <strong>exclusivo</strong> (subfase não é contada de novo na fase-mãe), então as participações somam 100%. Só leitura: nada aqui muda o que o bot faz.</p>
+  </div>
+  <div class="twb-page-actions">
+    <form method="get" action="/cycles" class="twb-inline-form">
+      <label for="janela-dias" class="small mb-0 mr-2">Janela</label>
+      <select id="janela-dias" name="days" class="custom-select custom-select-sm" onchange="this.form.submit()">
+        {% for d in day_options %}<option value="{{ d }}" {% if d == days %}selected{% endif %}>{% if d == 0 %}tudo em disco{% elif d == 1 %}último dia{% else %}últimos {{ d }} dias{% endif %}</option>{% endfor %}
+      </select>
+      <noscript><button class="btn btn-outline-secondary btn-sm ml-2" type="submit">Aplicar</button></noscript>
+    </form>
+  </div>
+</header>
+
+{% if not cycles.available %}
+<div class="twb-empty twb-empty--unknown">
+  <strong>Nenhum ciclo gravado ainda</strong>
+  O arquivo só nasce quando um ciclo termina (ou aborta por visão geral indisponível). O ciclo em andamento não aparece aqui até acabar — com ~30 aldeias isso leva horas.
+  {% if cycles.unreadable %}<br><span class="twb-status twb-status--danger">{{ cycles.unreadable }} arquivo(s) ilegível(is) em <code>cache/cycles/</code></span>{% endif %}
+</div>
+{% else %}
+
+<section class="twb-health-strip" aria-label="Estado da medição">
+  <div class="twb-health-item">
+    <span class="twb-health-label">Último ciclo gravado</span>
+    <span class="twb-health-value"><time class="twb-time">{{ cycles.latest.ended_fmt }}</time></span>
+    <span class="twb-health-meta">Terminou há <strong>{{ cycles.latest.age_fmt }}</strong>.{% if cycles.latest.aborted %} <span class="twb-status twb-status--warning">Abortado: {{ cycles.latest.aborted }}</span>{% elif cycles.latest.next_start_fmt %} O sono gravado previa o próximo início às <time class="twb-time">{{ cycles.latest.next_start_fmt }}</time>; o ciclo em andamento só aparece quando terminar.{% endif %}</span>
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Na janela</span>
+    <span class="twb-health-value"><span class="twb-number">{{ cycles.complete_count }}</span> completo(s)</span>
+    <span class="twb-health-meta">{{ cycles.first_fmt }} → {{ cycles.last_fmt }}.{% if cycles.aborted_count %} Mais {{ cycles.aborted_count }} abortado(s), fora das médias ({% for reason, n in cycles.aborted_reasons %}{{ reason }} ×{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}).{% endif %} {{ cycles.on_disk }} arquivo(s) em disco.</span>
+  </div>
+  <div class="twb-health-item">
+    <span class="twb-health-label">Tempo sem fase nomeada</span>
+    <span class="twb-health-value">{% if cycles.unphased_pct is none %}<span class="twb-status twb-status--unknown">Sem ciclo completo</span>{% elif cycles.unphased_warn %}<span class="twb-status twb-status--warning">{{ "%.1f"|format(cycles.unphased_pct)|replace('.', ',') }}%</span>{% else %}<span class="twb-status twb-status--success">{{ "%.1f"|format(cycles.unphased_pct)|replace('.', ',') }}%</span>{% endif %}</span>
+    <span class="twb-health-meta">Balde <code>(sem fase)</code>. Acima de {{ "%.0f"|format(cycles.unphased_warn_pct) }}% é instrumentação faltando, não tempo explicado.</span>
+  </div>
+</section>
+
+{% if cycles.unreadable %}<div class="twb-inline-alert twb-inline-alert--danger mb-3"><strong>{{ cycles.unreadable }} arquivo(s) ilegível(is)</strong> em <code>cache/cycles/</code> foram ignorados — JSON parcial ou formato inesperado.</div>{% endif %}
+
+{% if not cycles.medians %}
+<div class="twb-empty twb-empty--unknown mb-3"><strong>Nenhum ciclo completo na janela</strong>Só há ciclos abortados aqui; eles duram segundos e não dizem nada sobre o custo de um ciclo real. Aumente a janela ou espere o próximo ciclo terminar.</div>
+{% else %}
+
+<section class="twb-panel" aria-labelledby="titulo-resumo-ciclos">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-resumo-ciclos">Um ciclo típico na janela</h2><span class="small text-muted">Mediana de {{ cycles.complete_count }} ciclo(s) completo(s)</span></div>
+  <div class="twb-panel-body">
+    <div class="twb-metric-grid">
+      <div class="twb-metric"><span class="twb-metric-label">Duração (mediana)</span><span class="twb-metric-value">{{ cycles.medians.total_fmt }}</span><span class="twb-derived-note">de {{ cycles.medians.min_fmt }} a {{ cycles.medians.max_fmt }}</span></div>
+      <div class="twb-metric"><span class="twb-metric-label">Requisições por ciclo (mediana)</span><span class="twb-metric-value">{{ "%.0f"|format(cycles.medians.requests) }}</span><span class="twb-derived-note">em {{ "%.0f"|format(cycles.medians.villages) }} aldeia(s)</span></div>
+      <div class="twb-metric"><span class="twb-metric-label">Segundos por requisição</span><span class="twb-metric-value">{% if cycles.medians.sec_per_req is not none %}{{ "%.1f"|format(cycles.medians.sec_per_req)|replace('.', ',') }} s{% else %}—{% endif %}</span><span class="twb-derived-note">{% if cycles.medians.sleep_pct is not none %}{{ "%.0f"|format(cycles.medians.sleep_pct) }}% do tempo é o sono antes de cada requisição{% endif %}</span></div>
+    </div>
+    <p class="twb-evidence-detail mb-0 mt-3">Com o sono fixo antes de cada GET/POST, a duração do ciclo é quase inteira <em>número de requisições × segundos por requisição</em>. Encurtar o ciclo é cortar requisição — as tabelas abaixo dizem de onde.</p>
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-fases">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-fases">Por fase, somando todas as aldeias</h2><span class="small text-muted">Médias por ciclo completo</span></div>
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Tempo por fase com rolagem horizontal">
+    <table class="table table-sm twb-operational-table">
+      <caption class="sr-only">Participação de cada fase no tempo total, tempo e requisições médios por ciclo, custo por requisição e falhas</caption>
+      <thead><tr><th scope="col">Fase</th><th scope="col">Participação</th><th scope="col">Tempo/ciclo</th><th scope="col">Req/ciclo</th><th scope="col">s/req</th><th scope="col">POST</th><th scope="col">Falhas</th><th scope="col">Presente em</th></tr></thead>
+      <tbody>
+      {% for p in cycles.phases %}
+        <tr class="{% if p.is_unphased and cycles.unphased_warn %}twb-row--unknown{% endif %}">
+          <th scope="row"><code>{{ p.phase }}</code></th>
+          <td class="twb-number">{{ "%.1f"|format(p.share_pct)|replace('.', ',') }}%</td>
+          <td class="twb-number">{{ p.wall_per_cycle_fmt }}</td>
+          <td class="twb-number">{{ "%.1f"|format(p.req_per_cycle)|replace('.', ',') }}</td>
+          <td class="twb-number">{% if p.sec_per_req is not none %}{{ "%.1f"|format(p.sec_per_req)|replace('.', ',') }}{% else %}<span class="twb-derived-note">sem req</span>{% endif %}</td>
+          <td class="twb-number">{{ p.posts }}</td>
+          <td class="twb-number">{% if p.failed %}<span class="twb-status twb-status--danger">{{ p.failed }}</span>{% else %}0{% endif %}</td>
+          <td class="twb-number">{{ p.cycles_present }}/{{ cycles.complete_count }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="twb-panel-body"><p class="twb-evidence-detail mb-0"><code>aldeia</code> é o resto de <code>Village.run()</code> fora das subfases nomeadas. <code>s/req</code> muito acima do resto indica tempo que não é requisição (CPU, espera, captcha).</p></div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-aldeias">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-aldeias">Por aldeia</h2><span class="small text-muted">Média por ciclo <strong>em que a aldeia apareceu</strong></span></div>
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Tempo por aldeia com rolagem horizontal">
+    <table class="table table-sm twb-operational-table">
+      <caption class="sr-only">Tempo e requisições por aldeia, em quantos ciclos ela apareceu e as fases que dominam o seu tempo</caption>
+      <thead><tr><th scope="col">Aldeia</th><th scope="col">Participação</th><th scope="col">Tempo/ciclo</th><th scope="col">Req/ciclo</th><th scope="col">Presente em</th><th scope="col">Fases dominantes</th></tr></thead>
+      <tbody>
+      {% for v in cycles.villages %}
+        <tr>
+          <th scope="row">{% if v.is_account %}<em>{{ v.name }}</em>{% else %}{{ v.name }} <span class="twb-technical-id">#{{ v.village_id }}</span>{% endif %}</th>
+          <td class="twb-number">{{ "%.1f"|format(v.share_pct)|replace('.', ',') }}%</td>
+          <td class="twb-number">{{ v.wall_per_cycle_fmt }}</td>
+          <td class="twb-number">{{ "%.1f"|format(v.req_per_cycle)|replace('.', ',') }}</td>
+          <td class="twb-number">{{ v.cycles_present }}/{{ cycles.complete_count }}</td>
+          <td>{% for t in v.top_phases %}<code>{{ t.phase }}</code> {{ "%.0f"|format(t.pct) }}%{% if not loop.last %}, {% endif %}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="twb-panel-body"><p class="twb-evidence-detail mb-0">"Conta inteira" são as fases que não pertencem a uma aldeia (visão geral, reservas da tribo, estatísticas, em voo, Hunter, perfis de farm). Aldeia de farm e aldeia de apoio não custam o mesmo — antes de concluir algo pela média geral, olhe esta tabela.</p></div>
+</section>
+
+{% if cycles.last %}
+<section class="twb-panel" aria-labelledby="titulo-ultimo">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-ultimo">Último ciclo completo</h2><span class="small text-muted">Início <time class="twb-time">{{ cycles.last.started_fmt }}</time></span></div>
+  <div class="twb-panel-body">
+    <p class="mb-2"><strong>{{ cycles.last.total_fmt }}</strong> em {{ cycles.last.villages }} aldeia(s), {{ cycles.last.requests }} requisição(ões){% if cycles.last.sleep_pct is not none %}; {{ "%.0f"|format(cycles.last.sleep_pct) }}% dormindo antes delas{% endif %}, rede {{ cycles.last.net_fmt }}{% if cycles.last.captcha_fmt %}, <span class="twb-status twb-status--warning">captcha {{ cycles.last.captcha_fmt }}</span>{% endif %}.</p>
+    <div class="twb-data-list">{% for p in cycles.last.phases[:8] %}<span><code>{{ p.phase }}</code> <strong class="twb-number">{{ "%.0f"|format(p.share_pct) }}%</strong> ({{ p.requests }} req)</span>{% endfor %}</div>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+
+<section class="twb-panel" aria-labelledby="titulo-recentes">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-recentes">Ciclos recentes na janela</h2><span class="small text-muted">{{ cycles.recent|length }} de {{ cycles.window_count }}, mais novo primeiro</span></div>
+  {% if not cycles.recent %}
+  <div class="twb-panel-body"><div class="twb-empty">Nenhum ciclo começou dentro da janela escolhida.</div></div>
+  {% else %}
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Ciclos recentes com rolagem horizontal">
+    <table class="table table-sm twb-operational-table">
+      <caption class="sr-only">Ciclos recentes com início, duração, requisições, aldeias, sono seguinte e situação</caption>
+      <thead><tr><th scope="col">Início</th><th scope="col">Nº</th><th scope="col">Duração</th><th scope="col">Requisições</th><th scope="col">Aldeias</th><th scope="col">Sono depois</th><th scope="col">Situação</th></tr></thead>
+      <tbody>
+      {% for r in cycles.recent %}
+        <tr class="{% if r.aborted %}twb-row--unknown{% endif %}">
+          <td><time class="twb-time twb-time-cell">{{ r.started_fmt }}</time></td>
+          <td class="twb-number">{{ r.cycle if r.cycle is not none else '—' }}</td>
+          <td class="twb-number">{{ r.total_fmt }}</td>
+          <td class="twb-number">{{ r.requests }}</td>
+          <td class="twb-number">{{ r.villages }}</td>
+          <td class="twb-number">{{ r.next_sleep_fmt }}</td>
+          <td>{% if r.aborted %}<span class="twb-status twb-status--warning">Abortado: {{ r.aborted }}</span>{% else %}<span class="twb-status twb-status--success">Completo</span>{% endif %}{% if r.captcha_fmt %} <span class="twb-status twb-status--warning">captcha {{ r.captcha_fmt }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

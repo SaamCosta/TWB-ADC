@@ -9,10 +9,10 @@ from core.exceptions import InvalidJSONException
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -608,6 +608,23 @@ def pvp_conquest_scout_override():
     if target_id:
         PvpConquestReader.set_scout_override(target_id)
     return redirect(url_for("get_pvp_conquest"))
+
+
+@app.route('/cycles', methods=['GET'])
+def get_cycles():
+    # P-CICLO-MEDIDA (docs/backend.md 8.21): so leitura de cache/cycles. Nao
+    # chama sync() -- so precisa de cache/managed para nome de aldeia.
+    try:
+        days = int(request.args.get("days", 14))
+    except (TypeError, ValueError):
+        days = 14
+    days = max(0, min(days, 60))
+    return render_template(
+        'cycles.html',
+        cycles=CycleReader.load(days=days, managed=DataReader.cache_grab("managed")),
+        days=days,
+        day_options=[1, 7, 14, 0],
+    )
 
 
 @app.route('/empire', methods=['GET'])

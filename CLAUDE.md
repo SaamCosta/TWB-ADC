@@ -130,6 +130,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   nobres descontam o que outro alvo ou o trem bárbaro reservou, a reserva é
   reconstruída do Hunter depois de reinício e o piso da escolta não pede mais
   que existe; §8.20)
+  e o leitor da página `/cycles` (`tests/test_cycle_reader.py` — ciclo
+  abortado fora da mediana, média por aldeia só nos ciclos em que ela
+  apareceu; §8.22)
   e o medidor de ciclo (`tests/test_cycle_meter.py` — tempo exclusivo por
   fase fechando o total, requisição atribuída ao topo da pilha, wrapper sem
   medidor virando no-op; §8.21).
