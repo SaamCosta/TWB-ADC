@@ -140,6 +140,7 @@ from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
 from game.village import Village
+from game.attack import ConquestCache
 from game.conquest_planner import BarbarianTrainPlanner
 from game.hunter import Hunter
 from game.zone_manager import ZoneManager
@@ -582,6 +583,45 @@ class TWB:
         return random.randint(lo, hi)
 
     @staticmethod
+    def _prime_villages(managed_villages, config, source_ids, label):
+        """
+        Roda `Village.prime_for_conquest()` em cada id de `source_ids`.
+
+        Devolve `(set de ids com leitura viva, lista de ids que ficaram de
+        fora)`. Nomear os ausentes e obrigatorio, nao cosmetico: uma aldeia
+        que nao primou simplesmente NAO ENTRA na medicao seguinte -- o
+        percentual de prontidao do PvP e a contagem de nobres do trem passam a
+        descrever um exercito menor do que o real, e nada no log diria por que.
+        E o decimo quinto padrao do CLAUDE.md virado do avesso (numero que nao
+        diz sobre quanto foi calculado e indistinguivel de um numero completo).
+        Causa tipica: timeout de requisicao (`get_url` devolve None); retenta
+        no ciclo seguinte sozinho.
+        """
+        primed = set()
+        missed = []
+        for vid in sorted(source_ids):
+            village = managed_villages.get(vid)
+            if not village:
+                missed.append(vid)
+                continue
+            if village.prime_for_conquest(config=config):
+                primed.add(vid)
+            else:
+                missed.append(vid)
+        if source_ids:
+            logging.info(
+                "%s: primed %d/%d source village(s) before the cycle",
+                label, len(primed), len(source_ids),
+            )
+            if missed:
+                logging.warning(
+                    "%s: no live troop/map data for source village(s) %s "
+                    "-- they are excluded from this cycle's decision",
+                    label, ", ".join(missed),
+                )
+        return primed, missed
+
+    @staticmethod
     def prime_conquest_sources(managed_villages, config):
         """
         Load live troop/map data for the villages an active PvP operation
@@ -593,7 +633,7 @@ class TWB:
         the cycle's request count to answer a question about a handful of
         villages.
 
-        Returns the number of villages successfully primed.
+        Returns the set of village ids successfully primed.
         """
         source_ids = set()
         for data in PvpConquestCache.all().values():
@@ -604,34 +644,115 @@ class TWB:
                 source_ids.add(str(data["clear_village_id"]))
             source_ids.update(str(vid) for vid in (data.get("noble_villages") or []))
 
-        primed = 0
-        missed = []
-        for vid in sorted(source_ids):
-            village = managed_villages.get(vid)
-            if not village:
-                missed.append(vid)
-                continue
-            if village.prime_for_conquest(config=config):
-                primed += 1
-            else:
-                missed.append(vid)
-        if source_ids:
-            logging.info(
-                "PvpConquest: primed %d/%d source village(s) before the cycle",
-                primed, len(source_ids),
-            )
-            if missed:
-                # Naming them matters: a village that failed to prime is
-                # simply absent from the troop measurement, so the readiness
-                # percentage silently describes a smaller army than the
-                # operation actually depends on. Usually a request timeout
-                # (get_url returns None), and it retries next cycle.
-                logging.warning(
-                    "PvpConquest: no live troop/map data for source village(s) %s "
-                    "-- they are excluded from this cycle's readiness check",
-                    ", ".join(missed),
-                )
+        primed, _missed = TWB._prime_villages(
+            managed_villages, config, source_ids, "PvpConquest"
+        )
         return primed
+
+    @staticmethod
+    def prime_barbarian_sources(managed_villages, config, already_primed=()):
+        """
+        Mesmo prime da conquista PvP, para a conquista barbara (Feature 8).
+
+        QUEM ENTRA NA LISTA
+        -------------------
+        1. A aldeia que ACOMPANHA uma conquista ja em andamento
+           (`reserved_by` do registro em `cache/conquest`). E ela que le a
+           lealdade real do relatorio, confirma posse e manda o nobre extra --
+           `ConquestManager._handle_existing()`.
+        2. Toda aldeia que PODE ter nobre livre. "Pode" e deliberadamente
+           generoso: a uniao do que o objeto `Village` ainda carrega do ciclo
+           anterior com o `troops` do snapshot `cache/managed/{vid}.json`.
+
+        Por que a lista precisa ser um SUPERCONJUNTO, e nao uma selecao exata:
+        o planejador conta nobre por `village.units.troops`, e no inicio do
+        ciclo esse numero e a foto do fim do ciclo passado (os objetos `Village`
+        sobrevivem entre ciclos). Aldeia que entra na lista e nao tem mais
+        nobre e corrigida pela leitura viva e sai sozinha; aldeia que fica de
+        fora da lista nunca e corrigida e some da contagem em silencio -- que e
+        exatamente o erro caro. Errar para o lado de primar demais custa ~4
+        requisicoes; errar para o outro adia um trem inteiro por um ciclo.
+
+        `already_primed` evita repetir o custo para quem a conquista PvP acabou
+        de ler neste mesmo ciclo.
+
+        Returns the set of village ids successfully primed.
+        """
+        source_ids = set()
+
+        for data in ConquestCache.active_conquests().values():
+            if data.get("reserved_by"):
+                source_ids.add(str(data["reserved_by"]))
+
+        for vid, village in managed_villages.items():
+            if TWB._maybe_holds_noble(vid, village):
+                source_ids.add(str(vid))
+
+        source_ids -= set(already_primed)
+        primed, _missed = TWB._prime_villages(
+            managed_villages, config, source_ids, "Conquest"
+        )
+        return primed
+
+    @staticmethod
+    def _maybe_holds_noble(vid, village):
+        """
+        Se esta aldeia pode estar com nobre em casa, por qualquer das duas
+        fontes disponiveis antes de ela rodar neste ciclo.
+        """
+        units = getattr(village, "units", None)
+        troops = getattr(units, "troops", None) or {}
+        if int(troops.get("snob", 0) or 0) > 0:
+            return True
+        cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+        return int((cached.get("troops") or {}).get("snob", 0) or 0) > 0
+
+    def run_barbarian_conquest(self, managed_villages, config, reservation_board,
+                               world_villages, reservation_writer):
+        """
+        Acompanhamento e planejamento da conquista barbara, uma vez por ciclo.
+
+        ORDEM: ACOMPANHAR ANTES DE PLANEJAR, E ISSO NAO E ESTETICO
+        ----------------------------------------------------------
+        `BarbarianTrainPlanner.run()` mantem a invariante de UM trem barbaro
+        por vez e desiste cedo quando `ConquestCache.active_conquests()` nao
+        esta vazio. Quem tira um alvo dali e justamente o acompanhamento
+        (`ConquestManager._handle_existing()`): posse confirmada, alvo perdido
+        para outro jogador, alvo reservado pela tribo. No modelo antigo o laco
+        de aldeias rodava antes do planejador e essa ordem acontecia por
+        acidente; trazendo os dois para o inicio do ciclo ela passa a ser
+        explicita. Invertida, uma conquista que acabou de terminar bloquearia
+        a proxima por um ciclo inteiro -- e um ciclo aqui mede horas.
+
+        O acompanhamento e chamado apenas para as aldeias que sao `reserved_by`
+        de um registro ativo. Nao e uma amostra: `_get_my_conquest()` casa
+        exatamente por esse campo, entao as outras 29 aldeias que chamavam
+        `run_conquest()` no laco sempre saiam no primeiro `return False`.
+        """
+        anchors = []
+        for data in ConquestCache.active_conquests().values():
+            anchor = str(data.get("reserved_by") or "")
+            if anchor and anchor not in anchors:
+                anchors.append(anchor)
+
+        for anchor in anchors:
+            village = managed_villages.get(anchor)
+            # `config` da aldeia e populado por prime_for_conquest()/run(): no
+            # primeiro ciclo de uma aldeia que nao primou ele ainda e None, e
+            # run_conquest() faz `self.config.get(...)` de cara.
+            if not village or not village.config:
+                continue
+            village.run_conquest()
+
+        BarbarianTrainPlanner(
+            wrapper=self.wrapper,
+            villages=managed_villages,
+            config=config,
+            hunter=self.hunter,
+            reservation_board=reservation_board,
+            world_villages=world_villages,
+            reservation_writer=reservation_writer,
+        ).run()
 
     def run(self):
         """
@@ -885,13 +1006,45 @@ class TWB:
                 # rede), o prime le aldeia por aldeia as origens escolhidas, e
                 # a segunda chamada ja decide com numero vivo de tropa e
                 # consegue sondar os tempos de viagem.
+                primed_this_cycle = set()
                 if pvp_manager:
                     pvp_manager.run()
-                    primed = self.prime_conquest_sources(
+                    primed_this_cycle = self.prime_conquest_sources(
                         managed_villages_dict, config
                     )
-                    if primed:
+                    if primed_this_cycle:
                         pvp_manager.run()
+
+                # Feature 8 (2026-09-22): a conquista barbara decide UMA vez no
+                # inicio do ciclo, pelo mesmo motivo da PvP logo acima.
+                #
+                # Ela ja rodava uma vez por ciclo, mas no RABO -- depois do
+                # laco de aldeias. Isso resolvia a visibilidade (o planejador
+                # ve o imperio inteiro porque todas as aldeias ja rodaram) e
+                # deixava dois problemas de pe:
+                #
+                #  - a reserva de tropa do trem (`_reserve`) nascia depois de
+                #    farm e coleta ja terem gastado o ciclo inteiro, entao ela
+                #    so protegia a escolta a partir do ciclo SEGUINTE;
+                #  - um ciclo mediu ~4h com 30 aldeias em 2026-09-21, entao
+                #    acompanhamento e agendamento aconteciam no minuto
+                #    arbitrario em que o laco terminava.
+                #
+                # Roda na mesma forma de dois tempos da PvP: escolher as
+                # origens pelo snapshot de `cache/managed` (sem rede), primar
+                # so elas, e so entao decidir com numero vivo de tropa.
+                if config.get("conquest", {}).get("enabled", False):
+                    primed_this_cycle |= self.prime_barbarian_sources(
+                        managed_villages_dict, config,
+                        already_primed=primed_this_cycle,
+                    )
+                    self.run_barbarian_conquest(
+                        managed_villages=managed_villages_dict,
+                        config=config,
+                        reservation_board=reservation_board,
+                        world_villages=world_villages,
+                        reservation_writer=reservation_writer,
+                    )
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
@@ -1003,22 +1156,9 @@ class TWB:
                 # ativado. Roda uma vez por ciclo (não por aldeia).
                 InventoryManager.run(self.wrapper, config, self.found_villages)
 
-                # Feature 8 (fase 2): monta o trem de nobres bárbaro com os
-                # nobres de TODAS as aldeias, não mais 4 na mesma. Roda uma vez
-                # por ciclo, e antes do Hunter de propósito: o agendamento que
-                # ele acabou de criar precisa ser sondado e entrar no
-                # nearest_send_time() ainda neste ciclo, senão o bot dorme por
-                # cima da janela de envio do próprio trem que acabou de montar.
-                if config.get("conquest", {}).get("enabled", False):
-                    BarbarianTrainPlanner(
-                        wrapper=self.wrapper,
-                        villages=managed_villages_dict,
-                        config=config,
-                        hunter=self.hunter,
-                        reservation_board=reservation_board,
-                        world_villages=world_villages,
-                        reservation_writer=reservation_writer,
-                    ).run()
+                # Feature 8: o trem de nobres bárbaro deixou de ser montado
+                # aqui no fim do ciclo em 2026-09-22 -- ele roda no início,
+                # logo depois da conquista PvP. Ver o comentário lá.
 
                 sleep = 0
                 if self.is_active_hours(config=config):

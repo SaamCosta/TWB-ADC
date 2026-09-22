@@ -64,7 +64,16 @@ DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 class BarbarianTrainPlanner:
     """
-    Um por ciclo, construido em twb.py depois do laco de aldeias.
+    Um por ciclo, construido em twb.py ANTES do laco de aldeias.
+
+    Rodava depois dele ate 2026-09-22. A troca resolve duas coisas que a
+    posicao antiga nao tinha como resolver: a reserva de tropa do trem
+    (`_reserve`) passa a existir antes de farm e coleta gastarem o ciclo, e o
+    agendamento deixa de acontecer no minuto arbitrario em que o laco termina
+    (~4h com 30 aldeias). Em troca, `village.units`/`village.area` nao vem mais
+    de graca: `TWB.prime_barbarian_sources()` faz uma leitura minima das
+    aldeias que podem ter nobre antes de chamar este planejador, e
+    `_village_may_conquer()` continua recusando quem ficou sem dado.
 
     `villages` e o mesmo dict {village_id: Village} que PvpConquestManager e
     Hunter ja recebem.

@@ -20,9 +20,18 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   chama `Village.run()` por ciclo, depois dispara sistemas globais
   (`Hunter`, `ZoneManager`, `PvpConquestManager`, `VillageManager.farm_manager`).
 - **`game/village.py`** — orquestrador por aldeia. Chama, em ordem, os managers:
-  `BuildingManager` → `TroopManager` → `SnobManager` → `AttackManager` /
-  `ConquestManager` → `DefenceManager` → `ResourceManager` /
-  `ResourceSharingManager`. Também guarda cache de estado em `cache/managed/*.json`.
+  `BuildingManager` → `TroopManager` → `SnobManager` → `AttackManager` →
+  `DefenceManager` → `ResourceManager` / `ResourceSharingManager`. Também guarda
+  cache de estado em `cache/managed/*.json`.
+  ⚠️ **As duas conquistas NÃO decidem de dentro do laço de aldeias.** Desde
+  2026-09-21 (PvP, `docs/backend.md` §8.14) e 2026-09-22 (bárbara, §8.15) elas
+  rodam uma vez, no **início** do ciclo — bloco do `pvp_manager` e
+  `TWB.run_barbarian_conquest()` em `twb.py` —, precedidas de um prime
+  somente-leitura das aldeias de origem (`Village.prime_for_conquest()`).
+  Motivo: `units`/`area` só existiam depois que a aldeia rodava, e um ciclo
+  completo mede ~4h com 30 aldeias. `Village.run_pvp_conquest()` ainda roda
+  por aldeia (prioridade sobre o farm daquela aldeia); `Village.run_conquest()`
+  não — ele é chamado só para a aldeia `reserved_by` da conquista ativa.
 - **Managers de jogo (`game/`)**:
   - `attack.py` — `AttackManager` (farm) e `ConquestManager` (noble trains contra bárbaros)
   - `defence_manager.py` — `DefenceManager` (bandeiras, evacuação, suporte entre aldeias)

@@ -65,7 +65,8 @@ class Map:
             # `getaddrinfo failed` transitorio derrubou o processo inteiro
             # daqui (AttributeError em Extractor.game_state, que faz res.text
             # direto), levando com ele o ciclo das 28 aldeias e o
-            # BarbarianTrainPlanner, que roda por ultimo. A rede voltou 14s
+            # BarbarianTrainPlanner, que na epoca rodava por ultimo (hoje ele
+            # abre o ciclo, junto da conquista PvP). A rede voltou 14s
             # depois -- 12:16:01 respondeu 200. Ver docs/backend.md 8.8.
             self.last_fetch = previous_fetch
             logging.warning(

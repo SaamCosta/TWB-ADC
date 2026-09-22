@@ -817,9 +817,18 @@ class Village:
 
     def run_conquest(self):
         """
-        Feature 8: Runs the noble train conquest logic for any village with nobles.
-        Skipped if conquest is globally disabled or if the village has
-        conquest_enabled: false in its individual config.
+        Feature 8: acompanhamento da conquista barbara DESTA aldeia.
+
+        Chamado por `TWB.run_barbarian_conquest()` no inicio do ciclo, e so
+        para a aldeia que consta como `reserved_by` de um registro ativo em
+        `cache/conquest` -- nao mais de dentro de `run()`, para toda aldeia.
+        A montagem do trem saiu daqui na fase 2 (ver `ConquestManager.run()`);
+        o que sobrou e lealdade real do relatorio, nobre extra, confirmacao de
+        posse e alvo perdido.
+
+        Os portoes abaixo continuam valendo: conquista desligada, aldeia com
+        `conquest_enabled: false`, aldeia que e origem de uma operacao PvP, ou
+        dado de mapa/tropa que nao carregou neste ciclo.
         """
         if not self.config.get("conquest", {}).get("enabled", False):
             return
@@ -869,8 +878,9 @@ class Village:
         take a second full cycle (several minutes) before running at all.
         That's backwards for this game: once you're actively nobling,
         conquest is supposed to take priority over routine farming, the same
-        way barbarian ConquestManager (run_conquest(), right above this
-        call in run()) already does. Moved here, in the exact same slot,
+        way barbarian ConquestManager did back when run_conquest() was also
+        called from run() (it no longer is -- see the note next to
+        run_farming()). Moved here, in the exact same slot,
         right before run_farming(), so it: (a) runs on every single
         village.run() call, including the very first one after startup,
         since this village's troop/map data is already loaded earlier in
@@ -1249,9 +1259,15 @@ class Village:
         self.ensure_attack_manager()
         self.run_pvp_conquest()
         self._service_hunter()
-        # PvP runs first so it can choose and lock its clear/noble sources
-        # before any lower-priority barbarian conquest or farm spends troops.
-        self.run_conquest()
+        # A conquista barbara NAO e chamada daqui desde 2026-09-22: ela roda
+        # uma vez por ciclo, no inicio, em TWB.run_barbarian_conquest().
+        # Chamar de novo aqui seria, para 29 das 30 aldeias, um `return False`
+        # imediato (`_get_my_conquest()` casa so pelo `reserved_by`), e para a
+        # 30a um segundo passe de `_handle_existing()` no mesmo ciclo -- ou
+        # seja, um segundo caminho capaz de comprometer nobre pelo mesmo alvo.
+        # A reserva de escolta que a aldeia precisa respeitar ja esta em
+        # `units.conquest_reserve` antes de run_farming() abaixo, porque o
+        # planejador rodou antes de qualquer aldeia deste ciclo.
         self.run_farming()
         self._service_hunter()
 
