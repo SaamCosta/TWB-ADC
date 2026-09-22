@@ -1049,7 +1049,7 @@ Três correções de fato sobre a §7.9, porque mudam decisão:
 | 2 | ~~`InstanceLock` por endpoint da conta~~ ✅ **feito em 2026-09-20 (§8.10)** — reescrito com `msvcrt`, não transplantado | LT `core/instance_lock.py` | S | nada |
 | 3 | ~~`Notification`: config lazy + `try/except` no `send`~~ ✅ **feito em 2026-09-20 (§8.9)**; categorias ficaram de fora (exigem config nova → merge no config vivo) | LT `core/notification.py:22,74` | S | nada |
 | 4 | Ler `map/village.txt` e `map/player.txt` do mundo | LT `game/worldvillages.py` | S | o arquivo responde 200 e traz > 100 linhas |
-| 5 | Verificar os quatro bugs da auditoria deles (abaixo) | LT `CODE_REVIEW.md` | S | leitura |
+| 5 | ~~Verificar os quatro bugs da auditoria deles (abaixo)~~ ✅ **feito em 2026-09-22 (§8.19)** — B4/B8/B10 já fechados; B9 tinha uma metade aberta (leitura **parcial**) e foi corrigida | LT `CODE_REVIEW.md` | S | leitura |
 | 6 | `ServerClock` + `GameClock` | LT `core/server_clock.py:54,137` | M | formato de data do rodapé do br143 |
 | 7 | Auto-desbloqueio de coleta por nível de EP; saque previsto logado | LT `troopmanager.py:13,486` | M | §8.5 |
 | 8 | Consolidação noturna da coleta | LT `village.py:800` | M | depende de 7 |
@@ -3421,6 +3421,62 @@ de `/empire` com idade de leitura baixa. O `cache/in_flight.json` atual foi
 gerado da captura de 2026-09-22 pelo caminho de escrita real, para validar o
 render — o bot o sobrescreve no primeiro ciclo.
 
+## 8.19 ✅ `P-PURGE-PARCIAL` — os quatro bugs do fork, e a metade do B9 que sobrou (2026-09-22)
+
+Item 5 da fila tática da §7.10. Resultado da verificação, bug a bug:
+
+| Bug | Aqui | Onde |
+|---|---|---|
+| B4 — `t.wrapper` `None` no handler de crash | ✅ já fechado (P0-3) | `twb.py::main`, guarda + `try` em volta do report e da notificação |
+| B8 — `extra["units_sent"]` direto | ✅ já fechado (P2-25/P2-26) | `reports.py::safe_to_engage`, `manager.py` — tudo por `.get(...) or {}` |
+| B9 — overview com zero aldeias | ✅ metade vazia fechada em 2026-08-22 | `purge_refusal_reason` |
+| B9 — overview **parcial** | ❌ **aberto até hoje** | ver abaixo |
+| B10 — user-agent da seção errada | ✅ nunca existiu | `twb.py` lê `config["bot"]["user_agent"]` |
+
+**O buraco.** `OverviewPage` pede `game.php?screen=overview_villages` sem
+`group` nem `page`, e o jogo serve o grupo e a página que o **jogador** deixou
+selecionados no navegador. Com a visão geral filtrada num grupo de 10 aldeias,
+a interseção com o config não fica vazia, as duas recusas de
+`purge_refusal_reason` não disparam, e a limpeza apagava do `config.json` e do
+`cache/managed` as outras 20. O usuário joga na mesma conta (9º padrão), então
+filtrar por grupo é uso normal, não caso exótico.
+
+**Por que não foi corrigido pondo `group=0&page=-1` na URL.** Duas razões: (a)
+o grupo escolhido na interface fica gravado como preferência do jogador, e é
+provável que o escolhido por querystring também fique — **não medido** —, caso
+em que o bot passaria a desfazer o filtro do usuário a cada ciclo (a armadilha
+"restaurar a tela do jogador" da §7.10); (b) a sessão do `cache/session.json`
+estava vencida e o bot parado (log parado às 16:50:56 de 2026-09-22), então não
+havia como capturar o markup de grupo/paginação, e fixture se copia, não se
+inventa. A sonda ficou em `cache/_probe_overview.py` para quando houver sessão.
+
+**O que mudou.** A limpeza deixou de tratar "ausente da visão geral" como
+"perdida". `TWB.confirm_lost_villages(stale, found, world_rows)` só confirma
+perda quando o `map/village.txt` público (`WorldVillages.rows()`, o mesmo
+objeto da conquista, reaproveitado se já existir) dá a aldeia com **outro
+dono**. O nosso id sai do próprio arquivo: é o dono **majoritário** das aldeias
+que a visão geral acabou de listar. Maioria e não unanimidade porque o arquivo
+atrasa — medido: no `villages_br143.txt` de 20/09, 30 das 31 aldeias do config
+dão `5955651` e a **44167 (JULIET)**, conquistada depois, ainda dá o dono
+anterior `919832469`. Arquivo indisponível, aldeia ausente dele, ou dono ainda
+nosso: a aldeia **fica**, com um WARNING que diz o motivo
+(`... NAO sera removida: ainda nossa na lista do mundo -- a visao geral
+provavelmente esta filtrada por grupo ou paginada`).
+
+**Custo, dito às claras.** (1) A perda real passa a ser limpa com até
+`conquest.world_village_list_ttl` (6h) de atraso. Não há dano nisso: no mesmo
+intervalo o laço principal já pula a aldeia por `found_villages`. (2) Com
+`conquest.use_world_village_list: false` a lista vem vazia e **nenhuma**
+limpeza acontece — o WARNING avisa. Troca deliberada: a limpeza é destrutiva, e
+na dúvida o certo é não apagar.
+
+**Testes.** `tests/test_village_purge_partial.py`, com linhas **verbatim** do
+`village.txt` do br143: grupo filtrado não apaga nada, perda real é confirmada,
+lista indisponível e aldeia ausente não apagam, conquista recente não troca "quem
+somos", e uma guarda textual contra a comparação antiga em `twb.py`. A guarda
+foi provada reprovando: com a lógica antiga injetada, o cenário de grupo
+devolve `['35059', '36294']` como perdidas. Suíte inteira verde.
+
 ---
 
 ## 9. Próximos passos
@@ -3555,6 +3611,14 @@ render — o bot o sobrescreve no primeiro ciclo.
    65), as colunas de tropa variam por mundo, e o jogo marca nobre um segundo
    vez por ícone. **⏳ Falta campo:** a linha `InFlight: N comando(s) no ar` no
    log e a idade de leitura baixa no card.
+
+14. ~~**Item 5 da fila tática da §7.10**~~ — ✅ **feito em 2026-09-22** (§8.19).
+   Dos quatro bugs do fork, três já estavam fechados aqui; o B9 tinha a
+   metade **parcial** aberta — visão geral filtrada por grupo apagaria do
+   config as aldeias fora do grupo. A limpeza agora só remove o que o
+   `map/village.txt` confirma com outro dono. **⏳ Falta campo:** nenhuma perda
+   real de aldeia desde a mudança; o sinal é `Removed lost village` só depois
+   de o arquivo do mundo virar de dono.
 
 Depois disso, a fila anterior:
 

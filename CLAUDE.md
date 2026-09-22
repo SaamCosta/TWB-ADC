@@ -120,7 +120,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   quebrando o parser de propósito) e a trava de instância única
   (`tests/test_instance_lock.py` — recusa cross-process com subprocessos de
   verdade, porque trava de arquivo é **reentrante no mesmo processo** e um teste
-  in-process não distinguiria trava real de no-op; `docs/backend.md` §8.10).
+  in-process não distinguiria trava real de no-op; `docs/backend.md` §8.10)
+  e a confirmação de perda antes da limpeza de aldeias
+  (`tests/test_village_purge_partial.py` — visão geral filtrada por grupo não
+  apaga nada; só sai do config a aldeia que o `map/village.txt` dá com outro
+  dono; §8.19).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever

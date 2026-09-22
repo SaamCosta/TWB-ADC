@@ -391,6 +391,71 @@ class TWB:
             )
         return None
 
+    @staticmethod
+    def confirm_lost_villages(stale_ids, found_villages, world_rows):
+        """
+        Separa as aldeias ausentes da visao geral em (perdidas, nao_confirmadas).
+
+        `purge_refusal_reason()` pega a leitura VAZIA e a de outra conta. O que
+        ela nao pega e a leitura PARCIAL: `screen=overview_villages` vai sem
+        `group`/`page`, e o jogo serve o grupo e a pagina que o jogador deixou
+        selecionados na ultima visita. Filtrar a visao geral num grupo de 10
+        aldeias no navegador fazia a limpeza apagar as outras 20 do config --
+        a interseccao nao fica vazia, entao nenhuma das duas recusas dispara.
+        E o B9 da auditoria do fork (docs/backend.md 7.10), na metade que o
+        incidente de 2026-08-22 nao cobriu.
+
+        A confirmacao vem de uma fonte que nao depende dessa tela: o
+        `map/village.txt` publico (`WorldVillages.rows()`). O nosso id de
+        jogador sai do proprio arquivo -- o dono, la, das aldeias que a visao
+        geral acabou de listar -- em vez de `game_state`, para nao acrescentar
+        um parse a mais num caminho destrutivo. Maioria, e nao unanimidade,
+        porque o arquivo tem ate `world_village_list_ttl` de atraso e uma
+        aldeia recem-conquistada ainda aparece com o dono anterior.
+
+        So vira "perdida" a aldeia que o arquivo da com OUTRO dono. Ausente do
+        arquivo, arquivo indisponivel ou dono ainda nosso: fica, e o motivo
+        vai junto. O atraso do arquivo so adia a limpeza; nunca a antecipa.
+        """
+        stale_ids = list(stale_ids)
+        if not world_rows:
+            return [], {vid: "lista do mundo (map/village.txt) indisponivel"
+                        for vid in stale_ids}
+
+        owners = {}
+        for vid in found_villages or []:
+            row = world_rows.get(str(vid))
+            if row and row[2] != "0":
+                owners[row[2]] = owners.get(row[2], 0) + 1
+        if not owners:
+            return [], {vid: "nenhuma aldeia da visao geral aparece na lista "
+                             "do mundo -- sem como saber quem somos"
+                        for vid in stale_ids}
+        me = max(owners, key=owners.get)
+
+        lost, kept = [], {}
+        for vid in stale_ids:
+            row = world_rows.get(str(vid))
+            if row is None:
+                kept[vid] = "ausente da lista do mundo"
+            elif row[2] == me:
+                kept[vid] = ("ainda nossa na lista do mundo -- a visao geral "
+                             "provavelmente esta filtrada por grupo ou paginada")
+            else:
+                lost.append(vid)
+        return lost, kept
+
+    def _world_rows_for_purge(self, config):
+        """A lista do mundo para confirmar perda de aldeia, ou {}. Nunca levanta."""
+        try:
+            if not self.world_villages:
+                self.world_villages = WorldVillages(config=config)
+            self.world_villages.config = config
+            return self.world_villages.rows()
+        except Exception as exc:
+            logging.warning("get_overview: lista do mundo indisponivel (%s)", exc)
+            return {}
+
     def get_overview(self, config):
         """
         Gets the overview page to automatically detect world options and owned villages.
@@ -436,13 +501,32 @@ class TWB:
 
         # Remove stale entries for villages no longer owned by the player.
         # Cleans both cache/managed/ and config["villages"] so the UI stays accurate.
+        # So o que `confirm_lost_villages` confirmou pela lista do mundo: a
+        # visao geral pode estar filtrada por grupo ou paginada (B9).
         managed_cache_dir = os.path.join("cache", "managed")
+        cached_ids = []
         if os.path.exists(managed_cache_dir):
-            for fname in os.listdir(managed_cache_dir):
-                if not fname.endswith(".json"):
-                    continue
-                cached_vid = fname.replace(".json", "")
-                if cached_vid not in self.found_villages:
+            cached_ids = [f[:-len(".json")] for f in os.listdir(managed_cache_dir)
+                          if f.endswith(".json")]
+        missing = {vid for vid in cached_ids if vid not in self.found_villages}
+        missing.update(vid for vid in config.get("villages", {})
+                       if vid not in self.found_villages)
+        confirmed_lost = set()
+        if missing:
+            lost, kept = self.confirm_lost_villages(
+                sorted(missing), self.found_villages,
+                self._world_rows_for_purge(config)
+            )
+            confirmed_lost = set(lost)
+            for vid, why in sorted(kept.items()):
+                logging.warning(
+                    "get_overview: aldeia %s nao veio na visao geral, mas NAO "
+                    "sera removida: %s", vid, why
+                )
+        if os.path.exists(managed_cache_dir):
+            for cached_vid in cached_ids:
+                if cached_vid in confirmed_lost:
+                    fname = cached_vid + ".json"
                     stale_path = os.path.join(managed_cache_dir, fname)
                     try:
                         os.remove(stale_path)
@@ -450,7 +534,7 @@ class TWB:
                     except OSError as e:
                         logging.warning("Could not remove stale cache %s: %s", stale_path, e)
 
-        stale_config_ids = [vid for vid in config.get("villages", {}) if vid not in self.found_villages]
+        stale_config_ids = [vid for vid in config.get("villages", {}) if vid in confirmed_lost]
         if stale_config_ids:
             FileManager.copy_file("config.json", "config.bak")
             cfg = self.config()
