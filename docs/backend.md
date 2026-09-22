@@ -666,7 +666,11 @@ uma vez em vez de uma fileira de falhas idênticas.
 **Atenção:** o módulo deles é alpha declarado e o parser de `setFlagCounts` nunca
 rodou em conta viva — a arquitetura vale, o parser precisa de fixture do br143.
 
-### 6.4 Sobrecomprometimento de tropa entre múltiplos alvos
+### 6.4 ✅ Sobrecomprometimento de tropa entre múltiplos alvos
+
+> ✅ **Corrigido em 2026-09-22 (§8.20)**, junto com o piso da escolta do segundo
+> parágrafo. O texto abaixo é o diagnóstico original.
+
 
 O fix de 2026-08-07 garante que clear + escolta de **um mesmo alvo** nunca somem
 mais que 100% da tropa disponível. **Não cobre** a mesma aldeia comprometida com
@@ -1057,8 +1061,8 @@ Três correções de fato sobre a §7.9, porque mudam decisão:
 | 10 | `mode=call`: ler do servidor o que já está a caminho | LT `balancer.py:355` | M | fixture verbatim |
 | 11 | Velocidade de mercador medida na página de confirmação | LT `balancer.py:683` | M | mesma fixture |
 | 12 | Ícones A/B/C do `am_farm` + `data-units-forecast` | LT `attack.py:152` | M | br143 renderiza o atributo? |
-| 13 | Paginação do `am_farm` (o nosso leitor segue páginas?) | kuzyn | S | leitura |
-| 14 | Existe limite de saque (`Beutelimit`) no br143? | megaindex | S | `get_config` + `/page/settings` |
+| 13 | ~~Paginação do `am_farm`~~ ✅ **respondido em 2026-09-22: não se aplica** — o bot não lê o assistente de saque (`grep am_farm` em `*.py`: zero ocorrências); o farm envia por `screen=place` | kuzyn | S | leitura |
+| 14 | ~~Existe limite de saque (`Beutelimit`) no br143?~~ ✅ **não existe** — `get_config` público dá `<farm_limit>0</farm_limit>` (lido em 2026-09-22); `<hauls>1` é o saque normal (unidade carrega recurso), não um teto | megaindex | S | `get_config` + `/page/settings` |
 | 15 | Pacote de farm por capacidade equivalente | megaindex | M | interação com `min_attack_population` |
 | 16 | Notas privadas de aldeia (`ajaxaction=village_note_edit`) | LT `villagenotes.py` | S | fixture do `info_village` |
 
@@ -3479,6 +3483,75 @@ devolve `['35059', '36294']` como perdidas. Suíte inteira verde.
 
 ---
 
+## 8.20 ✅ `P-PVP-RESERVA` — um alvo PvP não enxergava a tropa do outro (2026-09-22)
+
+Fecha a §6.4. Escolhido nesta data porque era o único item aberto de risco
+real (tropa em jogo) que dava para fechar **sem sessão**: o bot estava parado
+desde 16:50:56 com o `cache/session.json` vencido, e todo o resto da fila ou
+pedia captura, ou pedia campo.
+
+**O defeito, em quatro lugares.** `_build_clear_units()`,
+`_build_noble_attacks()`, `_select_noble_attack_plan()` e
+`_select_clear_village()` liam `units.troops` cru. Com dois alvos, o B
+simulava e agendava contra a tropa que o A já tinha reservado para os
+comandos dele no Hunter; o comando que saísse por último seria recusado pelo
+servidor, horas depois da decisão. A reserva do trem bárbaro
+(`barbarian_conquest`) era igualmente invisível. E nobre é pior que tropa:
+dois alvos em preparação podiam **travar os mesmos nobres**, porque em
+preparação não existe reserva, só a trava no cache.
+
+**O que mudou.**
+- `_reserved_elsewhere(village, target_id)` — tudo que está no
+  `conquest_reserve` da aldeia **menos** a chave `pvp:<este alvo>` (senão uma
+  re-simulação se bloqueia com a própria reserva). Clear, escolta, ranking da
+  aldeia de limpeza e plano de nobres descontam isso.
+- `_snob_claims_of_other_targets()` — nobres travados por **outros alvos ainda
+  em preparação** (`noble_villages` no cache). Alvo `scheduled` fica de fora
+  de propósito: os nobres dele já estão na reserva em memória, e contar os dois
+  descontaria o mesmo nobre duas vezes.
+- `_sync_scheduled_reserves()` no início do `run()` — **a reserva vivia só na
+  memória** do `TroopManager` e sumia a cada reinício (sessão vencida é o
+  reinício de todo dia), enquanto o agendamento dura horas em disco. Agora ela
+  é reconstruída a partir de `cache/hunter/schedules.json`, e só com comandos
+  `pending`: reservar a tropa de um comando `sent` descontaria da tropa em casa
+  uma tropa que não está mais em casa. Arquivo vazio/ilegível, ou sem os
+  agendamentos daquele alvo, **não mexe em nada** — perder o arquivo não pode
+  ser lido como "todos os comandos já saíram".
+- **Piso da escolta.** `max(1, int(qty*ratio) // noble_count)` dava 1 unidade
+  de cada tipo a **cada** ataque: 2 aríetes, razão 0,5, 4 nobres → pedia 4 de 2.
+  Agora a sobra vai uma por ataque só enquanto o orçamento da aldeia
+  (`int(livre*ratio)`) durar. **A prova da regressão achou um caso a mais**, que
+  ninguém tinha descrito: na aldeia que também é a de limpeza, 3 cavalarias
+  leves viravam 2 na limpeza + 1 em cada uma das 2 escoltas = 4 de 3.
+- **Limpeza vazia espera, não falha.** Com o desconto, `{}` virou resposta
+  normal de `_build_clear_units()` (2ª metade do 3º padrão: o domínio de
+  retorno alargou). Os dois consumidores foram relidos:
+  `_prepare_departure_deadlines` já saía cedo; `_step_simulate` não — com
+  relatório de espionagem fecharia o alvo como `simulation_failed` para sempre
+  por uma reserva que é temporária, e pelo caminho de override agendaria os
+  **nobres sem limpeza**. Agora ele espera; o limite é o prazo de saída ou,
+  como esse prazo só é sondado com limpeza não vazia, a própria
+  `arrival_time` (`fail_reason: no_free_clear_troops`, com rótulo no painel).
+
+**O que ficou de fora, e por quê.** Tropa de limpeza de um alvo **ainda em
+preparação** não é descontada: antes da simulação não existe número exato, e
+inventar um seria reservar palpite. Quem agenda primeiro reserva; o segundo vê
+o resto e simula contra ele — ou espera. `_select_clear_village()` devolvendo
+`None` continua sendo falha terminal (`no_clear_village`), como antes.
+
+**Testes.** `tests/test_pvp_cross_target_reserve.py`, 15 casos, sem rede nem
+`cache/` real. Provado reprovando: com `_reserved_elsewhere` devolvendo `{}`,
+o piso antigo e sem as travas de preparação, **9 dos 13** casos originais
+falham (os 4 restantes são guardas que valem nos dois códigos: reserva
+própria, arquivo ilegível, alvo terminal e a aritmética do piso). Suíte
+inteira verde.
+
+**⏳ Falta campo:** só existe um alvo PvP de cada vez hoje, então o caso de dois
+alvos segue não exercitado. O sinal visível agora é a reidratação depois de um
+reinício: `reserva de <alvo> na aldeia <id> alinhada ao Hunter`.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -3619,6 +3692,13 @@ devolve `['35059', '36294']` como perdidas. Suíte inteira verde.
    `map/village.txt` confirma com outro dono. **⏳ Falta campo:** nenhuma perda
    real de aldeia desde a mudança; o sinal é `Removed lost village` só depois
    de o arquivo do mundo virar de dono.
+
+15. ~~**`P-PVP-RESERVA` (§6.4)**~~ — ✅ **feito em 2026-09-22** (§8.20). Alvo
+   PvP passa a descontar o que outros alvos e o trem bárbaro reservaram, a
+   reserva sobrevive a reinício (reconstruída do Hunter), e o piso da escolta
+   parou de pedir mais que a aldeia tem. De brinde, dois itens da §7.10 foram
+   respondidos sem código: o 13 não se aplica e o 14 (limite de saque) não
+   existe no br143. **⏳ Falta campo:** dois alvos PvP ao mesmo tempo.
 
 Depois disso, a fila anterior:
 

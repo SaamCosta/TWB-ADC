@@ -124,7 +124,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   e a confirmação de perda antes da limpeza de aldeias
   (`tests/test_village_purge_partial.py` — visão geral filtrada por grupo não
   apaga nada; só sai do config a aldeia que o `map/village.txt` dá com outro
-  dono; §8.19).
+  dono; §8.19)
+  e a reserva cruzada entre alvos PvP
+  (`tests/test_pvp_cross_target_reserve.py` — clear, escolta e plano de
+  nobres descontam o que outro alvo ou o trem bárbaro reservou, a reserva é
+  reconstruída do Hunter depois de reinício e o piso da escolta não pede mais
+  que existe; §8.20).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever

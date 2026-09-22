@@ -2005,6 +2005,7 @@ class PvpConquestReader:
     }
     FAIL_REASON_LABELS = {
         "no_clear_village":  "Nenhuma aldeia ofensiva disponível para limpeza.",
+        "no_free_clear_troops": "A chegada passou sem tropa livre para a limpeza: o exército estava reservado por outro alvo ou pelo trem bárbaro.",
         "simulation_failed": "Simulação indicou ataque inviável (tropas insuficientes).",
         "no_nobles":         "Nenhuma aldeia com noble disponível.",
         "scout_deadline_missed": (

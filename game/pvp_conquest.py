@@ -104,6 +104,9 @@ class PvpConquestManager:
         # rebuilt from the target cache on every run, so deleting/failing a
         # target releases the lock without leaving process-local stale state.
         self.farm_suspended_villages = set()
+        # All targets of the current run(), so one target's source choice can
+        # see what the others already locked (§6.4).
+        self._active_targets = {}
 
     # ------------------------------------------------------------------
     # Entry point
@@ -134,6 +137,8 @@ class PvpConquestManager:
         targets = PvpConquestCache.all()
         if not targets:
             return
+        self._active_targets = targets
+        self._sync_scheduled_reserves(targets)
 
         for target_id, data in targets.items():
             try:
@@ -291,7 +296,7 @@ class PvpConquestManager:
                 data["clear_village_id"] = clear_vid
                 changed = True
         else:
-            clear_vid = self._select_clear_village()
+            clear_vid = self._select_clear_village(target_id)
             if clear_vid:
                 data["clear_village_id"] = str(clear_vid)
                 changed = True
@@ -301,7 +306,7 @@ class PvpConquestManager:
             max_count = self.config.get("pvp_conquest", {}).get(
                 "nobles_per_target", 4
             )
-            noble_villages = self._select_noble_attack_plan(max_count)
+            noble_villages = self._select_noble_attack_plan(max_count, target_id)
             if noble_villages:
                 data["noble_villages"] = [str(vid) for vid in noble_villages]
                 changed = True
@@ -358,9 +363,10 @@ class PvpConquestManager:
         clear_village = self.villages.get(str(clear_vid))
         if not clear_village or not clear_village.units:
             return
-        attacker_units = self._build_clear_units(clear_village)
+        attacker_units = self._build_clear_units(clear_village, target_id)
         noble_attacks = self._build_noble_attacks(
-            str(clear_vid), attacker_units, noble_villages
+            str(clear_vid), attacker_units, noble_villages,
+            target_id=target_id,
         )
         if not attacker_units or len(noble_attacks) != len(noble_villages):
             return
@@ -826,7 +832,7 @@ class PvpConquestManager:
         # Determine clear village
         clear_vid = data.get("clear_village_id")
         if not clear_vid or clear_vid not in self.villages:
-            clear_vid = self._select_clear_village()
+            clear_vid = self._select_clear_village(target_id)
             if not clear_vid:
                 logger.warning("PvpConquest: no offensive village available to clear %s", target_id)
                 data["status"] = "failed"
@@ -858,7 +864,34 @@ class PvpConquestManager:
         # automatic troop-selection has no way to judge. Leave it out of
         # every auto-built attack here; sending it is a manual decision,
         # not something PvpConquestManager should do on its own.
-        attacker_units = self._build_clear_units(clear_village)
+        attacker_units = self._build_clear_units(clear_village, target_id)
+        if not attacker_units:
+            # Since §6.4 an empty clear is a normal answer: another target or
+            # the barbarian train may hold the whole army for a few hours.
+            # Simulating it would close the target as `simulation_failed`
+            # for good, and the override path would schedule nobles with no
+            # clear at all.  Wait instead; `_fail_if_scout_deadline_missed()`
+            # still ends the wait at the first departure -- but that deadline
+            # is only probed with a non-empty clear, so the arrival time is
+            # the bound that always exists.
+            arrival_ts = data.get("arrival_time")
+            if arrival_ts and time.time() >= float(arrival_ts):
+                logger.warning(
+                    "PvpConquest: target %s failed -- arrival passed with no "
+                    "free clear troops in %s", target_id, clear_vid,
+                )
+                data["status"] = "failed"
+                data["fail_reason"] = "no_free_clear_troops"
+                data["failed_at"] = int(time.time())
+                PvpConquestCache.set(target_id, data)
+                return
+            logger.info(
+                "PvpConquest: target %s waiting -- no free clear troops in %s "
+                "(reserved elsewhere: %s)",
+                target_id, clear_vid,
+                self._reserved_elsewhere(clear_village, target_id) or "-",
+            )
+            return
 
         if scout_report:
             defender_units = scout_report.get("extra", {}).get("defence_units", {})
@@ -954,7 +987,9 @@ class PvpConquestManager:
         # data["noble_villages"] keeps its old key name for backward
         # compatibility (used by _release_reserve()); may now contain the
         # same village_id more than once.
-        noble_villages = data.get("noble_villages") or self._select_noble_attack_plan(nobles_per_target)
+        noble_villages = data.get("noble_villages") or self._select_noble_attack_plan(
+            nobles_per_target, target_id
+        )
         if not noble_villages:
             logger.warning("PvpConquest: no villages with nobles available for %s", target_id)
             data["status"] = "failed"
@@ -1020,12 +1055,12 @@ class PvpConquestManager:
         # attacker_units from clear_vid's own troop pool before computing
         # its escort share, so the two claims add up to at most 100% of what
         # exists instead of being computed independently against the same
-        # full total. Doesn't (yet) account for a village being shared
-        # across *multiple different* pvp_conquest targets scheduled at once
-        # -- only one target is in play in this environment today.
+        # full total. Sharing a village across *different* targets is
+        # covered since 2026-09-22 by `_reserved_elsewhere()` (§6.4).
         noble_attacks = self._build_noble_attacks(
             clear_vid, attacker_units, noble_villages,
             escort_ratio=escort_ratio, noble_count=noble_count,
+            target_id=target_id,
         )
 
         if noble_attacks:
@@ -1281,44 +1316,206 @@ class PvpConquestManager:
             return None
         return report
 
-    def _build_clear_units(self, clear_village):
+    # ------------------------------------------------------------------
+    # Troops already promised to someone else (§6.4 do backend.md)
+    # ------------------------------------------------------------------
+    #
+    # Until 2026-09-22 every step below read `units.troops` raw: the clear,
+    # the escorts, the noble plan and the clear-village ranking all behaved
+    # as if the village's whole army were free.  With one target in play
+    # that was true by accident.  With two, target B would simulate and
+    # schedule against the very troops target A had already reserved for
+    # its own Hunter commands -- and whichever fired second would be
+    # rejected by the server for lack of troops, hours after the decision.
+    # The barbarian conquest reserve was invisible to it in the same way.
+
+    @staticmethod
+    def _reserved_elsewhere(village, target_id=None):
+        """
+        {unit: qty} reserved on `village` by every owner except this target.
+
+        Reads `conquest_reserve` directly instead of calling
+        `total_conquest_reserve()` so it also works on the lightweight
+        stand-ins the tests use.  Own key excluded so a re-simulation does
+        not see its own earlier reservation as someone else's.
+        """
+        units = getattr(village, "units", None)
+        reserve = getattr(units, "conquest_reserve", None) or {}
+        own = "pvp:%s" % target_id if target_id is not None else None
+        total = {}
+        for owner_key, reservation in reserve.items():
+            if owner_key == own:
+                continue
+            for unit, qty in (reservation or {}).items():
+                try:
+                    total[unit] = total.get(unit, 0) + int(qty)
+                except (TypeError, ValueError):
+                    continue
+        return total
+
+    @classmethod
+    def _free_troops(cls, troops, reserved):
+        """`troops` minus `reserved`, floored at zero, values as int."""
+        free = {}
+        for unit, qty in (troops or {}).items():
+            try:
+                have = int(qty)
+            except (TypeError, ValueError):
+                continue
+            free[unit] = max(0, have - int(reserved.get(unit, 0) or 0))
+        return free
+
+    def _snob_claims_of_other_targets(self, target_id=None):
+        """
+        {village_id: nobles} locked by OTHER targets still preparing.
+
+        A preparing target has chosen its noble villages (and suspended
+        their farming) but reserves nothing until `_step_simulate()`
+        schedules it -- so for those, the lock in the cache is the only
+        record of the claim.  Scheduled targets are deliberately left out:
+        their nobles are already in the in-memory reserve (rebuilt after a
+        restart by `_sync_scheduled_reserves()`), and counting both would
+        subtract the same noble twice.
+        """
+        claims = {}
+        for other_id, other in (getattr(self, "_active_targets", None) or {}).items():
+            if target_id is not None and str(other_id) == str(target_id):
+                continue
+            if (other or {}).get("status", "pending_scout") not in self.PREPARING_STATUSES:
+                continue
+            for vid in other.get("noble_villages") or []:
+                claims[str(vid)] = claims.get(str(vid), 0) + 1
+        return claims
+
+    def _sync_scheduled_reserves(self, targets):
+        """
+        Make each scheduled target's in-memory reserve match its Hunter file.
+
+        `conquest_reserve` lives on the TroopManager, i.e. in process memory,
+        while a PvP schedule lives on disk for hours.  After any restart
+        (session expiry being the usual one) a scheduled target kept its
+        Hunter commands but lost its reservation, so the next target to
+        simulate saw those troops as free.  The Hunter file is the source
+        that survives, and it also knows which commands already left:
+        reserving troops of a command marked `sent` would subtract, from the
+        troops at home, troops that are no longer at home.
+
+        Only targets that actually have a clear/nobles schedule in the file
+        are touched.  An unreadable or empty file changes nothing -- losing
+        the file must not be read as "every command already left".
+        """
+        active = {
+            str(tid) for tid, data in targets.items()
+            if (data or {}).get("status") == "scheduled"
+            and not data.get("reserve_released")
+        }
+        if not active:
+            return
+        schedules = FileManager.load_json_file("cache/hunter/schedules.json")
+        if not schedules:
+            return
+
+        found = set()
+        pending = {}
+        for sched in schedules.values():
+            tid = str(sched.get("target_id"))
+            if tid not in active or sched.get("label") not in ("clear", "nobles"):
+                continue
+            found.add(tid)
+            for atk in sched.get("attacks") or []:
+                if atk.get("status") != "pending":
+                    continue
+                vid = str(atk.get("source_village_id"))
+                bucket = pending.setdefault(tid, {}).setdefault(vid, {})
+                for unit, qty in (atk.get("troops") or {}).items():
+                    try:
+                        bucket[unit] = bucket.get(unit, 0) + int(qty)
+                    except (TypeError, ValueError):
+                        continue
+
+        for tid in found:
+            key = "pvp:%s" % tid
+            per_village = pending.get(tid, {})
+            for vid, village in self.villages.items():
+                reserve = getattr(getattr(village, "units", None), "conquest_reserve", None)
+                if reserve is None:
+                    continue
+                wanted = per_village.get(str(vid))
+                if wanted:
+                    if reserve.get(key) != wanted:
+                        logger.info(
+                            "PvpConquest: reserva de %s na aldeia %s alinhada ao Hunter: %s",
+                            tid, vid, wanted,
+                        )
+                        reserve[key] = dict(wanted)
+                elif reserve.pop(key, None):
+                    logger.info(
+                        "PvpConquest: reserva de %s solta na aldeia %s "
+                        "(nenhum comando pendente dela no Hunter)",
+                        tid, vid,
+                    )
+
+    def _build_clear_units(self, clear_village, target_id=None):
         """Build the exact clear composition used by preflight and scheduling."""
         clear_ratio = self.config.get("pvp_conquest", {}).get("clear_ratio", 0.8)
+        free = self._free_troops(
+            clear_village.units.troops,
+            self._reserved_elsewhere(clear_village, target_id),
+        )
         return {
-            unit: int(int(qty) * clear_ratio)
-            for unit, qty in clear_village.units.troops.items()
-            if int(qty) > 0 and unit not in ("spy", "snob", "knight")
-            and int(int(qty) * clear_ratio) > 0
+            unit: int(qty * clear_ratio)
+            for unit, qty in free.items()
+            if qty > 0 and unit not in ("spy", "snob", "knight")
+            and int(qty * clear_ratio) > 0
         }
 
     def _build_noble_attacks(
             self, clear_vid, attacker_units, noble_villages,
-            escort_ratio=None, noble_count=None):
-        """Build the same per-noble command list for preflight and schedule."""
+            escort_ratio=None, noble_count=None, target_id=None):
+        """
+        Build the same per-noble command list for preflight and schedule.
+
+        Escort budget per village is `escort_ratio` of what is free there
+        (after other reservations and, for the clear village, the clear
+        itself), split across `noble_count`.  When that split rounds to zero
+        -- 2 rams, ratio 0.5, 4 nobles -- the old `max(1, ...)` floor handed
+        one unit to *every* attack, asking for 4 rams out of 2 (§6.4).  Now
+        the leftover units go one per attack only while the village's budget
+        lasts, so the village's attacks never add up to more than it has.
+        """
         if escort_ratio is None:
             escort_ratio = self.config.get("conquest", {}).get("escort_ratio", 0.5)
         if noble_count is None:
             noble_count = max(len(noble_villages), 1)
 
+        budgets = {}
+        spent = {}
         attacks = []
         for raw_nvid in noble_villages:
             nvid = str(raw_nvid)
             nv = self.villages.get(nvid)
             if not nv or not nv.units:
                 continue
-            available_troops = dict(nv.units.troops)
-            if nvid == str(clear_vid):
-                for unit, qty in attacker_units.items():
-                    if unit in available_troops:
-                        available_troops[unit] = max(
-                            0, int(available_troops[unit]) - int(qty)
-                        )
-            escort_units = {
-                unit: max(1, int(int(qty) * escort_ratio) // noble_count)
-                for unit, qty in available_troops.items()
-                if int(qty) > 0 and unit not in ("spy", "snob", "knight")
-            }
-            troops = dict(escort_units)
+            if nvid not in budgets:
+                free = self._free_troops(
+                    nv.units.troops, self._reserved_elsewhere(nv, target_id)
+                )
+                if nvid == str(clear_vid):
+                    free = self._free_troops(free, attacker_units)
+                budgets[nvid] = {
+                    unit: int(qty * escort_ratio)
+                    for unit, qty in free.items()
+                    if qty > 0 and unit not in ("spy", "snob", "knight")
+                }
+                spent[nvid] = {}
+
+            troops = {}
+            for unit, budget in budgets[nvid].items():
+                left = budget - spent[nvid].get(unit, 0)
+                share = min(max(budget // noble_count, 1), left)
+                if share > 0:
+                    troops[unit] = share
+                    spent[nvid][unit] = spent[nvid].get(unit, 0) + share
             troops["snob"] = 1
             attacks.append({
                 "source_village_id": nvid,
@@ -1327,7 +1524,7 @@ class PvpConquestManager:
             })
         return attacks
 
-    def _select_clear_village(self):
+    def _select_clear_village(self, target_id=None):
         """
         Returns the village_id with the highest offensive attack power
         (profile == 'offensive' preferred, otherwise highest axe count).
@@ -1343,6 +1540,12 @@ class PvpConquestManager:
             troops = self._source_troops(vid, village)
             if not troops:
                 continue
+            # Rank by what is still free: an army fully reserved by another
+            # target would otherwise keep winning and then build an empty
+            # clear (§6.4).
+            troops = self._free_troops(
+                troops, self._reserved_elsewhere(village, target_id)
+            )
             profile = self.config.get("villages", {}).get(vid, {}).get("profile", "")
 
             # Attack power proxy: axes × 40 + light × 130
@@ -1363,7 +1566,7 @@ class PvpConquestManager:
         cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
         return cached.get("available_troops") or {}
 
-    def _select_noble_attack_plan(self, max_count):
+    def _select_noble_attack_plan(self, max_count, target_id=None):
         """
         Feature 11b (bugfix 2026-08-07): builds a plan of up to `max_count`
         *separate noble attacks*, one entry per available noble -- NOT one
@@ -1389,13 +1592,23 @@ class PvpConquestManager:
         it has more than one noble to spare. Order follows self.villages
         iteration order (dict insertion order), draining each village's
         available nobles before moving to the next.
+
+        Nobles already spoken for are not available (§6.4): those in any
+        other owner's reserve (barbarian train, scheduled PvP targets) and
+        those locked by other PvP targets that are still preparing.
         """
         plan = []
+        claims = self._snob_claims_of_other_targets(target_id)
         for vid, village in self.villages.items():
             troops = self._source_troops(vid, village)
             if not troops:
                 continue
-            available = int(troops.get("snob", 0))
+            reserved = self._reserved_elsewhere(village, target_id)
+            available = (
+                int(troops.get("snob", 0) or 0)
+                - int(reserved.get("snob", 0) or 0)
+                - claims.get(str(vid), 0)
+            )
             for _ in range(available):
                 if len(plan) >= max_count:
                     return plan
