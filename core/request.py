@@ -4,6 +4,7 @@ Class for using one generic cookie jar, emulating a single tab
 
 import requests
 
+from core.cycle_meter import CycleMeter
 from core.filemanager import FileManager
 from core.notification import Notification
 
@@ -59,6 +60,32 @@ class WebWrapper:
         self.server = server
         self.endpoint = endpoint
         self.reporter = ReporterObject(enabled=reporter_enabled, connection_string=reporter_constr)
+        # P-CICLO-MEDIDA: todo GET/POST passa por aqui, entao e aqui que se
+        # conta. Uma instancia por wrapper, e o wrapper e um so por processo
+        # (vigesimo quinto padrao), logo um medidor so para o ciclo inteiro.
+        self.meter = CycleMeter()
+
+    def _meter(self, method, slept, started, captcha=0.0, ok=True):
+        """Registra uma requisicao no medidor de ciclo. Nunca levanta: o
+        medidor e observabilidade e nao pode derrubar uma requisicao."""
+        try:
+            self.meter.record_request(
+                method, slept=slept, net=time.time() - started - captcha,
+                captcha=captcha, ok=ok)
+        except Exception:
+            pass
+
+    def _pause(self):
+        """O sono entre requisicoes. Devolve quanto dormiu, para o medidor.
+
+        `time.time()` e nao `monotonic()` em todo o registro: os testes de
+        captcha trocam o `time` deste modulo por um relogio falso, e medir com
+        o mesmo relogio que o resto do arquivo mantem os numeros coerentes."""
+        if self.priority_mode:
+            return 0.0
+        started = time.time()
+        time.sleep(random.randint(int(3 * self.delay), int(7 * self.delay)))
+        return time.time() - started
 
     def post_process(self, response):
         xsrf = re.search('<meta content="(.+?)" name="csrf-token"', response.text)
@@ -75,8 +102,8 @@ class WebWrapper:
 
     def get_url(self, url, headers=None):
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')
-        if not self.priority_mode:
-            time.sleep(random.randint(int(3 * self.delay), int(7 * self.delay)))
+        slept = self._pause()
+        started = time.time()
         url = urljoin(self.endpoint if self.endpoint else self.auth_endpoint, url)
         if not headers:
             headers = self.headers
@@ -87,17 +114,21 @@ class WebWrapper:
             if BOT_PROTECT_MARKER in res.text:
                 # GET e idempotente: da para repetir a propria requisicao
                 # bloqueada e devolver a resposta boa ao chamador.
-                return self._await_captcha_clear(probe_url=url, headers=headers)
+                blocked_at = time.time()
+                res = self._await_captcha_clear(probe_url=url, headers=headers)
+                self._meter("GET", slept, started,
+                            captcha=time.time() - blocked_at, ok=res is not None)
+                return res
+            self._meter("GET", slept, started)
             return res
         except Exception as e:
             self.logger.warning("GET %s: %s", url, str(e))
+            self._meter("GET", slept, started, ok=False)
             return None
 
     def post_url(self, url, data, headers=None):
-        if not self.priority_mode:
-            time.sleep(
-                random.randint(int(3 * self.delay), int(7 * self.delay))
-            )
+        slept = self._pause()
+        started = time.time()
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')
         url = urljoin(self.endpoint if self.endpoint else self.auth_endpoint, url)
         enc = urlencode(data)
@@ -118,15 +149,20 @@ class WebWrapper:
                 # um POST as cegas duplicaria ataque/construcao, que e o tipo de
                 # estrago que a §8.7 documenta; `None` e o valor de falha que os
                 # chamadores ja tratam.
+                blocked_at = time.time()
                 self._await_captcha_clear(
                     probe_url="game.php?screen=overview", headers=self.headers)
                 self.logger.warning(
                     "POST %s foi bloqueado por bot protection e NAO foi refeito; "
                     "a acao sera retentada no proximo ciclo", url)
+                self._meter("POST", slept, started,
+                            captcha=time.time() - blocked_at, ok=False)
                 return None
+            self._meter("POST", slept, started)
             return res
         except Exception as e:
             self.logger.warning("POST %s %s: %s", url, enc, str(e))
+            self._meter("POST", slept, started, ok=False)
             return None
 
     def _await_captcha_clear(self, probe_url, headers=None):

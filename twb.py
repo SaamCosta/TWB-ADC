@@ -139,6 +139,7 @@ from core.notification import Notification
 from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
+from core.cycle_meter import close_and_report, meter_phase
 from game.village import Village
 from game.attack import ConquestCache
 from game.conquest_planner import BarbarianTrainPlanner
@@ -924,11 +925,20 @@ class TWB:
                 )
                 time.sleep(sleep)
             else:
+                # P-CICLO-MEDIDA (core/cycle_meter.py): o ciclo e medido do
+                # overview ate o sono. `between` sao as requisicoes feitas
+                # entre um ciclo e outro (o Hunter depois do sono).
+                between = self.wrapper.meter.begin_cycle()
                 config = self.config()
-                overview_page, config = self.get_overview(config)
+                with meter_phase(self.wrapper, "overview"):
+                    overview_page, config = self.get_overview(config)
 
                 # Network timeout or expired session — sleep and retry next cycle
                 if overview_page is None:
+                    close_and_report(self.wrapper.meter, extra={
+                        "aborted": "overview_unavailable",
+                        "requests_between_cycles": between,
+                    })
                     sleep = config["bot"]["active_delay"] + random.randint(20, 60)
                     logging.warning(
                         "Overview unavailable, sleeping %.0fs before retry.", sleep
@@ -1020,7 +1030,8 @@ class TWB:
                     self.reservation_board.config = config
                     reservation_board = self.reservation_board
                     if reservation_board.enabled and managed_villages_dict:
-                        reservation_board.refresh(sorted(managed_villages_dict)[0])
+                        with meter_phase(self.wrapper, "reservas_tribo"):
+                            reservation_board.refresh(sorted(managed_villages_dict)[0])
 
                 # Feature 35 / Fase 2: escrita no quadro. Vive fora do `if`
                 # acima porque depende do quadro JA ter sido lido -- o token
@@ -1062,7 +1073,8 @@ class TWB:
                     )
                 self.player_stats.config = config
                 if managed_villages_dict:
-                    self.player_stats.refresh(sorted(managed_villages_dict)[0])
+                    with meter_phase(self.wrapper, "estatisticas"):
+                        self.player_stats.refresh(sorted(managed_villages_dict)[0])
 
                 # Feature 38: o que esta no ar agora, lido da visao geral de
                 # comandos do jogo (docs/frontend.md 6.1.2, item 1). Tambem e
@@ -1078,7 +1090,8 @@ class TWB:
                     )
                 self.in_flight.config = config
                 if managed_villages_dict:
-                    self.in_flight.refresh(sorted(managed_villages_dict)[0])
+                    with meter_phase(self.wrapper, "em_voo"):
+                        self.in_flight.refresh(sorted(managed_villages_dict)[0])
 
                 pvp_manager = None
                 if config.get("pvp_conquest", {}).get("enabled", False):
@@ -1102,7 +1115,10 @@ class TWB:
                     self.hunter.build_schedules_from_config(config)
 
                     def hunter_callback():
-                        self.hunter.run(config)
+                        # village=False: o Hunter e da conta inteira, mesmo
+                        # quando chamado do checkpoint de uma aldeia.
+                        with meter_phase(self.wrapper, "hunter", village=False):
+                            self.hunter.run(config)
 
                 for _v in self.villages:
                     _v.pvp_conquest_villages = managed_villages_dict
@@ -1131,12 +1147,13 @@ class TWB:
                 # consegue sondar os tempos de viagem.
                 primed_this_cycle = set()
                 if pvp_manager:
-                    pvp_manager.run()
-                    primed_this_cycle = self.prime_conquest_sources(
-                        managed_villages_dict, config
-                    )
-                    if primed_this_cycle:
+                    with meter_phase(self.wrapper, "pvp_inicio"):
                         pvp_manager.run()
+                        primed_this_cycle = self.prime_conquest_sources(
+                            managed_villages_dict, config
+                        )
+                        if primed_this_cycle:
+                            pvp_manager.run()
 
                 # Feature 8 (2026-09-22): a conquista barbara decide UMA vez no
                 # inicio do ciclo, pelo mesmo motivo da PvP logo acima.
@@ -1157,17 +1174,18 @@ class TWB:
                 # origens pelo snapshot de `cache/managed` (sem rede), primar
                 # so elas, e so entao decidir com numero vivo de tropa.
                 if config.get("conquest", {}).get("enabled", False):
-                    primed_this_cycle |= self.prime_barbarian_sources(
-                        managed_villages_dict, config,
-                        already_primed=primed_this_cycle,
-                    )
-                    self.run_barbarian_conquest(
-                        managed_villages=managed_villages_dict,
-                        config=config,
-                        reservation_board=reservation_board,
-                        world_villages=world_villages,
-                        reservation_writer=reservation_writer,
-                    )
+                    with meter_phase(self.wrapper, "conquista_barbara"):
+                        primed_this_cycle |= self.prime_barbarian_sources(
+                            managed_villages_dict, config,
+                            already_primed=primed_this_cycle,
+                        )
+                        self.run_barbarian_conquest(
+                            managed_villages=managed_villages_dict,
+                            config=config,
+                            reservation_board=reservation_board,
+                            world_villages=world_villages,
+                            reservation_writer=reservation_writer,
+                        )
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
@@ -1227,7 +1245,10 @@ class TWB:
                     if overview_village:
                         village.points = overview_village.points
 
-                    village.run(config=config)
+                    # "aldeia" so recebe o que village.run() faz fora das
+                    # fases que ele mesmo marca (init, farm, ...).
+                    with meter_phase(self.wrapper, "aldeia", village=village.village_id):
+                        village.run(config=config)
 
                     if (
                             village.get_config(
@@ -1272,12 +1293,14 @@ class TWB:
                 # Feature 24 (fase 1): leitura periódica do estado do(s)
                 # Paladino(s) — opt-in (config["statue"]["enabled"]), sem
                 # automação ativa. Roda uma vez por ciclo (não por aldeia).
-                StatueManager.run(self.wrapper, config, self.found_villages)
+                with meter_phase(self.wrapper, "estatua"):
+                    StatueManager.run(self.wrapper, config, self.found_villages)
 
                 # Feature 25 (fase 1): leitura periódica do inventário —
                 # opt-in (config["inventory"]["enabled"]), nenhum item é
                 # ativado. Roda uma vez por ciclo (não por aldeia).
-                InventoryManager.run(self.wrapper, config, self.found_villages)
+                with meter_phase(self.wrapper, "inventario"):
+                    InventoryManager.run(self.wrapper, config, self.found_villages)
 
                 # Feature 8: o trem de nobres bárbaro deixou de ser montado
                 # aqui no fim do ciclo em 2026-09-22 -- ele roda no início,
@@ -1320,7 +1343,8 @@ class TWB:
                     # Service once before sleeping. If a command is already
                     # inside Hunter.window, Hunter waits for the exact instant
                     # and sends it now instead of oversleeping it.
-                    self.hunter.run(config)
+                    with meter_phase(self.wrapper, "hunter"):
+                        self.hunter.run(config)
                     nearest = self.hunter.nearest_send_time()
                     if nearest:
                         # Wake up in time to enter the send window
@@ -1339,12 +1363,18 @@ class TWB:
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
 
-                VillageManager.farm_manager(
-                    verbose=True,
-                    # P2-33: a poda de cache/reports existia mas nunca era
-                    # acionada -- este parametro nunca era passado.
-                    clean_reports=config["bot"].get("max_cached_reports", 1000),
-                )
+                with meter_phase(self.wrapper, "perfis_farm"):
+                    VillageManager.farm_manager(
+                        verbose=True,
+                        # P2-33: a poda de cache/reports existia mas nunca era
+                        # acionada -- este parametro nunca era passado.
+                        clean_reports=config["bot"].get("max_cached_reports", 1000),
+                    )
+                close_and_report(self.wrapper.meter, extra={
+                    "cycle": self.runs,
+                    "next_sleep_seconds": round(sleep, 1),
+                    "requests_between_cycles": between,
+                })
                 print(
                     "Dead for %.2f minutes (next run at: %s)"
                     % (sleep / 60, dt_next.time())
@@ -1381,6 +1411,7 @@ class TWB:
             "cache/inventory",
             "cache/premium",
             "cache/farm_exclusions",
+            "cache/cycles",
         ]
         FileManager.create_directories(directories)
 

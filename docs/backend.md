@@ -3550,6 +3550,64 @@ inteira verde.
 alvos segue não exercitado. O sinal visível agora é a reidratação depois de um
 reinício: `reserva de <alvo> na aldeia <id> alinhada ao Hunter`.
 
+## 8.21 ✅ `P-CICLO-MEDIDA` — para onde vão as ~4h de um ciclo (2026-09-22)
+
+**Por que este e não outro.** Com a fila da §9 inteira em "⏳ falta campo", o
+próximo item da fila anterior é o baseline (item 3): *"duração de ciclo ...
+sem baseline, nenhuma das hipóteses da §7.7 é verificável"*. E o ciclo de ~4h
+com 30 aldeias já tinha custado duas reorganizações (§8.14, §8.15) sem que
+ninguém soubesse **onde** essas 4h estavam — o código não media tempo em
+lugar nenhum (`grep time.time|perf_counter` em `twb.py`/`village.py`: só o
+timestamp de `last_run`).
+
+**O que o log já dizia, e não bastava.** `get_url`/`post_url` dormem
+`randint(3·delay, 7·delay)` antes de **cada** requisição, e o `config.json`
+vivo tem `bot.delay_factor = 3` (nenhuma aldeia sobrescreve): 9–21 s por
+requisição. O `session_latest.log` de hoje mostra requisições a 13–17 s uma da
+outra. Logo a duração do ciclo é quase inteira *número de requisições × ~15 s*
+— ~930 requisições em 4h, ~30 por aldeia — e encurtar o ciclo é **cortar
+requisição**. O log tem cada GET em DEBUG, mas não diz a que fase ele
+pertence, e é truncado a cada reinício.
+
+**O que foi escrito.**
+- `core/cycle_meter.py::CycleMeter` — pilha de fases; cada requisição vai para
+  a fase do **topo**, e o tempo de parede é **exclusivo** (subfase não é
+  contada de novo na mãe), então a soma dos baldes fecha o total e os
+  percentuais somam 100%. O que roda fora de fase nomeada cai em `(sem fase)`
+  em vez de sumir — balde grande ali é instrumentação faltando. Subfase herda a
+  aldeia da mãe; o Hunter passa `village=False` porque é da conta inteira
+  mesmo quando chamado do checkpoint de uma aldeia.
+- `WebWrapper` ganhou `self.meter` e registra, por requisição: método, sono,
+  rede, tempo preso em captcha e falha. O registro nunca levanta.
+- Fases em `Village.run()`: `init`, `defesa`, `missoes`, `construcao`,
+  `recrutamento`, `nobre`, `mercado`, `compartilhamento`, `mapa`, `pvp`,
+  `farm`, `coleta`; em `twb.py`: `overview`, `reservas_tribo`, `estatisticas`,
+  `em_voo`, `pvp_inicio`, `conquista_barbara`, `aldeia` (resto de
+  `village.run`), `estatua`, `inventario`, `hunter`, `perfis_farm`.
+- Fim de ciclo (antes do sono): duas linhas `CycleMeter - INFO - Ciclo: ...` e
+  `Ciclo por fase: ...` no log, e `cache/cycles/<inicio>.json` com todos os
+  baldes `(aldeia, fase)`, o sono seguinte e as requisições feitas **entre**
+  ciclos (Hunter pós-sono). Poda em 300 arquivos (~50 dias). Ciclo abortado por
+  overview indisponível também é gravado, com `aborted`.
+
+**Escopo deliberado:** só observabilidade. Nada muda o que o bot faz, nem o
+ritmo — nenhuma chave de config nova. O que cortar vem **depois** de ler uns
+dias de `cache/cycles/`, e com o 11º padrão em mente: agregar por fase **e**
+por aldeia antes de concluir, porque aldeia de farm e aldeia de apoio não são
+o mesmo conjunto.
+
+**Testes.** `tests/test_cycle_meter.py`, 11 casos, relógio falso, sem rede nem
+`cache/` real (a poda roda num diretório temporário). Provado reprovando: sem o
+débito do tempo na entrada da subfase e com a requisição indo para a base da
+pilha, 10 problemas acusados. Um achado no caminho: `test_session_and_captcha`
+troca o `time` do `request.py` por um relógio falso sem `monotonic`, então o
+registro usa `time.time()`, como o resto do arquivo. Suíte inteira verde
+(62/62).
+
+**⏳ Falta campo:** o bot que está rodando subiu às 18:38 com o código antigo.
+O aceite é, depois de reiniciar, a primeira linha `Ciclo: ...` com `(sem fase)`
+pequeno e o primeiro arquivo em `cache/cycles/`.
+
 ---
 
 ## 9. Próximos passos
@@ -3700,13 +3758,19 @@ reinício: `reserva de <alvo> na aldeia <id> alinhada ao Hunter`.
    respondidos sem código: o 13 não se aplica e o 14 (limite de saque) não
    existe no br143. **⏳ Falta campo:** dois alvos PvP ao mesmo tempo.
 
+16. ~~**`P-CICLO-MEDIDA`**~~ — ✅ **feito em 2026-09-22** (§8.21). Primeira
+   metade do item 3 da fila abaixo (baseline): tempo e requisições por
+   `(aldeia, fase)` em cada ciclo, em `cache/cycles/`. **⏳ Falta campo:**
+   reiniciar o bot e juntar alguns dias antes de decidir o que cortar.
+
 Depois disso, a fila anterior:
 
 1. **Fechar as validações de campo da §6.2**, que não custam código: são
    observações no log de sessão do bot já rodando. A das bandeiras (§6.3) é a
    mais barata e a mais próxima de terminar.
 2. **`FND-01` como ADR de schema**, usando o inventário da §8 como entrada.
-3. **Capturar baseline de 7–14 dias** antes de qualquer refatoração: decisões,
+3. **Capturar baseline de 7–14 dias** antes de qualquer refatoração (a parte de
+   duração de ciclo já grava sozinha desde a §8.21): decisões,
    falhas, reservas, duração de ciclo, atraso do Hunter, alertas, tempo de
    diagnóstico. Sem baseline, nenhuma das hipóteses da §7.7 é verificável.
 4. **Harness de fault injection** antes de tocar em executores.

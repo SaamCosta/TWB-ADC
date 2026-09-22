@@ -129,7 +129,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   (`tests/test_pvp_cross_target_reserve.py` — clear, escolta e plano de
   nobres descontam o que outro alvo ou o trem bárbaro reservou, a reserva é
   reconstruída do Hunter depois de reinício e o piso da escolta não pede mais
-  que existe; §8.20).
+  que existe; §8.20)
+  e o medidor de ciclo (`tests/test_cycle_meter.py` — tempo exclusivo por
+  fase fechando o total, requisição atribuída ao topo da pilha, wrapper sem
+  medidor virando no-op; §8.21).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever

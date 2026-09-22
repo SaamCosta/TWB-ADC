@@ -6,6 +6,7 @@ import time
 from codecs import decode
 from datetime import datetime
 
+from core.cycle_meter import meter_phase
 from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.templates import TemplateManager, resolve_troop_template
@@ -993,6 +994,10 @@ class Village:
             and pvp.is_troop_spending_suspended(self.village_id)
         )
 
+    def _phase(self, name):
+        """Fase do medidor de ciclo, com esta aldeia como dona (P-CICLO-MEDIDA)."""
+        return meter_phase(self.wrapper, name, village=self.village_id)
+
     def _service_hunter(self):
         """Give a due coordinated attack priority at this safe checkpoint."""
         if callable(self.hunter_service_callback):
@@ -1204,7 +1209,11 @@ class Village:
             )
         self.wrapper.delay = delay_factor
 
-        data = self.village_init()
+        # P-CICLO-MEDIDA: cada bloco `with self._phase(...)` abaixo e uma linha
+        # do resumo de ciclo (core/cycle_meter.py). O agrupamento segue o que
+        # se decidiria cortar junto, nao a lista de metodos.
+        with self._phase("init"):
+            data = self.village_init()
 
         if not self.game_data:
             self.logger.error(
@@ -1212,7 +1221,8 @@ class Village:
             )
             raise VillageInitException
 
-        self.set_world_config()
+        with self._phase("init"):
+            self.set_world_config()
 
         if not self.get_config(section="villages", parameter=self.village_id):
             raise VillageInitException
@@ -1228,22 +1238,31 @@ class Village:
         if not self.game_data:
             raise InvalidGameStateException
 
-        self.update_pre_run()
+        with self._phase("init"):
+            self.update_pre_run()
 
-        self.setup_defence_manager(data=data)
-        self.run_quest_actions(config=config)
+        with self._phase("defesa"):
+            self.setup_defence_manager(data=data)
+        with self._phase("missoes"):
+            self.run_quest_actions(config=config)
 
-        self.run_builder()
+        with self._phase("construcao"):
+            self.run_builder()
         self._service_hunter()
-        self.units_get_template()
-        self.set_unit_wanted_levels()
+        with self._phase("recrutamento"):
+            self.units_get_template()
+            self.set_unit_wanted_levels()
 
-        self.units.update_totals()
-        self.run_unit_upgrades()
-        self.run_snob_recruit()
-        self.do_recruit()
-        self.manage_local_resources()
-        self.run_resource_sharing()
+            self.units.update_totals()
+            self.run_unit_upgrades()
+        with self._phase("nobre"):
+            self.run_snob_recruit()
+        with self._phase("recrutamento"):
+            self.do_recruit()
+        with self._phase("mercado"):
+            self.manage_local_resources()
+        with self._phase("compartilhamento"):
+            self.run_resource_sharing()
         self._service_hunter()
 
         # check_forced_peace() estava definido mas nunca era chamado de lugar
@@ -1253,11 +1272,13 @@ class Village:
         # atacaria durante a janela de paz. Precisa rodar antes de
         # ensure_attack_manager(), que le os tres campos.
         self.check_forced_peace()
-        self.ensure_map_loaded()
-        # P1-17: precisa vir antes de run_pvp_conquest()/Hunter, que consomem
-        # self.attack independentemente da config de farm.
-        self.ensure_attack_manager()
-        self.run_pvp_conquest()
+        with self._phase("mapa"):
+            self.ensure_map_loaded()
+            # P1-17: precisa vir antes de run_pvp_conquest()/Hunter, que
+            # consomem self.attack independentemente da config de farm.
+            self.ensure_attack_manager()
+        with self._phase("pvp"):
+            self.run_pvp_conquest()
         self._service_hunter()
         # A conquista barbara NAO e chamada daqui desde 2026-09-22: ela roda
         # uma vez por ciclo, no inicio, em TWB.run_barbarian_conquest().
@@ -1268,12 +1289,15 @@ class Village:
         # A reserva de escolta que a aldeia precisa respeitar ja esta em
         # `units.conquest_reserve` antes de run_farming() abaixo, porque o
         # planejador rodou antes de qualquer aldeia deste ciclo.
-        self.run_farming()
+        with self._phase("farm"):
+            self.run_farming()
         self._service_hunter()
 
-        self.do_gather()
+        with self._phase("coleta"):
+            self.do_gather()
         self._service_hunter()
-        self.go_manage_market()
+        with self._phase("mercado"):
+            self.go_manage_market()
 
         self.set_cache_vars()
         self.logger.info("Village cycle done, returning to overview")
