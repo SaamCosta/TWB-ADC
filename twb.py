@@ -1257,6 +1257,7 @@ class TWB:
             "cache/statue",
             "cache/inventory",
             "cache/premium",
+            "cache/farm_exclusions",
         ]
         FileManager.create_directories(directories)
 

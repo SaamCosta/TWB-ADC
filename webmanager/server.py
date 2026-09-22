@@ -9,10 +9,10 @@ from core.exceptions import InvalidJSONException
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader
+    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -197,7 +197,8 @@ def get_village_config():
     data = sync()
     vid = request.args.get("id", None)
     return render_template('village.html', data=data, config=pre_process_village_config(village_id=vid),
-                           current_select=vid, helpfile=help_file)
+                           current_select=vid, helpfile=help_file,
+                           farm_exclusions=FarmExclusionReader.load(vid))
 
 @app.route('/map', methods=['GET'])
 def get_map():

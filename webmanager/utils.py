@@ -2864,6 +2864,139 @@ class ReportReader:
         return rows
 
 
+class FarmExclusionReader:
+    """
+    Por que cada alvo de farm desta aldeia nao foi atacado no ultimo ciclo.
+
+    Le `cache/farm_exclusions/<village_id>.json`, escrito por
+    `AttackManager.run()` (ver `game/farm_exclusions.py`). O vocabulario de
+    motivos vem do modulo do bot, nao daqui: duplicar os rotulos faria a
+    interface descrever uma versao propria das regras, que envelhece separado.
+
+    Tres coisas que o retorno precisa deixar o template dizer, e que a pagina
+    erraria por omissao:
+
+    - **Arquivo ausente nao e "nenhuma exclusao".** E "esta aldeia nao rodou
+      farm desde que a instrumentacao existe". As duas coisas renderizariam
+      igual se `load()` devolvesse uma lista vazia nos dois casos, entao ha um
+      campo `available` explicito.
+    - **A leitura tem idade.** O motivo e uma afirmacao sobre um estado que
+      muda em horas; `observed_at` viaja junto e o template mostra a idade.
+    - **`truncated` existe porque lista curta e indistinguivel de lista
+      completa** (vigesimo sexto padrao). O resumo conta tudo; a lista
+      individual da fase de selecao e que e cortada.
+    """
+
+    @staticmethod
+    def _path(village_id):
+        return os.path.join(
+            os.path.dirname(__file__), "..", "cache", "farm_exclusions",
+            "%s.json" % village_id,
+        )
+
+    @staticmethod
+    def load(village_id):
+        from game.farm_exclusions import REASONS, FASE_TENTATIVA
+
+        empty = {
+            "available": False,
+            "village_id": village_id,
+            "observed_at": None,
+            "observed_at_fmt": "—",
+            "truncated": False,
+            "summary": [],
+            "attempts": [],
+            "selection_sample": [],
+            "attacked_count": 0,
+            "total": 0,
+        }
+        if not village_id:
+            return empty
+        path = FarmExclusionReader._path(village_id)
+        if not os.path.exists(path):
+            return empty
+        try:
+            with open(path, "r", encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            # JSON parcial: o bot grava atomicamente, mas o fallback in-place
+            # existe (ver FileManager.save_json_file). Tratar como ausente e
+            # honesto -- o que nao se pode e apagar nem inventar.
+            return empty
+
+        labels = ReportReader._village_labels()
+
+        def describe(code):
+            meta = REASONS.get(code)
+            if not meta:
+                return {"label": code, "help": "Motivo nao catalogado nesta versao "
+                                               "do painel; codigo mostrado cru.",
+                        "knob": None, "phase": FASE_TENTATIVA}
+            return {"label": meta["label"], "help": meta["detail_help"],
+                    "knob": meta["knob"], "phase": meta["phase"]}
+
+        raw_summary = data.get("summary") or {}
+        summary = []
+        for code, count in sorted(raw_summary.items(), key=lambda kv: -kv[1]):
+            info = describe(code)
+            summary.append({
+                "code": code, "count": count, "label": info["label"],
+                "help": info["help"], "knob": info["knob"], "phase": info["phase"],
+            })
+
+        attempts, selection = [], []
+        for target_id, entry in (data.get("targets") or {}).items():
+            info = describe(entry.get("code"))
+            label, own = ReportReader._label_for(target_id, labels)
+            row = {
+                "target_id": target_id,
+                "target_label": label,
+                "code": entry.get("code"),
+                "label": info["label"],
+                "help": info["help"],
+                "knob": info["knob"],
+                "detail": entry.get("detail"),
+                "observed_at": entry.get("observed_at"),
+                "attacked": entry.get("code") == "atacado",
+            }
+            if entry.get("phase") == FASE_TENTATIVA:
+                attempts.append(row)
+            else:
+                selection.append(row)
+
+        # Atacados por ultimo: a pergunta desta tela e sobre quem NAO foi.
+        attempts.sort(key=lambda r: (r["attacked"], r["label"], r["target_label"]))
+        selection.sort(key=lambda r: (r["label"], r["target_label"]))
+
+        # Formatado no servidor de proposito: sem JS o template mostraria o
+        # epoch cru. O JS do shell substitui por idade relativa; ele formata,
+        # nao inventa o valor.
+        observed_at = data.get("observed_at")
+        observed_fmt = "—"
+        if observed_at:
+            try:
+                observed_fmt = datetime.datetime.fromtimestamp(
+                    observed_at
+                ).strftime("%d/%m %H:%M")
+            except (OSError, OverflowError, ValueError):
+                observed_fmt = "—"
+
+        return {
+            "available": True,
+            "village_id": data.get("village_id", village_id),
+            "observed_at": observed_at,
+            "observed_at_fmt": observed_fmt,
+            "cycle_started_at": data.get("cycle_started_at"),
+            "truncated": bool(data.get("truncated")),
+            "max_selecao": data.get("max_selecao"),
+            "summary": summary,
+            "attempts": attempts,
+            "selection_sample": selection,
+            "attacked_count": raw_summary.get("atacado", 0),
+            "total": sum(raw_summary.values()),
+        }
+
+
 class FarmScoreReader:
     @staticmethod
     def load():

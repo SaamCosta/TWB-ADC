@@ -126,6 +126,68 @@
   </div>
 </section>
 
+{% set fx = farm_exclusions or {} %}
+<section class="twb-panel" aria-labelledby="farm-exclusions-title">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="farm-exclusions-title">Alvos de farm e o motivo de cada um</h2>{% if fx.get('available') %}<span class="twb-status twb-status--unknown">Último ciclo de farm</span>{% else %}<span class="twb-status twb-status--muted">Sem registro</span>{% endif %}</div>
+  <div class="twb-panel-body">
+  {% if not fx.get('available') %}
+    <div class="twb-empty twb-empty--unknown"><strong>Nenhum registro de farm para esta aldeia.</strong> Isso não significa “nenhum alvo foi excluído”: significa que o arquivo <code>cache/farm_exclusions/{{ current_select }}.json</code> não existe. Ele é escrito ao fim de cada execução de farm desta aldeia — se o farm está desabilitado, se a aldeia está sob ataque ou se o bot ainda não rodou desde a atualização, não há o que ler.</div>
+  {% else %}
+    <p class="twb-card-note">Foto do <strong>último ciclo de farm desta aldeia</strong>, não do estado atual. Motivos como “intervalo entre ataques” e “aguardando relatório” expiram em horas por conta própria.{% if fx.get('observed_at') %} Leitura de <span class="twb-time" data-observed-at="{{ fx.get('observed_at') }}">{{ fx.get('observed_at_fmt') }}</span>.{% else %} <strong>Sem timestamp — idade desconhecida.</strong>{% endif %}</p>
+
+    <div class="twb-observed-grid">
+      <section class="twb-evidence-card" aria-labelledby="fx-summary-title">
+        <h3 class="twb-subsection-title" id="fx-summary-title">Contagem por motivo</h3>
+        <table class="twb-table">
+          <thead><tr><th scope="col">Motivo</th><th scope="col">Alvos</th><th scope="col">O que muda isso</th></tr></thead>
+          <tbody>
+          {% for row in fx.get('summary') %}
+            <tr>
+              <th scope="row">{{ row.get('label') }}<br><small class="twb-technical-id">{{ row.get('code') }}</small><br><small>{{ row.get('help') }}</small></th>
+              <td><span class="twb-number">{{ row.get('count') }}</span></td>
+              <td>{% if row.get('knob') %}<code>{{ row.get('knob') }}</code>{% else %}<span class="twb-status twb-status--muted">Nada a configurar</span>{% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <p class="twb-card-note">{{ fx.get('total') }} decisões no ciclo, {{ fx.get('attacked_count') }} viraram ataque confirmado pelo servidor.{% if fx.get('truncated') %} <strong>A contagem acima está completa; a lista individual não.</strong> Os descartes de seleção passaram do teto de {{ fx.get('max_selecao') }} entradas guardadas por ciclo.{% endif %}</p>
+      </section>
+
+      <section class="twb-evidence-card" aria-labelledby="fx-attempts-title">
+        <h3 class="twb-subsection-title" id="fx-attempts-title">Alvos que o bot chegou a avaliar</h3>
+        {% if fx.get('attempts') %}
+        <p class="twb-card-note">Sobreviveram a todos os filtros de seleção. É aqui que mora a diferença entre “o jogo recusou” e “não sei o que aconteceu” — as duas viravam a mesma linha muda no log.</p>
+        <ul class="twb-data-stack">
+        {% for row in fx.get('attempts') %}
+          <li>
+            <strong>{{ row.get('target_label') }}</strong>
+            {% if row.get('attacked') %}<span class="twb-status twb-status--success">{{ row.get('label') }}</span>{% elif row.get('code') in ['recusado_pelo_jogo', 'sem_coordenada'] %}<span class="twb-status twb-status--danger">{{ row.get('label') }}</span>{% elif row.get('code') == 'falha_de_rede' %}<span class="twb-status twb-status--unknown">{{ row.get('label') }}</span>{% else %}<span class="twb-status twb-status--muted">{{ row.get('label') }}</span>{% endif %}
+            {% if row.get('detail') %}<span class="twb-technical-id">{{ row.get('detail') }}</span>{% endif %}
+          </li>
+        {% endfor %}
+        </ul>
+        {% else %}
+        <div class="twb-empty"><strong>Nenhum alvo chegou à fase de tentativa.</strong> Todos foram descartados pelos filtros de seleção — a tabela ao lado diz por quê.</div>
+        {% endif %}
+      </section>
+    </div>
+
+    {% if fx.get('selection_sample') %}
+    <details class="twb-details">
+      <summary>Descartes da seleção ({{ fx.get('selection_sample')|length }} alvos listados)</summary>
+      <div>
+        <ul class="twb-data-stack">
+        {% for row in fx.get('selection_sample') %}
+          <li><strong>{{ row.get('target_label') }}</strong><span class="twb-status twb-status--muted">{{ row.get('label') }}</span>{% if row.get('detail') %}<span class="twb-technical-id">{{ row.get('detail') }}</span>{% endif %}</li>
+        {% endfor %}
+        </ul>
+      </div>
+    </details>
+    {% endif %}
+  {% endif %}
+  </div>
+</section>
+
 <section class="twb-panel" aria-labelledby="config-title">
   <div class="twb-panel-header"><h2 class="twb-panel-title" id="config-title">Configuração específica</h2><span class="twb-status twb-status--warning">Gravação imediata</span></div>
   <div class="twb-panel-body">

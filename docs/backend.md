@@ -3080,6 +3080,98 @@ mais depois de `Village cycle done` da última aldeia.
 
 ---
 
+## 8.16 ✅ `P-FARM-MOTIVO` — o bot já sabia por que não atacou, e jogava fora (2026-09-22)
+
+Item 2 da §6.1.2 do `frontend.md`, que o próprio documento marcava como a melhor
+razão valor/esforço da lista *"porque o dado já é produzido e jogado fora"*.
+
+### O defeito
+
+`AttackManager` calcula o motivo de cada descarte — dono, pontos, raio,
+`_unknown_ignored`, janela 23h–8h, intervalo entre ataques, relatório de espião,
+e o texto do `error_box` que o servidor devolve numa recusa. Tudo isso morria em
+linhas de `DEBUG` (que não vão para o `session_latest.log` em nível normal) ou
+não era escrito em lugar nenhum. O que sobrava era uma linha por ciclo:
+
+```
+Farm targets: 23 Ignored targets: 316
+```
+
+O custo já foi pago em campo: em 2026-08-19 uma aldeia teve **100% dos ataques
+recusados** e ninguém soube por quê até alguém instrumentar a falha na mão — o
+motivo (limite de ataque falso do mundo) estava no `error_box` da resposta o
+tempo todo. É o décimo terceiro e o décimo quarto padrões do `CLAUDE.md`.
+
+### Três coisas que apareceram ao implementar, e nenhuma estava no plano
+
+**1. `attack()` devolve `False` para três coisas diferentes.** Alvo sem
+coordenada, timeout de rede e recusa do jogo — e só na última `last_refusal`
+fica preenchido. Um registro ingênuo (`"o jogo recusou: " + last_refusal`)
+apresentaria "não sei o que aconteceu" como diagnóstico, que é pior do que não
+registrar nada, porque parece resposta. Daí o `AttackManager.last_attack_failure`
+novo: código do motivo, zerado no início de todo `attack()`, ao lado do
+`last_refusal` que continua sendo o texto do servidor. Caminho que falhe sem
+publicar código degrada para `falha_de_rede` com a palavra *desconhecido* no
+detalhe — legível como ausência de resposta, não como recusa.
+
+**2. Ausência de linha significava duas coisas opostas.** Um alvo cortado pelo
+teto de `max_farms` e um alvo que o laço **nem alcançou** (porque o `break` de
+falta de tropa disparou antes) apareceriam idênticos: sem registro. Viraram dois
+códigos próprios, `fora_do_teto` e `ciclo_encerrado_sem_tropa`. É o vigésimo
+sexto padrão com outra roupa — lista curta é indistinguível de lista completa.
+
+**3. `scout()` devolve `False` sem levantar quando faltam espiões**, e os três
+chamadores em `can_attack()` descartavam esse retorno. "Explorou antes de
+atacar" (etapa normal do fluxo) e "quis explorar e não tinha espião" (alvo
+travado até haver) são opostos para quem lê e eram invisíveis da mesma forma.
+Viraram `espiao_enviado` e `sem_espiao`.
+
+### O que foi escrito
+
+`game/farm_exclusions.py` — vocabulário fechado de 21 códigos, cada um com fase
+(seleção / tentativa), rótulo em pt-BR, explicação e **qual chave de config
+mexe nele** (ou `None` quando não há nada a mexer, que é metade dos casos). Mais
+o `FarmExclusionLog`, que acumula o ciclo e grava
+`cache/farm_exclusions/<village_id>.json` no fim do `run()`.
+
+Três decisões de contrato:
+
+- **Snapshot do último ciclo, não log acumulado.** O arquivo é reescrito
+  inteiro. Motivo do sexto padrão: "intervalo entre ataques" e "aguardando
+  relatório" expiram sozinhos em horas, e uma lista acumulada teria a maioria
+  das linhas já falsa sem nada distinguindo as vivas das mortas. Série histórica
+  exige contrato de evento com `observed_at` por ocorrência — que é o `FND-01`.
+- **`observed_at` por entrada**, e a página mostra a idade.
+- **O teto de entradas corta só a fase de seleção** (400). As de tentativa são
+  no máximo `max_farms` e são as únicas com valor diagnóstico; um teto global as
+  perderia primeiro, porque são registradas depois. O `summary` conta **tudo**,
+  truncado ou não, e `truncated: true` diz que houve corte.
+
+### Testes
+
+`tests/test_farm_exclusions.py` (24 checagens, sem rede, sem tocar em `cache/`
+— `village_id=None` faz `flush()` virar no-op). **A guarda foi provada
+quebrando o mapeamento de propósito**: trocando `code = self.last_attack_failure`
+por `"recusado_pelo_jogo"` fixo, três testes falham, entre eles
+`test_timeout_nao_vira_recusa`. Guarda que não pode falhar é o décimo quinto
+padrão de cabeça para baixo.
+
+`tests/smoke_village_page.py` (fora do glob, lê `cache/` real) renderiza
+`/village` pelo test client do Flask — Jinja2 só falha em runtime, então é o
+único jeito barato de pegar erro de template sem subir o servidor. Cobre os dois
+ramos: sem arquivo e populado (com payload sintético **em memória**, porque não
+se fabrica arquivo dentro de `cache/`, que é estado real do bot).
+
+### Estado
+
+Suíte verde. **Não observado em campo ainda** — o arquivo só nasce depois de um
+ciclo de farm com o bot reiniciado. O aceite é abrir `/village?id=<uma aldeia>`
+e ver a contagem por motivo somar com `Farm targets` + `Ignored targets` do log
+do mesmo ciclo. Se divergirem, há um caminho de descarte não instrumentado — e
+descobrir isso é metade do valor da feature.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -3185,6 +3277,17 @@ mais depois de `Village cycle done` da última aldeia.
    44155 é +0,3 campo, dentro do ruído da folga de 19,7 h. Regressão em
    `tests/test_pvp_scout_origin.py`. **⏳ Falta campo:** a linha
    `scout sent from ... (N spies, X.X campos)` com `N` bem acima de 5.
+
+**Acrescentado em 2026-09-22:**
+
+11. ~~**`P-FARM-MOTIVO`**~~ — ✅ **feito em 2026-09-22** (§8.16). O motivo de
+   exclusão de cada alvo de farm passou a ser escrito em
+   `cache/farm_exclusions/` e publicado em `/village`. Três defeitos apareceram
+   no caminho e nenhum estava no plano: `attack()` devolvendo `False` para três
+   coisas diferentes, ausência de registro significando "cortado pelo teto" e
+   "nem alcançado" ao mesmo tempo, e `scout()` falhando por falta de espião sem
+   que nenhum dos três chamadores olhasse o retorno. **⏳ Falta campo:** o
+   arquivo só nasce depois de um ciclo de farm com o bot reiniciado.
 
 Depois disso, a fila anterior:
 

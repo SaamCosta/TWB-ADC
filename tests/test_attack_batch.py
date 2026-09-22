@@ -8,6 +8,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from game.attack import AttackManager
+from game.farm_exclusions import FarmExclusionLog
 from game.hunter import Hunter
 
 
@@ -288,6 +289,8 @@ def test_farm_loop_services_hunter_between_targets():
         [[{"id": "1"}, 1, 1], [{"id": "2"}, 2, 2]],
     )
     manager._ordered_templates = lambda _target_id: []
+    # village_id None faz flush() virar no-op: o teste nao toca em cache/.
+    manager.exclusions = FarmExclusionLog(None)
     checkpoints = []
     manager.hunter_service_callback = lambda: checkpoints.append(True)
 

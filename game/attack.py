@@ -13,6 +13,7 @@ from datetime import timedelta
 from core.filemanager import FileManager
 from core.templates import UNIT_CARRY, UNIT_POP
 from core.world_config import WorldConfig
+from game.farm_exclusions import FarmExclusionLog
 from game.reservations import manual_exclusion
 
 # Trechos do error_box que significam "o pacote nao cabe no que ha em casa".
@@ -134,10 +135,23 @@ class AttackManager:
         # sentinel string pioraria isso; o atributo mantem attack() devolvendo
         # falsy em toda recusa.
         self.last_refusal = None
+        # Codigo do motivo pelo qual o ultimo attack() devolveu falsy, ou None
+        # se ele foi aceito. Existe separado de `last_refusal` porque o
+        # chamador nao consegue distinguir os casos: `attack()` devolve False
+        # igual para alvo sem coordenada, timeout de rede e recusa do jogo, e
+        # so no ultimo caso `last_refusal` fica preenchido. Sem isto, "nao sei
+        # o que aconteceu" e "o jogo recusou" viram a mesma linha no painel --
+        # que e exatamente a confusao que esta feature existe para desfazer.
+        self.last_attack_failure = None
         # Set by TWB/Village. It gives long farm loops a cooperative checkpoint
         # where Hunter can take priority without a second thread touching the
         # shared HTTP session concurrently.
         self.hunter_service_callback = None
+        # Por que cada alvo nao foi atacado neste ciclo. O manager ja calculava
+        # todos esses motivos e os jogava fora em linhas de DEBUG; ver
+        # game/farm_exclusions.py. So o caminho de farm escreve aqui --
+        # Hunter, conquista e PvP chamam attack() direto e nao passam por run().
+        self.exclusions = FarmExclusionLog(village_id)
 
     def _refused_for_pack_reason(self):
         """
@@ -200,10 +214,22 @@ class AttackManager:
         if not self.troopmanager.can_attack or self.troopmanager.troops == {}:
             # Disable farming is disabled in config or no troops available
             return False
+        self.exclusions.begin()
         self.get_targets()
         ignored = []
         # Limits the amount of villages that are farmed from the current village
-        for target in self.targets[0: self.max_farms]:
+        considered = self.targets[0: self.max_farms]
+        # Os alvos que sobreviveram a todos os filtros e mesmo assim ficaram
+        # abaixo da linha de corte de max_farms. Sao invisiveis hoje: o log so
+        # publica o total de alvos, nunca quais deles o teto cortou.
+        for target in self.targets[self.max_farms:]:
+            village, *_ = target
+            self.exclusions.record(
+                village["id"], "fora_do_teto",
+                "posicao na fila maior que max_farms=%d" % self.max_farms,
+            )
+        stopped_at = None
+        for index, target in enumerate(considered):
             if callable(self.hunter_service_callback):
                 self.hunter_service_callback()
             village, *_ = target
@@ -223,7 +249,20 @@ class AttackManager:
             # a mesma checagem para cada um. Preserva o `break` que o caminho
             # de template unico ja tinha.
             if not sent and packs and packs[-1] in ignored:
+                stopped_at = index
                 break
+        if stopped_at is not None:
+            # Os que vieram depois do break nao foram avaliados. Registrar isso
+            # como um motivo proprio importa: sem ele o painel mostraria esses
+            # alvos sem linha nenhuma, e ausencia de motivo seria lida como
+            # "nada a relatar" em vez de "o bot nem chegou aqui".
+            for target in considered[stopped_at + 1:]:
+                village, *_ = target
+                self.exclusions.record(
+                    village["id"], "ciclo_encerrado_sem_tropa",
+                    "laco interrompido no alvo %s" % considered[stopped_at][0]["id"],
+                )
+        self.exclusions.flush()
 
     def _pack_capacity(self, template):
         """
@@ -367,6 +406,10 @@ class AttackManager:
             if cached:
                 attack_result = self.attack(target["id"], troops=template)
                 if attack_result == "forced_peace":
+                    self.exclusions.record(
+                        target["id"], "paz_forcada",
+                        "janela ativa agora, ou o ataque chegaria dentro dela",
+                    )
                     return 0
                 # O log e o reporter ficam DENTRO do if: antes eles anunciavam
                 # o ataque antes de saber se o servidor aceitou, entao contavam
@@ -402,6 +445,9 @@ class AttackManager:
                         if type(cached) == dict and "low_profile" in cached
                         else False,
                     )
+                    self.exclusions.attacked(
+                        target["id"], "pacote %s" % str(template)
+                    )
                     return 1
                 elif self._refused_for_pack_reason():
                     # Recusa que se repetiria identica em todo alvo -- ou nao
@@ -417,17 +463,46 @@ class AttackManager:
                         "Pacote %s recusado por %s (%s), nao sera tentado de novo neste ciclo",
                         str(template), self.village_id, self.last_refusal
                     )
+                    self._record_attack_failure(
+                        target["id"],
+                        "pacote %s bloqueado para o resto do ciclo" % str(template),
+                    )
                     return -1
                 else:
                     self.logger.debug(
                         "Ignoring target %s because unable to attack (server refused, not blocking future attempts)", target["id"]
                     )
+                    self._record_attack_failure(
+                        target["id"], "pacote %s" % str(template)
+                    )
         else:
             self.logger.debug(
                 "Not sending additional farm because not enough units: %s", missing
             )
+            self.exclusions.record(
+                target["id"], "sem_tropa_em_casa",
+                "falta %s para o pacote %s" % (missing, str(template)),
+            )
             return -1
         return 0
+
+    def _record_attack_failure(self, target_id, context):
+        """
+        Traduz o desfecho falsy do ultimo `attack()` num motivo legivel.
+
+        O `last_attack_failure` existe porque `attack()` devolve False igual
+        para tres coisas diferentes, e so uma delas preenche `last_refusal`.
+        Quando o codigo nao veio (caminho novo que ninguem instrumentou), o
+        registro degrada para "falha_de_rede" com a palavra "desconhecido" no
+        detalhe, em vez de inventar uma causa -- a leitura tem que ser
+        distinguivel de uma recusa de verdade.
+        """
+        code = self.last_attack_failure
+        detail = self.last_refusal or "motivo nao publicado pelo jogo"
+        if not code:
+            code = "falha_de_rede"
+            detail = "desfecho desconhecido (attack() falhou sem publicar motivo)"
+        self.exclusions.record(target_id, code, "%s -- %s" % (detail, context))
 
     def get_targets(self):
         """
@@ -449,12 +524,19 @@ class AttackManager:
         )
         for vid in self.map.villages:
             village = self.map.villages[vid]
+            # A propria aldeia esta no scan e tem dono != "0", entao cairia em
+            # "dono_jogador" -- um motivo tecnicamente certo e inutil de ler.
+            own = str(vid) == str(self.village_id)
             if village["owner"] != "0" and vid not in self.extra_farm:
                 if vid not in self.ignored:
                     self.logger.debug(
                         "Ignoring village %s because player owned, add to additional_farms to auto attack", vid
                     )
                     self.ignored.append(vid)
+                if not own:
+                    self.exclusions.record(
+                        vid, "dono_jogador", "dono %s" % village["owner"]
+                    )
                 continue
             if my_village and "points" in my_village and "points" in village:
                 if village["points"] >= self.farm_maxpoints:
@@ -464,6 +546,10 @@ class AttackManager:
                             vid, village["points"], self.farm_maxpoints
                         )
                         self.ignored.append(vid)
+                    self.exclusions.record(
+                        vid, "pontos_acima_max",
+                        "%d pontos, maximo %d" % (village["points"], self.farm_maxpoints),
+                    )
                     continue
                 if village["points"] <= self.farm_minpoints:
                     if vid not in self.ignored:
@@ -472,6 +558,10 @@ class AttackManager:
                             vid, village["points"], self.farm_minpoints
                         )
                         self.ignored.append(vid)
+                    self.exclusions.record(
+                        vid, "pontos_abaixo_min",
+                        "%d pontos, minimo %d" % (village["points"], self.farm_minpoints),
+                    )
                     continue
                 if (
                         village["points"] >= my_village["points"]
@@ -483,14 +573,25 @@ class AttackManager:
                             vid, my_village["points"], village["points"]
                         )
                         self.ignored.append(vid)
+                    self.exclusions.record(
+                        vid, "pontos_maiores_que_os_meus",
+                        "alvo %d, origem %d" % (village["points"], my_village["points"]),
+                    )
                     continue
                 if vid in self._unknown_ignored:
+                    self.exclusions.record(
+                        vid, "bloqueado_pelo_jogo",
+                        "o jogo recusou este alvo antes nesta sessao",
+                    )
                     continue
             if village["owner"] != "0":
                 get_h = time.localtime().tm_hour
                 if get_h in range(0, 8) or get_h == 23:
                     self.logger.debug(
                         "Village %s will be ignored because it is player owned and attack between 23h-8h", vid
+                    )
+                    self.exclusions.record(
+                        vid, "janela_noturna_jogador", "hora local %d" % get_h
                     )
                     continue
             distance = self.map.get_dist(village["location"])
@@ -501,6 +602,10 @@ class AttackManager:
                         vid, distance, self.farm_radius
                     )
                     self.ignored.append(vid)
+                self.exclusions.record(
+                    vid, "longe_demais",
+                    "%.1f campos, raio %d" % (distance, self.farm_radius),
+                )
                 continue
             if vid in self.ignored:
                 self.logger.debug("Removed %s from farm ignore list", vid)
@@ -565,6 +670,25 @@ class AttackManager:
             return True
         return False
 
+    def _record_scout_attempt(self, vid, sent, context):
+        """
+        Exploracao pedida no lugar do ataque -- e se ela realmente saiu.
+
+        `scout()` devolve False sem levantar quando faltam espioes em casa, e
+        ate aqui os tres chamadores descartavam esse retorno. As duas coisas
+        aparecem iguais de fora (o alvo simplesmente nao e atacado) e sao
+        opostas para quem le: uma e a etapa anterior do fluxo normal, a outra e
+        um alvo travado ate haver espiao.
+        """
+        if sent:
+            self.exclusions.record(vid, "espiao_enviado", context)
+        else:
+            self.exclusions.record(
+                vid, "sem_espiao",
+                "%s -- explorador nao saiu (precisa de %d espioes)"
+                % (context, self.scout_farm_amount),
+            )
+
     def can_attack(self, vid, clear=False):
         """
         Checks if it is safe en engage
@@ -584,6 +708,10 @@ class AttackManager:
             if last_attack < now - timedelta(hours=48):
                 self.logger.debug(f"Attacked long ago %s, trying scout attack", {last_attack})
                 if self.scout(vid):
+                    self.exclusions.record(
+                        vid, "espiao_enviado",
+                        "ultimo contato em %s, mais de 48h" % last_attack.strftime("%d/%m %H:%M"),
+                    )
                     return False
 
         if not cache_entry:
@@ -592,7 +720,9 @@ class AttackManager:
                 return True
 
             if self.troopmanager.can_scout:
-                self.scout(vid)
+                self._record_scout_attempt(
+                    vid, self.scout(vid), "alvo sem historico, explorando antes"
+                )
                 return False
             self.logger.warning(
                 "%s will be attacked but scouting is not possible (yet), going in blind!", vid
@@ -606,6 +736,10 @@ class AttackManager:
                     self.logger.info(
                         "Checking %s: scout report not yet available", vid
                     )
+                    self.exclusions.record(
+                        vid, "aguardando_relatorio_espiao",
+                        "explorador enviado, relatorio ainda nao chegou",
+                    )
                     return False
                 if status == 0:
                     # Relatório velho = último contato há MAIS de
@@ -614,11 +748,19 @@ class AttackManager:
                     # ser reavaliado (P1-10).
                     if int(time.time()) - cache_entry["last_attack"] > self.farm_low_prio_wait * 2:
                         self.logger.info(f"{vid}: Old scout report found ({cache_entry['last_attack']}), re-scouting")
-                        self.scout(vid)
+                        self._record_scout_attempt(
+                            vid, self.scout(vid),
+                            "relatorio velho (mais de %d s), re-explorando"
+                            % (self.farm_low_prio_wait * 2),
+                        )
                         return False
                     else:
                         self.logger.info(
                             "%s: scout report noted enemy units, ignoring", vid
+                        )
+                        self.exclusions.record(
+                            vid, "relatorio_viu_tropa",
+                            "defesa vista na ultima exploracao",
                         )
                         return False
                 self.logger.info(
@@ -629,10 +771,16 @@ class AttackManager:
             self.logger.debug(
                 "%s will be ignored for attack because unsafe, set safe:true to override", vid
             )
+            self.exclusions.record(
+                vid, "inseguro_sem_relatorio",
+                "cache marca safe=false e nao ha exploracao para revisar",
+            )
             return False
 
         if not cache_entry["scout"] and self.troopmanager.can_scout:
-            self.scout(vid)
+            self._record_scout_attempt(
+                vid, self.scout(vid), "alvo ainda nao explorado"
+            )
             return False
         min_time = self.farm_default_wait
         if cache_entry["high_profile"]:
@@ -654,6 +802,11 @@ class AttackManager:
             self.logger.debug(
                 "%s will be ignored because of previous attack (%d sec delay between attacks)",
                 vid, min_time
+            )
+            self.exclusions.record(
+                vid, "intervalo_entre_ataques",
+                "faltam %d s do intervalo de %d s"
+                % (cache_entry["last_attack"] + min_time - int(time.time()), min_time),
             )
             return False
         return cache_entry
@@ -741,6 +894,7 @@ class AttackManager:
         # ataque anterior como se fosse a deste (ver last_attack_duration).
         self.last_attack_duration = None
         self.last_refusal = None
+        self.last_attack_failure = None
         additional_attacks = [dict(atk) for atk in (additional_attacks or [])]
 
         if self.in_forced_peace:
@@ -752,12 +906,14 @@ class AttackManager:
         # estava no mapa.
         position = self._resolve_position(vid)
         if position is None:
+            self.last_attack_failure = "sem_coordenada"
             return False
 
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
         pre_attack = self.wrapper.get_url(url)
         if pre_attack is None:
             self.logger.warning("[Attack] %s -> %s: request timed out, aborting", self.village_id, vid)
+            self.last_attack_failure = "falha_de_rede"
             return False
         pre_data = {}
         for u in Extractor.attack_form(pre_attack):
@@ -776,6 +932,7 @@ class AttackManager:
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
         if conf is None:
             self.logger.warning("[Attack] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
+            self.last_attack_failure = "falha_de_rede"
             return False
         if '<div class="error_box">' in conf.text:
             # O motivo importa: "falta unidade" pede parar de tentar este
@@ -783,6 +940,7 @@ class AttackManager:
             # e ate 2026-08-19 as duas viravam o mesmo False silencioso -- o
             # chamador logava "server refused" sem dizer o que o jogo falou.
             self.last_refusal = Extractor.error_box_text(conf)
+            self.last_attack_failure = "recusado_pelo_jogo"
             self.logger.warning(
                 "[Attack] %s -> %s recusado pelo jogo: %s",
                 self.village_id, vid, self.last_refusal
@@ -822,6 +980,7 @@ class AttackManager:
 
             if not self.has_troops_available(requested):
                 self.last_refusal = "batch requires more units than are available"
+                self.last_attack_failure = "sem_tropa_em_casa"
                 self.logger.warning(
                     "[Attack] %s -> %s: %s",
                     self.village_id, vid, self.last_refusal
@@ -852,8 +1011,10 @@ class AttackManager:
                     "[Attack] %s -> %s: batch request timed out, aborting",
                     self.village_id, vid
                 )
+                self.last_attack_failure = "falha_de_rede"
                 return False
             if getattr(result, "status_code", 200) != 200:
+                self.last_attack_failure = "falha_de_rede"
                 self.last_refusal = "batch request returned HTTP %s" % getattr(
                     result, "status_code", "unknown"
                 )
@@ -864,6 +1025,7 @@ class AttackManager:
                 return False
             if '<div class="error_box">' in result.text:
                 self.last_refusal = Extractor.error_box_text(result)
+                self.last_attack_failure = "recusado_pelo_jogo"
                 self.logger.warning(
                     "[Attack] batch %s -> %s refused by game: %s",
                     self.village_id, vid, self.last_refusal

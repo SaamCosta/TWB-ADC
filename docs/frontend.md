@@ -139,6 +139,42 @@ Três coisas vieram junto:
 
 Regressão em `tests/test_pvp_conquest_add.py` (18 checagens, tmpdir, sem rede).
 
+### 2.4 `/village` passa a dizer por que cada alvo de farm não foi atacado (2026-09-22)
+
+Item 2 da §6.1.2. O backend está em `backend.md` §8.16; aqui fica o que a
+interface teve de decidir.
+
+Um painel novo em `village.html`, entre o estado observado e o editor de
+configuração: contagem por motivo (rótulo, quantidade e **qual chave de config
+mexe naquilo**), a lista dos alvos que o bot chegou a avaliar individualmente, e
+os descartes da seleção dentro de um `<details>` — são centenas e são o ruído.
+
+Os quatro contratos que a página é obrigada a honrar, e que ela erraria por
+omissão:
+
+1. **Arquivo ausente não é "nenhuma exclusão".** É "esta aldeia não rodou farm
+   desde que a instrumentação existe" — farm desligado, aldeia sob ataque, bot
+   não reiniciado. As duas coisas renderizariam a mesma lista vazia; por isso o
+   leitor devolve `available` explícito e o vazio tem texto próprio nomeando o
+   arquivo que falta.
+2. **É foto do último ciclo, não estado atual.** Vários motivos expiram sozinhos
+   em horas. O painel diz isso na primeira linha e mostra a idade da leitura
+   (`observed_at` formatado no servidor; o JS do shell só troca por idade
+   relativa — formata, não inventa).
+3. **`truncated` aparece em voz alta.** A contagem por motivo é completa; a
+   lista individual da seleção é cortada em 400. Sem dizer isso, lista curta
+   seria indistinguível de lista completa (vigésimo sexto padrão).
+4. **Código desconhecido aparece cru, não some.** O painel pode ser mais velho
+   que o bot, e engolir o código esconderia exatamente a exclusão nova que
+   ninguém está esperando.
+
+O vocabulário de motivos vem de `game/farm_exclusions.py`, importado pelo
+`FarmExclusionReader`. Duplicar os rótulos aqui faria a interface descrever uma
+versão própria das regras, que envelhece separado do bot.
+
+`tests/smoke_village_page.py` renderiza a rota pelo test client do Flask nos dois
+ramos. Fica **fora** do glob da suíte: lê o `cache/` real.
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)
@@ -457,7 +493,7 @@ mockup como especificação de layout.
 | # | Ideia roubada | Depende de | Esforço |
 |---:|---|---|---|
 | 1 | **Painel "Em voo"** (deles: *Deployment Status*) | `FND-02` p/ estado; ETA já existe parcial | M |
-| 2 | **Razão de exclusão do alvo de farm** | nada — o dado já é produzido e descartado | S |
+| 2 | ~~**Razão de exclusão do alvo de farm**~~ ✅ 2026-09-22 | nada — o dado já era produzido e descartado | S |
 | 3 | **Prazo por linha** (deles: coluna *Next Run*) | `FND-01` p/ frescor; útil degradado sem ele | S |
 | 4 | **Strip de recursos persistente no topo** | nada | S |
 | 5 | **Recrutamento em massa** reusando o padrão da §2.2 | nada — padrão já estabelecido | M |
@@ -479,7 +515,8 @@ nobre nascer "já pousado"; (b) nunca derivar a lista de `status` no cache de
 conquista — foi justamente o campo que mentia (`"complete"` com quatro nobres
 voando), e a trava que segurou foi construída sobre tempo de chegada.
 
-**2. Razão de exclusão do alvo de farm.** O mockup expõe as regras em linguagem
+**2. Razão de exclusão do alvo de farm.** ✅ **Feito em 2026-09-22** — ver §2.4
+abaixo e `backend.md` §8.16. O mockup expõe as regras em linguagem
 de domínio (*Ignore Villages < 100 pts*, *Ignore Barbarians with Wall Lvl > 5*).
 O que vale copiar não são os toggles — é a **legibilidade do motivo**: hoje o
 bot ignora e recusa alvos por caminhos invisíveis ao painel (`ignored` /

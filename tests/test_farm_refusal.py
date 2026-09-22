@@ -33,6 +33,7 @@ from game.attack import (
     INSUFFICIENT_UNITS_MESSAGES,
     FAKE_LIMIT_MESSAGES,
 )
+from game.farm_exclusions import FarmExclusionLog
 
 REAL = "Não existem unidades suficientes"
 
@@ -125,11 +126,14 @@ class _Fake(AttackManager):
 
     def __init__(self, refusal):
         self.last_refusal = None
+        self.last_attack_failure = None
         self._refusal = refusal
         self.village_id = "1"
         self.logger = _Silent()
         self.wrapper = _Wrapper()
         self.troopmanager = _Troops()
+        # village_id None faz flush() virar no-op: o teste nao toca em cache/.
+        self.exclusions = FarmExclusionLog(None).begin()
 
     def enough_in_village(self, units):
         return False          # localmente parece haver tropa
@@ -139,6 +143,7 @@ class _Fake(AttackManager):
 
     def attack(self, vid, troops=None):
         self.last_refusal = self._refusal
+        self.last_attack_failure = "recusado_pelo_jogo" if self._refusal else None
         return False          # o jogo recusou
 
 
