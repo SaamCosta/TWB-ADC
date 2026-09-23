@@ -350,6 +350,55 @@ out = Extractor.own_commands(_page([ROW_NOBLE.replace(
 _check("nobre ainda visivel pelo icone com a coluna quebrada",
        out["commands"][0]["has_snob"], True)
 
+# --------------------------------------------------------------------------
+# RETORNO COM NOBRE (2026-09-23). Recorte literal da mesma tela, capturado as
+# 20:1x com `WebWrapper.get_url`: um dos tres nobres do trem da 50833 que
+# baixaram a lealdade sem conquistar e voltam para casa. O jogo marca a linha
+# com o mesmo segundo <span class="own_command">, mas o icone e
+# `command/return_snob.*` (hint "Com nobre (retornando)"). O regex antigo so
+# casava `command/snob.*`: a coluna dizia nobre, o icone dizia que nao, e o
+# InFlight logava um WARNING por retorno -- alarme falso (15o padrao).
+# --------------------------------------------------------------------------
+ROW_RETURN_SNOB = """<tr class="nowrap  selected  row_ax">
+	<td>
+		<input type="checkbox" name="cancel[]" value="279844355" disabled />        			<span class="own_command" data-icon-hint="Ataque pequeno (1-1000 tropas) (retornando) " data-command-type="return" data-command-id="279844355">
+            <img  src="https://dsbr.innogamescdn.com/asset/e94cf8a0/graphic/command/return_attack_small.webp" alt="" />			</span>
+        			<span class="own_command" data-icon-hint="Com nobre (retornando) " data-command-type="return" data-command-id="279844355">
+            <img  src="https://dsbr.innogamescdn.com/asset/e94cf8a0/graphic/command/return_snob.webp" alt="" />			</span>
+        
+        <span class="quickedit" data-id="279844355">
+            <span class="quickedit-content">
+                <a href="/game.php?village=41123&amp;screen=info_command&amp;id=279844355&amp;type=own">
+                    <span class="quickedit-label">
+                         Retorno de BBM 033 (575|291) K25                    </span>
+                </a>
+                <a class="rename-icon" href="#" title="Renomear"></a>
+            </span>
+        </span>
+
+	</td>
+	<td>
+		<a href="/game.php?village=41123&amp;screen=info_village&amp;id=41123">BBM 001 (577|306) K35</a>
+	</td>
+	<td>
+			amanhã às 03:04:45:<span class="grey small">000</span>		</td>
+	<td class='unit-item'>10</td><td class='unit-item hidden'>0</td><td class='unit-item'>634</td><td class='unit-item hidden'>0</td><td class='unit-item'>278</td><td class='unit-item hidden'>0</td><td class='unit-item'>14</td><td class='unit-item'>4</td><td class='unit-item hidden'>0</td><td class='unit-item'>1</td></tr>"""
+out = Extractor.own_commands(_page([ROW_RETURN_SNOB]))
+c = out["commands"][0]
+_check("retorno: tipo", c["command_type"], "return")
+_check("retorno: coluna de nobre", c["units"].get("snob"), 1)
+_check("retorno: has_snob", c["has_snob"], True)
+_check("retorno com nobre nao gera aviso de discordancia",
+       [w for w in out["warnings"] if "coluna de nobre" in w], [])
+# O retorno sem nobre continua sem nobre pelos dois lados.
+sem_nobre = ROW_RETURN_SNOB.replace(
+    "<td class='unit-item'>1</td></tr>", "<td class='unit-item'>0</td></tr>"
+).replace("command/return_snob.webp", "command/return_attack_small.webp")
+out = Extractor.own_commands(_page([sem_nobre]))
+_check("retorno sem nobre: has_snob", out["commands"][0]["has_snob"], False)
+_check("retorno sem nobre: sem aviso",
+       [w for w in out["warnings"] if "coluna de nobre" in w], [])
+
 
 print("\n" + "=" * 70)
 if _failures:

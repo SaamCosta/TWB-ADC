@@ -128,7 +128,11 @@ OWN_COMMAND_TD_RE = re.compile(r"<td\b[^>]*>(.*?)</td>", re.S)
 # invisivel que originou o pedido da feature (docs/backend.md 6.1). Se as duas
 # leituras discordarem, a discordancia vira warning em vez de uma delas vencer
 # calada.
-OWN_COMMAND_SNOB_ICON_RE = re.compile(r"/command/snob\.\w+")
+# Nobre VOLTANDO (baixou a lealdade sem conquistar) usa o mesmo segundo span
+# com icone `command/return_snob.*` e hint "Com nobre (retornando)" -- medido
+# em 2026-09-23 nos tres retornos da 50833. So `snob.*` gerava um WARNING falso
+# de discordancia por retorno.
+OWN_COMMAND_SNOB_ICON_RE = re.compile(r"/command/(?:return_)?snob\.\w+")
 # Relogio do servidor, no topo de qualquer tela do jogo.
 SERVER_DATE_RE = re.compile(r'id="serverDate"[^>]*>\s*(\d{2})/(\d{2})/(\d{4})')
 SERVER_TIME_RE = re.compile(r'id="serverTime"[^>]*>\s*(\d{1,2}):(\d{2}):(\d{2})')
