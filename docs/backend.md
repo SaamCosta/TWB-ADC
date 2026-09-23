@@ -4243,6 +4243,39 @@ código antigo, os dois testes principais falham.
 Não coberto: os chamadores que fazem `res.text` direto, fora do `Extractor`.
 Esta correção fecha só a porta dos parsers.
 
+## 8.31 ✅ `P-FARM-PROPRIA` — o farm atacou a aldeia recém-conquistada (2026-09-23)
+
+A 50833 pousou às 18:15:06 (os 4 nobres do trem da §8.28 / §9 item 19). Às
+19:19:30 foi marcada `conquered` ("confirmed as ours via village cache") e com
+isso **saiu** de `active_conquests()`, a lista de exclusão do farm da §8.24.
+Às 19:31:32 a BBM 001 (41123) mandou `{'light': 35}` contra ela, com chegada
+prevista por volta das 22:01. O scan de mapa da BBM 001 era de antes do pouso
+e ainda mostrava a aldeia como bárbara, e o filtro `dono_jogador` lê o dono
+desse mapa. É o 3º corolário do 6º padrão pelo outro lado: a exclusão nascia
+com a intenção, mas **morria antes de o mapa ficar sabendo do efeito**.
+
+Duas camadas:
+- `AttackManager.get_targets()` pula qualquer aldeia de `config["villages"]`
+  (`own_villages`, reatribuído pela `Village` antes de cada `run()`), com o
+  motivo `aldeia_propria` no `cache/farm_exclusions`. A lista da conta não
+  atrasa, e o dono no mapa atrasa.
+- `ConquestCache.farm_blocked_targets()` também bloqueia conquista
+  `conquered`/`assumed_done` com pouso nos últimos 3 dias
+  (`RECENT_CONQUEST_SECONDS`), o que cobre a aldeia que ainda não entrou no
+  config. A janela é limitada para não arrastar o histórico inteiro de
+  `cache/conquest`.
+
+Teste: casos novos em `tests/test_farm_conquest_exclusion.py` (25 checks). Com
+o código antigo eles falham. `own_villages` tem padrão `frozenset()` na classe
+(imutável) porque sete testes criam o manager sem `__init__`.
+
+**Achado da mesma sessão sobre o timer (§8.28), fechado:** ✅ às 17:30:03 o
+timer dormiu 58 s. A tentativa 1 (17:31:20) ainda viu a reserva de Asshai no
+quadro, e a tentativa 2 reservou às **17:33:12, 62 s depois do vencimento**
+(reserva 83085, `em 26.09. às 17:32`, 2 de 3 vagas). O minuto de validade do
+quadro não é o minuto em que a reserva some. A margem de 8 tentativas foi
+necessária.
+
 ---
 
 ## 9. Próximos passos

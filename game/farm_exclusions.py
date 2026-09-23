@@ -60,6 +60,15 @@ REASONS = {
                        "precisa estar em `additional_farms` da aldeia de origem.",
         "knob": "villages.<id>.additional_farms",
     },
+    "aldeia_propria": {
+        "phase": FASE_SELECAO,
+        "label": "Aldeia da propria conta",
+        "detail_help": "A aldeia e desta conta (config.villages). O farm nunca "
+                       "ataca, mesmo que o mapa da aldeia de origem ainda a "
+                       "mostre como barbara (caso da 50833 logo apos a "
+                       "conquista, 2026-09-23).",
+        "knob": None,
+    },
     "janela_noturna_jogador": {
         "phase": FASE_SELECAO,
         "label": "Janela 23h-8h (alvo de jogador)",

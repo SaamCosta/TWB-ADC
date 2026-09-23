@@ -1129,6 +1129,9 @@ class Village:
                     self.attack.max_farms = self.get_config(
                         section="farms", parameter="max_farms", default=25
                     )
+                    self.attack.own_villages = {
+                        str(v) for v in (self.config.get("villages") or {})
+                    }
                     self.attack.run()
 
     def do_gather(self):

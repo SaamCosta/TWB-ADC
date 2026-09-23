@@ -157,6 +157,31 @@ check("51540" in [t[0]["id"] for t in am.targets], "fim da conquista libera o al
 check("51540" not in am.ignored, "e ele sai da lista de ignorados")
 
 
+# Incidente de 2026-09-23: a 50833 conquistada as 18:15, marcada "conquered"
+# as 19:19:30, e o mapa da BBM 001 ainda dizia barbara -- a BBM 001 farmou a
+# propria aldeia as 19:31. A lista da conta vence o dono no mapa.
+am = make_manager({**VILLAGES, "50833": barb("50833")})
+am.own_villages = {"41123", "50833"}
+am.get_targets()
+check("50833" not in [t[0]["id"] for t in am.targets], "aldeia propria com mapa velho nao e alvo")
+check(am.exclusions.entries["50833"]["code"] == "aldeia_propria", "motivo aldeia_propria")
+check("aldeia_propria" in REASONS, "codigo no vocabulario do painel")
+check("52000" in [t[0]["id"] for t in am.targets], "barbara comum segue farmada")
+
+# Conquista recem-concluida bloqueia mesmo antes de a aldeia entrar no config;
+# a antiga nao carrega para sempre.
+CONQUEST_FILES["50833"] = {"status": "conquered", "scheduled_arrival": NOW - 3600}
+CONQUEST_FILES["30000"] = {"status": "conquered", "scheduled_arrival": NOW - 10 * 86400}
+CONQUEST_FILES["30001"] = {"status": "assumed_done", "last_hit_timestamp": NOW - 7200}
+blocked = ConquestCache.farm_blocked_targets()
+check("50833" in blocked and "recente" in blocked["50833"], "conquista de 1h atras bloqueia")
+check("30001" in blocked, "assumed_done recente tambem bloqueia")
+check("30000" not in blocked, "conquista de 10 dias atras nao bloqueia mais")
+check("39000" not in blocked, "complete sem nobre no ar continua liberado")
+for k in ("50833", "30000", "30001"):
+    del CONQUEST_FILES[k]
+
+
 # --------------------------------------------------------------------------
 # run(): falha fechada
 # --------------------------------------------------------------------------

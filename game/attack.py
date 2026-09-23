@@ -68,6 +68,9 @@ class AttackManager:
     map = None
     village_id = None
     troopmanager = None
+    # Imutavel de proposito (1o padrao do CLAUDE.md): a Village reatribui um
+    # set novo por ciclo, nunca muta este.
+    own_villages = frozenset()
     wrapper = None
     targets = {}
     logger = logging.getLogger("Attacks")
@@ -155,6 +158,9 @@ class AttackManager:
         # {target_id: motivo} dos alvos na lista de conquista, relido no inicio
         # de cada run(). Ver _load_conquest_targets().
         self.conquest_targets = {}
+        # Aldeias da propria conta (config["villages"]), reescritas pela Village
+        # antes de cada run(). Ver get_targets().
+        self.own_villages = set()
 
     def _load_conquest_targets(self):
         """
@@ -588,6 +594,15 @@ class AttackManager:
             if str(vid) == str(self.village_id):
                 continue
             excluded += 1
+            # Aldeia da propria conta nunca e alvo, venha o mapa como vier. Em
+            # 2026-09-23 a 50833 foi conquistada as 18:15, marcada "conquered"
+            # as 19:19:30 (e por isso saiu de `conquest_targets`), e as 19:31 a
+            # BBM 001 mandou 35 leves contra ela: o scan de mapa da BBM 001 era
+            # de antes do pouso e ainda dizia barbara. O dono no mapa e a fonte
+            # que atrasa; a lista de aldeias da conta nao atrasa.
+            if str(vid) in self.own_villages:
+                self.exclusions.record(vid, "aldeia_propria", "aldeia desta conta")
+                continue
             # Antes de todo outro filtro, inclusive `additional_farms`: um alvo
             # PvP pode estar na lista manual de farm e ainda assim ser alvo de
             # conquista, e a conquista vence. Ver _load_conquest_targets().
@@ -1156,6 +1171,10 @@ class ConquestCache:
     # mesmo buraco do incidente de 2026-08-12 (registro fora de all_reserved
     # com quatro nobres voando), so que do outro lado da linha do tempo.
     ACTIVE_STATUSES = ("train_scheduled", "train_sent", "extra_pending")
+    # Quanto tempo depois do pouso o farm ainda trata a conquista como alvo
+    # bloqueado (farm_blocked_targets). Cobre o intervalo ate a aldeia entrar
+    # em config["villages"] e os mapas das outras aldeias serem relidos.
+    RECENT_CONQUEST_SECONDS = 3 * 24 * 3600
 
     @staticmethod
     def all_reserved():
@@ -1272,6 +1291,25 @@ class ConquestCache:
             blocked[str(target_id)] = "conquista barbara, status %s" % (
                 data.get("status") or "?"
             )
+        # Conquista que ACABOU de dar certo: a aldeia e nossa, mas pode ainda
+        # nao estar em config["villages"] (entra no proximo get_overview) e o
+        # mapa de quem farma pode ser de antes do pouso. Janela limitada para
+        # nao carregar para sempre o historico inteiro de cache/conquest.
+        now = time.time()
+        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+            target_id = fname.replace(".json", "")
+            if target_id in blocked:
+                continue
+            data = FileManager.load_json_file(f"cache/conquest/{fname}") or {}
+            if data.get("status") not in ("conquered", "assumed_done"):
+                continue
+            landed = data.get("scheduled_arrival") or data.get("last_hit_timestamp") or 0
+            try:
+                landed = float(landed)
+            except (TypeError, ValueError):
+                landed = 0
+            if landed and now - landed < ConquestCache.RECENT_CONQUEST_SECONDS:
+                blocked[target_id] = "conquista barbara recente, status %s" % data["status"]
         # Import local: pvp_conquest puxa Hunter e Simulator, e nada deles e
         # necessario para o resto deste modulo.
         from game.pvp_conquest import PvpConquestCache, PvpConquestManager
