@@ -142,7 +142,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   e a exclusão de alvo de conquista do farm
   (`tests/test_farm_conquest_exclusion.py` — bárbara ativa, nobre no ar com
   status errado e PvP em preparação saem de `get_targets()`, inclusive de
-  `additional_farms`, e lista ilegível trava o farm; §8.24).
+  `additional_farms`, e lista ilegível trava o farm; §8.24)
+  e o modo sombra da visão geral (`tests/test_overview_shadow.py` —
+  `game_data` de HTML e do envelope JSON do `TribalWars-Ajax`, comparação
+  igual/produção/diverge com teto de armazém, registro por aldeia no wrapper;
+  §9 item 20a).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever

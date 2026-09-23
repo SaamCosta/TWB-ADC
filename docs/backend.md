@@ -4322,6 +4322,33 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     validação precisa: aldeia só roda dentro de `active_hours` (6–23), e o
     ciclo noturno tem 0 aldeias, logo nenhuma linha de sombra. Reiniciar o bot
     para carregar o código; as linhas começam no primeiro ciclo depois das 6h.
+
+    ✅ **Modo sombra implementado em 2026-09-23** (passos 1 e 2; o 3 é campo).
+    - `core/game_data_shadow.py`. O `WebWrapper.post_process` guarda, em
+      `game_data_seen[village_id]`, um recorte do `game_data` de **toda**
+      resposta: HTML via `updateGameData` e JSON via o envelope
+      `{"response", "game_data"}` do `TribalWars-Ajax`. A aldeia sai do próprio
+      `game_data.village.id`, não da URL. Usa `*_float`, `*_prod` e
+      `time_generated` (relógio do servidor).
+    - Os três GETs de visão geral (`init` em `village_init`, `update_totals`,
+      `market`) capturam o recorte **antes** do GET e comparam depois. O
+      esperado é anterior + `*_prod` × intervalo, com teto no armazém.
+      Veredito: `igual`, `producao` (só a produção do intervalo) ou `diverge`
+      (resíduo > 1,5 em algum recurso, ou `pop`/`pop_max`/`storage_max`/
+      `trader_away` mudou). `init` entrou além do plano porque custa zero e
+      mostra se a leitura do `run()` logo depois do `prime_for_conquest()` é
+      redundante; filtrar por `age_sec` na análise.
+    - Saída: linha `OverviewShadow - INFO - Sombra <ponto> aldeia <id>: <veredito> | anterior de <tela>[ (ajax)] ha Ns | ...`
+      e a mesma coisa em `cache/shadow/overview.jsonl` (sobrevive ao restart,
+      que trunca o `session_latest.log`). ~90 linhas por ciclo diurno.
+    - A pergunta "não verificada" acima (a ação AJAX traz o recurso já
+      descontado?) passa a ser respondida pelo próprio dado: linhas com
+      `source_ajax: true` e `verdict` `igual`/`producao` dizem que sim.
+    - Nada decide com isso. Leitura ruim ou wrapper de mentira vira no-op.
+      Teste: `tests/test_overview_shadow.py` (fixture verbatim de
+      `cache/debug/ally_index.html`; provado quebrando o ramo JSON).
+    **⏳ Falta campo:** reiniciar o bot e juntar um ciclo diurno completo de
+    linhas antes de decidir qualquer corte.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a

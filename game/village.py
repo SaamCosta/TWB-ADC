@@ -6,6 +6,7 @@ import time
 from codecs import decode
 from datetime import datetime
 
+from core import game_data_shadow
 from core.cycle_meter import meter_phase
 from core.extractors import Extractor
 from core.filemanager import FileManager
@@ -137,9 +138,12 @@ class Village:
                 )
                 self.logger.info("Read game state for village")
         else:
+            shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
             data = self.wrapper.get_url(
                 f"game.php?village={self.village_id}&screen=overview"
             )
+            game_data_shadow.record_reread(
+                self.wrapper, self.village_id, "init", shadow_prev)
             if data:
                 self.game_data = Extractor.game_state(data)
                 self.logger = logging.getLogger(
@@ -1184,7 +1188,10 @@ class Village:
                 )
             )
 
+        shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
         res = self.wrapper.get_action(village_id=self.village_id, action="overview")
+        game_data_shadow.record_reread(
+            self.wrapper, self.village_id, "market", shadow_prev)
         self.game_data = Extractor.game_state(res)
         self.resman.update(self.game_data)
         if self.get_config(

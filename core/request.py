@@ -4,6 +4,7 @@ Class for using one generic cookie jar, emulating a single tab
 
 import requests
 
+from core import game_data_shadow
 from core.cycle_meter import CycleMeter
 from core.filemanager import FileManager
 from core.notification import Notification
@@ -64,6 +65,21 @@ class WebWrapper:
         # conta. Uma instancia por wrapper, e o wrapper e um so por processo
         # (vigesimo quinto padrao), logo um medidor so para o ciclo inteiro.
         self.meter = CycleMeter()
+        # P-OVERVIEW-SOMBRA: ultimo game_data visto por aldeia, de qualquer
+        # tela. Em __init__, nao no corpo da classe (primeiro padrao).
+        self.game_data_seen = {}
+
+    def _remember_game_data(self, response):
+        """Guarda o recorte do game_data desta resposta, se houver. Nunca
+        levanta: e observabilidade, igual ao medidor."""
+        try:
+            ajax = "json" in (response.headers.get("content-type") or "")
+            gd = game_data_shadow.extract_game_data(response.text)
+            snap = game_data_shadow.snapshot(gd, source_url=response.url, ajax=ajax) if gd else None
+            if snap:
+                self.game_data_seen[snap["village_id"]] = snap
+        except Exception:
+            pass
 
     def _meter(self, method, slept, started, captcha=0.0, ok=True):
         """Registra uma requisicao no medidor de ciclo. Nunca levanta: o
@@ -99,6 +115,7 @@ class WebWrapper:
         get_h = re.search(r'&h=(\w+)', response.text)
         if get_h:
             self.last_h = get_h.group(1)
+        self._remember_game_data(response)
 
     def get_url(self, url, headers=None):
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')
