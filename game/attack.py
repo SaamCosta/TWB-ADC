@@ -152,6 +152,38 @@ class AttackManager:
         # game/farm_exclusions.py. So o caminho de farm escreve aqui --
         # Hunter, conquista e PvP chamam attack() direto e nao passam por run().
         self.exclusions = FarmExclusionLog(village_id)
+        # {target_id: motivo} dos alvos na lista de conquista, relido no inicio
+        # de cada run(). Ver _load_conquest_targets().
+        self.conquest_targets = {}
+
+    def _load_conquest_targets(self):
+        """
+        Alvos que o farm NUNCA ataca: toda aldeia na lista de conquista,
+        barbara ou PvP.
+
+        Incidente de 2026-09-22 (Barbara #51540): o trem multi-origem pousou as
+        21:23:50 e conquistou a aldeia; um farm de 70 cavalarias leves que a BBM
+        001 tinha mandado as 18:51, com o trem ja agendado e voando, chegou as
+        21:48 e bateu na escolta que ficou de guarnicao -- 70 leves mortas e,
+        do nosso lado da defesa, 293 barbaros, 131 leves, 4 arietes e 3
+        catapultas. Um segundo farm, da BBM 010, ja estava no ar. O farm
+        tratava o alvo da conquista como uma barbara qualquer ate o mapa
+        mostrar dono, e ataque ja enviado nao volta: o jogo so deixa cancelar
+        nos primeiros minutos. Por isso o bloqueio comeca quando o alvo entra
+        na lista (`train_scheduled`), nao quando o nobre pousa.
+
+        Falha fechada: devolve None se a lista nao puder ser lida, e run()
+        pula o farm da aldeia neste ciclo. O custo de um ciclo sem farm e
+        pequeno; o de farmar a propria conquista ja foi medido.
+        """
+        try:
+            return ConquestCache.farm_blocked_targets()
+        except Exception as exc:  # noqa: BLE001 -- qualquer falha trava
+            self.logger.warning(
+                "Farm: lista de conquista ilegivel (%s) -- farm desta aldeia "
+                "suspenso neste ciclo para nao atacar alvo de conquista", exc
+            )
+            return None
 
     def _refused_for_pack_reason(self):
         """
@@ -214,6 +246,10 @@ class AttackManager:
         if not self.troopmanager.can_attack or self.troopmanager.troops == {}:
             # Disable farming is disabled in config or no troops available
             return False
+        conquest_targets = self._load_conquest_targets()
+        if conquest_targets is None:
+            return False
+        self.conquest_targets = conquest_targets
         self.exclusions.begin()
         self.get_targets()
         ignored = []
@@ -527,6 +563,18 @@ class AttackManager:
             # A propria aldeia esta no scan e tem dono != "0", entao cairia em
             # "dono_jogador" -- um motivo tecnicamente certo e inutil de ler.
             own = str(vid) == str(self.village_id)
+            # Antes de todo outro filtro, inclusive `additional_farms`: um alvo
+            # PvP pode estar na lista manual de farm e ainda assim ser alvo de
+            # conquista, e a conquista vence. Ver _load_conquest_targets().
+            conquest = self.conquest_targets.get(str(vid))
+            if conquest:
+                self.logger.info(
+                    "Farm: %s fora do farm -- alvo de conquista (%s)", vid, conquest
+                )
+                if vid not in self.ignored:
+                    self.ignored.append(vid)
+                self.exclusions.record(vid, "alvo_de_conquista", conquest)
+                continue
             if village["owner"] != "0" and vid not in self.extra_farm:
                 if vid not in self.ignored:
                     self.logger.debug(
@@ -1178,6 +1226,38 @@ class ConquestCache:
             if ConquestCache.nobles_in_flight(data, now=now):
                 in_flight.add(fname.replace(".json", ""))
         return in_flight
+
+    @staticmethod
+    def farm_blocked_targets():
+        """
+        {target_id: motivo} de toda aldeia que o farm nao pode atacar por
+        estar na lista de conquista (AttackManager._load_conquest_targets).
+
+        - Barbara: `active_conquests()`, que ja junta status ativo
+          (agendado, em voo, nobre extra pendente) com nobre no ar mesmo sob
+          status errado -- a mesma fonte que impede eleger dois trens.
+        - PvP: status em `PvpConquestManager.FARM_SUSPEND_STATUSES`
+          (preparando, agendado). Status ausente conta como `pending_scout`,
+          o mesmo default que o manager usa.
+
+        Nao engole excecao: quem chama decide, e o farm decide travar.
+        """
+        blocked = {}
+        for target_id, data in ConquestCache.active_conquests().items():
+            blocked[str(target_id)] = "conquista barbara, status %s" % (
+                data.get("status") or "?"
+            )
+        # Import local: pvp_conquest puxa Hunter e Simulator, e nada deles e
+        # necessario para o resto deste modulo.
+        from game.pvp_conquest import PvpConquestCache, PvpConquestManager
+
+        for target_id, data in PvpConquestCache.all().items():
+            status = data.get("status", "pending_scout")
+            if status in PvpConquestManager.FARM_SUSPEND_STATUSES:
+                blocked.setdefault(
+                    str(target_id), "conquista PvP, status %s" % status
+                )
+        return blocked
 
 
 class ConquestManager:

@@ -1241,6 +1241,10 @@ class TWB:
                     # Feature 18: keep own-village points fresh from the overview page
                     # so PvpConquestManager can estimate real moral instead of a
                     # hardcoded neutral value.
+                    # ⚠️ So funciona no modo Producao da visao geral; no modo
+                    # Combinado `villages_data` vem vazio e isto nao atribui nada.
+                    # A fonte que vale e `Village.points_from_game_data()`, lida
+                    # no `village_init()` logo abaixo, dentro de `village.run()`.
                     overview_village = overview_page.villages_data.get(village.village_id)
                     if overview_village:
                         village.points = overview_village.points

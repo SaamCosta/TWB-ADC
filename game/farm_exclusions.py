@@ -92,6 +92,15 @@ REASONS = {
                        "significa viagem mais longa, nao so mais alvos.",
         "knob": "farms.search_radius",
     },
+    "alvo_de_conquista": {
+        "phase": FASE_SELECAO,
+        "label": "Alvo de conquista",
+        "detail_help": "A aldeia esta na lista de conquista (barbara agendada, "
+                       "com nobre no ar ou aguardando nobre extra, ou alvo PvP "
+                       "em preparacao/agendado). O farm nunca ataca: um farm "
+                       "que chega depois do nobre bate na propria guarnicao.",
+        "knob": None,
+    },
     "bloqueado_pelo_jogo": {
         "phase": FASE_SELECAO,
         "label": "Bloqueado pelo jogo",

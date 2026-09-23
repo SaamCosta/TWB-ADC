@@ -135,7 +135,14 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   apareceu; §8.22)
   e o medidor de ciclo (`tests/test_cycle_meter.py` — tempo exclusivo por
   fase fechando o total, requisição atribuída ao topo da pilha, wrapper sem
-  medidor virando no-op; §8.21).
+  medidor virando no-op; §8.21)
+  e os pontos da própria aldeia (`tests/test_village_points.py` — lidos do
+  `game_data`, leitura ruim não zera, e a cadeia pontos → piso de ataque
+  falso → `_legalize` com o caso de campo 48 → 56; §8.23)
+  e a exclusão de alvo de conquista do farm
+  (`tests/test_farm_conquest_exclusion.py` — bárbara ativa, nobre no ar com
+  status errado e PvP em preparação saem de `get_targets()`, inclusive de
+  `additional_farms`, e lista ilegível trava o farm; §8.24).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -364,6 +371,13 @@ puxa o fio.**
   padrão desta lista com outra máscara: ao consumir um parser, conferir *qual*
   valor ele devolve quando falha, e se esse valor é distinguível de um
   resultado legítimo.
+  **Terceiro corolário, 2026-09-22 (§8.24): o bloqueio tem que nascer junto
+  com a intenção, não com o efeito.** O farm só largava um alvo de conquista
+  quando o mapa mostrava dono — ou seja, depois do pouso. Mas um farm mandado
+  *durante* o voo do trem chega depois dele e bate na guarnição (70 leves
+  mortas e 437 da escolta perdidos na 51540). Toda decisão com efeito diferido
+  que pode colidir com outra operação precisa conhecer a *lista de operações
+  agendadas*, não só o estado atual do alvo.
 - ⚠️ **Sétimo padrão, achado em 2026-08-16: sondar a API com um cliente
   diferente do que o bot usa.** Explorando o inventário com um
   `requests.Session()` montado à mão, mandei só `X-Requested-With` e vi

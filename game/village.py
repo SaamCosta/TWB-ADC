@@ -151,12 +151,39 @@ class Village:
                     "TWB_START",
                     "Starting run for village: %s" % self.game_data["village"]["name"],
                 )
+        self.points = self.points_from_game_data(self.game_data, self.points)
         if (
                 self.village_set_name
                 and self.game_data["village"]["name"] != self.village_set_name
         ):
             self.logger.name = f"Village {self.village_set_name}"
         return data
+
+    @staticmethod
+    def points_from_game_data(game_data, current=0):
+        """
+        Pontos desta aldeia lidos do `game_data` da tela que acabou de chegar.
+
+        Antes a unica fonte era `OverviewPage.villages_data`, que so sabe ler a
+        tabela do modo Producao da visao geral. Esta conta abre no modo
+        Combinado (`combined_table`, sem coluna de pontos), entao o dict vinha
+        vazio, `twb.py` nunca atribuia nada e `points` ficava no default 0 em
+        TODAS as aldeias -- medido em 2026-09-22, 31 de 31 com `points: 0` no
+        `cache/managed`. O zero desligava em silencio o piso de ataque falso
+        (`WorldConfig.min_attack_population` devolve 0 sem pontos), a
+        estimativa de moral do PvP e a pontuacao do resource sharing. O
+        sintoma visivel foi a BBM 004 (minimo real de 56, ou seja 5.600 a
+        5.699 pontos com fake_limit 1) mandando 48 de populacao e sendo
+        recusada pelo jogo.
+
+        `game_data.village.points` vem em toda tela do jogo, e um `int`. Leitura
+        ruim devolve `current` em vez de 0: zerar reabriria o mesmo buraco.
+        """
+        try:
+            points = int(((game_data or {}).get("village") or {}).get("points"))
+        except (TypeError, ValueError):
+            return current
+        return points if points > 0 else current
 
     def set_world_config(self):
         """

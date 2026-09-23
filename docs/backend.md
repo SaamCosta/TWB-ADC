@@ -637,6 +637,21 @@ campo e o cooldown de 24h está sendo respeitado.
 Ao retomar: `grep -a` (o log tem bytes NUL) por `Current village flag` e
 `Setting flag` em `cache/logs/session_latest.log`.
 
+⚠️ **A previsão "exatamente 3 trocas (BBM 003, 016, 017)" venceu — 2026-09-22.**
+Ela é de 2026-08-31, quando havia bandeira sobrando no inventário. Na sessão das
+19:14, as quatro primeiras aldeias (BBM 001–004) logaram bandeira de cunhagem
+equipada (−12%, −22%, −16%, −14%) e a mesma linha de oferta: `preferência de
+bandeira [7, 1] sem oferta no inventário da conta (tipo 7: 0, tipo 1: 0);
+usando tipo 2 nível 1`. Nenhum `Setting flag` — a guarda de rebaixamento de
+`flag_logic()` manteve o tipo 7, que está acima do 2 na preferência. A BBM 003,
+uma das três "esperadas", já está com cunhagem −16% e sem oferta não tem para
+onde ir. **Com o inventário de hoje, o esperado para o ciclo é zero trocas**;
+qualquer `Setting flag` que rebaixe uma aldeia de cunhagem é o bug.
+Defeito de texto achado no caminho: a linha diz *"usando tipo 2 nível 1"*, mas
+`_log_unmet_preference()` roda **antes** da guarda de rebaixamento, então
+anuncia uma troca que em seguida não acontece. Reescrever para "melhor
+disponível: tipo 2 nível 1".
+
 ✅ **A pergunta abaixo foi RESPONDIDA e corrigida em 2026-09-20 — ver §8.11.**
 Resposta curta: a política **não** contava a oferta, e o que segurava o Bug 1
 não era ela. O texto original fica abaixo porque o raciocínio dele continua
@@ -2461,13 +2476,22 @@ o tee truncaria o log do bot em produção, ou seja o teste seria a própria coi
 que ele existe para impedir (21º padrão). O que a cópia **não** isola é a trava,
 e esse é o ponto — passar prova que ela atravessa pastas diferentes.
 
-### ⏳ Limitação de transição, que vale enquanto o bot atual não reiniciar
+### ✅ Limitação de transição — encerrada em 2026-09-22
 
-O bot em execução no momento da mudança (pid 11936, iniciado antes) **não segura
-trava nenhuma**. Até o próximo restart, a proteção não vale para ele: um
-`python twb.py` agora adquiriria a trava normalmente e subiria o segundo bot.
-O aceite é reiniciar o bot e confirmar que um segundo `python twb.py` é recusado
-citando o pid do primeiro.
+O bot em execução no momento da mudança (pid 11936, iniciado antes) **não segurava
+trava nenhuma**. O aceite era reiniciar o bot e confirmar que uma segunda
+instância é recusada citando o pid do primeiro.
+
+**Cumprido em 2026-09-22 às 19:46**, com o bot reiniciado às 19:14. Em vez de
+subir um segundo `twb.py` (que, se a trava falhasse, rodaria de fato dois bots
+na conta), um processo separado instanciou `InstanceLock` com a **mesma chave**
+(o `server.endpoint` do `config.json`) e chamou `acquire()`: devolveu `False`,
+`degraded=False`, e `describe_holder()` respondeu *"Outro processo já está
+rodando esta conta (...): pid 11880, iniciado em 2026-09-22 19:14:34, cwd
+C:\Users\User\Desktop\TWB-CLAUDE"* — o pid bate com o `python.exe` vivo no
+`tasklist`. É a mesma chamada que `twb.py` faz antes do tee. O caminho da
+mensagem impressa pelo `twb.py` em si continua coberto pelo
+`tests/smoke_instance_lock_twb.py`, não por este teste.
 
 ---
 
@@ -3078,11 +3102,13 @@ de bug que custou 527 tropas e uma moeda em 2026-08-12.
 
 ### Estado
 
-Suíte inteira verde. **Não validado em campo ainda.** O que observar no próximo
-ciclo, no `session_latest.log`: a linha `Conquest: primed N/M source village(s)
-before the cycle` aparecendo **antes** da primeira aldeia rodar, e as linhas do
-`ConquestPlanner` (escolha de alvo, escolta, agendamento) no mesmo ponto — não
-mais depois de `Village cycle done` da última aldeia.
+Suíte inteira verde. ✅ **Validado em campo em 2026-09-22**, na sessão das
+19:14: `Conquest: primed 3/3 source village(s) before the cycle` às 19:16:47,
+seguido na mesma hora do acompanhamento da conquista ativa (`4 nobre(s) ja a
+caminho de 51540`) e do `ConquestPlanner` (`ja existe conquista barbara em
+andamento`) — tudo antes do `Village cycle done` da BBM 001 (19:26:00). O
+critério original era esse: as linhas da conquista na abertura do ciclo, não
+depois da última aldeia.
 
 ---
 
@@ -3170,11 +3196,40 @@ se fabrica arquivo dentro de `cache/`, que é estado real do bot).
 
 ### Estado
 
-Suíte verde. **Não observado em campo ainda** — o arquivo só nasce depois de um
-ciclo de farm com o bot reiniciado. O aceite é abrir `/village?id=<uma aldeia>`
-e ver a contagem por motivo somar com `Farm targets` + `Ignored targets` do log
-do mesmo ciclo. Se divergirem, há um caminho de descarte não instrumentado — e
-descobrir isso é metade do valor da feature.
+Suíte verde. O aceite é abrir `/village?id=<uma aldeia>` e ver a contagem por
+motivo somar com `Farm targets` + `Ignored targets` do log do mesmo ciclo. Se
+divergirem, há um caminho de descarte não instrumentado — e descobrir isso é
+metade do valor da feature.
+
+⏳ **Observado em campo em 2026-09-22, aceite NÃO fechado — e a divergência
+apareceu, como a frase acima previa.** Os arquivos nasceram para as quatro
+primeiras aldeias da sessão das 19:14. Comparando **alvos distintos** em
+`targets` (não `summary`, que conta registros e passa do total quando um alvo
+é tentado com mais de um pacote) contra a linha do log:
+
+| Aldeia | Log (farm + ignorados) | `targets` no arquivo |
+|---|---|---|
+| BBM 001 (41123) | 19 + 313 = 332 | 331 |
+| BBM 002 (38409) | 19 + 313 = 332 | **312** |
+| BBM 003 (44683) | 19 + 313 = 332 | 331 |
+| BBM 004 (39292) | 2 + 155 = 157 | 156 |
+
+- **BBM 002: 19 alvos sem linha nenhuma — caminho não instrumentado achado.**
+  O template dela é `watchtower_support`, que tem `"farm": []` em todos os
+  estágios **de propósito** (aldeia de espionagem não farma). Com
+  `self.template == []`, `_ordered_templates()` devolve `[]`, o laço do
+  `run()` não entra em `send_farm()` para nenhum alvo, e nada é registrado.
+  No log isso aparece como `Farm targets: 19` seguido de silêncio — nenhuma
+  requisição a `screen=place`. Correção pequena e ainda não feita: registrar
+  um código próprio (ex.: `sem_pacote_de_farm`, knob `villages.<id>.units`)
+  quando não há pacote, ou nem calcular alvos nesse caso.
+- **Diferença de 1 nas outras três:** ainda sem explicação. Suspeita não
+  verificada: `self.ignored` contando o mesmo id duas vezes (313 ignorados
+  contra 312 registros de seleção). Conferir antes de declarar resolvido.
+- O caminho de recusa funcionou em campo: a BBM 004 registrou
+  `recusado_pelo_jogo` com o texto do `error_box` (limite de ataque falso,
+  56 × 48 habitantes). Foi essa linha que levou ao `P-PONTOS-ZERO` (§8.23):
+  a recusa não deveria ter acontecido.
 
 ---
 
@@ -3297,9 +3352,10 @@ checagens, TTL/gate/degradação com wrapper falso) e
 por arquivo temporário, nunca toca `cache/` real). Suíte inteira (57 arquivos)
 verde; `/empire` renderizado via `app.test_client()` sem crash.
 
-**Não validado em campo ainda.** O que observar no próximo ciclo: a linha
-`PlayerStats: N dia(s) de Coletado/Saqueado lidos` no `session_latest.log`,
-e o card de `/empire` deixando de mostrar "sem leitura ainda".
+✅ **Leitura validada em campo em 2026-09-22:** `PlayerStats: 7 dia(s) de
+Coletado/Saqueado lidos` às 19:15:00, no primeiro minuto da sessão, e
+`cache/player_stats.json` reescrito pelo bot no mesmo minuto. O card de
+`/empire` com esse arquivo não foi aberto no navegador.
 
 ---
 
@@ -3419,11 +3475,12 @@ parser). Suíte inteira (59 arquivos) verde. `/empire` renderizado por
 `app.test_client()` nos **dois** ramos (com dado real da captura: 64 no ar, 1
 pousado, 4 nobres; e sem arquivo: "sem leitura ainda").
 
-**Não validado em campo ainda.** O que observar no próximo ciclo: a linha
-`InFlight: N comando(s) no ar (M com nobre)` no `session_latest.log`, e o card
-de `/empire` com idade de leitura baixa. O `cache/in_flight.json` atual foi
-gerado da captura de 2026-09-22 pelo caminho de escrita real, para validar o
-render — o bot o sobrescreve no primeiro ciclo.
+✅ **Leitura validada em campo em 2026-09-22:** `InFlight: 49 comando(s) no ar
+(4 com nobre)` às 19:15:07, e `cache/in_flight.json` sobrescrito pelo bot no
+mesmo minuto (o arquivo da captura saiu de cena). Os 4 nobres batem com o trem
+da 51540 registrado em `cache/conquest` (3 da 41123 + 1 da 74690), e as duas
+fontes são independentes: uma é a tela do jogo, a outra o nosso cache. O card
+de `/empire` com esse arquivo não foi aberto no navegador.
 
 ## 8.19 ✅ `P-PURGE-PARCIAL` — os quatro bugs do fork, e a metade do B9 que sobrou (2026-09-22)
 
@@ -3648,15 +3705,168 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
 
 ---
 
+## 8.23 ✅ `P-PONTOS-ZERO` — o piso de ataque falso estava desligado no império inteiro (2026-09-22)
+
+### O sintoma
+
+Às 19:44:56 da sessão das 19:14 o jogo recusou um farm da BBM 004 (39292 →
+39503): *"A força de ataque precisa do mínimo de 56 habitantes. Você está
+tentando enviar 48 fazendeiros."* O pacote era `{'light': 12}`. O
+`AttackManager._legalize()` existe exatamente para crescer esse pacote até o
+piso (§ do limite de ataque falso, 2026-08-19), e o log não tinha **nenhuma**
+linha `crescido para` na sessão inteira.
+
+### A causa, em três passos medidos
+
+1. `_legalize()` não age quando `min_attack_pop` é 0, e
+   `WorldConfig.min_attack_population()` devolve 0 quando não sabe os pontos.
+2. `cache/managed/*.json`: **31 de 31 aldeias com `points: 0`**, em todos os
+   `last_run` do dia. Não era a BBM 004; era todo mundo.
+3. A única fonte de `Village.points` era `twb.py`, copiando de
+   `OverviewPage.villages_data`. Um probe só-leitura com o próprio wrapper
+   (`cache/_probe_overview_points.py`, resposta em
+   `cache/_overview_points.html`) rodou o parser real sobre a tela: a
+   visão geral desta conta abre no modo **Combinado** (`combined_table`), e
+   `parse_production_table()` só conhece `production_table`. Resultado:
+   `villages_data` vazio, nenhuma atribuição, `points` no default de classe.
+   A tabela combinada **não tem coluna de pontos** — ler outra tabela não
+   resolveria.
+
+A captura que já estava em disco (`cache/_overview_default.html`, 18:11) era
+a página de login, de uma sessão vencida — antes de concluir qualquer coisa
+sobre markup a partir dela, conferir o `<title>`.
+
+### O que o zero desligava, calado
+
+- o piso de ataque falso em **todas** as aldeias (a BBM 001 tem 9.898 pontos,
+  mínimo 98 — qualquer pacote abaixo disso era recusado e bloqueado pelo resto
+  do ciclo);
+- a estimativa de moral do PvP (`pvp_conquest.py:916` pula a conta sem
+  `attacker_points`);
+- a pontuação do resource sharing (`resource_sharing.py:538` caía para o nível
+  do edifício principal).
+
+Mesma família do segundo padrão do `CLAUDE.md`: o valor de falha (0) é
+indistinguível de um valor legítimo, e o consumidor o trata como "o mundo não
+tem limite".
+
+### O que mudou
+
+`Village.points_from_game_data()` lê `game_data.village.points` (um `int`,
+presente em toda tela do jogo; conferido na captura: BBM 001 = 9898) e é
+chamado no fim de `village_init()` — que roda antes de `set_farm_options()` e
+também no `prime_for_conquest()`. Leitura ruim preserva o valor anterior em
+vez de zerar. A atribuição por `villages_data` em `twb.py` ficou, com um
+comentário dizendo que só funciona no modo Produção.
+
+**Não** se trocou o modo da visão geral para Produção: o jogo lembra o último
+modo aberto, então o bot mudaria a tela do usuário (armadilha registrada na
+§7.10).
+
+### Efeito colateral registrado, sem mudança
+
+`OverviewPage.is_premium` sai do mesmo `parse_production_table()`, então a
+autodetecção gravou `world.premium_account: false`. Hoje isso só controla
+`building.auto_queue_len`, que está `false` — sem efeito. Se alguém ligar o
+`auto_queue_len`, conferir `premium_account` à mão primeiro.
+
+### Testes
+
+`tests/test_village_points.py` (17 checagens): o helper com leitura boa e seis
+leituras ruins, e a cadeia pontos → piso → `_legalize()` com o caso exato de
+campo (48 → 56). Inclui o caso `points=0` exigindo que o pacote **não**
+cresça — é a assinatura do bug. O caminho `village_init()` em si faz
+requisição e não está coberto. Suíte inteira (64 arquivos) verde.
+
+**⏳ Falta campo:** reiniciar o bot e ver `points` diferente de 0 no
+`cache/managed` e as primeiras linhas `crescido para` no log. Enquanto o bot
+atual não reiniciar, a correção não vale.
+
+---
+
+## 8.24 ✅ `P-FARM-CONQUISTA` — o farm atacava o alvo da própria conquista (2026-09-22)
+
+### O incidente
+
+A primeira conquista multi-origem deu certo: o trem da Bárbara #51540 (582|289),
+agendado às 10:53 com `sources: {41123: 3, 74690: 1}`, pousou às 21:23:50 e a
+lealdade lida dos quatro relatórios foi 69 → 38 → 3 → −35 (estimativa do bot:
+0). É também a primeira validação em campo da leitura de lealdade por
+relatório com um trem inteiro.
+
+Só que o farm continuou tratando o alvo como uma bárbara qualquer enquanto o
+trem voava. O reporter (`cache/logs/twb_*.log`) tem, depois do agendamento,
+cinco farms contra a 51540: BBM 001 às 11:04, 16:03 e 18:51, BBM 010 às 12:30
+e 20:32. Os três primeiros pousaram antes do trem (14:01, 19:00 e 15:24 —
+inofensivos, a aldeia ainda era bárbara); os dois últimos chegam **depois**:
+
+| Envio | Origem | Chegada | Efeito |
+|---|---|---|---|
+| 18:51:30 | BBM 001, 70 leves | 21:48:41 | relatório 152227464: as 70 leves morreram contra a escolta que ficou de guarnição, e a guarnição perdeu 6 lanceiros, 293 bárbaros, 131 leves, 4 aríetes e 3 catapultas |
+| 20:32:35 | BBM 010, 70 leves | ~23:27 (calculado: 17,46 campos × 10 min) | no ar no momento do registro; comando velho demais para cancelar |
+
+O farm só deixaria a aldeia depois que o mapa mostrasse dono — tarde demais
+para o que já estava no ar. É o sexto padrão do `CLAUDE.md` com uma roupa nova:
+a decisão de farmar olhava o estado do alvo **agora**, e o efeito acontece
+horas depois, num mundo em que o trem já pousou.
+
+### O que mudou (decisão do usuário: o farm nunca ataca aldeia da lista de conquista)
+
+- `ConquestCache.farm_blocked_targets()` devolve `{alvo: motivo}` de toda
+  aldeia na lista de conquista: bárbara via `active_conquests()` (agendada,
+  em voo, nobre extra pendente, **e** nobre no ar mesmo com status errado) e
+  PvP com status em `PvpConquestManager.FARM_SUSPEND_STATUSES`.
+- `AttackManager.run()` relê a lista no início de cada farm, e
+  `get_targets()` exclui o alvo **antes de todo outro filtro** — inclusive de
+  `additional_farms`, porque um alvo PvP pode estar na lista manual e a
+  conquista vence. Código novo `alvo_de_conquista` no `/village` e uma linha
+  INFO `Farm: X fora do farm -- alvo de conquista (...)` por aldeia por ciclo.
+- **Falha fechada:** se a lista não puder ser lida, o farm daquela aldeia não
+  roda no ciclo (WARNING). Um JSON corrompido em `cache/conquest` já derruba o
+  planejador hoje, então isso não abre um modo de falha novo.
+
+### O que isto não cobre, e por quê
+
+- **Ataque já no ar não volta.** O bloqueio começa quando o alvo entra na
+  lista (`train_scheduled`), então farm novo não sai mais depois disso. Um
+  farm enviado **antes** do agendamento só chegaria depois dos nobres se a
+  viagem dele fosse maior que a espera até o trem mais a viagem do nobre —
+  cavalaria leve (10 min/campo) contra nobre (35 min/campo), na prática não
+  acontece. Não foi implementado cancelamento de comando.
+- **Depois da conquista** o status fica `train_sent` até o próximo ciclo, e
+  continua bloqueado; quando o `ConquestManager` confirma a posse, o mapa já
+  mostra dono e o filtro de aldeia de jogador assume.
+
+### Testes
+
+`tests/test_farm_conquest_exclusion.py` (17 checagens): o que entra e o que não
+entra na lista (inclusive `complete` com nobre no ar), o alvo fora de
+`get_targets()` mesmo em `additional_farms`, a volta ao farm quando a
+conquista termina, e `run()` sem farm quando a lista é ilegível. Inclui o caso
+sem lista exigindo que o alvo **seja** farmado — é a assinatura do incidente.
+As três leituras de disco são fixtures; nada toca `cache/`. Leitura real, só
+de leitura, contra o `cache/` vivo: `{'51540': 'conquista barbara, status
+train_sent'}`. Suíte inteira (65 arquivos) verde.
+
+**⏳ Falta campo:** reiniciar o bot e, no próximo trem, ver a linha
+`fora do farm -- alvo de conquista` para o alvo e nenhum `Attacking ... -> alvo`
+no reporter entre o agendamento e o pouso.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 
-0. ~~**`P-CONQ-RAIO`**~~ — ✅ **feito em 2026-09-19** (§8.6). Falta só a
-   validação em campo: o primeiro trem multi-origem real ainda não saiu.
-   **Motivo medido em 2026-09-20 23:00**, e não é código: o log diz
-   `Conquest: 1/4 nobres no imperio inteiro (74690:1) -- aguardando`. Falta
-   **nobre**; o planejador está sendo alcançado e decidindo certo.
+0. ~~**`P-CONQ-RAIO`**~~ — ✅ **feito em 2026-09-19** (§8.6) e ✅ **validado em
+   campo em 2026-09-22**: o primeiro trem multi-origem real saiu às 10:53 contra
+   a Bárbara #51540 (582|289), com `sources: {41123: 3, 74690: 1}` em
+   `cache/conquest/51540.json`. Confirmação independente pela tela do jogo
+   (`cache/in_flight.json`, 19:15): quatro comandos com nobre para 582|289, um
+   da BBM 011 e três da BBM 001, todos pousando às 21:23:50 com 100 ms de
+   intervalo — o mesmo `scheduled_arrival` do nosso cache. **✅ Conquistou:**
+   lealdade 69 → 38 → 3 → −35 nos quatro relatórios de nobre. Custo colateral
+   de fogo amigo registrado na §8.24.
 1. ~~**`P-COL-01`**~~ — ✅ **feito, testado e observado em campo**
    (2026-09-20 22:58, §8.5). O ciclo real logou
    `Using troops for gather operation: 2`, `Gather operation 1 is ready to
@@ -3672,6 +3882,14 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
    de aprendizado, um décimo do recurso. O sinal no log é
    `Unlock: iniciada coleta N (...)`, e a confirmação independente é
    `unlock_time` aparecendo na tela no ciclo seguinte.
+   **Gate LIGADO nas 31 aldeias em 2026-09-22 ~19:50, por decisão do usuário**
+   (o `village_template` segue `false`, então aldeia conquistada depois não
+   herda). A BBM 004 já estava ligada antes e rodou às 19:46 sem linha
+   `Unlock:` — esperado se não podia pagar ou nada estava pendente, porque a
+   decisão de não gastar é silenciosa. O `config.json` é relido no começo de
+   cada ciclo (`twb.py`, `config = self.config()` no laço), então vale a partir
+   do ciclo seguinte sem precisar de restart. **⏳ Falta campo:** a primeira
+   linha `Unlock: iniciada coleta`.
 
 **Acrescentado em 2026-09-20, depois do estudo dos forks:**
 
@@ -3703,8 +3921,11 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
    ✅ **feito em 2026-09-20** (§8.6, "O que foi feito"). `game/world_villages.py`,
    terceira camada em `_candidate_pool()`, recorte por caixa antes da pontuação.
    Candidatos 96 → 387 e o alvo eleito inalterado. De brinde, 38 bárbaras-fantasma
-   do cache local deixaram de ser elegíveis. **⏳ Nenhum trem montado com esse
-   pool ainda.**
+   do cache local deixaram de ser elegíveis. ✅ **Primeiro trem montado com esse
+   pool em 2026-09-22 às 10:53** (o da 51540, item 0). Vale dizer o limite da
+   prova: o alvo eleito é o mesmo que já era eleito antes da terceira camada
+   (582|289), então o trem prova que o pool novo não quebrou nada, não que ele
+   achou um alvo que o antigo não acharia.
 5. ~~**`P-MAPA-REDE`**~~ — ✅ **feito em 2026-09-20** (§8.8). Era o que impedia o
    ciclo de chegar ao planejador de conquista, e portanto o pré-requisito das
    validações de campo dos itens 0, 3 e 4 acima. **✅ Aceite cumprido em
@@ -3722,9 +3943,10 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
    no Windows, `fcntl.flock` no resto), chave = endpoint da conta, arquivo no
    temp do usuário, verificação **antes** do tee de log em `twb.py`. A `_Lock`
    do fork era no-op no Windows e não foi transplantada. Smoke ponta a ponta em
-   `tests/smoke_instance_lock_twb.py`. **⏳ Falta campo:** o bot que está
-   rodando subiu antes da mudança e não segura trava; o aceite é reiniciá-lo e
-   ver um segundo `python twb.py` ser recusado citando o pid do primeiro.
+   `tests/smoke_instance_lock_twb.py`. ✅ **Validado em campo em 2026-09-22
+   19:46:** com o bot reiniciado às 19:14, um `acquire()` de outro processo
+   na mesma chave foi recusado citando o pid 11880 (o bot vivo). Detalhe em
+   §8.10.
 
 8. ~~**Item 9 da fila tática da §7.10**~~ — ✅ **feito em 2026-09-20** (§8.11):
    a política de bandeira **não** contava a oferta, e a medição mostrou que o
@@ -3733,6 +3955,12 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
    releitura pós-upgrade (bug latente achado no caminho), `flag_supply` com a
    quantidade que o código descartava, e aviso único de oferta zerada.
    **⏳ Falta campo:** as linhas de oferta zerada e a contagem de trocas.
+   ✅ **Metade vista em 2026-09-22:** a linha de oferta zerada apareceu nas
+   quatro primeiras aldeias (tipos 7 e 1 com 0 disponíveis), e nenhuma troca
+   aconteceu nelas — a guarda de rebaixamento segurou. A contagem de trocas do
+   ciclo inteiro fica aberta, e o esperado agora é **zero**, não três (§6.3).
+   Às 22:22, **22 de 31 aldeias lidas, zero `Setting flag`**, 22 linhas de
+   oferta zerada. Faltam 9 para fechar o ciclo.
 
 **Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
 
@@ -3762,15 +3990,18 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
    no caminho e nenhum estava no plano: `attack()` devolvendo `False` para três
    coisas diferentes, ausência de registro significando "cortado pelo teto" e
    "nem alcançado" ao mesmo tempo, e `scout()` falhando por falta de espião sem
-   que nenhum dos três chamadores olhasse o retorno. **⏳ Falta campo:** o
-   arquivo só nasce depois de um ciclo de farm com o bot reiniciado.
+   que nenhum dos três chamadores olhasse o retorno. ⏳ **Observado em campo em
+   2026-09-22, aceite não fechado:** o arquivo nasceu para as quatro primeiras
+   aldeias, e a comparação com o log achou um caminho sem registro — aldeia
+   com template sem pacote de farm (`watchtower_support`, BBM 002) deixa os 19
+   alvos selecionados sem linha nenhuma. Mais uma diferença de 1 alvo sem
+   explicação nas outras três. Tabela e correção proposta na §8.16.
 12. ~~**`P-STATS-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.17, Feature 37).
    A série `Saqueado`/`Coletado` que o jogo já publica por dia
    (`screen=info_player&mode=stats_own`, medida em §8.13) virou
    `Extractor.stats_own_series()` + `PlayerStatsReader` (bot, TTL de 6h,
-   conta inteira) + card em `/empire`. **⏳ Falta campo:** a linha
-   `PlayerStats: N dia(s) de ... lidos` no log e o card deixando de mostrar
-   "sem leitura ainda".
+   conta inteira) + card em `/empire`. ✅ **Leitura validada em campo em
+   2026-09-22 19:15:** `PlayerStats: 7 dia(s) de Coletado/Saqueado lidos`.
 
 13. ~~**`P-VOO-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.18, Feature 38). O
    item 1 da §6.1.2 do `frontend.md` ("o mais valioso, e o único que não é
@@ -3778,8 +4009,9 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
    `/empire`, com a hora de chegada vinda do **servidor**. Três achados de
    captura: a tela é paginada e o contador do cabeçalho conta a página (25 de
    65), as colunas de tropa variam por mundo, e o jogo marca nobre um segundo
-   vez por ícone. **⏳ Falta campo:** a linha `InFlight: N comando(s) no ar` no
-   log e a idade de leitura baixa no card.
+   vez por ícone. ✅ **Leitura validada em campo em 2026-09-22 19:15:**
+   `InFlight: 49 comando(s) no ar (4 com nobre)`, com os 4 nobres batendo com o
+   trem da 51540 no `cache/conquest`.
 
 14. ~~**Item 5 da fila tática da §7.10**~~ — ✅ **feito em 2026-09-22** (§8.19).
    Dos quatro bugs do fork, três já estavam fechados aqui; o B9 tinha a
@@ -3806,6 +4038,20 @@ mostra o ramo "nenhum ciclo completo na janela" com o abortado das 19:14.
 17. ~~**`P-CICLO-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.22). `/cycles`
    lê `cache/cycles/` por fase e por aldeia, com abortado fora das medianas e
    média por presença. É onde a decisão do item 16 vai ser tomada.
+
+18. ~~**`P-PONTOS-ZERO`**~~ — ✅ **feito em 2026-09-22** (§8.23). A recusa da
+   BBM 004 levou a `points: 0` em todas as 31 aldeias: a visão geral da conta
+   abre no modo Combinado e o parser só lia o de Produção. Pontos agora saem
+   do `game_data`. Religa o piso de ataque falso, a moral do PvP e a pontuação
+   do resource sharing. **⏳ Falta campo:** reiniciar e ver `crescido para`
+   no log. Segunda recusa com a mesma assinatura na sessão velha, às 20:46:
+   BBM 011, mínimo 98, enviados 80.
+
+19. ~~**`P-FARM-CONQUISTA`**~~ — ✅ **feito em 2026-09-22** (§8.24). A primeira
+   conquista multi-origem (51540, 21:23:50) foi seguida de fogo amigo: um farm
+   mandado com o trem já no ar chegou 25 min depois e bateu na guarnição. O
+   farm agora nunca ataca aldeia da lista de conquista, bárbara ou PvP, desde
+   o agendamento. **⏳ Falta campo:** o próximo trem, com o bot reiniciado.
 
 Depois disso, a fila anterior:
 
