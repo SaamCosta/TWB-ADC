@@ -893,6 +893,26 @@ class ConquestReader:
     }
 
     @staticmethod
+    def _status_label(status, data):
+        """
+        Rotulo do status, dizendo de quem e a reserva quando um alvo manual
+        esta esperando (ConquestManager._get_manual_target, game/attack.py).
+        Sem isto o painel mostraria "na fila" para um alvo que o bot esta
+        pulando de proposito, sem pista do motivo.
+        """
+        waiting = data.get("waiting_reservation") if status == "manual" else None
+        if waiting:
+            label = "Na fila — aguardando reserva de %s" % (
+                waiting.get("reserved_by_name") or "outro jogador"
+            )
+            if waiting.get("reservation_expires"):
+                label += " (vence %s)" % waiting["reservation_expires"]
+            return label
+        if status == "blocked":
+            return "Bloqueado (%s)" % (data.get("blocked_reason") or "?")
+        return ConquestReader.STATUS_LABELS.get(status, status)
+
+    @staticmethod
     def _estimate_loyalty(data, drop_override=None):
         """
         Calcula lealdade estimada atual.
@@ -1009,7 +1029,7 @@ class ConquestReader:
                 "location_str":   location_str,
                 "reserved_by":    data.get("reserved_by", "—"),
                 "status":         status,
-                "status_label":   ConquestReader.STATUS_LABELS.get(status, status),
+                "status_label":   ConquestReader._status_label(status, data),
                 "status_color":   ConquestReader.STATUS_COLORS.get(status, "secondary"),
                 "hits_done":      hits_done,
                 "hits_needed":    hits_needed,

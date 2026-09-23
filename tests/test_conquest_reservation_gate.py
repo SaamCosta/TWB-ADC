@@ -231,32 +231,97 @@ def test_exclusao_manual_por_coordenada():
 # Caminho 2 -- fila manual
 # --------------------------------------------------------------------------
 
-def test_alvo_manual_reservado_sai_da_fila_sem_enviar():
+def test_alvo_manual_reservado_nao_e_entregue_e_fica_esperando():
     """
     A fila e um estado parado; o quadro da tribo nao e. Um alvo enfileirado a
     mao ontem pode ter sido reservado hoje (6o padrao: reconferir no momento de
     agir). E `find_target()` devolve alvo manual ANTES de qualquer filtro, entao
     sem esta guarda o caminho manual passaria as cegas.
+
+    Desde 2026-09-23 a reserva de terceiro NAO tira da fila: o alvo continua
+    "manual", anotado com quem reservou, e e pulado ate a reserva sumir.
     """
     files = {ALVO: {"status": "manual", "queued_at": 1, "target_id": ALVO}}
     man, written = _manager(_Board(claimed=[ALVO]), conquest_files=files)
 
     assert man._get_manual_target() is None
-    assert written[ALVO]["status"] == "blocked"
-    assert written[ALVO]["blocked_reason"] == "tribe_reservation"
-    assert written[ALVO]["reserved_by_name"] == "Conde Strahd von Zarovch"
+    assert written[ALVO]["status"] == "manual"
+    espera = written[ALVO]["waiting_reservation"]
+    assert espera["reserved_by_name"] == "Conde Strahd von Zarovch"
+    assert espera["reservation_expires"] == "hoje às 07:45"
 
 
-def test_alvo_manual_bloqueado_nao_vira_invalid():
+def test_alvo_manual_esperando_nao_segura_o_proximo_da_fila():
+    """Pular o reservado nao pode travar a fila: o seguinte e entregue."""
+    files = {ALVO: {"status": "manual", "queued_at": 1, "target_id": ALVO},
+             LIVRE: {"status": "manual", "queued_at": 2, "target_id": LIVRE}}
+    man, _written = _manager(_Board(claimed=[ALVO]), conquest_files=files)
+    assert man._get_manual_target() == LIVRE
+
+
+def test_espera_inalterada_nao_reescreve_o_arquivo_todo_ciclo():
+    ja_anotado = {"status": "manual", "queued_at": 1, "target_id": ALVO,
+                  "waiting_reservation": {
+                      "reserved_by_name": "Conde Strahd von Zarovch",
+                      "reserved_by_tribe": "RANDOW",
+                      "reservation_expires": "hoje às 07:45",
+                      "since": 123}}
+    man, written = _manager(_Board(claimed=[ALVO]), conquest_files={ALVO: ja_anotado})
+    assert man._get_manual_target() is None
+    assert written == {}
+
+
+def test_reserva_vencida_libera_o_alvo_esperando():
+    """O caso da 74694: a reserva saiu do quadro e a aldeia segue barbara."""
+    esperando = {"status": "manual", "queued_at": 1, "target_id": ALVO,
+                 "waiting_reservation": {"reserved_by_name": "Asshai",
+                                         "since": 123}}
+    man, written = _manager(_Board(claimed=[]), conquest_files={ALVO: esperando})
+    assert man._get_manual_target() == ALVO
+    assert written[ALVO]["status"] == "manual"
+    assert "waiting_reservation" not in written[ALVO]
+
+
+def test_reserva_vencida_mas_nobrada_pelo_dono_vira_invalid():
     """
-    "blocked" e nao "invalid" porque a causa e externa e reversivel -- a
-    reserva expira em 3 dias no br143 e pode ser solta antes. "invalid" e para
-    alvo que nunca vai servir, e some da fila para sempre.
+    Quem reservou nobrou antes de a reserva sair. O cache local ainda diz
+    barbara (ele nao fica sabendo de conquista -- 27o padrao); o village.txt
+    ja diz dono. Uma fonte com dono basta.
+    """
+    class _World:
+        def rows(self):
+            return {ALVO: (531, 289, "919714218", 10285, "x")}
+
+    esperando = {"status": "manual", "queued_at": 1, "target_id": ALVO,
+                 "waiting_reservation": {"reserved_by_name": "Asshai"}}
+    man, written = _manager(_Board(claimed=[]), conquest_files={ALVO: esperando})
+    man.world_villages = _World()
+    assert man._get_manual_target() is None
+    assert written[ALVO]["status"] == "invalid"
+
+
+def test_village_txt_ilegivel_nao_bloqueia():
+    class _World:
+        def rows(self):
+            raise OSError("sem rede")
+
+    files = {LIVRE: {"status": "manual", "queued_at": 1, "target_id": LIVRE}}
+    man, _written = _manager(_Board(claimed=[]), conquest_files=files)
+    man.world_villages = _World()
+    assert man._get_manual_target() == LIVRE
+
+
+def test_exclusao_por_config_continua_tirando_da_fila():
+    """
+    `excluded_targets` e o proprio usuario dizendo "nunca": ai sim "blocked".
+    E "blocked", nao "invalid", porque a causa e reversivel (tirar da config).
     """
     files = {ALVO: {"status": "manual", "queued_at": 1, "target_id": ALVO}}
-    man, written = _manager(_Board(claimed=[ALVO]), conquest_files=files)
-    man._get_manual_target()
-    assert written[ALVO]["status"] != "invalid"
+    man, written = _manager(None, conquest_files=files)
+    man.config = {"conquest": {"excluded_targets": [ALVO]}, "server": {}}
+    assert man._get_manual_target() is None
+    assert written[ALVO]["status"] == "blocked"
+    assert written[ALVO]["blocked_reason"] == "excluded_targets"
 
 
 def test_alvo_manual_livre_continua_passando():

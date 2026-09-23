@@ -4071,6 +4071,65 @@ Não verificado: tropa de apoio **ainda em trânsito** (antes de chegar) e tropa
 em ataque de farm não aparecem em nenhuma das duas tabelas desta captura; se o
 jogo não as lista nesta tela, continuam fora do total.
 
+## 8.27 ✅ `P-FILA-ESPERA` — alvo manual reservado por outro espera em vez de sair da fila (2026-09-23)
+
+Pedido do usuário: a **74694** (583|308, 10.285 pts, "Abandonada") estava
+reservada por Asshai [RANDOW] com vencimento em 23/09 às 17:31, e deveria entrar
+na fila de conquista **se** a reserva vencer e ninguém nobrar.
+
+O que existia não servia. `_get_manual_target()` via reserva de terceiro e
+gravava `status: "blocked"`. O comentário dizia que a causa era "reversível",
+mas **nenhum caminho do código tirava um alvo de `blocked`**. Na prática,
+enfileirar um alvo reservado era o mesmo que descartá-lo, e ele não voltava
+nem depois que a reserva vencia. Além disso, o alvo não passaria pela seleção
+automática: 10.285 pontos passa do `max_points: 1100`, e y=308 fica fora da
+`area_of_interest` (270–299).
+
+Mudança (`game/attack.py::_get_manual_target`):
+- Reserva de **companheiro de tribo** mantém o alvo em `manual`, anota
+  `waiting_reservation` (quem reservou, tribo e vencimento) e o **pula**. O
+  arquivo só é regravado quando a reserva muda, não a cada ciclo. Pular não
+  congela a seleção automática: o que congelava era um alvo manual
+  *devolvido* que nunca sai, e este não é devolvido.
+- A reserva saiu do quadro: a anotação é apagada, com a linha `reserva de X
+  sobre o alvo manual N saiu do quadro -- alvo liberado`, e o alvo segue o
+  caminho normal.
+- O dono passa a ser conferido em **duas fontes**, e basta uma dizer que a
+  aldeia tem dono: `cache/villages` e `map/village.txt` (`_world_owner`). Para
+  posse, o `village.txt` é a fonte mais nova (27º padrão), e quem reservou é
+  justamente quem pode ter nobrado sem o cache local ficar sabendo. Se o
+  `village.txt` não puder ser lido, a checagem volta a ser só a antiga.
+- `conquest.excluded_targets` continua gerando `blocked`, porque ali quem
+  disse "nunca" foi o próprio usuário.
+- Painel (`ConquestReader._status_label`): "Na fila — aguardando reserva de X
+  (vence …)" e "Bloqueado (motivo)". Antes, `blocked` aparecia com o nome cru
+  do status.
+
+Testes em `tests/test_conquest_reservation_gate.py`. O teste antigo, que
+exigia `blocked`, foi trocado por sete novos: espera, próximo da fila entregue,
+sem regravação, liberação, nobrada pelo dono → `invalid`, `village.txt`
+ilegível não bloqueia, e a exclusão por config continua bloqueando. A guarda
+foi provada desligando o ramo novo: dois testes falharam.
+
+A 74694 foi enfileirada às 11:44:49 de 23/09 por `ConquestReader.add_manual_target`.
+
+⚠️ **O bot que está rodando subiu às 09:01 com o código antigo.** Enquanto a
+50833 estiver ativa, o planejador nem chega à fila (um trem por vez). Mas o
+primeiro ciclo depois do pouso (18:15) vai consultar a fila. Se até lá o bot
+não tiver sido reiniciado e a reserva tiver sido renovada, o código antigo
+grava `blocked`. Nada é enviado nesse caso, mas o registro precisa ser voltado
+para `manual` à mão.
+
+**O que isto NÃO resolve.** Fila não é reserva. Assim que a reserva de Asshai
+vencer, qualquer outro membro da tribo pode reservar a aldeia antes do nosso
+trem, e aí ela volta a esperar. O bot só reserva quando agenda um trem
+(`reserve_targets`), e agendar exige 4 nobres livres e nenhuma outra conquista
+ativa. Os 4 nobres atuais estão voando para a 50833. Segurar a vaga no quadro
+enquanto os nobres se juntam é outra feature, e ela esbarra em
+`reserve_max_slots: 1` e em `_release_finished_target_claims()`: esse método
+soltaria na hora uma reserva de alvo que ainda não está em
+`active_conquests()`.
+
 ---
 
 ## 9. Próximos passos
@@ -4127,6 +4186,12 @@ jogo não as lista nesta tela, continuam fora do total.
    `claim_target()` devolve `None` sem postar nada. O primeiro exercício real
    será o próximo alvo sem reserva prévia. Sinal no log:
    `Reservations: alvo X (x|y) reservado no quadro da alianca`.
+   ✅ **Exercitado em campo em 2026-09-23 às 09:09:54:** `alvo 50833 (575|291)
+   reservado no quadro da alianca (reserva 82601) -- 1 de 1 vagas proprias em
+   uso`. É a primeira reserva criada pelo bot. No mesmo passo, o gate da Fase 1
+   decidiu pela primeira vez: 11 alvos descartados por `tribe_reservation`
+   (Aiko, GeBarreto, birkner, Buginha). **Resta ver** a vaga ser devolvida por
+   `_release_finished_target_claims()` depois que a 50833 resolver.
    **Payload ✅ capturado em 2026-09-21** (§8.7): estava no HTML da própria tela
    que a Fase 1 já baixa — `action=new_reservation` com `x[]`/`y[]`/
    `target_type=coord`/`comment[]`, e `action=submit` + `ids[]` +
@@ -4157,6 +4222,10 @@ jogo não as lista nesta tela, continuam fora do total.
    caminho de runtime** — o único que resta é o `twb.py::manual_config`, que só
    roda quando não existe `config.json`. **⏳ Falta campo:** nenhum captcha real
    desde a mudança, e a sessão atual ainda não venceu.
+   ✅ **Metade da sessão validada em 2026-09-23:** o bot subiu às 09:01:53 com
+   a sessão vencida, logou `O cookie em cache/cookies.txt nao autenticou` e
+   `Esperando uma sessao`. O usuário salvou o cookie às 09:02, e às 09:02:33
+   veio `Sessao aceita`, sem reinício. **Falta o captcha.**
 7. ~~**Item 2 da fila tática da §7.10**~~ — ✅ **feito em 2026-09-20** (§8.10):
    `core/instance_lock.py`, trava de região de 1 byte pelo SO (`msvcrt.locking`
    no Windows, `fcntl.flock` no resto), chave = endpoint da conta, arquivo no
@@ -4184,6 +4253,8 @@ jogo não as lista nesta tela, continuam fora do total.
    foram cortadas pela janela das 23h e rodam no ciclo de 2026-09-23; esperado
    continua zero (§6.3 — uma previsão de 3 trocas feita às 22:50 foi retirada,
    estava baseada em cache velho).
+   Ciclo de 2026-09-23 (bot subiu às 09:01): às 10:57, 10 leituras e zero
+   `Setting flag`. As BBM 028–031 ainda não tinham rodado.
 
 **Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
 
@@ -4272,12 +4343,26 @@ jogo não as lista nesta tela, continuam fora do total.
    do resource sharing. **⏳ Falta campo:** reiniciar e ver `crescido para`
    no log. Segunda recusa com a mesma assinatura na sessão velha, às 20:46:
    BBM 011, mínimo 98, enviados 80.
+   ✅ **Visto em campo em 2026-09-23 às 09:47:43:** `Pacote {'light': 15} tem
+   60 de populacao, abaixo do minimo 62 desta aldeia (6274 pontos); crescido
+   para {'light': 16}`. Os pontos chegam e a correção do pacote age.
+   Até as 11:40, nenhuma recusa por ataque falso. A única recusa do ciclo foi
+   `Não existem unidades suficientes` (74689 → 66113, às 10:56:57, o 8º farm
+   seguido da aldeia), e ela foi tratada como devia: pacote abandonado no
+   resto do ciclo. **Fecha** quando o ciclo inteiro terminar sem recusa por
+   ataque falso.
 
 19. ~~**`P-FARM-CONQUISTA`**~~ — ✅ **feito em 2026-09-22** (§8.24). A primeira
    conquista multi-origem (51540, 21:23:50) foi seguida de fogo amigo: um farm
    mandado com o trem já no ar chegou 25 min depois e bateu na guarnição. O
    farm agora nunca ataca aldeia da lista de conquista, bárbara ou PvP, desde
    o agendamento. **⏳ Falta campo:** o próximo trem, com o bot reiniciado.
+   ✅ **Visto em campo em 2026-09-23:** o trem contra a 50833 foi agendado às
+   09:09:54, e às 09:17:16, com os nobres ainda na praça esperando o
+   `send_time`, o farm logou `50833 fora do farm -- alvo de conquista
+   (conquista barbara, status train_scheduled)`. Os 4 nobres saíram às 09:19:43
+   (74689) e às 09:25:28 (41123), cada par num POST só, com chegada às
+   18:15:06. **Fecha** com o pouso sem nenhum farm nosso contra a 50833.
 
 **Acrescentado em 2026-09-23 (§8.25, frontend §2.8) — nada implementado.**
 
@@ -4395,6 +4480,13 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
       `cache/debug/ally_index.html`; provado quebrando o ramo JSON).
     **⏳ Falta campo:** reiniciar o bot e juntar um ciclo diurno completo de
     linhas antes de decidir qualquer corte.
+    Parcial de 2026-09-23 (bot de 09:01, 11 aldeias até as 11:40):
+    `update_totals` deu 18 × `producao`, `market` deu 14 × `producao`, e
+    nenhum dos dois teve `diverge`. `init` deu 3 × `producao` e 1 × `diverge`.
+    O `diverge` foi na 74690, às 11:01:24, com o dado anterior vindo do `map`
+    **1h52 antes** (+15k de madeira recebidos no intervalo). É o caso que o
+    plano mandava filtrar por `age_sec`, e não conta contra o corte. Ainda não
+    é decisão: faltam as aldeias restantes e o ciclo fechar.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a

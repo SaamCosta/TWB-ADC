@@ -1027,7 +1027,7 @@ class AttackManager:
                 return "forced_peace"
 
         self.logger.info(
-            "[Attack] %s -> %s duration %f.1 h", self.village_id, vid, duration / 3600
+            "[Attack] %s -> %s duration %.1f h", self.village_id, vid, duration / 3600
         )
         self.last_attack_duration = duration
 
@@ -1922,12 +1922,52 @@ class ConquestManager:
             # da tribo nao e. E o 6o padrao do CLAUDE.md: reconferir a premissa
             # no momento de agir, nao no de decidir.
             #
-            # Vira "blocked" e nao "invalid" porque a causa e externa e
-            # reversivel (a reserva expira em 3 dias no br143, e pode ser
-            # solta antes): "invalid" e para alvo que nunca vai servir.
+            # Reserva de companheiro de tribo NAO tira da fila: o alvo fica
+            # "manual" e e pulado ate a reserva sumir do quadro (vencer ou ser
+            # solta). Foi pedido do usuario em 2026-09-23 para a 74694
+            # (583|308, 10.285 pts, reserva de outro jogador vencendo no mesmo
+            # dia): alvo bom demais para cair num "blocked" do qual nada no
+            # codigo jamais o tirava de volta. Pular nao congela a selecao
+            # automatica -- quem congela e um alvo manual DEVOLVIDO que nunca
+            # sai, e este nao e devolvido. Se o dono da reserva nobrar, a
+            # checagem de dono abaixo o torna "invalid" assim que a reserva
+            # sair do quadro. `excluded_targets` continua bloqueando: ali quem
+            # disse "nunca" foi o proprio usuario.
             blocked = self._claim_block_reason(
                 target_id, (village_data or {}).get("location")
             )
+            if blocked and blocked[0] == "tribe_reservation":
+                detail = blocked[1]
+                waiting = {
+                    "reserved_by_name": detail.get("reserved_by_name"),
+                    "reserved_by_tribe": detail.get("reserved_by_tribe"),
+                    "reservation_expires": detail.get("reservation_expires"),
+                }
+                self.logger.info(
+                    "Conquest: alvo manual %s reservado por %s (vence %s) -- "
+                    "segue na fila esperando a reserva sair do quadro",
+                    target_id, waiting["reserved_by_name"],
+                    waiting["reservation_expires"]
+                )
+                previous = dict(data.get("waiting_reservation") or {})
+                previous.pop("since", None)
+                if previous != waiting:
+                    waiting["since"] = int(time.time())
+                    ConquestCache.set(target_id, {
+                        **data, "waiting_reservation": waiting,
+                    })
+                continue
+            if data.get("waiting_reservation") and not blocked:
+                self.logger.info(
+                    "Conquest: reserva de %s sobre o alvo manual %s saiu do "
+                    "quadro -- alvo liberado",
+                    data["waiting_reservation"].get("reserved_by_name"), target_id
+                )
+                data = {k: v for k, v in data.items() if k != "waiting_reservation"}
+                ConquestCache.set(target_id, data)
+
+            # Vira "blocked" e nao "invalid" porque a causa e externa e
+            # reversivel: "invalid" e para alvo que nunca vai servir.
             if blocked:
                 reason, detail = blocked
                 who = detail.get("reserved_by_name") or detail.get("matched")
@@ -1943,11 +1983,19 @@ class ConquestManager:
                 })
                 continue
 
-            if village_data and str(village_data.get("owner", "0")) != "0":
+            # Dono por duas fontes, e basta UMA dizer "tem dono". Para posse o
+            # `map/village.txt` e a fonte mais nova (27o padrao: 38 barbaras
+            # do cache local ja eram de jogador, zero no sentido inverso), e
+            # um alvo que esperou reserva alheia e exatamente o que o dono da
+            # reserva pode ter nobrado -- o cache local nao fica sabendo.
+            owner = str((village_data or {}).get("owner", "0"))
+            if owner == "0":
+                owner = self._world_owner(target_id)
+            if owner != "0":
                 self.logger.warning(
                     "Conquest: manual target %s is no longer a barbarian village "
                     "(owner=%s) -- cancelling manual queue entry",
-                    target_id, village_data.get("owner")
+                    target_id, owner
                 )
                 ConquestCache.set(target_id, {
                     **data,
@@ -1957,6 +2005,23 @@ class ConquestManager:
                 continue
             return target_id
         return None
+
+    def _world_owner(self, target_id):
+        """
+        Dono segundo `map/village.txt`, ou "0" (barbara ou sem leitura).
+
+        Sem leitura devolve "0" e nao bloqueia: a checagem pelo cache local
+        continua valendo, e o comportamento volta a ser o de antes desta
+        segunda fonte existir.
+        """
+        if not self.world_villages:
+            return "0"
+        try:
+            row = self.world_villages.rows().get(str(target_id))
+        except Exception as exc:  # noqa: BLE001 -- fonte extra, nao essencial
+            self.logger.debug("Conquest: village.txt ilegivel (%s)", exc)
+            return "0"
+        return str(row[2]) if row else "0"
 
     def _note_failed_claim(self, target_id):
         """
