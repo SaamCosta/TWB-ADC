@@ -683,6 +683,12 @@ a equipada **sai** —, então é inferência pela simetria) e que o inventário
 mudou entre 22:46 e a vez de cada aldeia. Sinal de bug: qualquer `Setting flag`
 com tipo diferente do equipado numa aldeia de tipo 7/1, ou uma troca nas 26 já
 lidas no ciclo seguinte.
+⏳ **Adiado para o ciclo de 2026-09-23:** `active_hours` é `6-23` e o laço de
+aldeias checa a janela **por aldeia** (`twb.py:1234`, `is_village_active_hours`),
+então às 23:00 as que faltam são puladas no meio do ciclo, e o ciclo seguinte
+começa de novo pela BBM 001. As cinco estão no fim da ordem e só rodam perto de
+10h. Até lá o inventário pode mudar: **reconferir a tabela acima contra a
+leitura `flag_supply` do próprio dia** antes de comparar com o log.
 
 ✅ **A pergunta abaixo foi RESPONDIDA e corrigida em 2026-09-20 — ver §8.11.**
 Resposta curta: a política **não** contava a oferta, e o que segurava o Bug 1
