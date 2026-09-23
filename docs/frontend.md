@@ -175,6 +175,10 @@ versão própria das regras, que envelhece separado do bot.
 `tests/smoke_village_page.py` renderiza a rota pelo test client do Flask nos dois
 ramos. Fica **fora** do glob da suíte: lê o `cache/` real.
 
+Código novo em 2026-09-22, `sem_pacote_de_farm` (aldeia cujo template de tropa
+não farma, como a BBM 002): entra pelo vocabulário importado, sem mudança de
+template — é o contrato 4 funcionando como previsto.
+
 ### 2.5 `/empire` ganha o card Saqueado × Coletado (2026-09-22)
 
 Item 6 da §6.1.2. Backend em `backend.md` §8.17.

@@ -96,6 +96,7 @@ def test_codigos_usados_pelo_manager_existem_no_vocabulario():
         "sem_espiao", "aguardando_relatorio_espiao", "relatorio_viu_tropa",
         "inseguro_sem_relatorio", "intervalo_entre_ataques",
         "recusado_pelo_jogo", "paz_forcada", "sem_coordenada", "falha_de_rede",
+        "sem_pacote_de_farm",
     }
     assert esperados.issubset(set(usados)), esperados - set(usados)
 
@@ -286,9 +287,93 @@ def test_alvos_alem_do_teto_ganham_motivo():
     man.run()
     assert man.exclusions.entries["2"]["code"] == "fora_do_teto"
     assert man.exclusions.summary["fora_do_teto"] == 3
-    # Os dois primeiros foram avaliados: sem pacote, nao ha o que registrar,
-    # mas tambem nao podem aparecer como cortados pelo teto.
-    assert "0" not in man.exclusions.entries
+    # Os dois primeiros foram avaliados, entao nao podem aparecer como
+    # cortados pelo teto.
+    assert man.exclusions.entries["0"]["code"] != "fora_do_teto"
+
+
+def test_template_sem_pacote_registra_todo_alvo_avaliado():
+    """
+    O caminho que a 8.16 achou em campo: a BBM 002 (`watchtower_support`, com
+    `farm: []` em todo estagio) logava `Farm targets: 19` e o arquivo nao tinha
+    linha nenhuma para esses 19. Ausencia de linha lia como "nada a relatar".
+    """
+    alvos = [[{"id": str(i)}, i, i] for i in range(3)]
+    man = _man_run(alvos, max_farms=10, packs_por_alvo=[])
+    man.run()
+    assert man.exclusions.summary == {"sem_pacote_de_farm": 3}
+    assert man.exclusions.entries["2"]["phase"] == FASE_TENTATIVA
+
+
+def test_pacote_vazio_nao_entra_na_escada():
+    """
+    `{}` tem populacao 0, _legalize() devolve intacto, e enough_in_village()
+    aprova porque nada falta -- viraria um ataque sem tropa. Sem pacote real, a
+    escada tem que ficar vazia para cair em `sem_pacote_de_farm`.
+    """
+    man = AttackManager.__new__(AttackManager)
+    man.min_attack_pop = 0
+    man.repman = None
+    for template in ([], {}, [{}], [{"light": 0}], [{}, {"light": "0"}]):
+        man.template = template
+        assert man._ordered_templates("9") == [], template
+    man.template = [{}, {"light": 15}]
+    assert man._ordered_templates("9") == [{"light": 15}]
+
+
+class _CapturaLog(_Silent):
+    def __init__(self):
+        self.infos = []
+
+    def info(self, msg, *args):
+        self.infos.append(msg % args)
+
+
+def _man_targets(villages):
+    man = AttackManager.__new__(AttackManager)
+    man.village_id = "41123"
+    man.logger = _CapturaLog()
+    man.map = type("M", (), {"villages": villages, "get_dist": lambda s, loc: 5.0})()
+    man.extra_farm = []
+    man.ignored = []
+    man._unknown_ignored = []
+    man.exclusions = FarmExclusionLog(None).begin()
+    man.farm_maxpoints = 99999
+    man.farm_minpoints = 0
+    man.target_high_points = True
+    man.farm_radius = 50
+    man.conquest_targets = {}
+    return man
+
+
+def test_log_do_ciclo_fecha_com_o_arquivo():
+    """
+    O aceite da 8.16: `Farm targets` + `Ignored targets` do log tem que somar
+    os alvos distintos do arquivo. Divergia em 1 em toda aldeia porque a
+    propria aldeia contava no log e nao no arquivo -- e o contador vinha de
+    `self.ignored`, que atravessa ciclos e nao inclui `bloqueado_pelo_jogo`.
+    """
+    def aldeia(vid, owner="0"):
+        return {"id": vid, "owner": owner, "points": 100, "location": [1, 1]}
+
+    villages = {
+        "41123": aldeia("41123", owner="1"),  # a propria
+        "10": aldeia("10"),
+        "11": aldeia("11"),
+        "12": aldeia("12", owner="777"),
+        "13": aldeia("13"),
+    }
+    man = _man_targets(villages)
+    man._unknown_ignored = ["13"]
+    # Resto de um ciclo anterior: aldeia que saiu do scan nao pode inflar o log.
+    man.ignored = ["99999"]
+    man.get_targets()
+
+    assert "41123" not in man.exclusions.entries
+    assert "41123" not in [t[0]["id"] for t in man.targets]
+    assert man.exclusions.entries["13"]["code"] == "bloqueado_pelo_jogo"
+    assert man.logger.infos[-1] == "Farm targets: 2 Ignored targets: 2"
+    assert len(man.targets) + len(man.exclusions.entries) == 4
 
 
 def test_alvos_depois_do_break_nao_sao_confundidos_com_avaliados():

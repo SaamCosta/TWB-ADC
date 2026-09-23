@@ -123,6 +123,14 @@ REASONS = {
                        "laco parou. Nao e uma afirmacao sobre este alvo.",
         "knob": None,
     },
+    "sem_pacote_de_farm": {
+        "phase": FASE_TENTATIVA,
+        "label": "Template sem pacote de farm",
+        "detail_help": "O estagio atual do template de tropa desta aldeia tem "
+                       "`farm` vazio -- de proposito em templates que nao "
+                       "farmam, como `watchtower_support`. Nenhum alvo e atacado.",
+        "knob": "villages.<id>.units",
+    },
     "sem_tropa_em_casa": {
         "phase": FASE_TENTATIVA,
         "label": "Tropa insuficiente em casa",

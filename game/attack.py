@@ -270,6 +270,16 @@ class AttackManager:
                 self.hunter_service_callback()
             village, *_ = target
             packs = self._ordered_templates(village["id"])
+            if not packs:
+                # Template de tropa sem pacote de farm neste estagio -- o
+                # `watchtower_support` e assim de proposito. Sem este registro o
+                # alvo passava pela selecao e sumia: 19 alvos da BBM 002 sem
+                # linha nenhuma em 2026-09-22 (docs/backend.md 8.16).
+                self.exclusions.record(
+                    village["id"], "sem_pacote_de_farm",
+                    "estagio atual do template de tropa sem pacote em `farm`",
+                )
+                continue
             sent = False
             for template in packs:
                 if template in ignored:
@@ -402,6 +412,11 @@ class AttackManager:
         templates = self.template if isinstance(self.template, list) else [self.template]
         legalizados = []
         for pack in templates:
+            # Pacote vazio (`{}`, ou so com zeros) nao e pacote: _legalize() o
+            # devolve intacto (populacao 0) e send_farm() mandaria um ataque sem
+            # tropa, que enough_in_village() aprova por nao faltar nada.
+            if not isinstance(pack, dict) or not any(int(q) > 0 for q in pack.values()):
+                continue
             legal = self._legalize(pack)
             if legal not in legalizados:
                 legalizados.append(legal)
@@ -558,11 +573,21 @@ class AttackManager:
             if self.village_id in self.map.villages
             else None
         )
+        # Contagem do log POR CICLO. `self.ignored` nao serve para isso: vive
+        # entre ciclos (existe para nao repetir o DEBUG), nunca perde aldeia que
+        # saiu do scan, e nao inclui janela noturna nem `bloqueado_pelo_jogo`.
+        # O log tem que fechar com o `cache/farm_exclusions` do mesmo ciclo --
+        # e o aceite da docs/backend.md 8.16.
+        excluded = 0
         for vid in self.map.villages:
             village = self.map.villages[vid]
-            # A propria aldeia esta no scan e tem dono != "0", entao cairia em
-            # "dono_jogador" -- um motivo tecnicamente certo e inutil de ler.
-            own = str(vid) == str(self.village_id)
+            # A propria aldeia esta no scan e tem dono != "0". Ela nao e alvo
+            # nem exclusao: antes caia em "dono_jogador", entrava na contagem
+            # do log e ficava fora do arquivo -- a diferenca de 1 que a 8.16
+            # deixou sem explicacao (313 ignorados no log, 312 no arquivo).
+            if str(vid) == str(self.village_id):
+                continue
+            excluded += 1
             # Antes de todo outro filtro, inclusive `additional_farms`: um alvo
             # PvP pode estar na lista manual de farm e ainda assim ser alvo de
             # conquista, e a conquista vence. Ver _load_conquest_targets().
@@ -581,10 +606,9 @@ class AttackManager:
                         "Ignoring village %s because player owned, add to additional_farms to auto attack", vid
                     )
                     self.ignored.append(vid)
-                if not own:
-                    self.exclusions.record(
-                        vid, "dono_jogador", "dono %s" % village["owner"]
-                    )
+                self.exclusions.record(
+                    vid, "dono_jogador", "dono %s" % village["owner"]
+                )
                 continue
             if my_village and "points" in my_village and "points" in village:
                 if village["points"] >= self.farm_maxpoints:
@@ -668,8 +692,9 @@ class AttackManager:
             if score is None:
                 score = default_score
             output.append([village, distance, distance / max(score, 1)])
+            excluded -= 1
         self.logger.info(
-            "Farm targets: %d Ignored targets: %d", len(output), len(self.ignored)
+            "Farm targets: %d Ignored targets: %d", len(output), excluded
         )
         self.targets = sorted(output, key=lambda x: x[2])
 

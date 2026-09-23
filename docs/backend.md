@@ -3226,6 +3226,28 @@ primeiras aldeias da sessão das 19:14. Comparando **alvos distintos** em
 - **Diferença de 1 nas outras três:** ainda sem explicação. Suspeita não
   verificada: `self.ignored` contando o mesmo id duas vezes (313 ignorados
   contra 312 registros de seleção). Conferir antes de declarar resolvido.
+- ✅ **Os dois fechados no código em 2026-09-22 (fim do dia).**
+  - **BBM 002:** alvo avaliado sem pacote nenhum agora registra
+    `sem_pacote_de_farm` (fase tentativa, knob `villages.<id>.units`). De
+    brinde, `_ordered_templates()` passou a descartar pacote vazio (`{}` ou só
+    zeros): `_legalize()` o devolvia intacto (população 0) e
+    `enough_in_village()` aprovava por nada faltar — um template com
+    `"farm": {}` mandaria ataque sem tropa. Nenhum template atual tem isso.
+  - **Diferença de 1:** era a **própria aldeia**, não id duplicado. Conferido
+    nos quatro arquivos antes de mexer: ela está ausente de `targets` em todos,
+    e `selecao` = ignorados do log − 1 (312/313 e 154/155). Ela caía em
+    `dono_jogador`, entrava em `self.ignored` (que alimenta o log) e ficava fora
+    do arquivo pelo `if not own`. Agora sai do laço antes de qualquer filtro.
+    Junto, o `Ignored targets` do log passou a ser contagem **do ciclo**: vinha
+    de `len(self.ignored)`, lista que atravessa ciclos (existe para não repetir
+    DEBUG), nunca perde aldeia que saiu do scan e não inclui
+    `janela_noturna_jogador` nem `bloqueado_pelo_jogo` — três outras formas de
+    o aceite divergir. Ninguém faz parse dessa linha (grep em `.py/.html/.js`).
+  - Testes em `tests/test_farm_exclusions.py` (+4, 1 ajustado); os cinco que
+    tocam o código novo **falham contra o `attack.py` do HEAD** (rodado).
+  - **⏳ Aceite de campo:** depois de reiniciar o bot, `Farm targets` +
+    `Ignored targets` = alvos distintos de `targets`, exato, em toda aldeia; e
+    a BBM 002 com 19 linhas `sem_pacote_de_farm`.
 - O caminho de recusa funcionou em campo: a BBM 004 registrou
   `recusado_pelo_jogo` com o texto do `error_box` (limite de ataque falso,
   56 × 48 habitantes). Foi essa linha que levou ao `P-PONTOS-ZERO` (§8.23):
@@ -3996,6 +4018,9 @@ no reporter entre o agendamento e o pouso.
    com template sem pacote de farm (`watchtower_support`, BBM 002) deixa os 19
    alvos selecionados sem linha nenhuma. Mais uma diferença de 1 alvo sem
    explicação nas outras três. Tabela e correção proposta na §8.16.
+   ✅ **Os dois corrigidos no mesmo dia** (`sem_pacote_de_farm`; a diferença
+   de 1 era a própria aldeia contada no log). **⏳ Falta campo:** reiniciar e
+   conferir a soma exata.
 12. ~~**`P-STATS-PAINEL`**~~ — ✅ **feito em 2026-09-22** (§8.17, Feature 37).
    A série `Saqueado`/`Coletado` que o jogo já publica por dia
    (`screen=info_player&mode=stats_own`, medida em §8.13) virou
