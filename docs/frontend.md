@@ -256,6 +256,72 @@ os nomes reais de aldeia: um `h1`, IDs únicos, sem overflow no body a 1280 e
 painel do navegador não renderizou imagem nesta sessão; a verificação foi por
 DOM.
 
+### 2.8 Auditoria de campo do painel (2026-09-23, 00:05)
+
+Pedido do usuário depois do estudo da interface do jogo (`backend.md` §8.25):
+"faça a mesma coisa em `127.0.0.1:5000`". As 22 rotas GET foram visitadas com o
+painel servindo o `cache/` vivo **num momento de ataque real em curso** (BBM
+032, chegada 00:05:07). Todas respondem 200 em ≤ 675 ms e nenhuma deixa vazar
+`undefined`/`NaN`/`None` no texto visível. Nenhum POST foi acionado. O que
+segue é o que está errado **contra o estado real**, e não contra fixture.
+
+**Gravidade alta — o painel contradiz o jogo:**
+- **W1 `/` e W4 `/villages`: "0 sob ataque" com ataque a caminho.** A ameaça só é
+  lida do `cache/managed` de cada aldeia, e a BBM 032 (conquistada às 21:23)
+  nunca foi processada pelo bot. O jogo publica `player.incomings` no
+  `game_data` de toda tela e ninguém o lê. `/villages` ainda diz "Dados
+  incompletos: 0" com 1 das 32 aldeias gerenciadas sem snapshot: a aldeia sem
+  dado **some da contagem** em vez de aparecer como incompleta.
+- **W6 `/conquest`: "Operações que exigem atenção: nenhuma"** logo acima de um
+  nobre cuja "última chegada prevista passou há 2h38min" sem que a conquista
+  tenha sido fechada. Chegada vencida e não reconciliada é exceção por
+  definição (sexto padrão). "1 ativa" é a 51540, já conquistada.
+- **W10 `/farmscores`: 1º e 4º lugares são aldeias NOSSAS** (44167 = BBM 031,
+  46676 = BBM 027, "Seguro"). Aldeias conquistadas seguem no ranking. O bot não
+  as ataca (log: "player owned"), mas o painel as recomenda.
+- **W7 `/cycles`: a mediana mistura o ciclo diurno (3h51, 861 req, 27 aldeias)
+  com o noturno (8m56, 35 req, 0 aldeias)** → "2h00, 448 req em 14 aldeias", que
+  não descreve ciclo nenhum. A decisão da §2.7 tirou o **abortado** das medianas;
+  o ciclo sem aldeia (janela inativa) passou pela mesma porta. Décimo primeiro
+  padrão.
+- **W11 `/hunter`: "30 agendadas · 3 terminais" no topo e "Agendamentos ativos:
+  0" na lista.** Provavelmente agendadas com horário vencido, contadas como
+  vivas no cabeçalho.
+
+**Gravidade média — dado velho ou incompleto apresentado como atual:**
+- **W3 `/empire`: "Aldeias: 31"** (a conta tem 32) e **"Pontos: 0"** em todas —
+  o bot vivo subiu às 19:14 sem a correção do `P-PONTOS-ZERO` (22:29). Some ao
+  reiniciar; o card não sinaliza que o zero é suspeito.
+- **W13 `/inventory`: 24 itens lidos em 16/08** (37 dias), leitura desligada. A
+  data aparece, mas a lista tem cara de atual.
+- **W15 `/logs`: só os `twb_*.log` do reporter**, com timestamp Unix cru no nome
+  (`twb_1790115278.log`). O `session_latest.log`, onde estão as linhas dos
+  managers, não é fonte (vigésimo padrão: os dois não se substituem).
+- **W8 `/flags` cita `docs/bugs_flags.md`**, que não existe desde 14/09.
+
+**Gravidade baixa — legibilidade:**
+- W2/W9: tipos crus de relatório (`ReportTrade`, `ReportAccept`,
+  `ReportAutoMintingSessionEnd`…) na atividade recente e no filtro de `/reports`.
+- Aldeias por id em vez de nome em `/`, `/conquest` e `/farmscores`.
+- W5: ajuda em **inglês** em `/village` e `/config`; `/village` mostra "Scout
+  first", a chave morta registrada no `CLAUDE.md`.
+- `/farmscores`: "Menor = mais eficiente" com a lista em ordem decrescente.
+- W12 `/zones`: o perfil torre sai sem etiqueta (DEF/OFF saem).
+- W14 `/pvp_conquest`: contador grudado ("00 em preparação").
+- Travamento transitório do renderer ao rolar `/conquest` (uma vez, 1.859 nós,
+  não reproduzido).
+
+**O que esta auditoria mostra além da lista.** Os cinco de gravidade alta têm a
+mesma raiz: o painel **só enxerga o que passou pelo laço de aldeias**, e o
+laço dorme 7 h por noite e leva ~4 h para chegar à última aldeia. Aldeia nova,
+conquista que pousou, ataque chegando de madrugada, tudo isso fica invisível
+até a vez da aldeia. O jogo publica boa parte disso de graça (`incomings`,
+`features`, visões gerais premium: `backend.md` §8.25), e é daí que o painel
+deveria ler o estado da conta, não do último snapshot por aldeia. É o mesmo
+diagnóstico da otimização do ciclo, visto pelo lado de quem lê.
+
+Nada corrigido nesta passada: a lista é a entrada para decidir com o usuário.
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)

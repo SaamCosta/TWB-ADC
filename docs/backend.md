@@ -3905,6 +3905,144 @@ no reporter entre o agendamento e o pouso.
 
 ---
 
+## 8.25 Estudo extensivo da interface do jogo (2026-09-22/23, conta premium + gerente de conta)
+
+**Pedido do usuário:** com o bot dormindo, vasculhar toda a interface — comum,
+premium e gerente de conta —, ver dados e configurações **sem alterar nada**, e
+usar a base de conhecimento oficial
+(`support.innogames.com/kb/TribalWars/pt_BR`). Objetivo declarado: a otimização
+do ciclo ("funcionalidade: módulos que rodam sempre, no início do ciclo, várias
+vezes por dia"), com futuros botões "premium ativado" / "gerente ativado".
+
+**Método.** Inventário de links da tela inicial (~110 destinos) e depois de
+cada tela capturada (sub-modos, `ajaxaction`, `action`); lotes de captura
+só-GET com o `WebWrapper` do bot (HTML em disco, fora do repo); bundles de JS
+da CDN (`Scavenging`, `VillagePlace`, `Farming`, `game`) para achar endpoints
+sem tocar a conta; a KB inteira (240 artigos) baixada e lida nos pontos
+relevantes. **Nenhum POST, nenhum clique que mude estado.**
+
+⚠️ **Incidente: o estudo provocou captcha (`data-bot-protect="forced"`) às
+~00:00 de 23/09.** ~60 GETs pelo wrapper + ~15 navegações no Chrome em ~15 min
+(~5 req/min; o bot faz ~3,7). O delay do wrapper, mesmo com 4–9 s extras,
+**não bastou**: o limite é da conta e soma todos os clientes. O script ficou
+preso em `_await_captcha_clear` sem saída visível, porque só conferia
+`data-bot-protect` depois do retorno. O usuário resolveu o captcha. Regra
+registrada na memória: varredura ≤ ~2 req/min somando todos os clientes.
+
+### O que o bot já usa e o que nunca tocou
+
+Já usados: `place` (+`units`, `scavenge`), `scavenge_api`, `overview`,
+`overview_villages` (+`commands`), `market` (`send`, `other_offer`,
+`own_offer`, `all_own_offer`, `exchange`), `flags`, `statue`, `snob`,
+`inventory`, `report/all`, `main`, `smith`, `new_quests`, `info_village`,
+`info_player` (+`stats_own`), `info_ally`, `ally/reservations`.
+
+Nunca tocados, com o que entregam — em ordem de impacto no ciclo:
+
+| Tela | Exige | Entrega | Hoje o bot faz |
+|---|---|---|---|
+| `am_farm` (assistente de saque) | assistente | envio A/B **sem confirmação**: `POST am_farm&mode=farm&ajaxaction=farm&json=1`; C = `ajaxaction=farm_from_report`, o **servidor** dimensiona pela última espionagem (`data-units-forecast`). Só bárbaras (KB) | ~4,5 req por ataque (praça → confirm → popup) |
+| `place&mode=scavenge_mass` | premium | 32 aldeias num GET: recursos, `res_rate`, armazém, tropa em casa, estado das 4 opções. Envio `scavenge_api` `send_squads` com **todos** os pendentes num POST (`squad_requests[0..n]`, JS verificado) | 1 GET + 1 POST **por esquadrão** (116 req/ciclo) |
+| `overview_villages&mode=units` | premium | por aldeia: próprias / na aldeia / fora / em trânsito / total | `place/units` 57×/ciclo |
+| `overview_villages&mode=buildings`, `tech` | premium | níveis de edifício e pesquisa de todas (⚠️ **25/pg**, usar "todos") | `main` 34×, `smith` 27× |
+| `train&mode=mass` | premium | recursos, fazenda, tropa, máximo recrutável de todas (⚠️ 25/pg) | quartel/estábulo/oficina 35× |
+| `snob` → cunhagem automática | **grátis** (≥ 5 aldeias) | `POST snob&action=start_auto_minting_session`, 8 h por aldeia, roda offline, confere a cada minuto (KB 6014); `snob&mode=coin` cunha em massa | `snob&action=coin` por moeda |
+| `am_village` / `am_troops` / `am_research` | gerente | construção / recrutamento / pesquisa **no servidor, 24 h** | `BuildingManager` / `TroopManager` (duplo comando, abaixo) |
+| `am_warehouse` (Estoque) | gerente | balanceamento automático "várias vezes por dia" | `resource_sharing` (~84 req/ciclo) |
+| `place&mode=call` (apoio em massa) | premium | tropas de todas ordenadas por distância ao destino, envio único | `DefenceManager` apoio por aldeia |
+| `market&mode=call` (Pedido) | premium | puxa recurso de todas para uma | — |
+| `report&mode=filter` | comum | o jogo **deixa de gerar** tipos de relatório | lê e abre tudo |
+| `premium&mode=feature_log` | — | prazo de cada funcionalidade | — |
+
+Outras telas mapeadas sem efeito direto no ciclo: `relic_system` (Tesouraria —
+relíquias com bônus por **raio**, inclusive capacidade de saque e velocidade de
+construção; cada bárbara conquistada entrega uma; até 2 por dia em batalha e
+coleta; teto de 20% por atributo), `relic_trade`, `info_player&mode=daily_bonus`
+(baús diários com itens), `reqdef` (pedido de apoio ao fórum), `am_market`
+(entregas agendadas — nenhuma criada), `am_notify` (e-mail em ataque),
+`place&mode=templates` (modelos Fake, Nobre, Farm1), `place&mode=neighbor`,
+`place&mode=sim`, `market` `traders` / `transports` / `mass_create_offers`,
+`settings/*`.
+
+### Os achados que mudam o desenho
+
+1. **Detecção de premium/gerente custa zero requisição.** Todo `game_data`
+   (que o bot já parseia em toda tela) traz
+   `"features": {"Premium": {"active": true}, "AccountManager": {...},
+   "FarmAssistent": {...}}`, além de `player.incomings` (conta inteira),
+   `new_report`, `villages`. Os botões "premium ativado"/"gerente ativado"
+   podem ser **leitura**, não configuração. Prazo em
+   `premium&mode=feature_log` (hoje os três vencem **08/out 01:16**).
+2. **Duplo comando em construção e recrutamento.** O gerente de construção está
+   ativo em 27 das 32 aldeias com modelos cujos níveis finais são **idênticos**
+   aos do bot (`ADC - DEFENSIVA` = `purple_predator_into_def`,
+   `ADC - OFENSIVA BOT` = `purple_predator_into_off`, `ADC - TORRE` =
+   `watchtower_support`); o gerente de tropa idem (`ADC - OFENSIVA` =
+   `off_no_archer`, `ADC - DEFENSIVA` = `def_no_archer`, `ADC - TORRE` =
+   `watchtower_support`). O bot também constrói nelas (BBM 004 `garage 5 -> 6`
+   às 19:40 com o modelo do gerente ativo). Gerente: até 50 ordens por aldeia e
+   depois **pausa** (BBM 030 em 29/50); põe armazém/fazenda sozinho; pode
+   demolir acima do alvo.
+3. **Duplo comando no transporte.** `am_warehouse` ativo (escassez < 23%,
+   excedente > 69%, viagem ≤ 24 h, reserva 0 comerciantes, sem grupos
+   excluídos) **e** `resource_sharing` do bot.
+4. **Relatório se corta na fonte.** Dos 1.000 relatórios em cache,
+   **460 (46%) são `ReportTrade`** — transporte, quase todo entre as nossas
+   aldeias — mais 37 `ReportAccept`, 7 `ReportAMemptyQueue`, 6
+   `ReportAMStockpileDistribution`. O filtro do jogo ("Transportes entre as suas
+   aldeias", "As tropas retornaram com recursos", "ordens do gerente
+   concluídas"…) os elimina antes de existirem. **Não** filtrar "seus ataques
+   sem perdas": é o relatório de farm. O jogo também já separa pastas
+   `[Coletando]` e `[Assistente de saque]`. Configuração: decisão do usuário.
+5. **A cunhagem automática já é usada à mão** (15 `ReportAutoMintingSessionEnd`
+   no cache) enquanto o bot cunha moeda a moeda.
+6. **Módulo que depende da vez da aldeia.** Às 23:49 o planejador dizia "já
+   existe conquista bárbara em andamento (51540)", 2h26 depois da conquista:
+   quem fecha é o `run_conquest()` da `reserved_by` (BBM 001), que só roda às
+   6h. Planejador bloqueado a noite toda. Exemplo concreto do item 4 do
+   usuário.
+7. **Ciclo noturno medido:** 0 aldeias, 35 req, 89% `conquista_barbara`.
+
+### Respostas aos itens do usuário (conversa de 22/09)
+
+- **Item 1 (relatórios desnecessários):** achado 4 — corte na fonte pelo filtro
+  do jogo; o que sobrar se tria pela lista (ícone de comando e pasta vêm no
+  markup: `attack_small|medium|large`, `farm`, `snob`, `spy`, `support`).
+- **Item 2 (premium/gerente):** achado 1 — detecção automática; a tabela acima
+  diz o que cada cenário libera.
+- **Item 5 ("Comércio" 1,1%, 7 dias: 312.260 / 83.210 / 11.610):** **não conta
+  envio entre as nossas aldeias.** `cache/resource_sharing/history.json` (300
+  envios, 18/09 18:38 → 22/09 23:02, janela **menor**) soma 738.230 madeira,
+  **1.050.100 argila**, 584.400 ferro aceitos entre aldeias próprias — 12× a
+  argila do "Comércio". É mercado com outros jogadores (a visão de transportes
+  mostra trocas com Bling, Woodrow Mitchell4, Vinnie Barton25).
+
+### Hipóteses NÃO testadas (exigem ação real, decisão do usuário)
+
+- `send_squads` com N esquadrões de aldeias diferentes, cada um com seu
+  `unit_counts`, num POST (o JS do jogo manda N pendentes, mas com o mesmo
+  `candidate_squad`).
+- Assistente de saque aceitar os mesmos alvos que o bot usa hoje e respeitar o
+  piso de ataque falso (`fake_limit`).
+
+### Evento de campo durante o estudo
+
+23:50: ataque de *Black 029 (570|277)*, **michelon97**, contra a **BBM 032
+(582|289)**, chegada 00:05:07. BBM 032 com **lealdade 27** (widget do gerente)
+e 0 tropa em casa; bot dormindo até 00:23 e sem snapshot dela. Avisado ao
+usuário na hora; nenhuma ação tomada. O painel mostrava "0 sob ataque"
+(`frontend.md` §2.8).
+
+Captura lenta depois que o usuário resolveu o captcha (3 GETs, ~45 s de
+intervalo): a lista de defesas traz **"michelon97 (Black 029) visitou BBM
+032"** — o título não fala em conquista (relatório não aberto). Na mesma lista,
+**nosso apoio estacionado em aldeias de outros jogadores está sendo atacado**
+(BBM 001 em "Aldeia-bonus", BBM 020 em "Odisseia_004" ×3); o bot não acompanha
+apoio fora de casa. Nos relatórios de comércio, **39 de 50 (78%) são entre as
+nossas aldeias**, o que reforça o achado 4.
+
+---
+
 ## 9. Próximos passos
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
@@ -4110,6 +4248,21 @@ no reporter entre o agendamento e o pouso.
    mandado com o trem já no ar chegou 25 min depois e bateu na guarnição. O
    farm agora nunca ataca aldeia da lista de conquista, bárbara ou PvP, desde
    o agendamento. **⏳ Falta campo:** o próximo trem, com o bot reiniciado.
+
+**Acrescentado em 2026-09-23 (§8.25, frontend §2.8) — decisões do usuário, nada implementado:**
+
+20. **Duplo comando** (achados 2 e 3): construção, recrutamento e transporte
+    rodam no gerente de conta **e** no bot, com os mesmos alvos. Decidir quem
+    manda por aldeia antes de otimizar qualquer um dos dois.
+21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte.
+    Configuração do jogo, feita pelo usuário.
+22. **Leitura de conta em vez de leitura por aldeia**:  e
+     (grátis), visões gerais premium e coleta em massa. Base para os
+    botões premium/gerente e para o painel parar de dizer "0 sob ataque".
+23. **Cunhagem automática** (grátis) no lugar da cunhagem moeda a moeda.
+24. **Assistente de saque e coleta em massa**: as duas hipóteses não testadas da
+    §8.25 exigem um envio real cada; canário com autorização.
+25. **Painel**: os cinco itens de gravidade alta da  §2.8.
 
 Depois disso, a fila anterior:
 
