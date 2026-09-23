@@ -1191,11 +1191,15 @@ class Village:
                 )
             )
 
-        shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
-        res = self.wrapper.get_action(village_id=self.village_id, action="overview")
-        game_data_shadow.record_reread(
-            self.wrapper, self.village_id, "market", shadow_prev)
-        self.game_data = Extractor.game_state(res)
+        reused = game_data_shadow.reuse(self.wrapper, self.village_id, "market")
+        if reused:
+            self.game_data = reused
+        else:
+            shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
+            res = self.wrapper.get_action(village_id=self.village_id, action="overview")
+            game_data_shadow.record_reread(
+                self.wrapper, self.village_id, "market", shadow_prev)
+            self.game_data = Extractor.game_state(res)
         self.resman.update(self.game_data)
         if self.get_config(
                 section="world", parameter="trade_for_premium", default=False

@@ -4671,6 +4671,26 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     `trader_away 4->0`). **Pelo critério de aceite, as releituras 2 e 3
     (`update_totals` e `market`) podem sair.** São cerca de 67 requisições por
     ciclo. A decisão de cortar é do usuário.
+    ✅ **Cortado em 2026-09-23, por decisão do usuário.** As duas releituras
+    agora reaproveitam o `game_data` **completo** da última resposta HTML
+    daquela aldeia (`WebWrapper.game_data_full`, guardado em `post_process`),
+    desde que ele tenha no máximo `bot.reuse_game_data_max_age` segundos
+    (padrão 60; a idade máxima medida nesses dois pontos foi 34 s, com
+    mediana de 12,5 s em `update_totals` e 17 s em `market`). Sem dado, dado
+    velho ou dado vindo de resposta JSON: o GET volta, e a comparação da
+    sombra continua rodando nesse caminho. Só HTML de propósito, porque é a
+    mesma origem do `Extractor.game_state()` que os consumidores sempre
+    receberam, e ninguém conferiu se o `game_data` do envelope AJAX tem todas
+    as chaves que `ResourceManager.update()` lê. Uma resposta JSON posterior
+    também invalida o HTML guardado, porque ele deixa de ser o dado mais novo.
+    O GET da visão geral não tinha outro efeito colateral: o `x-csrf-token`
+    não é renovado por essa tela durante o ciclo, e o que vem em seguida são
+    GETs comuns. A leitura inicial (`init`) **não** foi cortada: nela o dado
+    anterior chega a ter horas. Testes em `tests/test_overview_shadow.py`
+    (reaproveitamento, idade, JSON, gate 0, cópia, e `update_totals` sem GET),
+    provados por mutação. **⏳ Falta campo:** a fase `init`/`recrutamento`/
+    `mercado` do `/cycles` cair cerca de 67 requisições no primeiro ciclo
+    depois do reinício.
     O mesmo ciclo respondeu o item 20-medida (`Ciclo por tela`, 1.171
     requisições em 5h02). Os maiores gastos: `scavenge_api send_squads` 105;
     `report/all/view` 85 em `init` + 52 em `conquista_barbara` (**137 páginas

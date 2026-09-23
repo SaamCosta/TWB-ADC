@@ -167,6 +167,57 @@ def format_line(point, result):
         result["age_sec"], "; ".join(parts), extra)
 
 
+def remember_full(wrapper, village_id, game_data, text):
+    """Guarda o game_data COMPLETO desta resposta, so se ela for HTML.
+
+    So HTML de proposito: e a mesma origem de `Extractor.game_state()`, que e o
+    que os consumidores das releituras sempre receberam. O envelope JSON do
+    `TribalWars-Ajax` traz um `game_data` que a sombra comparou certo nos
+    recursos, mas ninguem conferiu se ele tem todas as chaves que
+    `ResourceManager.update()` le -- e na duvida o GET continua."""
+    try:
+        if not isinstance(getattr(wrapper, "game_data_full", None), dict):
+            return
+        if (text or "").lstrip().startswith("{"):
+            wrapper.game_data_full.pop(str(village_id), None)
+            return
+        wrapper.game_data_full[str(village_id)] = {
+            "game_data": game_data, "received_at": time.time(),
+        }
+    except Exception:
+        pass
+
+
+def reuse(wrapper, village_id, point):
+    """game_data completo e recente desta aldeia, ou None (faca o GET).
+
+    Corte do §9 item 20a, decidido sobre o ciclo diurno de 2026-09-23: nas
+    releituras `update_totals` e `market`, 67 de 67 comparacoes deram
+    `producao` (nada alem da producao do intervalo), com o dado anterior
+    tendo no maximo 34 s. Reaproveitar o que a ultima tela HTML trouxe da o
+    mesmo resultado sem a requisicao. `max_age` (bot.reuse_game_data_max_age)
+    limita isso ao caso medido; acima dele, ou sem dado, o GET volta.
+    """
+    try:
+        max_age = float(getattr(wrapper, "reuse_game_data_max_age", 0) or 0)
+        store = getattr(wrapper, "game_data_full", None)
+        if max_age <= 0 or not isinstance(store, dict):
+            return None
+        entry = store.get(str(village_id))
+        if not entry:
+            return None
+        age = time.time() - entry["received_at"]
+        if age > max_age:
+            return None
+        gd = entry["game_data"]
+        logger.debug(
+            "Releitura %s aldeia %s: reaproveitado game_data de %s ha %.0fs "
+            "(sem GET)", point, village_id, gd.get("screen"), age)
+        return json.loads(json.dumps(gd))
+    except Exception:
+        return None
+
+
 def before(wrapper, village_id):
     """O que o bot ja sabia desta aldeia, capturado ANTES do GET de releitura
     (o proprio GET sobrescreve o registro no `post_process`)."""

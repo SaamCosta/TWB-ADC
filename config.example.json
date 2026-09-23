@@ -19,6 +19,7 @@
     "token": ""
   },
   "bot": {
+    "reuse_game_data_max_age": 60,
     "active_hours": "6-23",
     "delay_factor": 1.0,
     "active_delay": 200,

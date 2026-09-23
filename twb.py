@@ -934,6 +934,11 @@ class TWB:
                 # entre um ciclo e outro (o Hunter depois do sono).
                 between = self.wrapper.meter.begin_cycle()
                 config = self.config()
+                # §9 item 20a: releituras 2 e 3 da visao geral reaproveitam o
+                # game_data da ultima tela HTML se ele tiver ate N segundos.
+                self.wrapper.reuse_game_data_max_age = config["bot"].get(
+                    "reuse_game_data_max_age", 60
+                )
                 with meter_phase(self.wrapper, "overview"):
                     overview_page, config = self.get_overview(config)
 

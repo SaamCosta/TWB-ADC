@@ -127,16 +127,20 @@ class TroopManager:
         """
         Updates the total amount of recruited units
         """
-        shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
-        main_data = self.wrapper.get_action(
-            action="overview", village_id=self.village_id
-        )
-        game_data_shadow.record_reread(
-            self.wrapper, self.village_id, "update_totals", shadow_prev)
-        if main_data is None:
-            (self.logger or logger).warning("TroopManager: request timed out, skipping this cycle")
-            return
-        self.game_data = Extractor.game_state(main_data)
+        reused = game_data_shadow.reuse(self.wrapper, self.village_id, "update_totals")
+        if reused:
+            self.game_data = reused
+        else:
+            shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
+            main_data = self.wrapper.get_action(
+                action="overview", village_id=self.village_id
+            )
+            game_data_shadow.record_reread(
+                self.wrapper, self.village_id, "update_totals", shadow_prev)
+            if main_data is None:
+                (self.logger or logger).warning("TroopManager: request timed out, skipping this cycle")
+                return
+            self.game_data = Extractor.game_state(main_data)
 
         if self.resman:
             if "research" in self.resman.requested:

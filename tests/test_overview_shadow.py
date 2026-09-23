@@ -181,12 +181,86 @@ def test_noop_without_support():
     check(other.game_data_seen is not w.game_data_seen, "game_data_seen compartilhado entre instancias")
 
 
+def test_reuse_corta_a_releitura_so_com_dado_html_recente():
+    """§9 item 20a: o corte. HTML recente e reaproveitado; JSON, dado velho e
+    gate desligado voltam para o GET (reuse devolve None)."""
+    w = WebWrapper("https://x/", endpoint="https://x/")
+    check(w.reuse_game_data_max_age == 0, "o default do wrapper tem que ser desligado")
+    w.post_process(FakeResponse(html(game_data(screen="main")),
+                                "https://x/game.php?village=32056&screen=main"))
+    check(gds.reuse(w, 32056, "update_totals") is None, "gate 0 nao pode reaproveitar")
+
+    w.reuse_game_data_max_age = 60
+    gd = gds.reuse(w, 32056, "update_totals")
+    check(gd and gd["village"]["name"] == "BBM 020", "HTML recente deveria ser reaproveitado")
+    check(gd and gd["screen"] == "main", "reaproveita o game_data inteiro, com a tela de origem")
+    gd["village"]["wood"] = -1
+    again = gds.reuse(w, 32056, "update_totals")
+    check(again["village"]["wood"] == 10120, "reuse tem que devolver copia, nao o objeto guardado")
+
+    # Dado mais velho que o limite: GET.
+    w.game_data_full["32056"]["received_at"] -= 61
+    check(gds.reuse(w, 32056, "market") is None, "dado velho nao pode ser reaproveitado")
+
+    # Resposta JSON posterior invalida o HTML guardado (e mais nova que ele).
+    w.post_process(FakeResponse(html(game_data(screen="market")),
+                                "https://x/game.php?village=32056&screen=market"))
+    envelope = json.dumps({"response": {}, "game_data": game_data(screen="api")})
+    w.post_process(FakeResponse(envelope, "https://x/game.php?screen=api",
+                                content_type="application/json"))
+    check(gds.reuse(w, 32056, "market") is None,
+          "depois de uma resposta JSON o HTML anterior ja nao e o dado mais novo")
+    check(gds.reuse(w, 99999, "market") is None, "aldeia sem registro: GET")
+    check(gds.reuse(mock.MagicMock(), 1, "market") is None, "MagicMock vira no-op")
+
+
+def test_update_totals_nao_faz_get_quando_reaproveita():
+    from game.troopmanager import TroopManager
+
+    class _W:
+        def __init__(self):
+            self.actions = []
+            self.urls = []
+            self.game_data_full = {}
+            self.game_data_seen = {}
+            self.reuse_game_data_max_age = 60
+
+        def get_action(self, **kw):
+            self.actions.append(kw)
+            return None
+
+        def get_url(self, url):
+            self.urls.append(url)
+            return None
+
+    w = _W()
+    gds.remember_full(w, "32056", game_data(screen="main"), "<html>")
+    tm = TroopManager.__new__(TroopManager)
+    tm.wrapper = w
+    tm.village_id = "32056"
+    tm.resman = None
+    tm.logger = None
+    tm.update_totals()
+    check(w.actions == [], "com dado reaproveitavel a visao geral nao pode ser pedida")
+    check(tm.game_data["village"]["name"] == "BBM 020", "game_data veio do reaproveitamento")
+    check(w.urls, "o resto do update_totals (place&mode=units) continua rodando")
+
+    w2 = _W()
+    w2.reuse_game_data_max_age = 0
+    tm.wrapper = w2
+    tm.update_totals()
+    check(w2.actions and w2.actions[0].get("action") == "overview",
+          "gate desligado: a releitura volta a ser feita")
+
+
 for fn in [
     test_extract_html_and_json,
     test_snapshot_uses_float_and_server_clock,
     test_compare_verdicts,
     test_wrapper_keeps_per_village_and_before_survives_reread,
     test_noop_without_support,
+    test_reuse_corta_a_releitura_so_com_dado_html_recente,
+    test_update_totals_nao_faz_get_quando_reaproveita,
 ]:
     try:
         fn()

@@ -68,6 +68,12 @@ class WebWrapper:
         # P-OVERVIEW-SOMBRA: ultimo game_data visto por aldeia, de qualquer
         # tela. Em __init__, nao no corpo da classe (primeiro padrao).
         self.game_data_seen = {}
+        # §9 item 20a (corte): game_data COMPLETO da ultima resposta HTML de
+        # cada aldeia, para as releituras 2 e 3 da visao geral reaproveitarem
+        # em vez de fazer o GET. 0 desliga; twb.py regrava por ciclo a partir
+        # de `bot.reuse_game_data_max_age`.
+        self.game_data_full = {}
+        self.reuse_game_data_max_age = 0
 
     def _remember_game_data(self, response):
         """Guarda o recorte do game_data desta resposta, se houver. Nunca
@@ -78,6 +84,7 @@ class WebWrapper:
             snap = game_data_shadow.snapshot(gd, source_url=response.url, ajax=ajax) if gd else None
             if snap:
                 self.game_data_seen[snap["village_id"]] = snap
+                game_data_shadow.remember_full(self, snap["village_id"], gd, response.text)
         except Exception:
             pass
 
