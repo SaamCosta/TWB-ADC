@@ -4187,6 +4187,35 @@ trens disponíveis ela é o gargalo da expansão. Fica como item próprio na §9
 usuário precisa do ciclo completo para a medição) e antes das 17:31. O sinal no
 log é `Reserva-timer: alvo 74694 (583|308) armado para 23/09 17:31`, e depois
 `reservado Ns depois do vencimento` ou `renovou a reserva`.
+✅ **Armado em campo às 14:14:33 de 23/09**, no terceiro reinício. O primeiro
+(14:09) subiu desarmado porque o `config.json` tinha perdido as duas chaves:
+ver §8.29. ⏳ Falta o disparo das 17:31.
+
+## 8.29 ✅ `P-CONFIG-HERANCA` — herdar config de aldeia nova apagava edições do meio do ciclo (2026-09-23)
+
+Achado ao conferir o timer da §8.28: depois do reinício das 14:09, o
+`config.json` tinha `reserve_max_slots: 1` e nenhuma
+`snipe_expiring_reservations`, embora as duas tivessem sido gravadas às 11:5x.
+O mtime do arquivo era 13:58:47, o mesmo segundo do `Read game state` da BBM
+032, que é a 51540 conquistada em 22/09 rodando pela primeira vez.
+
+Causa: `Village.apply_nearest_village_inheritance()` gravava o `config`
+**inteiro** a partir da cópia carregada no início do ciclo (09:01), e um ciclo
+dura horas. Toda edição feita no arquivo nesse intervalo, pelo usuário, pelo
+painel ou por outra sessão, era desfeita sem nenhum log. O caminho sem aldeia
+doadora tinha um segundo defeito: relia o disco e gravava os três campos do
+fallback, e logo depois `clear_flag()` gravava a cópia da memória por cima,
+desfazendo o fallback que acabara de escrever.
+
+Correção: `Village._persist_village_config()` relê o `config.json` e troca só
+`villages[<esta aldeia>]`. Os três pontos de gravação da herança passam por ele.
+Se o arquivo não puder ser lido, ele não grava nada, porque escrever a cópia
+velha seria o próprio bug. Teste: `tests/test_village_config_persist.py`; com o
+código antigo, os três casos falham.
+
+Continua valendo, e está fora do escopo: `twb.py` só relê a config no
+**início** de cada ciclo, então uma mudança no arquivo leva até um ciclo
+(~5h) para valer. Mudança urgente continua exigindo reinício.
 
 ---
 
@@ -4226,6 +4255,11 @@ log é `Reserva-timer: alvo 74694 (583|308) armado para 23/09 17:31`, e depois
    cada ciclo (`twb.py`, `config = self.config()` no laço), então vale a partir
    do ciclo seguinte sem precisar de restart. **⏳ Falta campo:** a primeira
    linha `Unlock: iniciada coleta`.
+   ✅ **Fechado em 2026-09-23:** `12:57:18 Unlock: iniciada coleta 4 (Extrema
+   Coleta) na aldeia 40374 por {'wood': 10000, 'stone': 12000, 'iron': 10000}`
+   (BBM 024) e `13:58:03 ... coleta 1 (Pequena Coleta) na aldeia 44167`
+   (BBM 031). Falta só a confirmação independente do plano: `unlock_time` na
+   tela no ciclo seguinte.
 
 **Acrescentado em 2026-09-20, depois do estudo dos forks:**
 
@@ -4313,6 +4347,15 @@ log é `Reserva-timer: alvo 74694 (583|308) armado para 23/09 17:31`, e depois
    estava baseada em cache velho).
    Ciclo de 2026-09-23 (bot subiu às 09:01): às 10:57, 10 leituras e zero
    `Setting flag`. As BBM 028–031 ainda não tinham rodado.
+   **Ciclo completo (09:01–14:04): 31 leituras e 2 `Setting flag`.** As duas
+   seguem a política, e nenhuma é o vaivém do Bug 1. **BBM 029 (49709):**
+   tinha recrutamento nível 1 (+6%) e foi para produção nível 1 (tipo 1 à
+   frente do 2 na preferência sem academia). Apareceu no inventário uma tipo 1
+   nível 1 sobrando, e o recrutamento voltou para o inventário. **BBM 032
+   (51540, recém-conquistada):** estava sem bandeira e recebeu recrutamento
+   nível 1, o melhor disponível depois que a BBM 029 levou a de produção. A
+   previsão de "zero" partia de um inventário sem tipo 1. **A prova do Bug 1
+   agora é nenhuma das duas trocar de volta no ciclo seguinte.**
 
 **Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
 
@@ -4409,6 +4452,8 @@ log é `Reserva-timer: alvo 74694 (583|308) armado para 23/09 17:31`, e depois
    seguido da aldeia), e ela foi tratada como devia: pacote abandonado no
    resto do ciclo. **Fecha** quando o ciclo inteiro terminar sem recusa por
    ataque falso.
+   ✅ **Fechado:** o ciclo terminou às 14:04 com 35 pacotes aumentados e
+   nenhuma recusa por ataque falso.
 
 19. ~~**`P-FARM-CONQUISTA`**~~ — ✅ **feito em 2026-09-22** (§8.24). A primeira
    conquista multi-origem (51540, 21:23:50) foi seguida de fogo amigo: um farm
@@ -4560,6 +4605,19 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     **1h52 antes** (+15k de madeira recebidos no intervalo). É o caso que o
     plano mandava filtrar por `age_sec`, e não conta contra o corte. Ainda não
     é decisão: faltam as aldeias restantes e o ciclo fechar.
+    ✅ **Ciclo diurno completo (09:01–14:04, 32 aldeias):** `update_totals`
+    deu 35 × `producao` e `market` deu 32 × `producao`, sem nenhum `diverge`
+    nos dois. `init` deu 3 × `producao` e 2 × `diverge`, ambos com dado
+    anterior velho (1h52 do `map` e 3h05 de `ally/reservations`, este com
+    `trader_away 4->0`). **Pelo critério de aceite, as releituras 2 e 3
+    (`update_totals` e `market`) podem sair.** São cerca de 67 requisições por
+    ciclo. A decisão de cortar é do usuário.
+    O mesmo ciclo respondeu o item 20-medida (`Ciclo por tela`, 1.171
+    requisições em 5h02). Os maiores gastos: `scavenge_api send_squads` 105;
+    `report/all/view` 85 em `init` + 52 em `conquista_barbara` (**137 páginas
+    de relatório**, o maior candidato depois das releituras); `market/send` 60
+    + a confirmação dela 35; `place` 52 + 52 + 51 no farm; `main` 40;
+    `market/other_offer` 38.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a

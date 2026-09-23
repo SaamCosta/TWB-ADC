@@ -1543,6 +1543,37 @@ class Village:
             % (nearest_dist, nearest_vid, min_spacing)
         )
 
+    def _persist_village_config(self, config):
+        """
+        Grava no config.json SO a entrada desta aldeia, relendo o arquivo.
+
+        `config` e a copia carregada no INICIO do ciclo, e um ciclo dura horas.
+        Gravar ela inteira apagava qualquer mudanca feita no arquivo nesse
+        intervalo -- pelo usuario, pelo painel ou por outra sessao. Aconteceu
+        em 2026-09-23: a 51540 herdou config as 13:58:47 com a copia das 09:01
+        e desfez `reserve_max_slots: 3` e `snipe_expiring_reservations: true`,
+        gravados as 11:5x, o que desarmaria o timer de reserva da 74694
+        (docs/backend.md 8.28). E o 6o padrao do CLAUDE.md aplicado a escrita:
+        reler no momento de agir, nao no de decidir.
+
+        Sem leitura valida do arquivo NAO grava: escrever a copia velha por
+        cima seria o proprio bug, e perder a marca de heranca so faz a aldeia
+        herdar de novo no proximo ciclo.
+        """
+        import collections
+        raw = FileManager.load_json_file(
+            "config.json", object_pairs_hook=collections.OrderedDict
+        )
+        if not raw or not isinstance(raw.get("villages"), dict):
+            self.logger.warning(
+                "Village %s: config.json ilegivel -- heranca de config nao "
+                "gravada neste ciclo", self.village_id
+            )
+            return False
+        raw["villages"][self.village_id] = config["villages"][self.village_id]
+        FileManager.save_json_file(raw, "config.json")
+        return True
+
     def apply_nearest_village_inheritance(self, config):
         """
         Feature 6 + 7: If a village was just added (inherit_on_first_run=True),
@@ -1559,7 +1590,7 @@ class Village:
 
         def clear_flag():
             config["villages"][self.village_id]["inherit_on_first_run"] = False
-            FileManager.save_json_file(config, "config.json")
+            self._persist_village_config(config)
 
         if inheritance_mode == "global_template":
             self.logger.info(
@@ -1607,18 +1638,14 @@ class Village:
                 self.village_id, fallback_profile, fallback_building, fallback_units
             )
 
-            # Write directly to config.json via FileManager
-            import collections
-            cfg_path = "config.json"
-            raw = FileManager.load_json_file(cfg_path, object_pairs_hook=collections.OrderedDict) or {}
-            if "villages" not in raw:
-                raw["villages"] = {}
-            if self.village_id not in raw["villages"]:
-                raw["villages"][self.village_id] = {}
-            raw["villages"][self.village_id]["profile"] = fallback_profile
-            raw["villages"][self.village_id]["building"] = fallback_building
-            raw["villages"][self.village_id]["units"] = fallback_units
-            FileManager.save_json_file(raw, cfg_path)
+            # Na copia em memoria E no disco, numa escrita so: antes isto
+            # gravava o disco e em seguida clear_flag() gravava por cima a
+            # copia em memoria, que nao tinha os tres campos -- desfazendo o
+            # fallback que acabara de ser escrito.
+            village_entry = config["villages"].setdefault(self.village_id, {})
+            village_entry["profile"] = fallback_profile
+            village_entry["building"] = fallback_building
+            village_entry["units"] = fallback_units
             clear_flag()
             return
 
@@ -1728,7 +1755,7 @@ class Village:
                 )
 
         config["villages"][self.village_id] = donor_config
-        FileManager.save_json_file(config, "config.json")
+        self._persist_village_config(config)
         self.logger.info(
             "Village %s inherited config from village %s (profile: %s, %.1f tiles away)",
             self.village_id, best_vid, donor_config.get("profile", "n/a"), best_dist
