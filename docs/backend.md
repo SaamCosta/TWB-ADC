@@ -3939,18 +3939,23 @@ Já usados: `place` (+`units`, `scavenge`), `scavenge_api`, `overview`,
 
 Nunca tocados, com o que entregam — em ordem de impacto no ciclo:
 
+> ⚠️ **Leia com a restrição da §9 (2026-09-23):** o bot é para conta **sem**
+> recurso pago. A coluna "Exige" separa o que vale numa conta gratuita (só
+> a cunhagem automática e, com confiança média, o filtro de relatório) do que
+> fica para a camada ativável por detecção.
+
 | Tela | Exige | Entrega | Hoje o bot faz |
 |---|---|---|---|
 | `am_farm` (assistente de saque) | assistente | envio A/B **sem confirmação**: `POST am_farm&mode=farm&ajaxaction=farm&json=1`; C = `ajaxaction=farm_from_report`, o **servidor** dimensiona pela última espionagem (`data-units-forecast`). Só bárbaras (KB) | ~4,5 req por ataque (praça → confirm → popup) |
-| `place&mode=scavenge_mass` | premium | 32 aldeias num GET: recursos, `res_rate`, armazém, tropa em casa, estado das 4 opções. Envio `scavenge_api` `send_squads` com **todos** os pendentes num POST (`squad_requests[0..n]`, JS verificado) | 1 GET + 1 POST **por esquadrão** (116 req/ciclo) |
+| `place&mode=scavenge_mass` | premium? (a confirmar) | 32 aldeias num GET: recursos, `res_rate`, armazém, tropa em casa, estado das 4 opções. Envio `scavenge_api` `send_squads` com **todos** os pendentes num POST (`squad_requests[0..n]`, JS verificado) | 1 GET + 1 POST **por esquadrão** (116 req/ciclo) |
 | `overview_villages&mode=units` | premium | por aldeia: próprias / na aldeia / fora / em trânsito / total | `place/units` 57×/ciclo |
 | `overview_villages&mode=buildings`, `tech` | premium | níveis de edifício e pesquisa de todas (⚠️ **25/pg**, usar "todos") | `main` 34×, `smith` 27× |
-| `train&mode=mass` | premium | recursos, fazenda, tropa, máximo recrutável de todas (⚠️ 25/pg) | quartel/estábulo/oficina 35× |
+| `train&mode=mass` | premium? (a confirmar) | recursos, fazenda, tropa, máximo recrutável de todas (⚠️ 25/pg) | quartel/estábulo/oficina 35× |
 | `snob` → cunhagem automática | **grátis** (≥ 5 aldeias) | `POST snob&action=start_auto_minting_session`, 8 h por aldeia, roda offline, confere a cada minuto (KB 6014); `snob&mode=coin` cunha em massa | `snob&action=coin` por moeda |
 | `am_village` / `am_troops` / `am_research` | gerente | construção / recrutamento / pesquisa **no servidor, 24 h** | `BuildingManager` / `TroopManager` (duplo comando, abaixo) |
 | `am_warehouse` (Estoque) | gerente | balanceamento automático "várias vezes por dia" | `resource_sharing` (~84 req/ciclo) |
-| `place&mode=call` (apoio em massa) | premium | tropas de todas ordenadas por distância ao destino, envio único | `DefenceManager` apoio por aldeia |
-| `market&mode=call` (Pedido) | premium | puxa recurso de todas para uma | — |
+| `place&mode=call` (apoio em massa) | premium? (a confirmar) | tropas de todas ordenadas por distância ao destino, envio único | `DefenceManager` apoio por aldeia |
+| `market&mode=call` (Pedido) | premium? (a confirmar) | puxa recurso de todas para uma | — |
 | `report&mode=filter` | comum | o jogo **deixa de gerar** tipos de relatório | lê e abre tudo |
 | `premium&mode=feature_log` | — | prazo de cada funcionalidade | — |
 
@@ -4249,20 +4254,49 @@ nossas aldeias**, o que reforça o achado 4.
    farm agora nunca ataca aldeia da lista de conquista, bárbara ou PvP, desde
    o agendamento. **⏳ Falta campo:** o próximo trem, com o bot reiniciado.
 
-**Acrescentado em 2026-09-23 (§8.25, frontend §2.8) — decisões do usuário, nada implementado:**
+**Acrescentado em 2026-09-23 (§8.25, frontend §2.8) — nada implementado.**
 
-20. **Duplo comando** (achados 2 e 3): construção, recrutamento e transporte
-    rodam no gerente de conta **e** no bot, com os mesmos alvos. Decidir quem
-    manda por aldeia antes de otimizar qualquer um dos dois.
-21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte.
-    Configuração do jogo, feita pelo usuário.
-22. **Leitura de conta em vez de leitura por aldeia**: `game_data.features` e
-    `incomings` (grátis), visões gerais premium e coleta em massa. Base para os
-    botões premium/gerente e para o painel parar de dizer "0 sob ataque".
-23. **Cunhagem automática** (grátis) no lugar da cunhagem moeda a moeda.
-24. **Assistente de saque e coleta em massa**: as duas hipóteses não testadas da
-    §8.25 exigem um envio real cada; canário com autorização.
-25. **Painel**: os cinco itens de gravidade alta da `frontend.md` §2.8.
+⚠️ **Restrição de projeto, dita pelo usuário em 2026-09-23:** o bot é feito
+para uma conta **sem** premium, **sem** gerente de conta e **sem** assistente
+de saque (os três pagos). Ordem obrigatória: **(1) otimizar o tempo com o que é
+grátis; (2) depois, um sistema ativável quando o recurso pago for detectado.**
+A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
+§8.25 foi ranqueada por impacto sem essa separação; a lista abaixo a corrige.
+
+**Camada 1 — grátis (vale numa conta sem nada pago):**
+
+20. **Cortar requisição que o próprio bot repete.** Não depende do jogo:
+    visão geral lida ~3× por aldeia (88 no ciclo de 22/09), lista de
+    relatórios (que é da conta inteira) baixada uma vez **por aldeia** (30),
+    ofertas do mercado consultadas em toda aldeia todo ciclo (~62). Medir por
+    fase no `/cycles` antes de cortar.
+21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
+    KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
+    restrições de publicar e arquivar) → grátis com confiança média, **a
+    confirmar numa conta gratuita**. Configuração do jogo, feita pelo usuário.
+22. **Cunhagem automática** no lugar da cunhagem moeda a moeda — **grátis pela
+    KB 6014** ("não está bloqueado para uma subscrição Premium"), exige ≥ 5
+    aldeias (condição de jogo, detectável).
+23. **Módulos de conta fora do laço de aldeias**: fechar conquista que pousou
+    sem esperar a vez da `reserved_by` (achado 6), e ler
+    `game_data.player.incomings` (grátis, toda tela) para defesa e painel.
+24. **Hipótese a testar, possivelmente grátis:** o endpoint `scavenge_api`
+    `send_squads` que o bot **já usa** aceitar N esquadrões num POST. A tela
+    de coleta em massa talvez seja premium (KB não diz), mas o endpoint não
+    necessariamente. Um envio real resolve; exige autorização.
+25. **Painel**: os cinco itens de gravidade alta da `frontend.md` §2.8 — todos
+    independem de recurso pago.
+
+**Camada 2 — ativável por detecção** (`game_data.features.*.active`, custo
+zero; prazo em `premium&mode=feature_log`):
+
+26. **Premium:** visões gerais de conta (tropas, edifícios, pesquisa,
+    produção), recrutamento em massa, apoio em massa, "Pedido" no mercado.
+27. **Gerente de conta:** decidir quem manda por aldeia (achados 2 e 3 —
+    construção, recrutamento e transporte hoje sob duplo comando); quando
+    ativo, o bot pode ceder essas fases e economizar as requisições.
+28. **Assistente de saque:** envio de farm em 1 requisição e dimensionamento
+    pelo servidor (botão C). Canário com autorização.
 
 Depois disso, a fila anterior:
 
