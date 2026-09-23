@@ -4270,6 +4270,58 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     relatórios (que é da conta inteira) baixada uma vez **por aldeia** (30),
     ofertas do mercado consultadas em toda aldeia todo ciclo (~62). Medir por
     fase no `/cycles` antes de cortar.
+
+    **20a. `P-OVERVIEW-SOMBRA` — primeiro passo, decidido com o usuário em
+    2026-09-23.** A "visão geral lida ~3×" é `game.php?village=N&screen=overview`
+    (a tela principal da aldeia, grátis), lida em três pontos por aldeia:
+    `Village.village_init()` (`village.py:141`, início),
+    `TroopManager.update_totals()` (`troopmanager.py:130`, antes de recrutar) e
+    `Village.go_manage_market()` (`village.py:1187`, depois do mercado). As
+    aldeias de origem de conquista somam mais duas leituras pelo
+    `prime_for_conquest()` (`village.py:979`), por isso BBM 001/010/011 tiveram 5.
+    Log de 22/09: BBM 002 leu às 19:26:11, 19:27:42 e 19:31:31.
+
+    *Por que não basta apagar:* navegar direto para o próximo endereço é
+    inofensivo, porque o jogo não exige passar pela visão geral. Mas cada
+    releitura atualiza o `game_data` (recursos, fazenda, pontos) **depois de
+    ações que gastaram recurso** (construir, recrutar, coletar). Sem ela,
+    recrutamento e mercado decidem com recurso já gasto (6º padrão): recusa do
+    jogo, que custa a requisição igual, ou o pior caso, mercado ou
+    compartilhamento enviando uma sobra que não existe mais.
+
+    *Por que dá para cortar:* **toda tela HTML** do jogo traz o mesmo
+    `TribalWars.updateGameData(...)` (conferido nas capturas de `main`, `place`,
+    `market`, `snob`, `report`, `train`, `am_farm`, `scavenge_mass`), e
+    `Extractor.game_state()` (`extractors.py:264`) funciona em qualquer uma.
+    O dado fresco provavelmente já está na última resposta recebida.
+    **Não verificado:** as ações por AJAX/JSON (construir via
+    `get_api_action`, `send_squads`) trazem o recurso já descontado? Pelo 7º
+    padrão o envelope muda com o cabeçalho `TribalWars-Ajax`. Se não trouxerem,
+    a releitura depois delas continua necessária.
+
+    *Plano (modo sombra, sem cortar nada):*
+    1. Guardar o `game_data` da última resposta HTML/JSON que o wrapper recebeu
+       para a aldeia (ou os recursos extraídos dela), com o horário.
+    2. Nas releituras 2 e 3, **continuar fazendo o GET**, mas antes comparar o
+       que o bot já tinha com o que a releitura trouxe, e logar uma linha por
+       comparação: aldeia, ponto (`update_totals` / `market`), recursos
+       anteriores × lidos, diferença, idade do dado anterior e de qual tela ele
+       veio.
+    3. Um ou dois ciclos diurnos completos depois, ler as linhas. Onde a
+       diferença for sempre zero (ou só a produção do intervalo, que é
+       previsível por `res_rate`), a releitura sai. Onde não for, ela fica, ou
+       é trocada pela leitura da resposta certa.
+
+    *Aceite:* nenhuma decisão de corte sem ao menos um ciclo diurno completo de
+    linhas de sombra; ganho esperado ~50–60 requisições/ciclo (~15 min),
+    confirmado pela fase `init` e pelas fases que contêm as releituras no
+    `/cycles`. Teste pontual da comparação (lógica pura). O modo sombra não muda
+    nenhuma decisão do bot.
+
+    *Campo:* a implementação não precisa do bot parado nem de horário. A
+    validação precisa: aldeia só roda dentro de `active_hours` (6–23), e o
+    ciclo noturno tem 0 aldeias, logo nenhuma linha de sombra. Reiniciar o bot
+    para carregar o código; as linhas começam no primeiro ciclo depois das 6h.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a
