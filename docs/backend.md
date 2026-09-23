@@ -4256,13 +4256,13 @@ nossas aldeias**, o que reforça o achado 4.
     manda por aldeia antes de otimizar qualquer um dos dois.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte.
     Configuração do jogo, feita pelo usuário.
-22. **Leitura de conta em vez de leitura por aldeia**:  e
-     (grátis), visões gerais premium e coleta em massa. Base para os
+22. **Leitura de conta em vez de leitura por aldeia**: `game_data.features` e
+    `incomings` (grátis), visões gerais premium e coleta em massa. Base para os
     botões premium/gerente e para o painel parar de dizer "0 sob ataque".
 23. **Cunhagem automática** (grátis) no lugar da cunhagem moeda a moeda.
 24. **Assistente de saque e coleta em massa**: as duas hipóteses não testadas da
     §8.25 exigem um envio real cada; canário com autorização.
-25. **Painel**: os cinco itens de gravidade alta da  §2.8.
+25. **Painel**: os cinco itens de gravidade alta da `frontend.md` §2.8.
 
 Depois disso, a fila anterior:
 
