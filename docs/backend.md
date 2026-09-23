@@ -4271,6 +4271,27 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     ofertas do mercado consultadas em toda aldeia todo ciclo (~62). Medir por
     fase no `/cycles` antes de cortar.
 
+    **20-medida — ✅ medidor por tela (2026-09-23).** O único ciclo diurno
+    medido (22/09, 3h51, 860 req) dá por fase: coleta 143, farm 130,
+    recrutamento 126, **mercado 98**, init 101, **compartilhamento 84**. Só
+    que fase diz *onde no código*, não *o que foi pedido*: "mercado 98" mistura
+    a releitura da visão geral (já na sombra, 20a), as ofertas e a bolsa, e
+    "compartilhamento 84" mistura a leitura de mercadores (`market/send`) com
+    envios reais. A lista de relatórios fica dentro de `init`, junto com a
+    visão geral, então o "30 por ciclo" também não sai separado. Cortar a
+    partir disso seria chute.
+    Por isso o `CycleMeter` agora conta requisição por **(aldeia, fase, tela)**
+    — `screens` em cada balde de `cache/cycles/*.json`, rótulo de
+    `cycle_meter.screen_key()` (`market/send`, `report/all` × `report/all/view`,
+    `scavenge_api ajaxaction=send_squads`, `POST ...`), sem id nenhum. Fica fora
+    de `buckets` numéricos para não quebrar as somas de `by_phase` e do
+    `CycleReader`. O fechamento do ciclo loga `Ciclo por tela:` com as 10
+    maiores, e `by_screen()` agrega. Teste em `tests/test_cycle_meter.py`
+    (provado quebrando o repasse da URL no wrapper).
+    **⏳ Falta campo:** o mesmo ciclo diurno que fecha o 20a responde com
+    números quais telas do mercado, do compartilhamento e do `init` se repetem.
+    Ciclos gravados antes disto não têm `screens` e simplesmente não somam.
+
     **20a. `P-OVERVIEW-SOMBRA` — primeiro passo, decidido com o usuário em
     2026-09-23.** A "visão geral lida ~3×" é `game.php?village=N&screen=overview`
     (a tela principal da aldeia, grátis), lida em três pontos por aldeia:

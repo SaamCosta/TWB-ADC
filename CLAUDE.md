@@ -135,7 +135,8 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   apareceu; §8.22)
   e o medidor de ciclo (`tests/test_cycle_meter.py` — tempo exclusivo por
   fase fechando o total, requisição atribuída ao topo da pilha, wrapper sem
-  medidor virando no-op; §8.21)
+  medidor virando no-op, contagem por tela via `screen_key`; §8.21 e §9
+  item 20)
   e os pontos da própria aldeia (`tests/test_village_points.py` — lidos do
   `game_data`, leitura ruim não zera, e a cadeia pontos → piso de ataque
   falso → `_legalize` com o caso de campo 48 → 56; §8.23)

@@ -32,6 +32,7 @@ ao fechar/gravar o resumo nunca derruba o ciclo (ver `close_and_report`).
 import logging
 import time
 from contextlib import contextmanager, nullcontext
+from urllib.parse import parse_qs, urlparse
 
 from core.filemanager import FileManager
 
@@ -57,6 +58,46 @@ def _new_bucket():
     }
 
 
+# Parametros de URL que distinguem O QUE foi pedido. Ids (village, target,
+# h, from...) ficam de fora de proposito: a chave precisa ser um conjunto
+# pequeno e estavel para somar entre aldeias e ciclos.
+_SCREEN_VERB_PARAMS = ("ajax", "ajaxaction", "action", "try", "func")
+
+
+def screen_key(url):
+    """Rotulo curto do que uma URL do jogo pede, para contar requisicao por
+    tela (item 20 da docs/backend.md 9: a fase diz ONDE no codigo, a tela diz
+    O QUE -- "mercado 98 req" nao separa visao geral, ofertas e bolsa).
+
+    `game.php?village=1&screen=market&mode=send` -> `market/send`;
+    `...screen=report&mode=all&view=9` -> `report/all/view` (lista e relatorio
+    individual custam diferente e cortam por motivos diferentes);
+    `...screen=api&ajaxaction=x` -> `api ajaxaction=x`;
+    `interface.php?func=get_config` -> `interface.php func=get_config`.
+    Nunca levanta; URL ilegivel vira `?`."""
+    try:
+        parsed = urlparse(url or "")
+        query = parse_qs(parsed.query)
+        page = parsed.path.rsplit("/", 1)[-1] or "?"
+        screen = (query.get("screen") or [None])[0]
+        if screen:
+            parts = [screen]
+            mode = (query.get("mode") or [None])[0]
+            if mode:
+                parts.append(mode)
+            if "view" in query:
+                parts.append("view")
+            label = "/".join(parts)
+        else:
+            label = page
+        verbs = ["%s=%s" % (p, query[p][0]) for p in _SCREEN_VERB_PARAMS if p in query]
+        if verbs:
+            label += " " + " ".join(verbs)
+        return label
+    except Exception:
+        return "?"
+
+
 def _hms(seconds):
     seconds = int(round(seconds))
     hours, rest = divmod(seconds, 3600)
@@ -76,6 +117,10 @@ class CycleMeter:
         self._wall_clock = wall_clock
         # Tudo mutavel em __init__ (primeiro padrao do CLAUDE.md).
         self.buckets = {}
+        # {(aldeia, fase): {tela: requisicoes}}. Separado de `buckets` porque
+        # os baldes so tem numeros e sao somados chave a chave (by_phase,
+        # webmanager); um dict ali dentro quebraria essa soma.
+        self.screens = {}
         self._stack = []
         self.active = False
         self.started_at = None
@@ -93,6 +138,7 @@ class CycleMeter:
         inclusive uma pilha suja deixada por uma excecao no meio do laco."""
         now = self._clock()
         self.buckets = {}
+        self.screens = {}
         self._stack = [(None, UNPHASED)]
         self.active = True
         self.started_at = self._wall_clock()
@@ -115,6 +161,7 @@ class CycleMeter:
         for (village, phase), b in self.buckets.items():
             row = {"village": village, "phase": phase}
             row.update({k: (round(v, 2) if isinstance(v, float) else v) for k, v in b.items()})
+            row["screens"] = dict(self.screens.get((village, phase), {}))
             rows.append(row)
         rows.sort(key=lambda r: -r["wall"])
         summary = {
@@ -175,13 +222,19 @@ class CycleMeter:
 
     # -- requisicoes ---------------------------------------------------------
 
-    def record_request(self, method, slept=0.0, net=0.0, captcha=0.0, ok=True):
+    def record_request(self, method, slept=0.0, net=0.0, captcha=0.0, ok=True, url=None):
         if not self.active or not self._stack:
             self.outside_requests += 1
             return
         village, phase = self._stack[-1]
         b = self._bucket(village, phase)
         b["requests"] += 1
+        if url is not None:
+            label = screen_key(url)
+            if method == "POST":
+                label = "POST " + label
+            counts = self.screens.setdefault((village, phase), {})
+            counts[label] = counts.get(label, 0) + 1
         if method == "POST":
             b["posts"] += 1
         else:
@@ -212,6 +265,19 @@ def by_phase(summary):
         for key in a:
             a[key] += row[key]
     return sorted(agg.items(), key=lambda kv: -kv[1]["wall"])
+
+
+def by_screen(summary, phase=None):
+    """Requisicoes por (fase, tela), somando aldeias. Ciclo gravado antes de
+    existir `screens` simplesmente nao contribui."""
+    agg = {}
+    for row in summary.get("buckets", []):
+        if phase is not None and row.get("phase") != phase:
+            continue
+        for label, n in (row.get("screens") or {}).items():
+            key = (row.get("phase"), label)
+            agg[key] = agg.get(key, 0) + n
+    return sorted(agg.items(), key=lambda kv: -kv[1])
 
 
 def by_village(summary):
@@ -271,6 +337,10 @@ def close_and_report(meter, extra=None):
         head, phases = format_summary(summary)
         logger.info(head)
         logger.info(phases)
+        screens = by_screen(summary)[:10]
+        if screens:
+            logger.info("Ciclo por tela: " + ", ".join(
+                "%s %s (%d)" % (phase, label, n) for (phase, label), n in screens))
         save_summary(summary)
         return summary
     except Exception as exc:

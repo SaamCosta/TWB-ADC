@@ -81,13 +81,13 @@ class WebWrapper:
         except Exception:
             pass
 
-    def _meter(self, method, slept, started, captcha=0.0, ok=True):
+    def _meter(self, method, slept, started, captcha=0.0, ok=True, url=None):
         """Registra uma requisicao no medidor de ciclo. Nunca levanta: o
         medidor e observabilidade e nao pode derrubar uma requisicao."""
         try:
             self.meter.record_request(
                 method, slept=slept, net=time.time() - started - captcha,
-                captcha=captcha, ok=ok)
+                captcha=captcha, ok=ok, url=url)
         except Exception:
             pass
 
@@ -133,14 +133,14 @@ class WebWrapper:
                 # bloqueada e devolver a resposta boa ao chamador.
                 blocked_at = time.time()
                 res = self._await_captcha_clear(probe_url=url, headers=headers)
-                self._meter("GET", slept, started,
+                self._meter("GET", slept, started, url=url,
                             captcha=time.time() - blocked_at, ok=res is not None)
                 return res
-            self._meter("GET", slept, started)
+            self._meter("GET", slept, started, url=url)
             return res
         except Exception as e:
             self.logger.warning("GET %s: %s", url, str(e))
-            self._meter("GET", slept, started, ok=False)
+            self._meter("GET", slept, started, url=url, ok=False)
             return None
 
     def post_url(self, url, data, headers=None):
@@ -172,14 +172,14 @@ class WebWrapper:
                 self.logger.warning(
                     "POST %s foi bloqueado por bot protection e NAO foi refeito; "
                     "a acao sera retentada no proximo ciclo", url)
-                self._meter("POST", slept, started,
+                self._meter("POST", slept, started, url=url,
                             captcha=time.time() - blocked_at, ok=False)
                 return None
-            self._meter("POST", slept, started)
+            self._meter("POST", slept, started, url=url)
             return res
         except Exception as e:
             self.logger.warning("POST %s %s: %s", url, enc, str(e))
-            self._meter("POST", slept, started, ok=False)
+            self._meter("POST", slept, started, url=url, ok=False)
             return None
 
     def _await_captcha_clear(self, probe_url, headers=None):

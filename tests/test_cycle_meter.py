@@ -173,6 +173,45 @@ def test_webwrapper_records_get_post_and_failures():
     b = {(r["village"], r["phase"]): r for r in s["buckets"]}[("9", "farm")]
     check((b["requests"], b["gets"], b["posts"], b["failed"]) == (3, 2, 1, 1), f"wrapper: {b}")
     check(b["sleep"] == 0, "priority_mode nao dorme")
+    check(b["screens"] == {"place": 1, "POST place": 1, "game.php": 1},
+          f"wrapper deveria contar por tela, veio {b['screens']}")
+
+
+def test_screen_key_and_by_screen():
+    cases = {
+        "https://x/game.php?village=1&screen=overview": "overview",
+        "https://x/game.php?village=1&screen=market&mode=send": "market/send",
+        "https://x/game.php?village=1&screen=report&mode=all": "report/all",
+        "https://x/game.php?village=1&screen=report&mode=all&group_id=0&view=77": "report/all/view",
+        "https://x/game.php?village=1&screen=report&mode=all&from=12": "report/all",
+        "https://x/game.php?ajaxaction=send_squads&village=1&screen=scavenge_api":
+            "scavenge_api ajaxaction=send_squads",
+        "https://x/game.php?village=1&screen=place&try=confirm": "place try=confirm",
+        "https://x/interface.php?func=get_config": "interface.php func=get_config",
+        "https://x/map/village.txt": "village.txt",
+        None: "?",
+    }
+    for url, want in cases.items():
+        got = cm.screen_key(url)
+        check(got == want, f"screen_key({url!r}) = {got!r}, esperado {want!r}")
+
+    m, _ = _meter()
+    m.begin_cycle()
+    for vid in ("1", "2"):
+        with m.phase("mercado", village=vid):
+            m.record_request("GET", url="https://x/game.php?village=%s&screen=overview" % vid)
+            m.record_request("GET", url="https://x/game.php?village=%s&screen=market&mode=other_offer" % vid)
+            m.record_request("GET")  # sem url: conta requisicao, nao tela
+    s = m.end_cycle()
+    rows = dict(cm.by_screen(s))
+    check(rows == {("mercado", "overview"): 2, ("mercado", "market/other_offer"): 2},
+          f"by_screen soma aldeias por (fase, tela): {rows}")
+    check(dict(by_phase(s))["mercado"]["requests"] == 6,
+          "screens no balde nao pode mudar a soma de by_phase")
+    check(cm.by_screen({"buckets": [{"phase": "farm", "requests": 3}]}) == [],
+          "ciclo antigo sem `screens` nao contribui e nao levanta")
+    m.begin_cycle()
+    check(m.screens == {}, "begin_cycle deveria zerar as telas")
 
 
 def test_webwrapper_without_meter_attribute_still_works():
@@ -234,6 +273,7 @@ for fn in [
     test_phase_outside_cycle_is_noop_and_end_without_begin_is_none,
     test_meter_phase_tolerates_wrappers_without_meter,
     test_webwrapper_records_get_post_and_failures,
+    test_screen_key_and_by_screen,
     test_webwrapper_without_meter_attribute_still_works,
     test_summary_format_and_pruning_use_a_temp_dir,
     test_close_and_report_never_raises,
