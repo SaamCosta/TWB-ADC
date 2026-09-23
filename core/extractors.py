@@ -475,6 +475,40 @@ class Extractor:
         return data
 
     @staticmethod
+    def units_owned_total(res):
+        """
+        Unidades que PERTENCEM a aldeia, onde quer que estejam, lidas de
+        `screen=place&mode=units&display=units`: a linha "Desta aldeia" de
+        `units_home`, a tabela de coleta e todas as linhas de `units_away`
+        (tropas desta aldeia apoiando outra aldeia, propria ou alheia).
+
+        `units_in_total` nao serve aqui: o `re.sub` dele apaga toda linha com
+        `village_anchor` para esconder o apoio RECEBIDO em `units_home` -- mas
+        as linhas de `units_away` tambem abrem com `village_anchor`, entao o
+        apoio ENVIADO sumia junto. A fazenda conta essas tropas e o
+        recrutamento nao, e o bot recrutava para repor o que so estava longe
+        (BBM 006, 2026-09-23: 1000 lanceiros, 1000 espadachins e 300 pesadas
+        na SFC 002 fora do total). `units_in_total` continua como esta porque
+        `reports.py` o usa sobre recortes de relatorio.
+
+        Devolve lista de (unidade, quantidade) como `units_in_total`; o
+        chamador soma as repeticoes.
+        """
+        if type(res) != str:
+            res = res.text
+        away = re.search(r'(?s)<table id="units_away".*?</table>', res)
+        rest = res
+        data = []
+        if away:
+            rest = res[:away.start()] + res[away.end():]
+            data += re.findall(
+                r"class='unit-item unit-item-([a-z]+)[^']*'[^>]*>(\d+)</td>",
+                away.group(0),
+            )
+        data += Extractor.units_in_total(rest)
+        return data
+
+    @staticmethod
     def attack_form(res):
         """
         Detects input fiels in the attack form

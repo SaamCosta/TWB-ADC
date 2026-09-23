@@ -166,7 +166,7 @@ class TroopManager:
             return
 
         self.total_troops = {}
-        for u in Extractor.units_in_total(result_all):
+        for u in Extractor.units_owned_total(result_all):
             k, v = u
             if k in self.total_troops:
                 self.total_troops[k] = self.total_troops[k] + int(v)

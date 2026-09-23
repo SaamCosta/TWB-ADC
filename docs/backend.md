@@ -4046,6 +4046,31 @@ intervalo): a lista de defesas traz **"michelon97 (Black 029) visitou BBM
 apoio fora de casa. Nos relatórios de comércio, **39 de 50 (78%) são entre as
 nossas aldeias**, o que reforça o achado 4.
 
+## 8.26 ✅ `P-APOIO-RECRUTA` — apoio enviado sumia do total e o bot recrutava para repor (2026-09-23)
+
+Relato do usuário: o bot recrutava para cobrir uma lacuna de fazenda que não
+existia. `TroopManager.update_totals()` somava `place&mode=units` com
+`Extractor.units_in_total`, cujo `re.sub(r'<span class="village_anchor.+?</tr>')`
+apaga toda linha com âncora de aldeia. A intenção era esconder o apoio
+**recebido** em `units_home`, mas as linhas de `units_away` (tropa **desta**
+aldeia apoiando outra) também abrem com `village_anchor` e sumiam junto.
+Medido na BBM 006 (captura verbatim, `cache/_probe_place_units.py`): 1000
+lanceiros, 1000 espadachins e 300 pesadas na SFC 002 fora do total — com
+template defensivo, o bot recrutaria exatamente isso de novo. A coleta já era
+contada (tabela sem âncora).
+
+Correção: `Extractor.units_owned_total` separa a tabela `units_away` e soma
+todas as linhas dela; o resto segue pelo parser antigo. `units_in_total` ficou
+intocado porque `reports.py` o usa sobre recortes de relatório. Consumidores de
+`total_troops` que mudam de valor: recrutamento (o alvo), `Snobber.troops_are_short`
+(cujo docstring já **afirmava** que o total incluía apoio — não incluía até
+aqui), `PvpConquestManager` (população própria) e o `cache/managed` lido pelo
+painel. Teste: `tests/test_units_owned_total.py`.
+
+Não verificado: tropa de apoio **ainda em trânsito** (antes de chegar) e tropa
+em ataque de farm não aparecem em nenhuma das duas tabelas desta captura; se o
+jogo não as lista nesta tela, continuam fora do total.
+
 ---
 
 ## 9. Próximos passos

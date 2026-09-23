@@ -147,7 +147,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   e o modo sombra da visão geral (`tests/test_overview_shadow.py` —
   `game_data` de HTML e do envelope JSON do `TribalWars-Ajax`, comparação
   igual/produção/diverge com teto de armazém, registro por aldeia no wrapper;
-  §9 item 20a).
+  §9 item 20a)
+  e o total de tropas do recrutamento (`tests/test_units_owned_total.py` —
+  apoio enviado em `units_away` entra no total; recorte verbatim da BBM 006;
+  §8.26).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
