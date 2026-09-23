@@ -4217,6 +4217,32 @@ Continua valendo, e está fora do escopo: `twb.py` só relê a config no
 **início** de cada ciclo, então uma mudança no arquivo leva até um ciclo
 (~5h) para valer. Mudança urgente continua exigindo reinício.
 
+## 8.30 ✅ `P-EXTRACTOR-NONE` — um soluço de rede derrubava o bot inteiro (2026-09-23)
+
+Às 14:1x de 23/09, no ciclo que começou às 14:14, `TroopManager.attempt_upgrade()`
+recebeu `None` de `get_action` (a rede caiu, e o bot logou em seguida
+`Internet seems to be down`), e `Extractor.smith_data(None)` levantou
+`AttributeError: 'NoneType' object has no attribute 'text'`. O `main()` pegou
+a exceção e reiniciou o laço às 14:29:53, e o timer da §8.28 rearmou. O ciclo
+das 14:14, porém, foi abortado no meio.
+
+É o 2º padrão do CLAUDE.md, e a varredura da classe (12º padrão) achou **24
+parsers** do `Extractor` com o mesmo `res = res.text` sem guarda. Correção na
+raiz: `_page_text()` devolve `""` para `None`, e cada parser devolve o próprio
+valor de "não casou". Esse valor é o mesmo que ele já devolvia para uma
+resposta 200 com outra tela (sessão expirada, bot protection), caso que os
+chamadores já tratam. A distinção entre "sem rede" e "tela sem o dado" não
+existe aqui. Quem precisa dela olha o `res` antes de chamar o parser.
+`get_daily_reward`, que não tem nenhum chamador, também quebrava em qualquer
+página sem o bônus (`.group` sobre `None`) e ganhou a guarda.
+
+Teste: `tests/test_extractor_none_response.py`. Ele varre a classe inteira em
+vez de listar nomes e tem uma guarda contra a varredura voltar vazia. Com o
+código antigo, os dois testes principais falham.
+
+Não coberto: os chamadores que fazem `res.text` direto, fora do `Extractor`.
+Esta correção fecha só a porta dos parsers.
+
 ---
 
 ## 9. Próximos passos

@@ -150,6 +150,27 @@ OWN_COMMAND_ARRIVAL_RE = re.compile(
 )
 
 
+
+def _page_text(res):
+    """
+    Texto de uma resposta para os parsers abaixo; "" quando ela e None.
+
+    `WebWrapper.get_url()` devolve None em QUALQUER excecao (2o padrao do
+    CLAUDE.md), e 24 parsers daqui faziam `res.text` direto. Em 2026-09-23
+    um soluco de rede derrubou o bot inteiro em `smith_data`, no meio de um
+    ciclo. Com "" cada parser devolve o proprio valor de "nao casou" -- o
+    mesmo que ja devolve quando a resposta e 200 mas nao e a tela esperada
+    (sessao expirada, bot protection), caso que os chamadores ja tratam.
+    Isso NAO distingue "sem rede" de "tela sem o dado": quem precisa dessa
+    diferenca olha o `res` antes de chamar o parser.
+    """
+    if res is None:
+        return ""
+    if isinstance(res, str):
+        return res
+    return res.text
+
+
 class Extractor:
     """
     Defines various non-compiled regexes for data retrieval
@@ -230,8 +251,7 @@ class Extractor:
         """
         Detects village data on a page
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         grabber = re.search(r'var village = (.+);', res)
         if grabber:
             data = grabber.group(1)
@@ -256,8 +276,7 @@ class Extractor:
         sem ele isto devolve None em toda chamada, que é a falha muda do 15º
         padrão. Fixture verbatim do br143 em tests/test_scavenge_unlock.py.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         return Extractor.js_object_after(res, r"new ScavengeScreen\(\s*")
 
     @staticmethod
@@ -265,8 +284,7 @@ class Extractor:
         """
         Detects the game state that is available on most pages
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         grabber = re.search(r'TribalWars\.updateGameData\((.+?)\);', res)
         if grabber:
             data = grabber.group(1)
@@ -277,8 +295,7 @@ class Extractor:
         """
         Fetches building data from the main building
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         dre = re.search(r'(?s)BuildingMain.buildings = (\{.+?\});', res)
         if dre:
             return json.loads(dre.group(1), strict=False)
@@ -290,8 +307,7 @@ class Extractor:
         """
         Gets quest data on almost any page
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         get_quests = re.search(r'Quests.setQuestData\((\{.+?\})\);', res)
         if get_quests:
             result = json.loads(get_quests.group(1), strict=False)
@@ -306,8 +322,7 @@ class Extractor:
         """
         Detects if there are rewards available for quests
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         get_rewards = re.search(r'RewardSystem\.setRewards\(\s*(\[\{.+?\}\]),', res)
         rewards = []
         if get_rewards:
@@ -323,8 +338,7 @@ class Extractor:
         """
         Detects other villages on the map page
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.search(r'(?s)TWMap.sectorPrefech = (\[(.+?)\]);', res)
         if data:
             result = json.loads(data.group(1), strict=False)
@@ -335,8 +349,7 @@ class Extractor:
         """
         Gets smith data
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.search(r'(?s)BuildingSmith.techs = (\{.+?\});', res)
         if data:
             result = json.loads(data.group(1), strict=False)
@@ -365,8 +378,7 @@ class Extractor:
         error page, so this never matched and the failure looked like a broken
         regex rather than a wrong URL).
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
 
         def _num(element_id):
             match = re.search(fr'{element_id}["\s>]+(\d+)', res)
@@ -386,8 +398,7 @@ class Extractor:
         """
         Detects data on the premium exchange page
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.search(r'(?s)PremiumExchange.receiveData\((.+?)\);', res)
         if data:
             result = json.loads(data.group(1), strict=False)
@@ -399,8 +410,7 @@ class Extractor:
         """
         Fetches recruit data for the current building
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.search(r'(?s)unit_managers.units = (\{.+?\});', res)
         if data:
             raw = data.group(1)
@@ -414,8 +424,7 @@ class Extractor:
         """
         Detects all units in the village
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         matches = re.search(r'<table id="units_home".*?</tr>(.*?)</tr>', res, re.DOTALL)
         # We get the start of the table and grab the 2nd row (Where "From this village" troops are located)
         if matches:
@@ -434,8 +443,7 @@ class Extractor:
         """
         Detects queued building entries
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         builder = re.search('(?s)<table id="build_queue"(.+?)</table>', res)
         if not builder:
             return 0
@@ -447,8 +455,7 @@ class Extractor:
         """
         Detects active recruitment entries
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         builder = re.findall(r'(?s)TrainOverview\.cancelOrder\((\d+)\)', res)
         return builder
 
@@ -457,8 +464,7 @@ class Extractor:
         """
         Fetches villages from the overview page
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         villages = re.findall(r'<span class="quickedit-vn" data-id="(\w+)"', res)
         return list(set(villages))
 
@@ -467,8 +473,7 @@ class Extractor:
         """
         Gets total amount of units in a village
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         # hide units from other villages
         res = re.sub(r'(?s)<span class="village_anchor.+?</tr>', '', res)
         data = re.findall(r'(?s)class=\Wunit-item unit-item-([a-z]+)\W.+?(\d+)</td>', res)
@@ -494,8 +499,7 @@ class Extractor:
         Devolve lista de (unidade, quantidade) como `units_in_total`; o
         chamador soma as repeticoes.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         away = re.search(r'(?s)<table id="units_away".*?</table>', res)
         rest = res
         data = []
@@ -514,8 +518,7 @@ class Extractor:
         Detects input fiels in the attack form
         ... because there are many :)
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.findall(r'(?s)<input.+?name="(.+?)".+?value="(.*?)"', res)
         return data
 
@@ -524,8 +527,7 @@ class Extractor:
         """
         Detects the duration of an attack
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.search(r'<span class="relative_time" data-duration="(\d+)"', res)
         if data:
             return int(data.group(1))
@@ -536,8 +538,7 @@ class Extractor:
         """
         Fetches information from a report
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         data = re.findall(r'(?s)class="report-link" data-id="(\d+)"', res)
         return data
 
@@ -608,8 +609,7 @@ class Extractor:
         ultimo dela: sobrevive a redacao ("Descida X para Y", "Decreased from
         X to Y") sem depender do idioma da frase.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
 
         # Span dedicado, mantido como primeira tentativa: existe em alguns
         # temas/mundos e e inequivoco quando esta presente.
@@ -722,8 +722,7 @@ class Extractor:
         "urgência desconhecida", não como "sem ataques" (ver
         DefenceManager._parse_incoming_urgency).
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         commands = []
         try:
             rows = INCOMING_ROW_RE.findall(res)
@@ -795,8 +794,7 @@ class Extractor:
         correta (usar a viagem sem bonus), que e a estimativa conservadora --
         o bot manda mais cedo do que precisaria, nunca mais tarde.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         try:
             cells = EFFECT_CELL_RE.findall(res)
         except Exception:
@@ -1066,8 +1064,7 @@ class Extractor:
         de cada ponto -- e o proprio docstring de `balanced_slice` existe por
         causa dessa armadilha.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         if not res:
             return None
 
@@ -1120,8 +1117,7 @@ class Extractor:
         fuso; e o mesmo caso do 17o padrao, em que o ambiente de medicao nao
         distingue as duas hipoteses.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         if not res:
             return None, "resposta vazia"
         date_match = SERVER_DATE_RE.search(res)
@@ -1213,8 +1209,7 @@ class Extractor:
         total; serve de guarda contra o parser derrubar linha em silencio --
         divergir de len(commands) vira warning.
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         if not res:
             return None
 
@@ -1346,9 +1341,12 @@ class Extractor:
         """
         Detects if there are unopened daily rewards
         """
-        if type(res) != str:
-            res = res.text
+        res = _page_text(res)
         get_daily = re.search(r'DailyBonus.init\((\s+\{.*\}),', res)
+        # Sem chamador no codigo (2026-09-23), mas quebrava em qualquer pagina
+        # sem o bonus diario: `.group` sobre None.
+        if not get_daily:
+            return None
         res = json.loads(get_daily.group(1))
         reward_count_unlocked = str(res["reward_count_unlocked"])
         if reward_count_unlocked and res["chests"][reward_count_unlocked]["is_collected"]:
