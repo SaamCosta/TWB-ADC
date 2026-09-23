@@ -614,7 +614,7 @@ reaparecer, é aqui que se puxa o fio.**
 | Feature 18 (moral/night no simulador) | isoladamente, nunca foi |
 | Feature 27 (reserva cruzada na conquista bárbara) | próxima conquista bárbara com PvP ativo |
 | Trem PvP falhado → `status: "failed"` | só no próximo train que realmente falhar |
-| `support_others` | ligar em **uma** aldeia e observar `[Support] ... duration` |
+| `support_others` | a chave já está `true` em 22 de 30 aldeias; o bloqueio é que ninguém **pede** apoio sem ataque real chegando. Exercitar com ataque mínimo de aldeia própria **distante** contra uma com `request_support_on_attack` (ver `CLAUDE.md`) |
 | ~~Venda na bolsa premium~~ | ⛔ **cancelada em 2026-09-21** — Feature 34 morta, §4.5 |
 | Marcas da torre de vigia na tela de chegadas | a BBM 002 já tem torre nível 8; falta capturar o markup |
 
@@ -651,6 +651,12 @@ Defeito de texto achado no caminho: a linha diz *"usando tipo 2 nível 1"*, mas
 `_log_unmet_preference()` roda **antes** da guarda de rebaixamento, então
 anuncia uma troca que em seguida não acontece. Reescrever para "melhor
 disponível: tipo 2 nível 1".
+✅ **Corrigido em 2026-09-22:** a linha agora diz *"melhor disponível: tipo 2
+nível 1 (equipada: tipo 7 nível 4)"* — nunca "usando". A chamada continua antes
+das guardas, de propósito: a escassez é fato do inventário e vale reportar
+mesmo quando a aldeia fica como está. Quem anuncia troca é só `Setting flag`.
+Regressão em `tests/test_flag_supply.py` com o caso de campo, provada falhando
+contra a redação antiga.
 
 ✅ **A pergunta abaixo foi RESPONDIDA e corrigida em 2026-09-20 — ver §8.11.**
 Resposta curta: a política **não** contava a oferta, e o que segurava o Bug 1
@@ -2639,7 +2645,9 @@ escreve `usando tipo 2 nível 1` para uma aldeia que vai **continuar com o tipo
 Não é bug de comportamento — o bot faz a coisa certa — mas é uma mensagem que
 induz o leitor a contar trocas que não houve, exatamente na validação que
 depende de contar trocas. Corrigir a redação (ou mover a chamada para depois da
-guarda) antes da próxima leitura de log.
+guarda) antes da próxima leitura de log. ✅ **Redação corrigida em 2026-09-22** (§6.3):
+"melhor disponível", com a bandeira equipada entre parênteses; a chamada ficou
+onde estava.
 
 ---
 

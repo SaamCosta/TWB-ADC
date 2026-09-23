@@ -620,6 +620,10 @@ class DefenceManager:
         # os tipos 7, 1 e 2 estavam todos em zero e as 30 aldeias caíam para o
         # tipo 6 sem uma linha de log dizendo por quê. Uma vez por aldeia por
         # processo, não por ciclo.
+        # Roda ANTES das guardas abaixo de propósito: a escassez é um fato do
+        # inventário e vale reportar mesmo quando a aldeia fica como está. Por
+        # isso a mensagem diz o que está DISPONÍVEL, não o que vai ser feito --
+        # quem anuncia troca de fato é só a linha `Setting flag`.
         if chosen != wanted[0]:
             self._log_unmet_preference(wanted, chosen, chosen_level)
 
@@ -703,22 +707,32 @@ class DefenceManager:
         "cai silenciosamente para o próximo tipo da lista" -- correto, e
         invisível. Esta linha é o que torna a escassez observável sem virar
         ruído de todo ciclo.
+
+        A redação é "melhor disponível", nunca "usando": esta chamada vem antes
+        da guarda de rebaixamento, do gate de frescor e do cooldown, e em campo
+        (2026-09-22) as quatro primeiras aldeias logaram "usando tipo 2" e
+        ficaram com o tipo 7 -- justo na validação que conta trocas (§6.3).
+        A bandeira equipada vai junto para o leitor ver que não houve troca.
         """
         key = (self.village_id, tuple(wanted))
         if key in self._unmet_logged:
             return
         self._unmet_logged.add(key)
         missing = wanted[:wanted.index(chosen)]
+        if self.current_flag:
+            equipped = "equipada: tipo %s nível %s" % tuple(self.current_flag[:2])
+        else:
+            equipped = "nenhuma equipada"
         self.logger.info(
             "Village %s: preferência de bandeira %s sem oferta no inventário "
-            "da conta (%s); usando tipo %s nível %s",
+            "da conta (%s); melhor disponível: tipo %s nível %s (%s)",
             self.village_id,
             missing,
             ", ".join(
                 "tipo %s: %d disponível(is)" % (t, self.flag_type_supply(t))
                 for t in missing
             ) or "inventário vazio",
-            chosen, chosen_level,
+            chosen, chosen_level, equipped,
         )
 
     def flag_type_supply(self, flag_type):

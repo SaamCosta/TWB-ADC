@@ -310,6 +310,41 @@ def test_no_unmet_warning_when_the_first_choice_is_available():
           f"com o tipo preferido disponivel nao deveria avisar nada: {unmet}")
 
 
+def test_unmet_warning_does_not_announce_a_swap_that_the_guard_blocks():
+    """
+    Caso de campo de 2026-09-22 (BBM 001-004): cunhagem (tipo 7) equipada,
+    tipos 7 e 1 sem oferta, melhor disponivel tipo 2 nivel 1. A guarda de
+    rebaixamento mantem o 7 -- e a linha antiga dizia "usando tipo 2 nivel 1",
+    anunciando uma troca que nao aconteceu, na validacao que conta trocas.
+    """
+    records = []
+
+    class Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    logger = logging.getLogger("test-unmet-no-swap")
+    logger.handlers = [Collector()]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    d = make(has_academy=True, current=[7, 4], inventory={2: 1})
+    d.logger = logger
+    d.flag_logic([7, 1, 2])
+
+    check(d.sent == [], f"a guarda deveria segurar o tipo 7, mandou {d.sent}")
+    unmet = [m for m in records if "sem oferta" in m]
+    check(len(unmet) == 1, f"deveria haver 1 aviso de oferta, houve {len(unmet)}")
+    if unmet:
+        msg = unmet[0]
+        check("usando" not in msg,
+              f"o aviso nao pode anunciar troca que a guarda bloqueia: {msg}")
+        check("melhor disponível: tipo 2 nível 1" in msg,
+              f"o aviso deveria dizer o que esta disponivel: {msg}")
+        check("equipada: tipo 7 nível 4" in msg,
+              f"o aviso deveria mostrar a bandeira que fica: {msg}")
+
+
 # ---------------------------------------- o quadro real medido em 2026-09-20
 
 def test_the_real_account_inventory_falls_back_to_population():
@@ -359,6 +394,7 @@ for fn in [
     test_force_bypasses_the_randomizer,
     test_unmet_preference_is_reported_once,
     test_no_unmet_warning_when_the_first_choice_is_available,
+    test_unmet_warning_does_not_announce_a_swap_that_the_guard_blocks,
     test_the_real_account_inventory_falls_back_to_population,
     test_downgrade_guard_is_what_protects_the_current_allocation,
 ]:
