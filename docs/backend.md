@@ -658,37 +658,26 @@ mesmo quando a aldeia fica como está. Quem anuncia troca é só `Setting flag`.
 Regressão em `tests/test_flag_supply.py` com o caso de campo, provada falhando
 contra a redação antiga.
 
-⚠️ **O "esperado: zero trocas" acima também venceu — previsão refeita às 22:50
-de 2026-09-22, ANTES de observar.** Às 22:49, 26 de 31 aldeias tinham sido lidas
-com **zero** `Setting flag` (as 26 linhas de oferta zerada, 23 delas seguidas de
-`mantém a bandeira tipo 7/1`, e as três de tipo 2 caladas porque já estão no
-melhor nível). As cinco que faltam (BBM 027–031) não são o mesmo caso: a leitura
-das 22:46 (aldeia 39449) mostra **duas tipo 2 nível 4 sobrando** (`flag_supply
-2: {4: 2}`), e o `cache/managed` delas (15:13–15:41, sessão anterior) dá:
+❌ **Previsão de 22:50 de 2026-09-22 retirada às 23:00 — estava errada, e o
+"esperado: zero trocas" acima continua valendo.** Eu tinha previsto 3 trocas
+para cima dentro do tipo 2 (BBM 028, 029, 030) a partir de `flag_supply 2: {4: 2}`
+no `cache/managed/39449.json`. Esse arquivo ainda era **da sessão anterior**:
+`set_cache_vars()` só o regrava no **fim** da execução da aldeia (22:56), e eu o
+li às 22:49, com a aldeia ainda rodando. Conferi o mtime das cinco aldeias da
+tabela e não o da fonte da premissa. Relido depois de regravado: `2: {1: 1}` —
+uma tipo 2 sobrando, nível 1, exatamente o que as 26 linhas de oferta da noite
+já diziam (`melhor tipo 2 nível 1`). Com isso 028 (2/3), 029 (2/1) e 030 (2/1)
+já estão no melhor nível disponível ou acima, e `already_best` as deixa quietas.
+A BBM 027 confirmou às 22:57: 2/4 equipada, oferta zerada, nenhuma troca.
+**O log era a fonte certa e o cache era a errada** — 24º padrão do `CLAUDE.md`
+com outra roupa: medir a partir do que o código lê *neste* ciclo, não de um
+arquivo que só parece fresco.
 
-| Aldeia | Equipada | Preferência | Previsto |
-|---|---|---|---|
-| BBM 027 (46676) | 2/4 | [1, 2, 6, 8] | fica, calada |
-| BBM 028 (46584) | 2/3 | idem | **troca para 2/4** |
-| BBM 029 (49709) | 2/1 | idem | **troca para 2/4** |
-| BBM 030 (52755) | 2/1 | idem | **troca para 2/3** — a que a 028 devolve |
-| BBM 031 (44167) | 1/2 | idem | fica (topo da preferência) |
-
-São melhorias **dentro do mesmo tipo**: `already_best` é falso (3 < 4) e a
-guarda de rebaixamento não se aplica (mesmo índice na preferência). Não é o Bug
-1. A previsão é **exatamente 3 trocas, todas para cima**, e silêncio no ciclo
-seguinte (a 2/1 devolvida não é melhor para ninguém). Duas premissas que não
-verifiquei: que a bandeira tirada volta ao inventário (§8.11 mediu o contrário —
-a equipada **sai** —, então é inferência pela simetria) e que o inventário não
-mudou entre 22:46 e a vez de cada aldeia. Sinal de bug: qualquer `Setting flag`
-com tipo diferente do equipado numa aldeia de tipo 7/1, ou uma troca nas 26 já
-lidas no ciclo seguinte.
-⏳ **Adiado para o ciclo de 2026-09-23:** `active_hours` é `6-23` e o laço de
-aldeias checa a janela **por aldeia** (`twb.py:1234`, `is_village_active_hours`),
-então às 23:00 as que faltam são puladas no meio do ciclo, e o ciclo seguinte
-começa de novo pela BBM 001. As cinco estão no fim da ordem e só rodam perto de
-10h. Até lá o inventário pode mudar: **reconferir a tabela acima contra a
-leitura `flag_supply` do próprio dia** antes de comparar com o log.
+⏳ **As quatro restantes (BBM 028–031) ficam para o ciclo de 2026-09-23:**
+`active_hours` é `6-23` e o laço de aldeias checa a janela **por aldeia**
+(`twb.py:1234`, `is_village_active_hours`), então às 23:00 as que faltam são
+puladas e o ciclo seguinte recomeça pela BBM 001. Esperado: zero `Setting flag`,
+salvo mudança de inventário até lá.
 
 ✅ **A pergunta abaixo foi RESPONDIDA e corrigida em 2026-09-20 — ver §8.11.**
 Resposta curta: a política **não** contava a oferta, e o que segurava o Bug 1
@@ -4023,9 +4012,10 @@ no reporter entre o agendamento e o pouso.
    ciclo inteiro fica aberta, e o esperado agora é **zero**, não três (§6.3).
    Às 22:22, **22 de 31 aldeias lidas, zero `Setting flag`**, 22 linhas de
    oferta zerada. Faltam 9 para fechar o ciclo.
-   Às 22:49, **26 de 31, zero `Setting flag`**. ⚠️ Previsão refeita para as 5
-   restantes: **3 trocas para cima dentro do tipo 2** (BBM 028, 029, 030), não
-   zero — tabela na §6.3.
+   Às 22:57, **27 de 31, zero `Setting flag`**. As 4 restantes (BBM 028–031)
+   foram cortadas pela janela das 23h e rodam no ciclo de 2026-09-23; esperado
+   continua zero (§6.3 — uma previsão de 3 trocas feita às 22:50 foi retirada,
+   estava baseada em cache velho).
 
 **Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
 
