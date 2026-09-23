@@ -658,6 +658,32 @@ mesmo quando a aldeia fica como está. Quem anuncia troca é só `Setting flag`.
 Regressão em `tests/test_flag_supply.py` com o caso de campo, provada falhando
 contra a redação antiga.
 
+⚠️ **O "esperado: zero trocas" acima também venceu — previsão refeita às 22:50
+de 2026-09-22, ANTES de observar.** Às 22:49, 26 de 31 aldeias tinham sido lidas
+com **zero** `Setting flag` (as 26 linhas de oferta zerada, 23 delas seguidas de
+`mantém a bandeira tipo 7/1`, e as três de tipo 2 caladas porque já estão no
+melhor nível). As cinco que faltam (BBM 027–031) não são o mesmo caso: a leitura
+das 22:46 (aldeia 39449) mostra **duas tipo 2 nível 4 sobrando** (`flag_supply
+2: {4: 2}`), e o `cache/managed` delas (15:13–15:41, sessão anterior) dá:
+
+| Aldeia | Equipada | Preferência | Previsto |
+|---|---|---|---|
+| BBM 027 (46676) | 2/4 | [1, 2, 6, 8] | fica, calada |
+| BBM 028 (46584) | 2/3 | idem | **troca para 2/4** |
+| BBM 029 (49709) | 2/1 | idem | **troca para 2/4** |
+| BBM 030 (52755) | 2/1 | idem | **troca para 2/3** — a que a 028 devolve |
+| BBM 031 (44167) | 1/2 | idem | fica (topo da preferência) |
+
+São melhorias **dentro do mesmo tipo**: `already_best` é falso (3 < 4) e a
+guarda de rebaixamento não se aplica (mesmo índice na preferência). Não é o Bug
+1. A previsão é **exatamente 3 trocas, todas para cima**, e silêncio no ciclo
+seguinte (a 2/1 devolvida não é melhor para ninguém). Duas premissas que não
+verifiquei: que a bandeira tirada volta ao inventário (§8.11 mediu o contrário —
+a equipada **sai** —, então é inferência pela simetria) e que o inventário não
+mudou entre 22:46 e a vez de cada aldeia. Sinal de bug: qualquer `Setting flag`
+com tipo diferente do equipado numa aldeia de tipo 7/1, ou uma troca nas 26 já
+lidas no ciclo seguinte.
+
 ✅ **A pergunta abaixo foi RESPONDIDA e corrigida em 2026-09-20 — ver §8.11.**
 Resposta curta: a política **não** contava a oferta, e o que segurava o Bug 1
 não era ela. O texto original fica abaixo porque o raciocínio dele continua
@@ -3991,6 +4017,9 @@ no reporter entre o agendamento e o pouso.
    ciclo inteiro fica aberta, e o esperado agora é **zero**, não três (§6.3).
    Às 22:22, **22 de 31 aldeias lidas, zero `Setting flag`**, 22 linhas de
    oferta zerada. Faltam 9 para fechar o ciclo.
+   Às 22:49, **26 de 31, zero `Setting flag`**. ⚠️ Previsão refeita para as 5
+   restantes: **3 trocas para cima dentro do tipo 2** (BBM 028, 029, 030), não
+   zero — tabela na §6.3.
 
 **Acrescentado em 2026-09-21 (§8.12), decidido pelo usuário:**
 
