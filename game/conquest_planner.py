@@ -793,7 +793,13 @@ class BarbarianTrainPlanner:
         if not board or not board.is_readable():
             return
 
-        active = set(ConquestCache.active_conquests())
+        # Alvo da fila manual tambem e "quero manter" (pedido do usuario,
+        # 2026-09-23): o timer de reserva (game/reservation_sniper.py) reserva
+        # o alvo manual no minuto em que a reserva de um aliado vence, horas
+        # ou dias antes de haver nobre para o trem. Sem isto a vaga seria
+        # devolvida no ciclo seguinte ao da reserva. Sair da fila (conquistado,
+        # cancelado, invalido) continua soltando a vaga.
+        active = set(ConquestCache.active_conquests()) | self._manual_queue_ids()
         for claim in board.my_claims():
             target_id = str(claim.get("village_id"))
             if target_id in active:
@@ -803,6 +809,16 @@ class BarbarianTrainPlanner:
             if not claim.get("has_comment"):
                 continue
             writer.release_claim(claim, reason="conquista resolvida")
+
+    @staticmethod
+    def _manual_queue_ids():
+        """Ids com status "manual" em cache/conquest (a fila do painel)."""
+        ids = set()
+        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+            data = FileManager.load_json_file(f"cache/conquest/{fname}")
+            if data and data.get("status") == "manual":
+                ids.add(fname.replace(".json", ""))
+        return ids
 
     def _release_orphan_reserves(self):
         """

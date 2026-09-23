@@ -151,6 +151,7 @@
     "reserve_targets": false,
     "reserve_max_slots": 1,
     "reserve_comment": "Conquista em andamento -- trem a caminho",
+    "snipe_expiring_reservations": false,
     "excluded_targets": [],
     "use_world_village_list": true,
     "world_village_list_ttl": 21600

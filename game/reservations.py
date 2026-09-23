@@ -240,6 +240,11 @@ class ReservationBoard:
         return claim if claim.get("reserved_by_id") == self._own_player_id else None
 
     @property
+    def fetched_at(self):
+        """Epoch da ultima leitura boa. A validade no quadro e relativa a ele."""
+        return self._fetched_at
+
+    @property
     def csrf(self):
         return self._csrf
 
@@ -377,16 +382,22 @@ class ReservationWriter:
         self._writes_this_cycle = 0
         self._comment_cache = {}
 
-    def _may_write(self, what, needs_csrf=True):
+    def _may_write(self, what, needs_csrf=True, budget_exempt=False):
         """
         `needs_csrf=False` na remocao: ela usa o `delete_href` que o jogo
         renderizou, e esse href ja carrega o proprio `h`. O token do
         formulario de CRIAR e outro assunto -- acoplar os dois faria a
         remocao parar de funcionar por causa de um formulario que ela nao usa.
+
+        `budget_exempt=True` e do timer de reserva (game/reservation_sniper.py):
+        ele dispara num minuto marcado, e perder o minuto porque o planejador
+        ja escreveu uma vez no ciclo seria perder a aldeia. O laco dele tem
+        teto proprio (`MAX_ATTEMPTS`, uma por minuto), que e o que este
+        orcamento existe para garantir.
         """
         if not self.enabled:
             return False
-        if self._writes_this_cycle >= self.MAX_WRITES_PER_CYCLE:
+        if not budget_exempt and self._writes_this_cycle >= self.MAX_WRITES_PER_CYCLE:
             self.logger.info(
                 "Reservations: %s adiado -- ja houve %d escrita(s) neste ciclo "
                 "e o limite de taxa e da conta inteira", what,
@@ -475,7 +486,7 @@ class ReservationWriter:
     # Escrita
     # ------------------------------------------------------------------
 
-    def claim_target(self, target_id, location):
+    def claim_target(self, target_id, location, budget_exempt=False):
         """
         Reserva `location` em nome da conta. Devolve o dict da reserva
         confirmada, ou None.
@@ -498,7 +509,8 @@ class ReservationWriter:
                 target_id
             )
             return None
-        if not self._may_write("reservar %s" % target_id):
+        if not self._may_write("reservar %s" % target_id,
+                               budget_exempt=budget_exempt):
             return None
 
         existing = self.board.claimed_by_me(target_id, location)
@@ -516,7 +528,8 @@ class ReservationWriter:
             return None
 
         village_id = self.board.read_village_id
-        self._writes_this_cycle += 1
+        if not budget_exempt:
+            self._writes_this_cycle += 1
         self.wrapper.post_url(
             self.CREATE_URL % (village_id, self.board.csrf),
             data={

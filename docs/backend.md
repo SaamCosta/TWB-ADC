@@ -4128,7 +4128,65 @@ ativa. Os 4 nobres atuais estão voando para a 50833. Segurar a vaga no quadro
 enquanto os nobres se juntam é outra feature, e ela esbarra em
 `reserve_max_slots: 1` e em `_release_finished_target_claims()`: esse método
 soltaria na hora uma reserva de alvo que ainda não está em
-`active_conquests()`.
+`active_conquests()`. → Resolvido no mesmo dia, na §8.28.
+
+## 8.28 ✅ `P-RESERVA-TIMER` — reservar no minuto em que a reserva do aliado vence (2026-09-23)
+
+Decisão do usuário, a partir da 74694: *"aldeias em disputa devem ser
+reservadas assim que a reserva do aliado vencer"*. Três partes:
+
+1. **O timer** (`game/reservation_sniper.py`, gate
+   `conquest.snipe_expiring_reservations`). Para cada alvo da fila manual
+   reservado por outra pessoa, o timer lê a validade no quadro, marca a hora e,
+   nesse minuto, tenta reservar para a conta. Os formatos de validade foram
+   medidos nas 441 linhas de `cache/debug/reservations_all.html`: `hoje às
+   HH:MM`, `amanhã às HH:MM` e `em DD.MM. às HH:MM`. O parser entende as 441,
+   e a conta é feita a partir da hora em que o quadro foi **lido**, não da hora
+   atual. O timer usa o mesmo gancho do Hunter (`hunter_service_callback`, que
+   o farm chama antes de cada alvo), dorme até o horário quando faltam ≤ 90 s,
+   e o `twb.py` encurta o sono entre ciclos para acordar a tempo. Tenta 2 s
+   depois do minuto virar, repete a cada 60 s e desiste depois de 8 tentativas,
+   por causa do captcha, que o jogo aplica pela taxa da conta. Casos cobertos:
+   reserva renovada → rearma para o novo horário; aldeia com dono (cache ou
+   `village.txt`) → desarma sem reservar; reserva já nossa → desarma. A reserva
+   feita pelo timer grava `target_claim.source = "reservation_timer"` no
+   `cache/conquest` e **não tira o alvo da fila**.
+   O timer passa por fora do limite de 1 escrita por ciclo do
+   `ReservationWriter` (`budget_exempt`), porque perder o minuto porque o
+   planejador já escreveu no ciclo seria perder a aldeia. O limite próprio dele
+   são as 8 tentativas.
+2. **A rotina que devolve vagas passou a respeitar a fila.**
+   `_release_finished_target_claims()` soltava toda reserva do bot cujo alvo
+   não estivesse em `active_conquests()`, e soltaria a reserva do timer no
+   ciclo seguinte. Agora a fila manual (`_manual_queue_ids`) também conta como
+   "quero manter". Um alvo que sai da fila (conquistado, cancelado ou
+   inválido) continua liberando a vaga.
+3. **`reserve_max_slots: 3`** no `config.json`, por decisão do usuário: ele
+   espera ter 3 trens de nobres disponíveis na maior parte do tempo. O
+   `config.example.json` segue com 1.
+
+Testes: `tests/test_reservation_sniper.py` (18 casos: parser, armar, disparar,
+renovação, dono, teto de tentativas) e mais um em `tests/test_reservation_writer.py`
+(a varredura não solta alvo da fila). Os testes que já existiam dessa varredura
+passaram a trocar a fila por um dublê, porque sem isso liam o `cache/conquest`
+de produção (21º padrão). A guarda foi provada por mutação: forçar
+`budget_exempt=False` e desligar a renovação derrubam um teste cada.
+
+**Premissa corrigida no caminho.** Vários docstrings de `reservations.py` e a
+§8.7 dizem que a reserva "vale 3 dias". Na mesma captura, 141 reservas vencem
+em 07/12 e 101 em 25/12, então a validade **não é fixa** por reserva. A folga
+de "6,7×" do docstring do `ReservationWriter` continua valendo para as
+reservas que o próprio bot cria. O que não se sustenta é a leitura de que toda
+reserva alheia some em até 3 dias.
+
+**Não resolvido, e pedido pelo usuário:** a invariante de **um trem bárbaro
+por vez no império** (`BarbarianTrainPlanner.run`, `active_conquests()`). Com 3
+trens disponíveis ela é o gargalo da expansão. Fica como item próprio na §9.
+
+⏳ **Falta campo:** reiniciar o bot depois que o ciclo de 23/09 fechar (o
+usuário precisa do ciclo completo para a medição) e antes das 17:31. O sinal no
+log é `Reserva-timer: alvo 74694 (583|308) armado para 23/09 17:31`, e depois
+`reservado Ns depois do vencimento` ou `renovou a reserva`.
 
 ---
 
@@ -4363,6 +4421,21 @@ soltaria na hora uma reserva de alvo que ainda não está em
    (conquista barbara, status train_scheduled)`. Os 4 nobres saíram às 09:19:43
    (74689) e às 09:25:28 (41123), cada par num POST só, com chegada às
    18:15:06. **Fecha** com o pouso sem nenhum farm nosso contra a 50833.
+
+**Acrescentado em 2026-09-23, pedido do usuário (§8.28):**
+
+19a. **`P-CONQ-PARALELO` — mais de um trem bárbaro ao mesmo tempo.** O
+    usuário vai ter 3 trens de nobres disponíveis na maior parte do tempo e
+    precisa expandir rápido dentro do alcance de 70 campos. Hoje
+    `BarbarianTrainPlanner.run()` sai quando existe **qualquer** conquista em
+    `active_conquests()` ("um trem por vez no império inteiro"), e o trem de
+    cada alvo leva cerca de 9h entre agendar e pousar. A invariante existe para
+    que dois trens não disputem os mesmos nobres e escoltas. Tirá-la exige
+    reserva de nobre e escolta **por trem**, que a §8.20 já faz para o PvP, e
+    exige olhar os consumidores que assumem um trem só: `_release_orphan_reserves`,
+    `_promote_scheduled_trains`, a Hunter por alvo e o farm. Antes de
+    implementar, medir quantos nobres o império tem por dia e quanto tempo eles
+    ficam parados esperando a invariante. `reserve_max_slots` já está em 3.
 
 **Acrescentado em 2026-09-23 (§8.25, frontend §2.8) — nada implementado.**
 

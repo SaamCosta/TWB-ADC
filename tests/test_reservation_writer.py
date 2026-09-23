@@ -489,7 +489,7 @@ def test_carimbo_diferente_nao_e_do_bot():
 # A varredura do planejador
 # --------------------------------------------------------------------------
 
-def _planner(writer, board, active):
+def _planner(writer, board, active, manual=()):
     """
     `BarbarianTrainPlanner` sem `__init__` e com o `ConquestCache` trocado --
     a varredura le `cache/conquest`, que e ESTADO DE PRODUCAO. Um teste que
@@ -511,6 +511,9 @@ def _planner(writer, board, active):
     p.config = writer.config
     p.reservation_board = board
     p.reservation_writer = writer
+    # A fila manual tambem e cache/conquest de producao: trocada aqui pelo
+    # mesmo motivo do ConquestCache acima.
+    p._manual_queue_ids = lambda: set(manual)
     return p
 
 
@@ -537,6 +540,19 @@ def test_varredura_nao_toca_em_conquista_em_andamento():
     )
     planner = _planner(writer, board, active={"51540": {"status": "train_scheduled"}})
     planner._release_finished_target_claims()
+    assert [u for u in wrapper.gets if "action=delete_reservations" in u] == []
+
+
+def test_varredura_nao_solta_alvo_da_fila_manual():
+    """
+    O timer de reserva (8.28) reserva um alvo da fila manual horas ou dias
+    antes de haver nobre para o trem. Sem isto a vaga seria devolvida no ciclo
+    seguinte ao da reserva, e a aldeia voltaria a ficar livre para a tribo.
+    """
+    wrapper, board, writer = build(
+        [page(DE_TERCEIRO, DO_BOT)], comments={"79340": STAMP}
+    )
+    _planner(writer, board, active={}, manual={"51540"})._release_finished_target_claims()
     assert [u for u in wrapper.gets if "action=delete_reservations" in u] == []
 
 

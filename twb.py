@@ -149,6 +149,7 @@ from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
 from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
+from game.reservation_sniper import ReservationSniper
 from game.world_villages import WorldVillages
 from game.player_stats import PlayerStats
 from game.in_flight import InFlight
@@ -200,6 +201,9 @@ class TWB:
     # Feature 36: idem -- sobrevive entre ciclos para o TTL de 6h da lista do
     # mundo valer, e para o arquivo de 6,3 MB nao ser reparseado por ciclo.
     world_villages = None
+    # docs/backend.md 8.28: idem -- os horarios armados atravessam ciclos (e
+    # o sono entre eles), e o ciclo noturno nao rele o quadro para rearmar.
+    reservation_sniper = None
     # Feature 37: idem -- sobrevive entre ciclos para o TTL de
     # `player_stats.cache_seconds` valer; sem isso o objeto nasceria de novo
     # a cada ciclo e nunca deixaria de reler a rede.
@@ -1061,6 +1065,27 @@ class TWB:
                     self.world_villages.config = config
                     world_villages = self.world_villages
 
+                # docs/backend.md 8.28: timer que reserva alvo da fila manual
+                # no minuto em que a reserva de um aliado vence. Armar nao vai
+                # a rede -- le o quadro que acabou de ser lido acima.
+                if reservation_writer is not None:
+                    if not self.reservation_sniper:
+                        self.reservation_sniper = ReservationSniper(
+                            wrapper=self.wrapper, config=config,
+                            board=self.reservation_board,
+                            writer=self.reservation_writer,
+                        )
+                    sniper = self.reservation_sniper
+                    sniper.config = config
+                    sniper.board = self.reservation_board
+                    sniper.writer = self.reservation_writer
+                    sniper.world_villages = world_villages
+                    if managed_villages_dict:
+                        sniper.fallback_village_id = sorted(managed_villages_dict)[0]
+                    elif config.get("villages"):
+                        sniper.fallback_village_id = sorted(config["villages"])[0]
+                    sniper.arm()
+
                 # Feature 37: a serie Saqueado/Coletado que o proprio jogo
                 # publica (docs/backend.md 8.13), relida no maximo uma vez por
                 # `player_stats.cache_seconds` (default 6h -- a resolucao da
@@ -1120,10 +1145,25 @@ class TWB:
                         with meter_phase(self.wrapper, "hunter", village=False):
                             self.hunter.run(config)
 
+                # 8.28: o timer de reserva pega carona no mesmo checkpoint. O
+                # nome do atributo nas aldeias continua `hunter_service_callback`
+                # para nao mexer nos chamadores.
+                service_callback = hunter_callback
+                if self.reservation_sniper and self.reservation_sniper.enabled:
+                    _hunter_cb = hunter_callback
+                    _sniper = self.reservation_sniper
+
+                    def service_callback():
+                        if _hunter_cb:
+                            _hunter_cb()
+                        if _sniper.armed:
+                            with meter_phase(self.wrapper, "reserva_timer", village=False):
+                                _sniper.tick()
+
                 for _v in self.villages:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
-                    _v.hunter_service_callback = hunter_callback
+                    _v.hunter_service_callback = service_callback
                     _v.reservation_board = reservation_board
 
                 # Feature 13 (2026-09-21): a conquista PvP decide UMA vez no
@@ -1363,6 +1403,21 @@ class TWB:
                                 "Hunter: shortened sleep to %.0fs to catch upcoming send_time",
                                 sleep
                             )
+                # 8.28: mesmo trato do Hunter acima -- disparar o que ja
+                # venceu e acordar a tempo do proximo horario armado.
+                sniper = self.reservation_sniper
+                if sniper and sniper.enabled and sniper.armed:
+                    with meter_phase(self.wrapper, "reserva_timer"):
+                        sniper.tick()
+                    nearest = sniper.nearest_time()
+                    if nearest:
+                        time_to_window = nearest - time.time() - sniper.LEAD
+                        if time_to_window < sleep:
+                            sleep = max(0, time_to_window)
+                            logging.info(
+                                "Reserva-timer: sono encurtado para %.0fs para "
+                                "pegar o vencimento de uma reserva", sleep
+                            )
                 dtn = datetime.datetime.now()
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
@@ -1389,6 +1444,8 @@ class TWB:
                 # Feature 10: fire any attacks that became due during the sleep
                 if self.hunter:
                     self.hunter.run(config)
+                if self.reservation_sniper and self.reservation_sniper.enabled:
+                    self.reservation_sniper.tick()
 
                 # Feature 13: PvP Conquest now runs from inside
                 # Village.run_pvp_conquest() (game/village.py), right before
