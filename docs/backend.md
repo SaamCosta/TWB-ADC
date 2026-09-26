@@ -4276,9 +4276,242 @@ quadro, e a tentativa 2 reservou às **17:33:12, 62 s depois do vencimento**
 quadro não é o minuto em que a reserva some. A margem de 8 tentativas foi
 necessária.
 
+## 8.32 Auditoria completa do bot (2026-09-26)
+
+Segunda auditoria integral, 45 dias depois da primeira (§5). Nada foi corrigido
+nesta sessão: é só o diagnóstico, com a ordem sugerida no fim.
+
+### Escopo e método
+
+- **Lidos linha a linha:** `twb.py`, `core/request.py`, `core/extractors.py`,
+  `core/filemanager.py`, `pages/overview.py`, `game/village.py`,
+  `game/attack.py`, `game/conquest_planner.py`, `game/hunter.py`,
+  `game/pvp_conquest.py`, `game/defence_manager.py`, `game/troopmanager.py`,
+  `game/buildingmanager.py`, `game/map.py`, `game/reports.py`, `manager.py`,
+  `game/snobber.py`; e as partes que decidem algo em `core/world_config.py`,
+  `game/resources.py` (mercado), `game/resource_sharing.py` (plano e envio),
+  `game/reservations.py` (escrita) e `webmanager/server.py` (segurança).
+- **Não lidos por inteiro:** `webmanager/utils.py`, `reservation_sniper`,
+  `world_villages`, `in_flight`, `player_stats`, `pages/statue|inventory`,
+  `core/templates|cycle_meter|game_data_shadow|instance_lock`,
+  `game/simulator`, `zone_manager`, `new_world_setup` e a parte premium de
+  `resources.py`. São os mais novos e quase todos têm teste; ficam para uma
+  passada própria se for o caso.
+- **Varredura por AST** (script descartável): nenhum atributo de classe mutável
+  novo com mutação compartilhada; nenhum nome indefinido real (só os do
+  `from core.exceptions import *`); funções sem chamador listadas no A26-21.
+- **Suíte:** 70/70 verde. **Log da sessão de 26/09 (18:23→):** zero ERROR,
+  zero traceback.
+- **Evidência de campo:** `cache/logs/twb_*.log` (91 `TWB_EXCEPTION` desde
+  23/08), os 28 registros de `cache/conquest/` e o `config.json`.
+
+### P1 — derruba o bot ou arrisca nobre
+
+**A26-01 — Uma exceção em qualquer aldeia derruba o ciclo inteiro, e a terceira
+mata o processo.** Confirmado por código e por campo. `twb.py:1300` chama
+`village.run()` sem `try`, e `main()` (`twb.py:1492`) tenta três vezes **na vida
+do processo**: sem pausa entre as tentativas e sem zerar o contador depois de
+um ciclo bom. O reporter registra 91 quedas desde 23/08, todas de `None`, com
+quatro no mesmo dia em 23/08, 26/08 e 15/09. Três bastam para o processo
+encerrar. A última foi em 25/09 às 15:48, na BBM 034. Cada queda também joga
+fora o estado em memória: reservas de escolta, `wait_for`, frescor das
+bandeiras. **Correção:** isolar cada aldeia em `try/except` com traceback no
+log (a aldeia é pulada, o ciclo segue), pausar entre as tentativas e zerar o
+contador ao fim de cada ciclo completo. É essa rede que tira a fatalidade dos
+itens seguintes.
+
+**A26-02 — Cinco caminhos de `None` em `Village` sobreviveram à §8.30**, que
+fechou os parsers mas não os chamadores (a própria §8.30 avisa isso). Eles casam
+a assinatura de 76 das 91 quedas. Parte das 45 `'text'` era o `smith_data`, que
+a §8.30 já corrigiu.
+- a) O GET da visão geral falha numa aldeia que já rodou antes. `game_data`
+  continua com a foto do ciclo anterior, o `if not self.game_data` passa, e
+  `setup_defence_manager(data=None)` faz `data.text` (`village.py:381`):
+  `'NoneType' object has no attribute 'text'`. Antes de cair, `resman.update()`
+  já decidiu com o recurso de horas atrás (6º padrão).
+- b) O mesmo GET falha na primeira execução do objeto. `self.logger` ainda é o
+  `None` da classe, e o `self.logger.error(...)` de `village.py:1260` é a própria
+  queda: `'error'` (21 ocorrências, a última em 15/09).
+- c) Resposta 200 que não é tela de jogo (login, captcha): `game_state()`
+  devolve `None` e `self.game_data["village"]` quebra em `village.py:150`.
+- d) `get_quest_rewards()` (`village.py:1388`): `get_api_data` devolve `None` com
+  rede ruim e um `Response` quando o JSON não parseia, e os dois quebram em
+  `result["response"]`. Roda em toda aldeia, todo ciclo (`quests_enabled: true`).
+- e) `go_manage_market()` (`village.py:1202`) atribui `game_state(res)` sem
+  guarda, e o `None` chega a `set_cache_vars()` (`village.py:1827`).
+
+A queda de 25/09 (`not subscriptable`, cerca de 110 s depois do `TWB_START` da
+BBM 034) é d ou e. Sem o traceback não dá para saber qual: o
+`session_latest.log` daquela sessão já foi sobrescrito.
+
+**A26-03 — Risco de autoconquista.** O mecanismo está confirmado no código,
+mas ainda não aconteceu em campo. A proteção pela lealdade real do relatório
+está morta, e a estimativa que sobra diz 0.
+- Nenhum dos dois construtores de `ConquestManager` passa `repman`
+  (`village.py:887`, `conquest_planner.py:318`), então `_get_real_loyalty()`
+  sempre devolve `None`. Nos 28 registros de `cache/conquest`,
+  `loyalty_source` é `"estimate"` em todos, e `confirmed_by: "noble_report"` não
+  aparece em nenhum. É o 3º padrão: a correção de `loyalty_from_report()`
+  (13/08) funciona e nunca é chamada neste caminho.
+- `_promote_scheduled_trains()` (`conquest_planner.py:910`) usa
+  `conquest.loyalty_drop_per_noble` (25) no lugar do piso do mundo (20) e grava
+  `loyalty_after_train: 0`. Os 7 trens do planejador têm 0; os 21 do caminho
+  antigo têm 20. O comentário fala em "piso da faixa", mas o número usado não é
+  o piso.
+- Juntando os dois: depois do pouso, se `cache/villages/{alvo}` ainda disser
+  bárbara, `_handle_existing()` cai na estimativa `0 + horas × 1`, que dá mais
+  que zero, e **manda um nobre extra contra a aldeia que acabou de
+  conquistar**. É o incidente de 12/08. Esse cache pode estar velho porque o
+  mapa só é relido a cada 8 h (`map.py:26`) e, com `map_sector_radius: 0`, a
+  âncora pode nem enxergar o alvo. Até hoje não aconteceu porque a âncora não
+  tinha nobre sobrando na hora. Com três trens em paralelo (§9 item 19a),
+  deixa de depender de sorte.
+- **Correção**, três coisas baratas. Antes de tudo, `_target_is_mine()` checa
+  `target_id in config["villages"]`: a visão geral da conta roda no início do
+  ciclo e é a prova de posse mais fresca que o bot tem. Depois, passar `repman`
+  nos dois construtores e usar `self._drop_min` do mundo no planejador.
+
+**A26-04 — Um trem agendado que o Hunter não chega a disparar trava a conquista
+bárbara para sempre.** Confirmado por código. Quando a chegada passa,
+`Hunter.run()` marca o schedule como `failed` (`hunter.py:209` e `:247`), mas
+deixa os ataques em `pending`. `_promote_scheduled_trains()` só age quando
+nenhum ataque está `pending` (`conquest_planner.py:889`), então o registro fica
+em `train_scheduled` indefinidamente. Consequências:
+- `active_conquests()` nunca esvazia, e o planejador para ("um trem por vez");
+- a reserva `barb_train:*` nunca é solta, e farm e coleta perdem essa tropa em
+  silêncio;
+- o alvo fica fora do farm.
+
+O caminho real é o bot parado, ou morto pelo A26-01, durante a janela de cerca
+de 9 h de um trem. Hoje a única saída é o botão de limpar do painel.
+**Correção:** ao marcar o schedule como `failed`, marcar também os ataques
+`pending` como `failed`, com `fail_reason: arrival_passed`.
+
+### P2 — decisão errada ou perda silenciosa
+
+**A26-05 — O Hunter serve os schedules um de cada vez e pode perder o comando de
+outro schedule.** `hunter.py:240-340` ordena os schedules pelo primeiro envio,
+mas processa cada um até o fim, dormindo até 120 s por comando. Exemplo:
+schedule A com envios em T+10 e T+100, schedule B com envio em T+50. O Hunter
+dorme até T+100 dentro de A, e o comando de B vira `send_time_missed`. A
+conquista PvP grava clear e nobres em schedules separados, que é exatamente
+esse caso. **Correção:** achatar os ataques pendentes numa lista única,
+ordenada por `send_time`.
+
+**A26-06 — `market.trade_max_per_hour` faz o contrário do nome.**
+`resources.py:677` usa o valor como **horas entre trocas**, enquanto
+`helpfile.py:90` diz "máximo de trocas por hora". O `config.json` tem 12, que na
+prática é uma troca a cada 12 h por aldeia.
+
+**A26-07 — Ao aceitar oferta do mercado, o bot não confere a proporção.**
+`check_other_offers()` (`resources.py:781`) aceita qualquer oferta que entregue
+o recurso que falta e peça até todo o excedente. Uma oferta de 1.000 de ferro
+por 20.000 de madeira passa. `auto_trade` está `true` em campo. **Correção:**
+exigir `wanted_amount <= offer_amount × trade_multiplier_value`.
+
+**A26-08 — `DefenceManager.supported` nunca é zerado** (`defence_manager.py:426`,
+`:436`, `:453`). Depois de apoiar `support_others_max_villages` aldeias (2), a
+doadora nunca mais apoia ninguém até o bot reiniciar, e também não volta a
+apoiar a mesma aldeia num ataque futuro. Hoje está latente, porque nenhum apoio
+real saiu até agora, mas é justamente o caminho que a §6.2 manda exercitar.
+
+**A26-09 — Resposta de erro de ação AJAX é contada como sucesso.** Ainda não
+verificado contra o servidor. `get_api_action` devolve o JSON inteiro e nenhum
+chamador procura chave de erro (grep por `"error"` em `game/` e `core/`: zero).
+Afeta:
+- `popup_command`: farm e apoio contam como enviados;
+- `research`;
+- `start_unlock`: desconta o recurso localmente;
+- `assign_flag`: `flag_logic()` grava `current_flag` sem olhar o retorno
+  (`defence_manager.py:692`).
+
+O `try=confirm` anterior filtra a maior parte dos casos, então o buraco fica
+entre confirmar e enviar. **Antes de mexer:** capturar uma resposta de erro real
+com os cabeçalhos do wrapper (7º padrão, skill `twb-sondar`). Há um cruzamento
+de graça para medir o tamanho do problema: `cache/in_flight.json` (o que o jogo
+diz que está no ar) contra as linhas `Attacking` do log.
+
+**A26-10 — `internet_online()` só trata `Timeout`** (`twb.py:240`). Falha de DNS
+ou conexão recusada levanta `ConnectionError` e vira queda (A26-01). Além disso,
+o teste de internet depende do github.com a cada ciclo. **Correção:** pegar
+`requests.RequestException` e testar contra o próprio endpoint do jogo.
+
+**A26-11 — A moral do PvP é calculada com pontos de aldeia.** Latente, porque o
+gate está desligado. `_step_simulate()` usa `clear_village.points` e os pontos
+da aldeia-alvo (`pvp_conquest.py:915-919`), mas a moral do TW sai dos pontos
+dos **jogadores**. Com `dynamic_moral_night_bonus: false`, como está em campo,
+a simulação usa moral 100 e ignora o bônus noturno (no br143,
+`night.active: 2`, defesa ×2). Os dois erros superestimam o ataque, que é o
+lado perigoso. Confirmar a regra no servidor antes de corrigir (5º padrão:
+dizer de qual campo o número vem).
+
+**A26-12 — `cache/hunter/schedules.json` não tem trava entre processos.** O
+Hunter lê o arquivo, dorme até 120 s dentro da janela de envio e grava tudo de
+volta. Se o painel editar o arquivo nesse intervalo (`/hunter/add`, `delete` ou
+`toggle`), a edição é desfeita, ou um schedule apagado volta. É o mesmo desenho
+da §8.29, em outro arquivo.
+
+### P3 — eficiência, ruído e dívida
+
+- **A26-13** — O recrutamento faz um lote de no máximo 25 de uma unidade por
+  prédio, por visita (`troopmanager.py:181-217`). A fila mediana desses lotes é
+  de 140 min (57 lotes medidos), contra um ciclo de 4 a 5 h, então o quartel
+  fica ocioso na maior parte do tempo quando há recurso. É decisão de produto,
+  não bug.
+- **A26-14** — O planejador sonda a duração da viagem e grava o schedule com
+  `send_time: None`; o Hunter sonda de novo (2 requisições por origem, por
+  trem). Cada sonda extra é mais uma chance de falhar e cair no A26-04. Passar
+  adiante a duração já medida.
+- **A26-15** — O WARNING `queue out-of-sync` (recrutamento e construção) sai em
+  toda aldeia com fila depois de cada reinício, porque `wait_for` e `waits` só
+  existem em memória. O texto fala em "manual actions" para uma fila que é do
+  próprio bot (15º padrão).
+- **A26-16** — `run_quest_actions()` chama `self.run()` inteiro e, quando volta,
+  o `run()` de fora continua: a aldeia roda duas vezes no mesmo ciclo
+  (`village.py:509` e `:1288`).
+- **A26-17** — Com a rede fora e o TTL vencido, `WorldConfig.get()` refaz o
+  fetch (timeout de 30 s) em cada chamada, e são dezenas por ciclo. Guardar a
+  tentativa que falhou.
+- **A26-18** — O Hunter liga `priority_mode` e só desliga no fim do schedule,
+  fora de `try/finally` (`hunter.py:291` e `:339`). Uma exceção no envio deixa
+  o bot sem pausa entre requisições, que é o gatilho de captcha por taxa.
+- **A26-19** — Tropa evacuada ou mandada de apoio nunca é chamada de volta:
+  machado e nobre evacuados ficam na aldeia de destino até alguém agir à mão.
+- **A26-20** — `Extractor._command_arrival()` converte a hora do servidor em
+  epoch com o fuso da máquina (`.timestamp()` sobre datetime ingênuo), que é
+  justamente o que o docstring diz evitar. No br143 não faz diferença.
+- **A26-21** — Código morto confirmado pela varredura: `get_daily_reward`,
+  `FileManager.read_lines`, `ReservationWriter.bot_claim_for`,
+  `Simulator.update_with_real_levels/grab_cache/cache_customize`,
+  `SnobManager.level_system`, `ZoneManager.get_zone_members/zone_under_attack`,
+  e `distance_to`/`is_full`/`calculate_remaining_capacity`/`parse_coordinates`
+  em `pages/overview.py`. Nenhum tem efeito; remover segue o formato do 4º
+  padrão.
+
+### O que foi conferido e está bem
+
+`FileManager.save_json_file` é atômico. A trava de instância segura. O
+`WebWrapper` espera o captcha sem `input()`. `ReservationWriter.release_claim`
+só apaga reserva com carimbo do bot. O painel escuta só em localhost, recusa
+POST de outra origem e passa nomes de template por `basename`. A ordem de
+`safe_to_engage` foi remedida: continua 0 divergências em 40 alvos, então
+segue como ressalva de documentação (§5), não como bug.
+
+### Ordem sugerida
+
+1. **Lote A, estabilidade** (não muda nenhuma decisão de jogo): A26-01, A26-02
+   e A26-10.
+2. **Lote B, nobre** (antes de ligar o §9 item 19a): A26-03, A26-04 e A26-14.
+3. **Lote C:** A26-05, A26-06, A26-07, A26-08 e A26-12.
+4. A26-09 e A26-11 só depois de sondar o servidor.
+
 ---
 
 ## 9. Próximos passos
+
+**Auditoria de 2026-09-26 (§8.32):** 21 achados em aberto, quatro deles P1
+(queda do processo, autoconquista e trava do planejador). A ordem sugerida
+está no fim da §8.32. A decisão de encaixá-la na fila abaixo é do usuário.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

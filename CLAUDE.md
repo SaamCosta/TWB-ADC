@@ -205,6 +205,14 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
 **Nenhum item da auditoria segue aberto.** O último (P2-29) foi fechado em
 2026-08-12 — ver o Lote 7 e o quinto padrão abaixo.
 
+⚠️ **Segunda auditoria, de 2026-09-26: 21 achados em aberto (`A26-01` a
+`A26-21`), em `docs/backend.md` §8.32.** Os quatro P1 são estes. Uma exceção
+em qualquer aldeia derruba o bot, e três no mesmo processo o encerram. Cinco
+caminhos de `None` em `Village` continuam abertos. A conquista bárbara pode
+mandar nobre extra contra a aldeia que acabou de conquistar, porque o `repman`
+não é passado e o planejador grava `loyalty_after_train: 0`. E um schedule
+vencido no Hunter trava o planejador para sempre.
+
 ⚠️ **Aberto, fora da auditoria: rastreio de conquista sumiu sem explicação.**
 Em 2026-08-12 às 19:46 o `ConquestManager._get_my_conquest()` devolveu `None`
 para a Bárbara #40314 com o arquivo `cache/conquest/40314.json` em
