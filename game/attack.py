@@ -2438,7 +2438,16 @@ class ConquestManager:
         cached "owner" field IS our player_id, no wrapper plumbing needed.
         Mirrors the equivalent fix in
         PvpConquestManager._own_player_id() (game/pvp_conquest.py).
+
+        A26-03 (primeira das tres correcoes): antes do cache de mapa, que e
+        relido so a cada 8 h, vem a lista de aldeias da conta -- a visao geral
+        roda no inicio de todo ciclo e `add_village()` poe a aldeia recem
+        conquistada em config["villages"]. E a prova de posse mais fresca que o
+        bot tem, e sem ela a estimativa de lealdade mandaria nobre extra contra
+        a aldeia que acabou de ser conquistada.
         """
+        if str(target_id) in ((self.config or {}).get("villages") or {}):
+            return True
         data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
         if not data:
             return False

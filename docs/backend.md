@@ -4307,8 +4307,8 @@ nesta sessão: é só o diagnóstico, com a ordem sugerida no fim.
 
 ### P1 — derruba o bot ou arrisca nobre
 
-**A26-01 — Uma exceção em qualquer aldeia derruba o ciclo inteiro, e a terceira
-mata o processo.** Confirmado por código e por campo. `twb.py:1300` chama
+**✅ A26-01 — Uma exceção em qualquer aldeia derruba o ciclo inteiro, e a terceira
+mata o processo.** *(Corrigido em 2026-09-27, §8.33.)* Confirmado por código e por campo. `twb.py:1300` chama
 `village.run()` sem `try`, e `main()` (`twb.py:1492`) tenta três vezes **na vida
 do processo**: sem pausa entre as tentativas e sem zerar o contador depois de
 um ciclo bom. O reporter registra 91 quedas desde 23/08, todas de `None`, com
@@ -4320,7 +4320,8 @@ log (a aldeia é pulada, o ciclo segue), pausar entre as tentativas e zerar o
 contador ao fim de cada ciclo completo. É essa rede que tira a fatalidade dos
 itens seguintes.
 
-**A26-02 — Cinco caminhos de `None` em `Village` sobreviveram à §8.30**, que
+**✅ A26-02 — Cinco caminhos de `None` em `Village` sobreviveram à §8.30**
+*(corrigido em 2026-09-27, §8.33; o `e` derrubou o bot naquele dia)*, que
 fechou os parsers mas não os chamadores (a própria §8.30 avisa isso). Eles casam
 a assinatura de 76 das 91 quedas. Parte das 45 `'text'` era o `smith_data`, que
 a §8.30 já corrigiu.
@@ -4344,7 +4345,9 @@ A queda de 25/09 (`not subscriptable`, cerca de 110 s depois do `TWB_START` da
 BBM 034) é d ou e. Sem o traceback não dá para saber qual: o
 `session_latest.log` daquela sessão já foi sobrescrito.
 
-**A26-03 — Risco de autoconquista.** O mecanismo está confirmado no código,
+**A26-03 — Risco de autoconquista.** *(1ª das 3 correções feita em 2026-09-27,
+§8.33: `_target_is_mine()` aceita `config["villages"]`. Faltam `repman` nos
+construtores e `_drop_min` no planejador.)* O mecanismo está confirmado no código,
 mas ainda não aconteceu em campo. A proteção pela lealdade real do relatório
 está morta, e a estimativa que sobra diz 0.
 - Nenhum dos dois construtores de `ConquestManager` passa `repman`
@@ -4431,7 +4434,8 @@ com os cabeçalhos do wrapper (7º padrão, skill `twb-sondar`). Há um cruzamen
 de graça para medir o tamanho do problema: `cache/in_flight.json` (o que o jogo
 diz que está no ar) contra as linhas `Attacking` do log.
 
-**A26-10 — `internet_online()` só trata `Timeout`** (`twb.py:240`). Falha de DNS
+**✅ A26-10 — `internet_online()` só trata `Timeout`** *(metade corrigida em
+2026-09-27, §8.33: pega `RequestException`. Segue testando contra o github.com.)* (`twb.py:240`). Falha de DNS
 ou conexão recusada levanta `ConnectionError` e vira queda (A26-01). Além disso,
 o teste de internet depende do github.com a cada ciclo. **Correção:** pegar
 `requests.RequestException` e testar contra o próprio endpoint do jogo.
@@ -4499,18 +4503,122 @@ segue como ressalva de documentação (§5), não como bug.
 
 ### Ordem sugerida
 
-1. **Lote A, estabilidade** (não muda nenhuma decisão de jogo): A26-01, A26-02
-   e A26-10.
+1. ~~**Lote A, estabilidade**~~ (não muda nenhuma decisão de jogo): A26-01,
+   A26-02 e A26-10. ✅ **Feito em 2026-09-27** (§8.33), junto com dois achados
+   novos da mesma queda (`A26-22`, `A26-23`).
 2. **Lote B, nobre** (antes de ligar o §9 item 19a): A26-03, A26-04 e A26-14.
 3. **Lote C:** A26-05, A26-06, A26-07, A26-08 e A26-12.
 4. A26-09 e A26-11 só depois de sondar o servidor.
+
+## 8.33 ✅ `P-QUEDA-HUNTER` — a rede caiu e o 4º nobre não saiu (2026-09-27)
+
+**O incidente.** Trem de 4 nobres contra a Bárbara #55647 (582|288), agendado
+às 12:46:08 com pouso comum às 23:59:47 e origens `41123 ×2, 74689 ×1, 74690 ×1`.
+Os três primeiros saíram pelo Hunter às 12:55:54 e 13:05:57. O da BBM 011
+(74690), marcado para 14:38:41, foi recusado:
+`Hunter: refusing late attack 74690 -> 55647; send_time passed 102.145s ago`.
+O usuário mandou o quarto nobre na mão.
+
+**Não foi o captcha.** O bot ficou em bot protection de 13:20:55 a 14:09:24 e
+retomou sozinho, 29 minutos antes da saída. A sequência que perdeu o nobre
+(`session_latest.log`):
+
+| Hora | Evento |
+|---|---|
+| 14:26:58 | `ConnectionResetError` no mercado da BBM 006, e depois timeout de conexão |
+| 14:27:23 | `go_manage_market()` grava `None` em `game_data`; `set_cache_vars()` quebra em `village.py:1827` — é o **A26-02 e** |
+| 14:27:23 | Pelo **A26-01**, o processo cai. `main()` sobe outro `TWB`, que vê a rede fora e dorme `active_delay` + jitter **sem consultar o Hunter**: `Dead for 11.07 minutes (next run at: 14:38:37)` |
+| 14:38:41 | Hora de saída. O bot acordou 4 s antes |
+| 14:38:45 → 14:40:23 | O processo novo faz login, visão geral, reservas, estatísticas, comandos no ar e o prime das 3 origens. Só depois vem o primeiro `Hunter.run()` |
+
+Sem a queda, o checkpoint cooperativo do Hunter dentro do laço teria disparado
+a 74690 por volta de 14:36:41.
+
+Efeito colateral que a tabela não mostra: o `return False` da espera por rede
+em `TWB.run()` voltava para o `for _ in range(3)` de `main()` como se fosse mais
+uma tentativa. A queda e a espera gastaram duas das três, e o processo seguiu o
+resto do dia na última.
+
+**Achados novos, fora da auditoria:**
+
+- **`A26-22` — sono cego.** Dos quatro caminhos que dormem, só o sono entre
+  ciclos (`twb.py`, bloco `# Feature 10`) encurtava pela
+  `hunter.nearest_send_time()`. As duas esperas por rede e a espera de "Overview
+  unavailable" dormiam o `active_delay` inteiro. E um processo recém-reiniciado
+  nem tem `self.hunter`, então não teria como perguntar.
+- **`A26-23` — Hunter tarde demais no início do ciclo.** O primeiro
+  `Hunter.run()` do ciclo vinha depois das reservas, das estatísticas, dos
+  comandos no ar e do prime da conquista, cerca de 100 s medidos. Num processo
+  novo não dava para simplesmente adiantá-lo: a aldeia de origem ainda não
+  tinha `attack`, e `_send_attack_batch()` marcaria o comando como falho.
+
+**Correção.**
+
+- *A26-01:* cada `village.run()` roda em `try/except` com traceback no log
+  (`logging.exception`; `VillageInitException` sai como WARNING, sem traceback).
+  A aldeia é pulada e o ciclo segue. Se a rede caiu, o ciclo termina ali
+  (`aborted: network_lost` no medidor) em vez de pagar timeout nas outras 30
+  aldeias. `main()` conta só quedas **seguidas**: um processo que fechou pelo
+  menos um ciclo recomeça do 1. Há 30 s de pausa entre as tentativas
+  (`CRASH_RESTART_PAUSE`), e uma volta normal de `t.start()` encerra o processo
+  em vez de consumir tentativa.
+- *A26-02:*
+  - a/c: `village_init()` zera `game_data` quando o GET falha ou a tela não é de
+    jogo, em vez de manter a foto do ciclo anterior;
+  - b: o log de erro de `run()` usa um logger de reserva;
+  - d: `get_quest_rewards()` aceita só `dict` com `dialog` string;
+  - e: a releitura do mercado só troca `game_data` quando a leitura vem boa.
+- *A26-10 (metade):* `internet_online()` pega `requests.RequestException`.
+  Continua testando contra o github.com.
+- *A26-22:* `TWB._hunter_capped_sleep()` lê `cache/hunter/schedules.json` direto,
+  sem depender de `self.hunter`, e acorda
+  `Hunter.window + Hunter.WAKE_MARGIN` (120 + 120 s) antes da próxima saída.
+  O piso é de 30 s (`BLIND_SLEEP_FLOOR`): com a rede fora não há o que cruzar,
+  e sem piso o laço reconferiria a rede sem pausa. `nearest_send_time(after=)`
+  ignora horário vencido, para um schedule velho não prender a espera no piso.
+  A espera por rede do início de `run()` virou laço interno e não devolve mais
+  `False` para `main()`.
+- *A26-23:* o Hunter roda logo depois da visão geral, antes de tudo o resto.
+  Ele também passa a primar a aldeia de origem que ainda não tem
+  `AttackManager` (`Hunter._ensure_source_ready()`, o mesmo
+  `prime_for_conquest()` somente-leitura da conquista), e reconfere o atraso
+  **depois** do prime: prime que atravessa a saída é recusa, nunca ataque
+  atrasado. Há checkpoint do Hunter entre as aldeias do prime da conquista e
+  trava de reentrada. `priority_mode` volta a `False` num `finally` (pega de
+  tabela o caso de exceção do A26-18).
+- *A26-03, 1ª das três correções:* `_target_is_mine()` aceita
+  `config["villages"]` como prova de posse. Entrou agora por causa da 55647:
+  os quatro nobres pousam hoje, e a conquista está em `extra_pending` com
+  `loyalty_source: "estimate"`.
+
+**Rodando o mesmo caso com a correção:** a queda às 14:27:23 não derruba o
+processo. O ciclo termina, e o sono seguinte é encurtado para acordar às
+14:34:41, 4 minutos antes da saída.
+
+**Testes:** `tests/test_crash_resilience.py` (31 checks). Cobre o sono
+encurtado no caso real (678 s até a saída, sono de 664 s), o prime da origem
+num processo novo, o prime que atravessa a saída, reentrada e `priority_mode`,
+as quedas seguidas de `main()`, os caminhos a/c/d/e e a posse por config. Para
+provar que o teste pega o bug, rodei com o `village.py` anterior: falha em
+`A26-02 a`. Suíte: 71/71.
+
+**Não coberto:** o timer de reserva (§8.28) também tem hora marcada, e os
+sonos cegos não o consultam. Os horários armados dele vivem só em memória, então
+um processo recém-reiniciado não tem como saber deles sem reler o quadro. O
+custo de perder um é menor, porque a reserva segue disponível para a próxima
+leitura, mas continua sendo o 28º padrão em aberto.
+
+**Não validado em campo.** Isso só acontece na próxima queda de rede com envio
+agendado. No log, procurar `Hunter: sono (rede fora) encurtado` e
+`Hunter: aldeia X ainda nao rodou neste processo -- lendo antes do envio`.
 
 ---
 
 ## 9. Próximos passos
 
-**Auditoria de 2026-09-26 (§8.32):** 21 achados em aberto, quatro deles P1
-(queda do processo, autoconquista e trava do planejador). A ordem sugerida
+**Auditoria de 2026-09-26 (§8.32):** 21 achados; o Lote A (A26-01, 02, 10) foi
+fechado em 2026-09-27 (§8.33). Seguem abertos os P1 de autoconquista (A26-03,
+1/3 feito) e trava do planejador (A26-04). A ordem sugerida
 está no fim da §8.32. A decisão de encaixá-la na fila abaixo é do usuário.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**

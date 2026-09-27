@@ -155,7 +155,7 @@ from game.player_stats import PlayerStats
 from game.in_flight import InFlight
 from manager import VillageManager
 from pages.overview import OverviewPage
-from core.exceptions import UnsupportedPythonVersion
+from core.exceptions import UnsupportedPythonVersion, VillageInitException
 from core.extractors import Extractor
 
 coloredlogs.install(
@@ -234,10 +234,13 @@ class TWB:
         """
         Checks whether the bot has internet access
         """
+        # A26-10: so `Timeout` era tratado. DNS fora ou conexao recusada
+        # levantam `ConnectionError`, e a propria checagem de rede virava a
+        # queda do processo.
         try:
             requests.get("https://github.com/stefan2200/TWB", timeout=(10, 60))
             return True
-        except requests.Timeout:
+        except requests.RequestException:
             return False
 
     def manual_config(self):
@@ -680,6 +683,71 @@ class TWB:
             lo, hi = hi, lo
         return random.randint(lo, hi)
 
+    # Piso dos sonos "cegos" encurtados pelo Hunter. Com a rede fora nada pode
+    # ser enviado mesmo, entao aqui um piso nao cruza send_time nenhum -- so
+    # impede o laco de reconferir a rede sem pausa.
+    BLIND_SLEEP_FLOOR = 30
+
+    def _base_sleep(self, config):
+        """O sono normal entre ciclos (active/inactive_delay + jitter)."""
+        sleep = 0
+        if self.is_active_hours(config=config):
+            sleep = config["bot"]["active_delay"]
+        else:
+            if config["bot"]["inactive_still_active"]:
+                sleep = config["bot"]["inactive_delay"]
+        return sleep + self._jitter(config)
+
+    def _hunter_capped_sleep(self, sleep, config, reason):
+        """
+        Encurta um sono que nao passa pelo Hunter (rede fora, visao geral
+        indisponivel) para acordar a tempo do proximo comando agendado.
+
+        2026-09-27: depois de uma queda de rede o bot dormiu 11 min as cegas e
+        acordou 4 s antes da saida do 4o nobre do trem contra a 55647 -- e o
+        processo novo ainda levou ~100 s ate o Hunter agir. O sono entre
+        ciclos ja respeitava `nearest_send_time()`; estes nao.
+
+        Le o arquivo de schedules direto, sem depender de `self.hunter`: num
+        processo que acabou de reiniciar ele ainda nao existe. Acorda
+        `Hunter.window + Hunter.WAKE_MARGIN` antes da saida, porque quem acorda
+        daqui ainda paga o custo de voltar (login, visao geral, prime).
+        """
+        if not config.get("hunter", {}).get("enabled", False):
+            return sleep
+        try:
+            nearest = Hunter().nearest_send_time(after=time.time())
+        except Exception as e:
+            logging.warning("Hunter: nao consegui ler os schedules (%s)", e)
+            return sleep
+        if not nearest:
+            return sleep
+        wake_in = nearest - time.time() - Hunter.window - Hunter.WAKE_MARGIN
+        capped = max(self.BLIND_SLEEP_FLOOR, wake_in)
+        if capped < sleep:
+            logging.info(
+                "Hunter: sono (%s) encurtado de %.0fs para %.0fs -- ha comando "
+                "agendado saindo as %s",
+                reason, sleep, capped,
+                datetime.datetime.fromtimestamp(nearest).strftime("%H:%M:%S"),
+            )
+            return capped
+        return sleep
+
+    def _sleep_offline(self, config):
+        """Um passo da espera por rede, sem perder comando agendado."""
+        print("Internet seems to be down, waiting till its back online...")
+        sleep = self._hunter_capped_sleep(
+            self._base_sleep(config), config, "rede fora"
+        )
+        dtn = datetime.datetime.now()
+        dt_next = dtn + datetime.timedelta(0, sleep)
+        print(
+            "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
+        )
+        sys.stdout.flush()
+        time.sleep(sleep)
+
     @staticmethod
     def _prime_villages(managed_villages, config, source_ids, label):
         """
@@ -706,6 +774,11 @@ class TWB:
                 primed.add(vid)
             else:
                 missed.append(vid)
+            # O prime custa ~25 s por aldeia e a conquista barbara pode primar
+            # varias: checkpoint do Hunter entre uma e outra, como no laco.
+            service = getattr(village, "_service_hunter", None)
+            if callable(service):
+                service()
         if source_ids:
             logging.info(
                 "%s: primed %d/%d source village(s) before the cycle",
@@ -859,23 +932,12 @@ class TWB:
         """
         Notification.send("TWB is starting up")
         config = self.config()
-        if not self.internet_online():
-            print("Internet seems to be down, waiting till its back online...")
-            sleep = 0
-            if self.is_active_hours(config=config):
-                sleep = config["bot"]["active_delay"]
-            else:
-                if config["bot"]["inactive_still_active"]:
-                    sleep = config["bot"]["inactive_delay"]
-
-            sleep += self._jitter(config)
-            dtn = datetime.datetime.now()
-            dt_next = dtn + datetime.timedelta(0, sleep)
-            print(
-                "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
-            )
-            time.sleep(sleep)
-            return False
+        # Esperava UMA vez e devolvia False, e main() tratava a volta como mais
+        # uma das 3 tentativas da vida do processo: em 2026-09-27 uma queda de
+        # rede gastou duas (o crash e esta espera) e deixou o bot na ultima.
+        # Esperar aqui dentro nao consome tentativa nenhuma.
+        while not self.internet_online():
+            self._sleep_offline(config)
 
         self.wrapper = WebWrapper(
             config["server"]["endpoint"],
@@ -913,21 +975,7 @@ class TWB:
         defense_states = {}
         while self.should_run:
             if not self.internet_online():
-                print("Internet seems to be down, waiting till its back online...")
-                sleep = 0
-                if self.is_active_hours(config=config):
-                    sleep = config["bot"]["active_delay"]
-                else:
-                    if config["bot"]["inactive_still_active"]:
-                        sleep = config["bot"]["inactive_delay"]
-
-                sleep += self._jitter(config)
-                dtn = datetime.datetime.now()
-                dt_next = dtn + datetime.timedelta(0, sleep)
-                print(
-                    "Dead for %.2f minutes (next run at: %s)" % (sleep / 60, dt_next.time())
-                )
-                time.sleep(sleep)
+                self._sleep_offline(config)
             else:
                 # P-CICLO-MEDIDA (core/cycle_meter.py): o ciclo e medido do
                 # overview ate o sono. `between` sao as requisicoes feitas
@@ -948,7 +996,10 @@ class TWB:
                         "aborted": "overview_unavailable",
                         "requests_between_cycles": between,
                     })
-                    sleep = config["bot"]["active_delay"] + random.randint(20, 60)
+                    sleep = self._hunter_capped_sleep(
+                        config["bot"]["active_delay"] + random.randint(20, 60),
+                        config, "visao geral indisponivel",
+                    )
                     logging.warning(
                         "Overview unavailable, sleeping %.0fs before retry.", sleep
                     )
@@ -1012,6 +1063,21 @@ class TWB:
                     for v in self.villages
                     if v.village_id in self.found_villages
                 }
+
+                # Hunter o mais cedo possivel no ciclo: logo depois da visao
+                # geral, antes de reservas, estatisticas, comandos no ar e do
+                # prime da conquista. Em 2026-09-27 esse preambulo custou ~100 s
+                # num processo recem-reiniciado e o 4o nobre do trem contra a
+                # 55647 saiu 102 s atrasado -- recusado. Seguro num processo
+                # novo porque o Hunter agora prima a aldeia de origem que ainda
+                # nao rodou (`Hunter._ensure_source_ready`).
+                if config.get("hunter", {}).get("enabled", False):
+                    if not self.hunter:
+                        self.hunter = Hunter(wrapper=self.wrapper)
+                    self.hunter.villages = managed_villages_dict
+                    self.hunter.build_schedules_from_config(config)
+                    with meter_phase(self.wrapper, "hunter"):
+                        self.hunter.run(config)
                 # P2-35: one PvpConquestManager for the whole cycle instead of
                 # one per village. The state machine still runs once per
                 # village (that priority-over-farm behaviour is deliberate --
@@ -1138,12 +1204,7 @@ class TWB:
                 # callback before processing starts; Village and AttackManager
                 # invoke it at safe checkpoints using the same HTTP session.
                 hunter_callback = None
-                if config.get("hunter", {}).get("enabled", False):
-                    if not self.hunter:
-                        self.hunter = Hunter(wrapper=self.wrapper)
-                    self.hunter.villages = managed_villages_dict
-                    self.hunter.build_schedules_from_config(config)
-
+                if config.get("hunter", {}).get("enabled", False) and self.hunter:
                     def hunter_callback():
                         # village=False: o Hunter e da conta inteira, mesmo
                         # quando chamado do checkpoint de uma aldeia.
@@ -1250,6 +1311,7 @@ class TWB:
                 # aldeia -- acelera o apoio que CHEGA nela, entao quem precisa
                 # do numero e a doadora, na hora de estimar a viagem.
                 defense_bonus = {}
+                network_lost = False
 
                 for village in processing_order:
                     if village.village_id not in self.found_villages:
@@ -1296,8 +1358,45 @@ class TWB:
 
                     # "aldeia" so recebe o que village.run() faz fora das
                     # fases que ele mesmo marca (init, farm, ...).
-                    with meter_phase(self.wrapper, "aldeia", village=village.village_id):
-                        village.run(config=config)
+                    # A26-01: sem isto uma excecao em qualquer aldeia derrubava o
+                    # processo inteiro (e o estado em memoria junto: reservas de
+                    # escolta, wait_for, frescor das bandeiras). Agora a aldeia
+                    # e pulada neste ciclo, com traceback no log -- que era o
+                    # que faltava para diagnosticar as quedas de `None`.
+                    try:
+                        with meter_phase(self.wrapper, "aldeia", village=village.village_id):
+                            village.run(config=config)
+                    except Exception as e:
+                        if isinstance(e, VillageInitException):
+                            # Tela da aldeia nao veio (timeout, login,
+                            # captcha): o motivo ja foi logado, traceback
+                            # nao acrescenta nada.
+                            logging.warning(
+                                "Village %s: init falhou (tela da aldeia nao veio), pulada neste ciclo",
+                                village.village_id,
+                            )
+                        else:
+                            logging.exception(
+                                "Village %s: erro no ciclo, aldeia pulada: %s",
+                                village.village_id, e,
+                            )
+                        try:
+                            self.wrapper.reporter.report(
+                                village.village_id, "TWB_EXCEPTION", str(e)
+                            )
+                        except Exception:
+                            pass
+                        # Quase toda queda de aldeia em campo e rede. Se ela
+                        # caiu, as proximas 30 aldeias falhariam uma a uma,
+                        # cada uma pagando timeout; melhor voltar ao topo, cuja
+                        # espera por rede respeita o Hunter.
+                        if not self.internet_online():
+                            logging.warning(
+                                "Rede fora no meio do ciclo -- encerrando o ciclo aqui"
+                            )
+                            network_lost = True
+                            break
+                        continue
 
                     if (
                             village.get_config(
@@ -1321,6 +1420,13 @@ class TWB:
                         defense_bonus[village.village_id] = (
                             village.def_man.support_speed_bonus_pct
                         )
+
+                if network_lost:
+                    close_and_report(self.wrapper.meter, extra={
+                        "aborted": "network_lost",
+                        "requests_between_cycles": between,
+                    })
+                    continue
 
                 if len(defense_states) and config["farms"]["farm"]:
                     print("Syncing attack states")
@@ -1484,15 +1590,30 @@ class TWB:
         self.run()
 
 
+# main(): quantas quedas seguidas (sem nenhum ciclo completo entre elas)
+# encerram o processo, e a pausa antes de reiniciar. A pausa e curta de
+# proposito: o processo novo roda o Hunter logo depois da visao geral e a
+# espera por rede ja respeita o proximo comando agendado.
+MAX_CONSECUTIVE_CRASHES = 3
+CRASH_RESTART_PAUSE = 30
+
+
 def main():
     """
     Python main entry function
     """
     check_update()
-    for _ in range(3):
+    # A26-01: eram 3 tentativas na VIDA do processo, sem pausa e sem zerar --
+    # e ate uma volta normal de t.start() gastava uma. Agora contam so quedas
+    # SEGUIDAS: um processo que fechou pelo menos um ciclo completo antes de
+    # cair recomeca a contagem. Volta normal de t.start() (should_run
+    # desligado, falta de user-agent) encerra o processo sem reiniciar.
+    failures = 0
+    while failures < MAX_CONSECUTIVE_CRASHES:
         t = TWB()
         try:
             t.start()
+            break
         except Exception as e:
             # A causa raiz é impressa ANTES de qualquer tentativa de reportar:
             # se o próprio handler falhar, o traceback original não se perde.
@@ -1518,8 +1639,21 @@ def main():
             except Exception as notify_error:
                 print("Could not send the crash notification: %s" % str(notify_error))
 
+            failures = 1 if t.runs > 0 else failures + 1
+            if failures < MAX_CONSECUTIVE_CRASHES:
+                print(
+                    "Queda %d de %d seguidas; reiniciando em %ds"
+                    % (failures, MAX_CONSECUTIVE_CRASHES, CRASH_RESTART_PAUSE)
+                )
+                sys.stdout.flush()
+                time.sleep(CRASH_RESTART_PAUSE)
+
+    if failures < MAX_CONSECUTIVE_CRASHES:
+        return
     try:
-        Notification.send("TWB has crashed 3 times, exiting")
+        Notification.send(
+            "TWB crashed %d times in a row, exiting" % MAX_CONSECUTIVE_CRASHES
+        )
     except Exception as notify_error:
         print("Could not send the final crash notification: %s" % str(notify_error))
 

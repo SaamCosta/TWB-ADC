@@ -150,7 +150,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   §9 item 20a)
   e o total de tropas do recrutamento (`tests/test_units_owned_total.py` —
   apoio enviado em `units_away` entra no total; recorte verbatim da BBM 006;
-  §8.26).
+  §8.26)
+  e a resiliência a queda (`tests/test_crash_resilience.py` — sono de rede
+  fora encurtado pelo Hunter, prime da origem num processo novo, quedas
+  seguidas de `main()`, os `None` do A26-02; §8.33).
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever
@@ -205,13 +208,14 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
 **Nenhum item da auditoria segue aberto.** O último (P2-29) foi fechado em
 2026-08-12 — ver o Lote 7 e o quinto padrão abaixo.
 
-⚠️ **Segunda auditoria, de 2026-09-26: 21 achados em aberto (`A26-01` a
-`A26-21`), em `docs/backend.md` §8.32.** Os quatro P1 são estes. Uma exceção
-em qualquer aldeia derruba o bot, e três no mesmo processo o encerram. Cinco
-caminhos de `None` em `Village` continuam abertos. A conquista bárbara pode
-mandar nobre extra contra a aldeia que acabou de conquistar, porque o `repman`
-não é passado e o planejador grava `loyalty_after_train: 0`. E um schedule
-vencido no Hunter trava o planejador para sempre.
+⚠️ **Segunda auditoria, de 2026-09-26: 21 achados (`A26-01` a `A26-21`), em
+`docs/backend.md` §8.32.** O Lote A (A26-01, A26-02, A26-10) foi fechado em
+2026-09-27 (§8.33), depois de uma queda de rede derrubar o bot e custar o 4º
+nobre de um trem. Seguem abertos dois P1. A conquista bárbara pode mandar nobre
+extra contra a aldeia que acabou de conquistar, porque o `repman` não é passado
+e o planejador grava `loyalty_after_train: 0`; das três correções, só a de
+`_target_is_mine()` foi feita. E um schedule vencido no Hunter trava o
+planejador para sempre (A26-04).
 
 ⚠️ **Aberto, fora da auditoria: rastreio de conquista sumiu sem explicação.**
 Em 2026-08-12 às 19:46 o `ConquestManager._get_my_conquest()` devolveu `None`
@@ -820,6 +824,22 @@ puxa o fio.**
   quê*. É o 16º padrão outra vez (a instrução vinha de um documento, e
   documento é memória, não especificação), com o agravante de que aqui o
   documento era o **plano da própria tarefa**.
+- ⚠️ **Vigésimo oitavo padrão, achado em 2026-09-27: espera cega num sistema
+  que tem compromisso com hora marcada.** O Hunter existe para sair num
+  segundo exato, e o sono entre ciclos já sabia disso: encurtava para acordar
+  na janela. Mas havia **quatro** caminhos que dormem, e só esse perguntava. A
+  espera por rede fora (duas cópias) e a de "Overview unavailable" dormiam o
+  `active_delay` inteiro. Uma queda de rede fez o bot acordar 4 s antes da
+  saída de um nobre, e o processo novo ainda levou ~100 s até o Hunter agir.
+  A regra: **quando existe um registro de prazos (schedules do Hunter, timer de
+  reserva), todo `time.sleep` do laço principal tem que consultá-lo — não só o
+  caminho feliz.** Grep por `time.sleep` em `twb.py` custa um segundo e mostra
+  todos os caminhos. Dois corolários. Primeiro, "acordar a tempo da janela" não
+  basta para quem acorda de um reinício, que ainda paga login, visão geral e
+  prime; a margem tem que incluir o custo de voltar (`Hunter.WAKE_MARGIN`,
+  medido). Segundo, um retorno que parece inofensivo (`return False` depois de
+  esperar) pode estar sendo contado por quem chama: `main()` tratava como mais
+  uma das 3 vidas do processo. §8.33.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do

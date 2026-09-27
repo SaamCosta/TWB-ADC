@@ -41,12 +41,21 @@ class Hunter:
     # Seconds before send_time to enter priority mode and start monitoring
     window = 120
     PROBE_RETRY_SECONDS = 60
+    # Quanto antes da janela um processo que acabou de subir precisa acordar.
+    # Medido em 2026-09-27: da volta da rede ate o Hunter conseguir agir foram
+    # ~100 s (login, visao geral, reservas, estatisticas, comandos no ar e o
+    # prime das origens). Quem dorme "ate a janela" sem essa folga acorda na
+    # hora certa e chega atrasado -- foi o que perdeu o 4o nobre da 55647.
+    WAKE_MARGIN = 120
 
     def __init__(self, wrapper=None):
         self.wrapper = wrapper
         # Populated by twb.py each cycle: {village_id: Village}
         self.villages = {}
         self.logger = logging.getLogger("Hunter")
+        # Trava de reentrada: o prime preguicoso abaixo roda codigo de Village,
+        # e nenhum checkpoint dali pode chamar o Hunter de volta no meio.
+        self._running = False
 
     # ------------------------------------------------------------------
     # Schedule persistence
@@ -190,7 +199,41 @@ class Hunter:
         """
         if not config.get("hunter", {}).get("enabled", False):
             return
+        if self._running:
+            return
+        self._running = True
+        try:
+            self._run(config)
+        finally:
+            self._running = False
+            # A26-18 por tabela: uma excecao no meio de um schedule nao pode
+            # deixar o wrapper preso em priority_mode.
+            if hasattr(self.wrapper, "priority_mode"):
+                self.wrapper.priority_mode = False
 
+    def _ensure_source_ready(self, source_id, config):
+        """
+        Garante que a aldeia de origem tem AttackManager antes do envio.
+
+        Num processo que acabou de subir (reinicio depois de queda, ou bot
+        iniciado na mao perto da hora), os objetos Village ainda nao rodaram:
+        sem `attack`, `_send_attack_batch()` marcaria o comando como falho. O
+        prime e somente-leitura (~4 requisicoes) e e o mesmo que a conquista
+        usa no inicio do ciclo.
+        """
+        village = self.villages.get(str(source_id))
+        if not village or village.attack:
+            return
+        prime = getattr(village, "prime_for_conquest", None)
+        if not callable(prime):
+            return
+        self.logger.info(
+            "Hunter: aldeia %s ainda nao rodou neste processo -- lendo antes do envio",
+            source_id
+        )
+        prime(config=config)
+
+    def _run(self, config):
         schedules = self._load_schedules()
         if not schedules:
             return
@@ -288,6 +331,18 @@ class Hunter:
                     continue  # not our cycle yet
 
                 # --- Within the send window ---
+                self._ensure_source_ready(atk["source_village_id"], config)
+                time_to_send = send_time - time.time()
+                if time_to_send <= 0:
+                    atk["status"] = "failed"
+                    atk["fail_reason"] = "send_time_missed"
+                    atk["missed_by_seconds"] = abs(float(time_to_send))
+                    changed = True
+                    self.logger.error(
+                        "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
+                        atk["source_village_id"], target_id, abs(float(time_to_send))
+                    )
+                    continue
                 if hasattr(self.wrapper, "priority_mode"):
                     self.wrapper.priority_mode = True
                 if time_to_send > 0:
@@ -356,11 +411,15 @@ class Hunter:
     # Sleep adjuster (called by twb.py before time.sleep)
     # ------------------------------------------------------------------
 
-    def nearest_send_time(self):
+    def nearest_send_time(self, after=None):
         """
         Returns the nearest pending send_time across all schedules, or None.
         twb.py uses this to shorten the inter-cycle sleep so we wake up in
         time to enter the send window.
+
+        `after` descarta horarios ja vencidos: quem so quer saber "ate quando
+        posso dormir" (o sono de rede fora) nao deve ser acordado por um
+        comando que o proximo Hunter.run() vai apenas marcar como falho.
         """
         schedules = self._load_schedules()
         nearest = None
@@ -371,6 +430,8 @@ class Hunter:
                 if atk.get("status") != "pending":
                     continue
                 st = atk.get("send_time")
+                if after is not None and st and st <= after:
+                    continue
                 if st and (nearest is None or st < nearest):
                     nearest = st
         return nearest

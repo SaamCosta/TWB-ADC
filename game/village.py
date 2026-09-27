@@ -144,20 +144,28 @@ class Village:
             )
             game_data_shadow.record_reread(
                 self.wrapper, self.village_id, "init", shadow_prev)
-            if data:
-                self.game_data = Extractor.game_state(data)
-                self.logger = logging.getLogger(
-                    "Village %s" % self.game_data["village"]["name"]
-                )
-                self.logger.info("Read game state for village")
-                self.wrapper.reporter.report(
-                    self.village_id,
-                    "TWB_START",
-                    "Starting run for village: %s" % self.game_data["village"]["name"],
-                )
+            # A26-02 a/c: GET falho mantinha o game_data do ciclo ANTERIOR (o
+            # `if not self.game_data` de run() passava e setup_defence_manager
+            # quebrava em `data.text`); resposta 200 que nao e tela de jogo
+            # (login, captcha) dava None e quebrava logo abaixo. Nos dois casos
+            # o certo e nao ter game_data: run() pula a aldeia e o prime
+            # devolve False.
+            self.game_data = Extractor.game_state(data) if data else None
+            if not self.game_data:
+                return None
+            self.logger = logging.getLogger(
+                "Village %s" % self.game_data["village"]["name"]
+            )
+            self.logger.info("Read game state for village")
+            self.wrapper.reporter.report(
+                self.village_id,
+                "TWB_START",
+                "Starting run for village: %s" % self.game_data["village"]["name"],
+            )
         self.points = self.points_from_game_data(self.game_data, self.points)
         if (
                 self.village_set_name
+                and self.game_data
                 and self.game_data["village"]["name"] != self.village_set_name
         ):
             self.logger.name = f"Village {self.village_set_name}"
@@ -1191,16 +1199,20 @@ class Village:
                 )
             )
 
-        reused = game_data_shadow.reuse(self.wrapper, self.village_id, "market")
-        if reused:
-            self.game_data = reused
-        else:
+        fresh = game_data_shadow.reuse(self.wrapper, self.village_id, "market")
+        if not fresh:
             shadow_prev = game_data_shadow.before(self.wrapper, self.village_id)
             res = self.wrapper.get_action(village_id=self.village_id, action="overview")
             game_data_shadow.record_reread(
                 self.wrapper, self.village_id, "market", shadow_prev)
-            self.game_data = Extractor.game_state(res)
-        self.resman.update(self.game_data)
+            fresh = Extractor.game_state(res)
+        # A26-02 e: sem guarda o None ia parar em self.game_data e dali em
+        # set_cache_vars() -- a queda de 2026-09-27 as 14:27, que custou o 4o
+        # nobre da 55647. Leitura ruim mantem o game_data lido no inicio desta
+        # mesma execucao, e resman.update(None) ja preserva os recursos.
+        if fresh:
+            self.game_data = fresh
+        self.resman.update(fresh)
         if self.get_config(
                 section="world", parameter="trade_for_premium", default=False
         ) and self.get_village_config(
@@ -1257,7 +1269,9 @@ class Village:
             data = self.village_init()
 
         if not self.game_data:
-            self.logger.error(
+            # A26-02 b: na primeira execucao do objeto o logger ainda e o None
+            # da classe, e este log era a propria queda.
+            (self.logger or logging.getLogger("Village")).error(
                 "Error reading game data for village %s", self.village_id
             )
             raise VillageInitException
@@ -1384,8 +1398,17 @@ class Village:
             village_id=self.village_id,
             params={"screen": 'new_quests', "tab": "main-tab", "quest": 0},
         )
+        # A26-02 d: get_api_data devolve None com rede ruim e o proprio
+        # Response quando o JSON nao parseia; os dois quebravam aqui, em toda
+        # aldeia e todo ciclo (quests_enabled).
+        dialog = None
+        if isinstance(result, dict):
+            dialog = (result.get("response") or {}).get("dialog")
+        if not isinstance(dialog, str):
+            self.logger.debug("Quest rewards: resposta sem dialogo legivel, pulando")
+            return False
         # The data is escaped for JS, so unescape it before sending it to the extractor.
-        rewards = Extractor.get_quest_rewards(decode(result["response"]["dialog"], 'unicode-escape'))
+        rewards = Extractor.get_quest_rewards(decode(dialog, 'unicode-escape'))
         for reward in rewards:
             # First check if there is enough room for storing the reward
             for t_resource in reward["reward"]:
