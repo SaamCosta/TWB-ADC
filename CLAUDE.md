@@ -153,7 +153,13 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   §8.26)
   e a resiliência a queda (`tests/test_crash_resilience.py` — sono de rede
   fora encurtado pelo Hunter, prime da origem num processo novo, quedas
-  seguidas de `main()`, os `None` do A26-02; §8.33).
+  seguidas de `main()`, os `None` do A26-02; §8.33)
+  e os avisos de Telegram (`tests/test_telegram_notes.py` — Hunter,
+  promoção do trem, conquista, queda de rede; §8.34). ⚠️ `Notification.send`
+  só age depois de `Notification.arm()`, que só `twb.main()` chama: a suíte lê
+  o `config.json` real, e sem essa trava rodar os testes com o Telegram ligado
+  mandaria mensagem ao canal. Teste que precisa do `send()` de verdade arma
+  uma instância própria, nunca o singleton.
   **A maior parte do bot continua
   sem cobertura** — em especial tudo que faz requisição — então revisar diffs
   manualmente segue valendo. Ao introduzir lógica pura e isolável, escrever

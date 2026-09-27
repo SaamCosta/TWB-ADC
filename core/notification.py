@@ -29,6 +29,13 @@ class _Notification:
        transformando "captcha detectado" em "GET falhou" e pulando a espera
        inteira).
 
+    3. **So envia depois de `arm()`**, que so `twb.main()` chama (2026-09-27).
+       Os avisos de Hunter e de conquista passaram a morar em caminhos que a
+       suite de testes exercita, e os testes rodam da raiz do repo -- leem o
+       `config.json` de verdade. Com `notifications.enabled` ligado, rodar a
+       suite mandaria mensagem real para o canal. Import, teste, webmanager e
+       ferramenta auxiliar nunca armam; so o processo do bot.
+
     Ainda **nao** implementado, de proposito: filtro por categoria
     (`notify_<categoria>`), que o fork LazyTurtle tem. Ele exige chaves novas em
     `config.example.json` e, por tabela, bump de `build.version` -- o que dispara
@@ -37,6 +44,7 @@ class _Notification:
 
     bot = None
     enabled = False
+    armed = False
     channel_id = None
     token = None
     loop = None
@@ -45,6 +53,10 @@ class _Notification:
     def __init__(self):
         # Sem I/O aqui. Ver o item 1 do docstring da classe.
         pass
+
+    def arm(self):
+        """Libera o envio. Chamado so por `twb.main()` -- ver item 3."""
+        self.armed = True
 
     def get_config(self):
         try:
@@ -71,6 +83,8 @@ class _Notification:
         return True
 
     def send(self, message):
+        if not self.armed:
+            return
         try:
             if not self._ensure_bot():
                 return

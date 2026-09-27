@@ -4612,6 +4612,57 @@ leitura, mas continua sendo o 28º padrão em aberto.
 agendado. No log, procurar `Hunter: sono (rede fora) encurtado` e
 `Hunter: aldeia X ainda nao rodou neste processo -- lendo antes do envio`.
 
+## 8.34 ✅ `P-TELEGRAM-AVISOS` — o que deu errado passa a chegar no celular (2026-09-27)
+
+**Motivo.** O 4º nobre da 55647 foi recusado às 14:40 da §8.33, e o usuário só
+soube depois, lendo o log. O `Notification` (§8.9) já era seguro e já avisava
+captcha, captcha resolvido, queda do processo e início do bot. Não estava
+ligado, e não sabia de Hunter, conquista nem rede.
+
+**Avisos novos.** O texto é em pt-BR e cita aldeia pelo nome quando ele é
+conhecido.
+
+| Origem | Quando |
+|---|---|
+| `Hunter` | comando que não saiu (recusa por atraso, com os segundos, ou envio falho), marcando se levava nobre; operação que expirou com comando pendente |
+| `BarbarianTrainPlanner` | trem agendado (origens e pouso); os N nobres saíram; **trem incompleto** ("só 3 de 4… se quiser mandar na mão, é agora"); nenhum nobre saiu; alvo cancelado por reserva da tribo |
+| `ConquestManager._handle_existing` | conquistada (pela lista de aldeias ou pelo relatório do nobre); perdida para outro jogador; abandonada por reserva; **sem confirmação** (a estimativa de lealdade zerou); nobre extra enviado |
+| `twb.py` | queda de rede, avisada **na volta** com início, fim e duração (com a rede fora o Telegram também não chega); erro numa aldeia que foi pulada (A26-01), menos `VillageInitException`, que é timeout rotineiro |
+
+**Dois cuidados de desenho.**
+
+- **O Hunter acumula e envia no fim do `run()`.** `send()` faz rede e pode
+  levar segundos. Dentro da janela de envio, cada segundo pertence ao próximo
+  comando do mesmo trem.
+- **`Notification.arm()`**. Os avisos novos moram em caminhos que a suíte
+  exercita, e os testes rodam da raiz do repo, ou seja, contra o `config.json`
+  real. Com o Telegram ligado, rodar a suíte mandaria mensagem ao canal. Agora
+  `send()` só age depois de `arm()`, e só `twb.main()` chama. Import, teste,
+  webmanager e ferramentas nunca armam. Foi o 20º padrão (efeito que dispara
+  onde ninguém previu) aparecendo antes de acontecer.
+
+**Verificado.** Com um token falso, o `send()` chegou à API do Telegram e voltou
+`Unauthorized` duas vezes seguidas, reusando o mesmo loop. Com o token do
+`config.json`, só leitura (`getMe`, `getChat`, `getChatMember`): o bot existe e é
+administrador do canal com permissão de postar. **Nenhuma mensagem foi
+enviada.** Falta só `notifications.enabled: true`, que vale ao vivo, sem
+reiniciar.
+
+**Testes.** `tests/test_telegram_notes.py` (14 checks) cobre:
+- o texto e o momento dos avisos do Hunter, sem repetir no run seguinte;
+- os três desfechos da promoção do trem e a conquista confirmada;
+- a queda de rede avisada uma vez, com o início preservado.
+
+Em `tests/test_notification_safety.py` entrou o caso "sem `arm()` não lê config
+nem monta bot". O `tests/test_session_and_captcha.py` passou a armar o notifier
+real, senão o teste de captcha passaria sem exercitar o `send()`. Suíte: 72/72.
+
+**Fora, de propósito:**
+- filtro por categoria (`notify_<categoria>`), pelo mesmo motivo da §8.9: exige
+  config nova e bump de `build.version`;
+- avisos da conquista PvP. As falhas de envio dela já chegam pelo Hunter, e o
+  desfecho fica para quando ela sair do semi-manual.
+
 ---
 
 ## 9. Próximos passos

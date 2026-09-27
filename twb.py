@@ -736,6 +736,7 @@ class TWB:
 
     def _sleep_offline(self, config):
         """Um passo da espera por rede, sem perder comando agendado."""
+        _mark_offline()
         print("Internet seems to be down, waiting till its back online...")
         sleep = self._hunter_capped_sleep(
             self._base_sleep(config), config, "rede fora"
@@ -938,6 +939,7 @@ class TWB:
         # Esperar aqui dentro nao consome tentativa nenhuma.
         while not self.internet_online():
             self._sleep_offline(config)
+        _mark_online()
 
         self.wrapper = WebWrapper(
             config["server"]["endpoint"],
@@ -977,6 +979,7 @@ class TWB:
             if not self.internet_online():
                 self._sleep_offline(config)
             else:
+                _mark_online()
                 # P-CICLO-MEDIDA (core/cycle_meter.py): o ciclo e medido do
                 # overview ate o sono. `between` sao as requisicoes feitas
                 # entre um ciclo e outro (o Hunter depois do sono).
@@ -1380,6 +1383,10 @@ class TWB:
                                 "Village %s: erro no ciclo, aldeia pulada: %s",
                                 village.village_id, e,
                             )
+                            Notification.send(
+                                "Aldeia %s: erro no ciclo, pulada (o bot segue): %s"
+                                % (village.village_id, e)
+                            )
                         try:
                             self.wrapper.reporter.report(
                                 village.village_id, "TWB_EXCEPTION", str(e)
@@ -1395,6 +1402,7 @@ class TWB:
                                 "Rede fora no meio do ciclo -- encerrando o ciclo aqui"
                             )
                             network_lost = True
+                            _mark_offline()
                             break
                         continue
 
@@ -1590,6 +1598,33 @@ class TWB:
         self.run()
 
 
+# Inicio da queda de rede em curso (epoch) ou None. Fica no modulo, e nao na
+# instancia, porque main() cria um TWB novo a cada reinicio e a queda que
+# interessa avisar pode atravessar um deles. Com a rede fora nao da para
+# mandar Telegram, entao o aviso sai na VOLTA, com a duracao.
+_offline_since = None
+
+
+def _mark_offline():
+    global _offline_since
+    if _offline_since is None:
+        _offline_since = time.time()
+
+
+def _mark_online():
+    global _offline_since
+    if _offline_since is None:
+        return
+    started, _offline_since = _offline_since, None
+    Notification.send(
+        "Internet voltou: ficou fora de %s a %s (%.0f min). Se havia comando "
+        "agendado nesse intervalo, o Hunter avisa em seguida."
+        % (datetime.datetime.fromtimestamp(started).strftime("%H:%M"),
+           datetime.datetime.now().strftime("%H:%M"),
+           (time.time() - started) / 60)
+    )
+
+
 # main(): quantas quedas seguidas (sem nenhum ciclo completo entre elas)
 # encerram o processo, e a pausa antes de reiniciar. A pausa e curta de
 # proposito: o processo novo roda o Hunter logo depois da visao geral e a
@@ -1603,6 +1638,9 @@ def main():
     Python main entry function
     """
     check_update()
+    # So o processo do bot envia Telegram -- ver o item 3 do docstring de
+    # core/notification.py (a suite de testes le o mesmo config.json).
+    Notification.arm()
     # A26-01: eram 3 tentativas na VIDA do processo, sem pausa e sem zerar --
     # e ate uma volta normal de t.start() gastava uma. Agora contam so quedas
     # SEGUIDAS: um processo que fechou pelo menos um ciclo completo antes de

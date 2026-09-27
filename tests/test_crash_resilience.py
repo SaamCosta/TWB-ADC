@@ -253,6 +253,8 @@ def run_main(behaviours):
     finally:
         sys.stdout = old_stdout
         devnull.close()
+        # main() arma o Telegram de verdade; o resto da suite nao pode herdar.
+        twb.Notification.armed = False
         (twb.TWB, twb.check_update, twb.time.sleep, twb.Notification.send,
          twb.traceback.print_exc) = saved
     return starts, queue

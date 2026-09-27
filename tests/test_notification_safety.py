@@ -31,7 +31,14 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import core.notification as notification_module
-from core.notification import _Notification
+from core.notification import _Notification as _RawNotification
+
+
+def _Notification():
+    """Notifier armado, como o do processo do bot (`twb.main()` arma)."""
+    notifier = _RawNotification()
+    notifier.arm()
+    return notifier
 
 failures = []
 
@@ -74,6 +81,24 @@ class _RealFileManagerGuard:
 
 ENABLED = {"notifications": {"enabled": True, "token": "123:abc", "channel_id": "-1"}}
 DISABLED = {"notifications": {"enabled": False}}
+
+
+def test_sem_arm_nao_envia_nem_le_config():
+    """Teste e ferramenta nunca armam: nem com a notificacao ligada no
+    config.json real ela pode ler o config ou montar o bot."""
+    fm = CountingFileManager(ENABLED)
+    original_telegram = notification_module.telegram
+    notification_module.telegram = ExplodingTelegram
+    try:
+        with _RealFileManagerGuard(fm):
+            notifier = _RawNotification()
+            notifier.send("oi")
+    finally:
+        notification_module.telegram = original_telegram
+    check(fm.reads == 0 and notifier.bot is None,
+          "notifier sem arm() leu o config (%d) ou montou bot" % fm.reads)
+    check(notification_module.Notification.armed is False,
+          "o singleton nao pode nascer armado (import nao arma)")
 
 
 def test_construir_nao_le_config():

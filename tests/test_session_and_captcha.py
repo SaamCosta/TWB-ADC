@@ -464,6 +464,10 @@ def test_notificador_real_nao_derruba_a_espera():
     from core.notification import _Notification
 
     real = _Notification()
+    # Armado como no processo do bot, senao send() volta antes de chegar ao
+    # loop que explode e o teste passa sem exercitar nada. Seguro: o
+    # _ensure_bot abaixo nao le o config.json real.
+    real.arm()
     real._ensure_bot = lambda: True
     real.loop = _ExplodingLoop()
 

@@ -11,6 +11,7 @@ from datetime import datetime
 from datetime import timedelta
 
 from core.filemanager import FileManager
+from core.notification import Notification
 from core.templates import UNIT_CARRY, UNIT_POP
 from core.world_config import WorldConfig
 from game.farm_exclusions import FarmExclusionLog
@@ -1146,6 +1147,16 @@ class AttackCache:
         for existing in FileManager.list_directory("cache/attacks", ends_with=".json"):
             output[existing.replace(".json", "")] = FileManager.load_json_file(f"cache/attacks/{existing}")
         return output
+
+
+def conquest_label(target_id, data=None):
+    """'Barbara #55647 (582|288)' para aviso humano; cai no id se faltar dado."""
+    data = data or {}
+    name = data.get("target_name") or "alvo %s" % target_id
+    loc = data.get("target_location")
+    if isinstance(loc, (list, tuple)) and len(loc) == 2:
+        return "%s (%s|%s)" % (name, loc[0], loc[1])
+    return name
 
 
 class ConquestCache:
@@ -2544,6 +2555,10 @@ class ConquestManager:
                 "status": "conquered",
                 "confirmed_by": "village_cache",
             })
+            Notification.send(
+                "Conquista: %s e nossa (confirmado pela lista de aldeias)."
+                % conquest_label(target_id, conquest_data)
+            )
             self.wrapper.reporter.report(
                 self.village_id, "TWB_CONQUEST",
                 f"Conquest CONFIRMED: {target_id} is now ours."
@@ -2582,6 +2597,11 @@ class ConquestManager:
                 "status": "lost",
                 "lost_to_owner": taken_by,
             })
+            Notification.send(
+                "Conquista PERDIDA: %s foi conquistada pelo jogador %s antes "
+                "da gente. Nobres ja em rota nao voltam."
+                % (conquest_label(target_id, conquest_data), taken_by)
+            )
             self.wrapper.reporter.report(
                 self.village_id, "TWB_CONQUEST",
                 f"Alvo {target_id} perdido: conquistado pelo jogador {taken_by}"
@@ -2618,6 +2638,11 @@ class ConquestManager:
                 "blocked_reason": reason,
                 "blocked_at": int(time.time()),
             })
+            Notification.send(
+                "Conquista abandonada: %s foi reservada por %s. Nenhum nobre "
+                "novo sai; os que estao em rota nao voltam."
+                % (conquest_label(target_id, conquest_data), who)
+            )
             self.wrapper.reporter.report(
                 self.village_id, "TWB_CONQUEST",
                 f"Alvo {target_id} abandonado: reservado por {who}"
@@ -2664,6 +2689,10 @@ class ConquestManager:
                 "status": "conquered",
                 "confirmed_by": "noble_report",
             })
+            Notification.send(
+                "Conquista: %s e nossa (relatorio do nobre: lealdade %.0f)."
+                % (conquest_label(target_id, conquest_data), real_loyalty)
+            )
             return False
 
         if real_loyalty is not None:
@@ -2713,6 +2742,12 @@ class ConquestManager:
                 "status": "assumed_done",
                 "assumed_reason": "estimativa de lealdade chegou a zero sem confirmacao",
             })
+            Notification.send(
+                "Conquista SEM CONFIRMACAO: a estimativa de lealdade de %s "
+                "chegou a zero, mas nenhum relatorio confirma. O bot parou de "
+                "mandar nobre -- confira no jogo se a aldeia e sua."
+                % conquest_label(target_id, conquest_data)
+            )
             return False
 
         self.logger.info(
@@ -2761,12 +2796,17 @@ class ConquestManager:
                 # lealdade zerada *depois* do pouso, no topo deste método.
                 "status": "extra_pending",
             })
+            landing = (datetime.fromtimestamp(arrival).strftime("%H:%M:%S")
+                       if arrival else "horário desconhecido")
             self.logger.info(
                 "Conquest: extra noble sent to %s, estimated loyalty now %.1f "
                 "(pouso em %s)",
-                target_id, new_loyalty,
-                datetime.fromtimestamp(arrival).strftime("%H:%M:%S")
-                if arrival else "horário desconhecido"
+                target_id, new_loyalty, landing
+            )
+            Notification.send(
+                "Conquista: nobre extra enviado contra %s (lealdade estimada "
+                "antes do pouso: %.0f; pouso as %s)."
+                % (conquest_label(target_id, conquest_data), current_loyalty, landing)
             )
             return True
 

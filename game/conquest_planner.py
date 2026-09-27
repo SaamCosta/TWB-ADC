@@ -52,8 +52,9 @@ import logging
 import time
 
 from core.filemanager import FileManager
+from core.notification import Notification
 from core.world_config import WorldConfig
-from game.attack import ConquestCache, ConquestManager, field_distance
+from game.attack import ConquestCache, ConquestManager, conquest_label, field_distance
 from game.hunter import Hunter
 from game.reservations import manual_exclusion
 
@@ -583,6 +584,13 @@ class BarbarianTrainPlanner:
             "Trem multi-origem agendado -> %s | chegada %s | origens %s"
             % (target_id, arrival_str, per_source),
         )
+        Notification.send(
+            "Conquista: trem de %d nobres agendado contra %s, pouso %s "
+            "(origens: %s)."
+            % (len(plan), conquest_label(target_id, ConquestCache.get(target_id)),
+               arrival_str,
+               ", ".join("%s x%d" % (v, n) for v, n in sorted(per_source.items())))
+        )
         return target_id
 
     def _claim_target_on_board(self, target_id, location):
@@ -763,6 +771,10 @@ class BarbarianTrainPlanner:
                 "blocked_reason": reason,
                 "blocked_at": int(time.time()),
             })
+            Notification.send(
+                "Conquista cancelada: %s foi reservada por %s (%s)."
+                % (conquest_label(target_id, data), who, reason)
+            )
 
     def _release_finished_target_claims(self):
         """
@@ -904,6 +916,10 @@ class BarbarianTrainPlanner:
                     "invalid_reason": "O Hunter nao conseguiu despachar nenhum "
                                       "nobre do trem agendado",
                 })
+                Notification.send(
+                    "Conquista FALHOU: nenhum nobre do trem contra %s saiu. "
+                    "Alvo liberado." % conquest_label(target_id, data)
+                )
                 continue
 
             arrival = int(sched.get("arrival_time") or 0) or None
@@ -923,13 +939,25 @@ class BarbarianTrainPlanner:
                 "noble_arrivals": [arrival] * len(sent),
                 "last_hit_timestamp": arrival or int(time.time()),
             })
+            landing = (datetime.datetime.fromtimestamp(arrival).strftime(DATETIME_FMT)
+                       if arrival else "horário desconhecido")
             self.logger.info(
                 "Conquest: %d/%d nobres do trem contra %s sairam pelo Hunter, "
                 "pouso comum em %s",
-                len(sent), len(attacks), target_id,
-                datetime.datetime.fromtimestamp(arrival).strftime(DATETIME_FMT)
-                if arrival else "horário desconhecido"
+                len(sent), len(attacks), target_id, landing
             )
+            if len(sent) == len(attacks):
+                Notification.send(
+                    "Conquista: os %d nobres do trem contra %s sairam; pouso %s."
+                    % (len(sent), conquest_label(target_id, data), landing)
+                )
+            else:
+                Notification.send(
+                    "Conquista INCOMPLETA: so %d de %d nobres do trem contra %s "
+                    "sairam; pouso %s. O bot tenta completar com nobre extra "
+                    "depois do pouso -- se quiser mandar na mao, e agora."
+                    % (len(sent), len(attacks), conquest_label(target_id, data), landing)
+                )
 
     def _get_hunter(self):
         if self._hunter is None:

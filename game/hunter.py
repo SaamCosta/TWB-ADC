@@ -32,6 +32,7 @@ import time
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+from core.notification import Notification
 
 
 class Hunter:
@@ -56,6 +57,10 @@ class Hunter:
         # Trava de reentrada: o prime preguicoso abaixo roda codigo de Village,
         # e nenhum checkpoint dali pode chamar o Hunter de volta no meio.
         self._running = False
+        # Avisos de Telegram acumulados durante o run() e enviados so no fim:
+        # `Notification.send` faz rede e pode levar segundos, e dentro da
+        # janela de envio cada segundo e de outro comando do mesmo trem.
+        self._notes = []
 
     # ------------------------------------------------------------------
     # Schedule persistence
@@ -210,6 +215,35 @@ class Hunter:
             # deixar o wrapper preso em priority_mode.
             if hasattr(self.wrapper, "priority_mode"):
                 self.wrapper.priority_mode = False
+            notes, self._notes = self._notes, []
+            for note in notes:
+                Notification.send(note)
+
+    def _village_label(self, village_id):
+        """'BBM 011 (74690)' quando o nome e conhecido, senao so o id."""
+        village = self.villages.get(str(village_id))
+        name = None
+        try:
+            name = village.game_data["village"]["name"]
+        except (AttributeError, KeyError, TypeError):
+            pass
+        return "%s (%s)" % (name, village_id) if name else str(village_id)
+
+    def _note_failure(self, atk, target_id, reason):
+        label = "FAKE" if atk.get("is_fake") else "REAL"
+        troops = atk.get("troops") or {}
+        noble = " com nobre" if int(troops.get("snob", 0) or 0) > 0 else ""
+        self._notes.append(
+            "Hunter [%s]: comando%s %s -> %s NAO saiu: %s"
+            % (label, noble, self._village_label(atk.get("source_village_id")),
+               target_id, reason)
+        )
+
+    def _note_expired(self, sched_key):
+        self._notes.append(
+            "Hunter: operacao %s expirou -- a hora de chegada passou sem "
+            "todos os comandos terem saido" % sched_key
+        )
 
     def _ensure_source_ready(self, source_id, config):
         """
@@ -252,6 +286,8 @@ class Hunter:
             if sched.get("arrival_time", 0) < now:
                 sched["status"] = "failed"
                 changed = True
+                if any(a.get("status") == "pending" for a in sched.get("attacks", [])):
+                    self._note_expired(sched_key)
                 continue
             target_id = sched["target_id"]
             for atk in sched.get("attacks", []):
@@ -292,6 +328,7 @@ class Hunter:
                     "Hunter: schedule %s arrival has passed without all attacks being sent — marking failed",
                     sched_key
                 )
+                self._note_expired(sched_key)
                 sched["status"] = "failed"
                 changed = True
                 continue
@@ -325,6 +362,10 @@ class Hunter:
                         "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
                         atk["source_village_id"], target_id, abs(float(time_to_send))
                     )
+                    self._note_failure(
+                        atk, target_id,
+                        "a hora de saida passou ha %.0f s" % abs(float(time_to_send)),
+                    )
                     continue
 
                 if time_to_send > self.window:
@@ -341,6 +382,10 @@ class Hunter:
                     self.logger.error(
                         "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
                         atk["source_village_id"], target_id, abs(float(time_to_send))
+                    )
+                    self._note_failure(
+                        atk, target_id,
+                        "a hora de saida passou ha %.0f s" % abs(float(time_to_send)),
                     )
                     continue
                 if hasattr(self.wrapper, "priority_mode"):
@@ -390,6 +435,11 @@ class Hunter:
                         "OK" if result else "FAILED",
                         " (batch)" if len(batch) > 1 else "",
                     )
+                    if not result:
+                        self._note_failure(
+                            batch_atk, target_id,
+                            "o envio falhou (ver o log do Hunter)",
+                        )
 
             if hasattr(self.wrapper, "priority_mode"):
                 self.wrapper.priority_mode = False
