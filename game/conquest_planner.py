@@ -735,7 +735,6 @@ class BarbarianTrainPlanner:
         if not board and not cfg_excluded:
             return
 
-        schedules = None
         for target_id, data in ConquestCache.active_conquests().items():
             location = self._known_location(target_id)
 
@@ -763,11 +762,10 @@ class BarbarianTrainPlanner:
             if data.get("status") == "train_scheduled":
                 key = data.get("hunter_schedule_key")
                 if key:
-                    if schedules is None:
-                        schedules = FileManager.load_json_file(Hunter.SCHEDULE_CACHE) or {}
-                    sched = schedules.pop(key, None)
+                    # A26-12: apaga sob a trava do arquivo, relendo o disco,
+                    # em vez de gravar uma copia lida antes.
+                    sched = Hunter.remove_schedule(key)
                     if sched:
-                        FileManager.save_json_file(schedules, Hunter.SCHEDULE_CACHE)
                         self.logger.warning(
                             "Conquest: schedule %s do trem contra %s cancelado "
                             "-- alvo reservado por %s", key, target_id, who

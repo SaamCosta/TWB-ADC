@@ -670,11 +670,35 @@ class ResourceManager:
 
         return "%d:%02d:%02d" % (hour, minutes, seconds)
 
+    def trade_interval_seconds(self):
+        """
+        Intervalo minimo entre duas trocas desta aldeia, em segundos, ou None
+        quando `market.trade_max_per_hour` <= 0 (trocas desligadas).
+
+        A26-06: o codigo fazia `last_trade + 3600 * trade_max_per_hour`, ou
+        seja, lia o valor como HORAS ENTRE TROCAS -- o contrario do nome e do
+        helpfile ("maximo de trocas por hora"). Com o default 1 as duas
+        leituras coincidem, e foi isso que escondeu o bug desde o bot base
+        (17o padrao do CLAUDE.md). Com os 12 do config.json, o bot fazia uma
+        troca a cada 12 h por aldeia, e nao ate 12 por hora.
+        """
+        try:
+            per_hour = float(self.trade_max_per_hour)
+        except (TypeError, ValueError):
+            per_hour = 1.0
+        if per_hour <= 0:
+            return None
+        return 3600.0 / per_hour
+
     def manage_market(self, drop_existing=True):
         """
         Manages the market for you
         """
-        last = self.last_trade + int(3600 * self.trade_max_per_hour)
+        interval = self.trade_interval_seconds()
+        if interval is None:
+            self.logger.debug("Market: trade_max_per_hour <= 0, trocas desligadas")
+            return
+        last = self.last_trade + int(interval)
         if last > int(time.time()):
             rts = self.readable_ts(last)
             self.logger.debug(f"Won't trade for {rts}")
@@ -739,6 +763,33 @@ class ResourceManager:
 
                 self.trade(plenty, biased, item, how_many)
 
+    def offer_is_acceptable(self, offer, item, how_many, sell, willing_to_sell):
+        """
+        Aceitar a oferta de outro jogador?
+
+        A26-07: antes bastava entregar o recurso que falta, na quantidade
+        pedida, e cobrar ate todo o excedente -- uma oferta de 1.000 de ferro
+        por 20.000 de madeira passava. Agora a proporcao tambem conta: o que
+        pagamos por unidade recebida nao pode passar de `trade_bias`, que e a
+        mesma proporcao que o bot usa ao criar a propria oferta
+        (`market.trade_multiplier_value`, ou 1:1 com o multiplicador desligado).
+        """
+        if offer["offered"] != item or offer["wanted"] != sell:
+            return False
+        if offer["offer_amount"] < how_many:
+            return False
+        if offer["wanted_amount"] > willing_to_sell:
+            return False
+        if offer["wanted_amount"] > offer["offer_amount"] * float(self.trade_bias):
+            self.logger.debug(
+                "Market: oferta %s recusada pela proporcao -- %d %s por %d %s "
+                "(maximo %.2f por unidade)",
+                offer.get("id"), offer["wanted_amount"], offer["wanted"],
+                offer["offer_amount"], offer["offered"], float(self.trade_bias)
+            )
+            return False
+        return True
+
     def check_other_offers(self, item, how_many, sell):
         """
         Checks if there are offers that match our needs
@@ -778,12 +829,7 @@ class ResourceManager:
                 continue
 
             offer = self.parse_res_offer(res_offer, off_id[0])
-            if (
-                    offer["offered"] == item
-                    and offer["offer_amount"] >= how_many
-                    and offer["wanted"] == sell
-                    and offer["wanted_amount"] <= willing_to_sell
-            ):
+            if self.offer_is_acceptable(offer, item, how_many, sell, willing_to_sell):
                 self.logger.info(
                     f"Good offer: {offer['offer_amount']} {offer['offered']} for {offer['wanted_amount']} {offer['wanted']}"
                 )

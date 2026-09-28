@@ -632,9 +632,12 @@ def test_duracao_sondada_vira_send_time_no_schedule():
     """
     import webmanager.utils as wu
     raw = {}
-    saved = (wu.HunterReader._load_raw, wu.HunterReader._save_raw)
-    wu.HunterReader._load_raw = staticmethod(lambda: raw)
+    saved = (wu.HunterReader._load_raw, wu.HunterReader._save_raw, wu.file_lock)
+    wu.HunterReader._load_raw = staticmethod(lambda **_k: raw)
     wu.HunterReader._save_raw = staticmethod(lambda data: raw.update(data))
+    # A trava do A26-12 criaria cache/hunter/schedules.json.lock no repo real.
+    import contextlib
+    wu.file_lock = lambda *_a, **_k: contextlib.nullcontext()
     try:
         p, _ = _planner()
         plan = [
@@ -646,7 +649,7 @@ def test_duracao_sondada_vira_send_time_no_schedule():
             p, "49709", "2030-01-01 12:00:00", plan
         )
     finally:
-        wu.HunterReader._load_raw, wu.HunterReader._save_raw = saved
+        wu.HunterReader._load_raw, wu.HunterReader._save_raw, wu.file_lock = saved
     assert ok
     (sched,) = raw.values()
     first, second = sched["attacks"]

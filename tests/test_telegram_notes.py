@@ -82,7 +82,7 @@ schedules = {
     },
 }
 Hunter._load_schedules = lambda self: schedules
-Hunter._save_schedules = lambda self, s: None
+Hunter._save_schedules = lambda self, s, *_: None
 
 h = Hunter(wrapper=SimpleNamespace(priority_mode=False))
 h.villages = {"74690": SimpleNamespace(

@@ -51,7 +51,7 @@ def with_schedules(schedules):
     """Troca a leitura/escrita de schedules por memoria, sem tocar cache/."""
     saved = []
     Hunter._load_schedules = lambda self: schedules
-    Hunter._save_schedules = lambda self, s: saved.append(s)
+    Hunter._save_schedules = lambda self, s, *_: saved.append(s)
     return saved
 
 

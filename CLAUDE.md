@@ -158,6 +158,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   (`tests/test_conquest_loyalty_and_expiry.py` — `repman` entregue e relido
   antes da lealdade, pouso lido pelo relatório sem nobre extra, ataque
   `pending` de schedule vencido virando `arrival_passed`; §8.35)
+  e a fila do Hunter e a gravação do `schedules.json`
+  (`tests/test_hunter_schedule_queue.py` — intercalação entre schedules,
+  merge com o que o painel criou ou apagou durante a espera, trava entre dois
+  processos reais; §8.36), as regras do mercado
+  (`tests/test_market_trade_rules.py`) e a vaga de apoio liberada
+  (`tests/test_support_release.py`)
   e os avisos de Telegram (`tests/test_telegram_notes.py` — Hunter,
   promoção do trem, conquista, queda de rede; §8.34). ⚠️ `Notification.send`
   só age depois de `Notification.arm()`, que só `twb.main()` chama: a suíte lê
@@ -223,7 +229,14 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
 2026-09-27 (§8.33), depois de uma queda de rede derrubar o bot e custar o 4º
 nobre de um trem. O Lote B (A26-03 autoconquista, A26-04 trem
 preso, A26-14 sonda dobrada) foi fechado no mesmo dia (§8.35): **nenhum P1
-aberto**. Próximo: Lote C (A26-05/06/07/08/12).
+aberto**. O Lote C (A26-05 fila do Hunter, A26-06 `trade_max_per_hour`, A26-07
+proporção da oferta, A26-08 `supported`, A26-12 trava do `schedules.json`) também
+foi fechado no mesmo dia (§8.36). Sobram A26-09 e A26-11, que pedem sondagem
+do servidor antes, e os P3.
+⚠️ **`cache/hunter/schedules.json` tem vários escritores** (Hunter, planejador,
+painel). Quem grava nele passa por `core.file_lock` e **relê antes de gravar**.
+Nunca gravar a cópia lida antes de uma espera: é esse o bug do A26-12, e é o
+mesmo da §8.29 em outro arquivo.
 
 ⚠️ **Aberto, fora da auditoria: rastreio de conquista sumiu sem explicação.**
 Em 2026-08-12 às 19:46 o `ConquestManager._get_my_conquest()` devolveu `None`

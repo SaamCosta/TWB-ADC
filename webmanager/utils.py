@@ -9,6 +9,7 @@ import time
 
 import psutil
 
+from core.file_lock import file_lock
 from core.filemanager import FileManager
 
 
@@ -1285,22 +1286,29 @@ class HunterReader:
         return os.path.join(os.path.dirname(__file__), "..", "cache", "hunter", "schedules.json")
 
     @staticmethod
-    def _load_raw():
+    def _load_raw(strict=False):
+        """
+        `strict=True` devolve None quando o arquivo existe e nao pode ser
+        lido. Quem vai gravar em seguida usa isso para nao trocar um arquivo
+        ilegivel por um que so tem o schedule novo.
+        """
         path = HunterReader._cache_path()
         if not os.path.exists(path):
             return {}
         try:
-            with open(path, "r") as f:
+            with open(path, "r", encoding="utf-8-sig") as f:
                 return json.load(f)
         except Exception:
-            return {}
+            return None if strict else {}
 
     @staticmethod
     def _save_raw(data):
+        # Atomica (tmp + os.replace): o Hunter relê este arquivo antes de
+        # disparar cada comando, e um `open(..., "w")` deixava uma janela com
+        # JSON pela metade.
         path = HunterReader._cache_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
+        FileManager.save_json_file(data, os.path.abspath(path))
 
     @staticmethod
     def load():
@@ -1432,23 +1440,31 @@ class HunterReader:
         if not attack_entries:
             return False
 
-        raw = HunterReader._load_raw()
-        raw[sched_key] = {
-            "target_id":    str(target_id),
-            "label":        label,
-            "arrival_time": arrival_ts,
-            "arrival_str":  arrival_str,
-            "status":       "pending",
-            "attacks":      attack_entries,
-        }
-        HunterReader._save_raw(raw)
+        # A26-12: reler e gravar sob a mesma trava que o bot usa
+        # (Hunter._save_schedules), senao uma gravacao desfaz a outra.
+        with file_lock(HunterReader._cache_path()):
+            raw = HunterReader._load_raw(strict=True)
+            if raw is None:
+                return False
+            raw[sched_key] = {
+                "target_id":    str(target_id),
+                "label":        label,
+                "arrival_time": arrival_ts,
+                "arrival_str":  arrival_str,
+                "status":       "pending",
+                "attacks":      attack_entries,
+            }
+            HunterReader._save_raw(raw)
         return True
 
     @staticmethod
     def delete_schedule(sched_key):
-        raw = HunterReader._load_raw()
-        raw.pop(sched_key, None)
-        HunterReader._save_raw(raw)
+        with file_lock(HunterReader._cache_path()):
+            raw = HunterReader._load_raw(strict=True)
+            if raw is None:
+                return False
+            if raw.pop(sched_key, None) is not None:
+                HunterReader._save_raw(raw)
         return True
 
     @staticmethod

@@ -163,7 +163,7 @@ def test_hunter_groups_only_same_source_and_send_time():
     hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
     hunter._load_schedules = lambda: schedules
     saved = []
-    hunter._save_schedules = lambda data: saved.append(data)
+    hunter._save_schedules = lambda data, *_: saved.append(data)
     calls = []
     hunter._send_attack_batch = lambda batch, target: calls.append(
         ([atk["source_village_id"] for atk in batch], target)
@@ -237,7 +237,7 @@ def test_hunter_never_sends_after_send_time():
     hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
     hunter._load_schedules = lambda: schedules
     saved = []
-    hunter._save_schedules = lambda data: saved.append(data)
+    hunter._save_schedules = lambda data, *_: saved.append(data)
     hunter._send_attack_batch = lambda *_args: (_ for _ in ()).throw(
         AssertionError("late attack was sent")
     )
@@ -269,7 +269,7 @@ def test_hunter_services_schedules_by_departure_not_file_order():
     }
     hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
     hunter._load_schedules = lambda: schedules
-    hunter._save_schedules = lambda _data: None
+    hunter._save_schedules = lambda *_: None
     sent = []
     hunter._send_attack_batch = lambda _batch, target: sent.append(target) or True
 

@@ -435,7 +435,18 @@ def test_trem_agendado_cancela_o_schedule_do_hunter():
     p.reservation_board = _Board(claimed=[ALVO])
     p._release = lambda tid: released.append(tid)
 
-    p._cancel_reserved_targets()
+    # A26-12: o cancelamento passa por `Hunter.remove_schedule`, que trava e
+    # rele o arquivo real. Aqui ele e trocado pelo dict em memoria, para o
+    # teste nao tocar em cache/hunter (a trava em si tem teste proprio em
+    # tests/test_hunter_schedule_queue.py).
+    real_hunter = planner_mod.Hunter
+    planner_mod.Hunter = type("H", (real_hunter,), {
+        "remove_schedule": classmethod(lambda cls, key: schedules.pop(key, None)),
+    })
+    try:
+        p._cancel_reserved_targets()
+    finally:
+        planner_mod.Hunter = real_hunter
 
     assert "k1" not in schedules, "o schedule do Hunter sobreviveu -- o trem sairia"
     assert written[ALVO]["status"] == "blocked"

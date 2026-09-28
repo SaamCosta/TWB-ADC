@@ -74,7 +74,7 @@ schedules = {
     },
 }
 Hunter._load_schedules = lambda self: schedules
-Hunter._save_schedules = lambda self, s: None
+Hunter._save_schedules = lambda self, s, *_: None
 rec = Recorder()
 hunter_module.Notification = rec
 h = Hunter(wrapper=SimpleNamespace(priority_mode=False))

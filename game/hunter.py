@@ -26,11 +26,13 @@ Each attack's send_time is computed by probing the confirm page so the
 server's own travel-time calculation is used — no local formula needed.
 """
 
+import copy
 import datetime
 import logging
 import time
 
 from core.extractors import Extractor
+from core.file_lock import file_lock
 from core.filemanager import FileManager
 from core.notification import Notification
 
@@ -69,8 +71,103 @@ class Hunter:
     def _load_schedules(self):
         return FileManager.load_json_file(self.SCHEDULE_CACHE) or {}
 
-    def _save_schedules(self, schedules):
-        FileManager.save_json_file(schedules, self.SCHEDULE_CACHE)
+    def _save_schedules(self, schedules, baseline=None):
+        """
+        Grava so o que ESTE processo mudou desde `baseline` (a copia lida no
+        inicio), por cima do que esta no disco agora.
+
+        A26-12: o `_run()` le o arquivo, dorme ate 120 s na janela de envio e
+        gravava a copia inteira de volta. Um schedule criado pelo painel nesse
+        intervalo sumia, e um apagado voltava. Agora a gravacao rele o disco
+        sob `file_lock` e aplica `merge_schedule_changes()`.
+        """
+        path = FileManager.get_path(self.SCHEDULE_CACHE)
+        with file_lock(path):
+            try:
+                disk = FileManager.load_json_file(self.SCHEDULE_CACHE)
+            except Exception as exc:
+                # Arquivo corrompido: gravar a nossa copia inteira, como antes
+                # do A26-12, e melhor que mesclar com um vazio e perder os
+                # schedules que nao mudaram.
+                self.logger.warning(
+                    "Hunter: %s ilegivel na gravacao (%s) -- gravando a copia "
+                    "deste processo inteira", self.SCHEDULE_CACHE, exc
+                )
+                FileManager.save_json_file(schedules, self.SCHEDULE_CACHE)
+                return
+            if disk is None:
+                disk = {}  # arquivo apagado: quem apagou quis zerar
+            merged, dropped = self.merge_schedule_changes(disk, schedules, baseline)
+            for key in dropped:
+                self.logger.warning(
+                    "Hunter: schedule %s foi apagado fora do bot enquanto ele "
+                    "rodava -- nao sera recriado", key
+                )
+            FileManager.save_json_file(merged, self.SCHEDULE_CACHE)
+
+    @staticmethod
+    def merge_schedule_changes(disk, mine, baseline):
+        """
+        Aplica as mudancas de `mine` (em relacao a `baseline`) sobre `disk`.
+
+        - schedule que nao existia em `baseline`: foi criado por nos, entra;
+        - schedule que mudou em relacao a `baseline`: entra, mas so se ainda
+          existir no disco -- se sumiu, alguem apagou de proposito, e ele vai
+          para a lista `dropped`;
+        - schedule que nao mudou: fica o que esta no disco (o outro lado pode
+          ter mexido nele);
+        - schedule que so existe no disco: fica.
+
+        `baseline=None` trata tudo de `mine` como criado por nos.
+        Devolve `(merged, dropped)`.
+        """
+        baseline = baseline or {}
+        merged = dict(disk)
+        dropped = []
+        for key, sched in mine.items():
+            if key not in baseline:
+                merged[key] = sched
+            elif sched != baseline[key]:
+                if key in disk:
+                    merged[key] = sched
+                else:
+                    dropped.append(key)
+        return merged, dropped
+
+    @classmethod
+    def remove_schedule(cls, sched_key):
+        """
+        Apaga um schedule sob a mesma trava do resto. Devolve o schedule
+        removido, ou None se ele nao existia.
+        """
+        path = FileManager.get_path(cls.SCHEDULE_CACHE)
+        with file_lock(path):
+            schedules = FileManager.load_json_file(cls.SCHEDULE_CACHE) or {}
+            sched = schedules.pop(sched_key, None)
+            if sched is not None:
+                FileManager.save_json_file(schedules, cls.SCHEDULE_CACHE)
+        return sched
+
+    def _schedule_deleted(self, sched_key):
+        """
+        True so quando o arquivo foi lido e o schedule nao esta mais nele.
+
+        Arquivo vazio ou ilegivel responde False: um soluco de leitura nao
+        pode cancelar um nobre. O custo e nao enxergar o caso "apagaram o
+        ultimo schedule" -- esse comando ainda sai.
+        """
+        try:
+            disk = self._load_schedules()
+        except Exception as exc:
+            # load_json_file LEVANTA em JSON corrompido. Esta leitura roda
+            # dentro da janela de envio, depois da espera: deixar a excecao
+            # subir derrubaria o run() e o comando nao sairia.
+            self.logger.warning(
+                "Hunter: nao consegui reler %s antes do envio (%s) -- enviando "
+                "assim mesmo", self.SCHEDULE_CACHE, exc
+            )
+            return False
+        return bool(disk) and sched_key not in disk
 
     # ------------------------------------------------------------------
     # Config → cache bootstrap
@@ -91,6 +188,7 @@ class Hunter:
             return
 
         cached = self._load_schedules()
+        baseline = copy.deepcopy(cached)
         changed = False
 
         for entry in cfg_schedules:
@@ -185,7 +283,7 @@ class Hunter:
             )
 
         if changed:
-            self._save_schedules(cached)
+            self._save_schedules(cached, baseline)
 
     # ------------------------------------------------------------------
     # Main run — fires due attacks
@@ -287,23 +385,39 @@ class Hunter:
         )
         prime(config=config)
 
+    def _refuse_late(self, atk, target_id, time_to_send):
+        """A hora de saida passou: o comando vira `failed`, nunca sai atrasado."""
+        missed = abs(float(time_to_send))
+        atk["status"] = "failed"
+        atk["fail_reason"] = "send_time_missed"
+        atk["missed_by_seconds"] = missed
+        self.logger.error(
+            "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
+            atk["source_village_id"], target_id, missed
+        )
+        self._note_failure(atk, target_id, "a hora de saida passou ha %.0f s" % missed)
+
     def _run(self, config):
         schedules = self._load_schedules()
         if not schedules:
             return
+        # Copia do que foi lido: na gravacao, so o que mudou em relacao a ela
+        # vai para o disco (A26-12, ver _save_schedules).
+        baseline = copy.deepcopy(schedules)
 
         now = time.time()
         changed = False
 
         # Resolve travel times for every schedule before choosing what to
-        # service. Dict/file order is not chronological: PvP conquest writes
-        # the clear schedule before the nobles schedule even though nobles
-        # normally depart first. Sleeping on the first dict entry could miss a
-        # more urgent command in a later entry.
+        # service.
         for sched_key, sched in schedules.items():
             if sched.get("status") != "pending":
                 continue
             if sched.get("arrival_time", 0) < now:
+                self.logger.warning(
+                    "Hunter: schedule %s arrival has passed without all attacks being sent — marking failed",
+                    sched_key
+                )
                 self._expire_schedule(sched_key, sched)
                 changed = True
                 continue
@@ -323,156 +437,130 @@ class Hunter:
                     atk["send_time"] = sched["arrival_time"] - duration
                     changed = True
 
-        def next_departure(item):
-            _key, sched = item
-            departures = [
-                float(atk["send_time"])
-                for atk in sched.get("attacks", [])
-                if atk.get("status") == "pending" and atk.get("send_time") is not None
-            ]
-            return min(departures) if departures else float("inf")
-
-        ordered_schedules = sorted(schedules.items(), key=next_departure)
-
-        for sched_key, sched in ordered_schedules:
+        # A26-05: UMA fila com os comandos pendentes de todos os schedules,
+        # por send_time. Antes a ordem era por schedule, e cada um era servido
+        # ate o fim: com A em T+10 e T+100 e B em T+50, o Hunter dormia ate
+        # T+100 dentro de A e o comando de B virava send_time_missed. A
+        # conquista PvP grava clear e nobres em schedules separados, que e
+        # exatamente esse caso.
+        queue = []
+        for sched_key, sched in schedules.items():
             if sched.get("status") != "pending":
                 continue
+            for atk in sched.get("attacks", []):
+                if atk.get("status") == "pending" and atk.get("send_time") is not None:
+                    queue.append((float(atk["send_time"]), sched_key, atk))
+        queue.sort(key=lambda item: item[0])
 
+        for send_time, sched_key, atk in queue:
+            if atk.get("status") != "pending":
+                continue  # ja saiu no lote de um comando anterior
+            sched = schedules[sched_key]
             target_id = sched["target_id"]
-            arrival_ts = sched["arrival_time"]
 
-            if arrival_ts < now:
-                self.logger.warning(
-                    "Hunter: schedule %s arrival has passed without all attacks being sent — marking failed",
-                    sched_key
-                )
-                self._expire_schedule(sched_key, sched)
+            time_to_send = send_time - time.time()
+
+            # A coordinated operation is defined by its arrival time.
+            # Sending after the computed departure cannot recover that
+            # promise; it only creates a real, late attack.  This path is
+            # deliberately strict -- even the explicit PvP scout override
+            # never authorizes an expired departure.
+            if time_to_send <= 0:
+                self._refuse_late(atk, target_id, time_to_send)
                 changed = True
                 continue
 
-            for atk in sorted(
-                    sched["attacks"],
-                    key=lambda item: (
-                        float(item["send_time"])
-                        if item.get("send_time") is not None else float("inf")
-                    )):
-                if atk["status"] != "pending":
-                    continue
+            if time_to_send > self.window:
+                continue  # not our cycle yet
 
-                send_time = atk.get("send_time")
-                if send_time is None:
-                    continue  # still can't probe, try next cycle
-
-                time_to_send = send_time - time.time()
-
-                # A coordinated operation is defined by its arrival time.
-                # Sending after the computed departure cannot recover that
-                # promise; it only creates a real, late attack.  This path is
-                # deliberately strict -- even the explicit PvP scout override
-                # never authorizes an expired departure.
-                if time_to_send <= 0:
-                    atk["status"] = "failed"
-                    atk["fail_reason"] = "send_time_missed"
-                    atk["missed_by_seconds"] = abs(float(time_to_send))
-                    changed = True
-                    self.logger.error(
-                        "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
-                        atk["source_village_id"], target_id, abs(float(time_to_send))
-                    )
-                    self._note_failure(
-                        atk, target_id,
-                        "a hora de saida passou ha %.0f s" % abs(float(time_to_send)),
-                    )
-                    continue
-
-                if time_to_send > self.window:
-                    continue  # not our cycle yet
-
-                # --- Within the send window ---
-                self._ensure_source_ready(atk["source_village_id"], config)
-                time_to_send = send_time - time.time()
-                if time_to_send <= 0:
-                    atk["status"] = "failed"
-                    atk["fail_reason"] = "send_time_missed"
-                    atk["missed_by_seconds"] = abs(float(time_to_send))
-                    changed = True
-                    self.logger.error(
-                        "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
-                        atk["source_village_id"], target_id, abs(float(time_to_send))
-                    )
-                    self._note_failure(
-                        atk, target_id,
-                        "a hora de saida passou ha %.0f s" % abs(float(time_to_send)),
-                    )
-                    continue
-                if hasattr(self.wrapper, "priority_mode"):
-                    self.wrapper.priority_mode = True
-                if time_to_send > 0:
-                    label = "FAKE" if atk.get("is_fake") else "REAL"
-                    self.logger.info(
-                        "Hunter: [%s] %s -> %s — sleeping %.1fs to hit send_time",
-                        label, atk["source_village_id"], target_id, time_to_send
-                    )
-                    time.sleep(time_to_send)
-
-                # Feature 26: commands with the same source, target and send
-                # time can use the game's native train form.  Different troop
-                # compositions often have different travel durations; those
-                # intentionally remain separate so they still converge on the
-                # requested arrival time.
-                batch = [
-                    candidate for candidate in sched["attacks"]
-                    if candidate.get("status") == "pending"
-                    and str(candidate.get("source_village_id"))
-                    == str(atk.get("source_village_id"))
-                    and candidate.get("send_time") is not None
-                    and abs(float(candidate["send_time"]) - float(send_time)) < 0.5
-                ]
-
-                if len(batch) > 1:
-                    self.logger.info(
-                        "Hunter: batching %d attacks %s -> %s at one send time",
-                        len(batch), atk["source_village_id"], target_id
-                    )
-
-                result = self._send_attack_batch(batch, target_id)
-                sent_at = int(time.time())
-                for batch_atk in batch:
-                    batch_atk["status"] = "sent" if result else "failed"
-                    batch_atk["sent_at"] = sent_at
-                    if len(batch) > 1:
-                        batch_atk["batch_size"] = len(batch)
+            # --- Within the send window ---
+            self._ensure_source_ready(atk["source_village_id"], config)
+            time_to_send = send_time - time.time()
+            if time_to_send <= 0:
+                self._refuse_late(atk, target_id, time_to_send)
                 changed = True
-
-                for batch_atk in batch:
-                    label = "FAKE" if batch_atk.get("is_fake") else "REAL"
-                    self.logger.info(
-                        "Hunter: [%s] %s -> %s — %s%s",
-                        label, batch_atk["source_village_id"], target_id,
-                        "OK" if result else "FAILED",
-                        " (batch)" if len(batch) > 1 else "",
-                    )
-                    if not result:
-                        self._note_failure(
-                            batch_atk, target_id,
-                            "o envio falhou (ver o log do Hunter)",
-                        )
-
+                continue
             if hasattr(self.wrapper, "priority_mode"):
-                self.wrapper.priority_mode = False
+                self.wrapper.priority_mode = True
+            label = "FAKE" if atk.get("is_fake") else "REAL"
+            self.logger.info(
+                "Hunter: [%s] %s -> %s — sleeping %.1fs to hit send_time",
+                label, atk["source_village_id"], target_id, time_to_send
+            )
+            time.sleep(time_to_send)
 
-            pending = [a for a in sched["attacks"] if a["status"] == "pending"]
-            if not pending:
-                failed = any(a.get("status") == "failed" for a in sched["attacks"])
-                sched["status"] = "failed" if failed else "complete"
-                self.logger.info(
-                    "Hunter: schedule %s %s",
-                    sched_key, "failed" if failed else "complete"
+            # 6o padrao: reconferir a premissa na hora de agir. O schedule foi
+            # lido antes da espera, e o painel pode te-lo apagado nela.
+            if self._schedule_deleted(sched_key):
+                self.logger.warning(
+                    "Hunter: schedule %s foi apagado durante a espera -- "
+                    "comando %s -> %s NAO enviado",
+                    sched_key, atk["source_village_id"], target_id
                 )
-                changed = True
+                continue
+
+            # Feature 26: commands with the same source, target and send
+            # time can use the game's native train form.  Different troop
+            # compositions often have different travel durations; those
+            # intentionally remain separate so they still converge on the
+            # requested arrival time.
+            batch = [
+                candidate for candidate in sched["attacks"]
+                if candidate.get("status") == "pending"
+                and str(candidate.get("source_village_id"))
+                == str(atk.get("source_village_id"))
+                and candidate.get("send_time") is not None
+                and abs(float(candidate["send_time"]) - float(send_time)) < 0.5
+            ]
+
+            if len(batch) > 1:
+                self.logger.info(
+                    "Hunter: batching %d attacks %s -> %s at one send time",
+                    len(batch), atk["source_village_id"], target_id
+                )
+
+            result = self._send_attack_batch(batch, target_id)
+            sent_at = int(time.time())
+            for batch_atk in batch:
+                batch_atk["status"] = "sent" if result else "failed"
+                batch_atk["sent_at"] = sent_at
+                if len(batch) > 1:
+                    batch_atk["batch_size"] = len(batch)
+            changed = True
+
+            for batch_atk in batch:
+                label = "FAKE" if batch_atk.get("is_fake") else "REAL"
+                self.logger.info(
+                    "Hunter: [%s] %s -> %s — %s%s",
+                    label, batch_atk["source_village_id"], target_id,
+                    "OK" if result else "FAILED",
+                    " (batch)" if len(batch) > 1 else "",
+                )
+                if not result:
+                    self._note_failure(
+                        batch_atk, target_id,
+                        "o envio falhou (ver o log do Hunter)",
+                    )
+
+        if hasattr(self.wrapper, "priority_mode"):
+            self.wrapper.priority_mode = False
+
+        for sched_key, sched in schedules.items():
+            if sched.get("status") != "pending":
+                continue
+            attacks = sched.get("attacks", [])
+            if any(a.get("status") == "pending" for a in attacks):
+                continue
+            failed = any(a.get("status") == "failed" for a in attacks)
+            sched["status"] = "failed" if failed else "complete"
+            self.logger.info(
+                "Hunter: schedule %s %s",
+                sched_key, "failed" if failed else "complete"
+            )
+            changed = True
 
         if changed:
-            self._save_schedules(schedules)
+            self._save_schedules(schedules, baseline)
 
     # ------------------------------------------------------------------
     # Sleep adjuster (called by twb.py before time.sleep)

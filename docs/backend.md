@@ -4391,8 +4391,8 @@ de 9 h de um trem. Hoje a única saída é o botão de limpar do painel.
 
 ### P2 — decisão errada ou perda silenciosa
 
-**A26-05 — O Hunter serve os schedules um de cada vez e pode perder o comando de
-outro schedule.** `hunter.py:240-340` ordena os schedules pelo primeiro envio,
+**✅ A26-05 — O Hunter serve os schedules um de cada vez e pode perder o comando de
+outro schedule.** *(Corrigido em 2026-09-27, §8.36.)* `hunter.py:240-340` ordena os schedules pelo primeiro envio,
 mas processa cada um até o fim, dormindo até 120 s por comando. Exemplo:
 schedule A com envios em T+10 e T+100, schedule B com envio em T+50. O Hunter
 dorme até T+100 dentro de A, e o comando de B vira `send_time_missed`. A
@@ -4400,18 +4400,21 @@ conquista PvP grava clear e nobres em schedules separados, que é exatamente
 esse caso. **Correção:** achatar os ataques pendentes numa lista única,
 ordenada por `send_time`.
 
-**A26-06 — `market.trade_max_per_hour` faz o contrário do nome.**
+**✅ A26-06 — `market.trade_max_per_hour` faz o contrário do nome.** *(Corrigido em
+2026-09-27, §8.36: o código passou a seguir o nome.)*
 `resources.py:677` usa o valor como **horas entre trocas**, enquanto
 `helpfile.py:90` diz "máximo de trocas por hora". O `config.json` tem 12, que na
 prática é uma troca a cada 12 h por aldeia.
 
-**A26-07 — Ao aceitar oferta do mercado, o bot não confere a proporção.**
+**✅ A26-07 — Ao aceitar oferta do mercado, o bot não confere a proporção.**
+*(Corrigido em 2026-09-27, §8.36.)*
 `check_other_offers()` (`resources.py:781`) aceita qualquer oferta que entregue
 o recurso que falta e peça até todo o excedente. Uma oferta de 1.000 de ferro
 por 20.000 de madeira passa. `auto_trade` está `true` em campo. **Correção:**
 exigir `wanted_amount <= offer_amount × trade_multiplier_value`.
 
-**A26-08 — `DefenceManager.supported` nunca é zerado** (`defence_manager.py:426`,
+**✅ A26-08 — `DefenceManager.supported` nunca é zerado** *(corrigido em
+2026-09-27, §8.36)* (`defence_manager.py:426`,
 `:436`, `:453`). Depois de apoiar `support_others_max_villages` aldeias (2), a
 doadora nunca mais apoia ninguém até o bot reiniciar, e também não volta a
 apoiar a mesma aldeia num ataque futuro. Hoje está latente, porque nenhum apoio
@@ -4448,7 +4451,8 @@ a simulação usa moral 100 e ignora o bônus noturno (no br143,
 lado perigoso. Confirmar a regra no servidor antes de corrigir (5º padrão:
 dizer de qual campo o número vem).
 
-**A26-12 — `cache/hunter/schedules.json` não tem trava entre processos.** O
+**✅ A26-12 — `cache/hunter/schedules.json` não tem trava entre processos.**
+*(Corrigido em 2026-09-27, §8.36.)* O
 Hunter lê o arquivo, dorme até 120 s dentro da janela de envio e grava tudo de
 volta. Se o painel editar o arquivo nesse intervalo (`/hunter/add`, `delete` ou
 `toggle`), a edição é desfeita, ou um schedule apagado volta. É o mesmo desenho
@@ -4507,7 +4511,8 @@ segue como ressalva de documentação (§5), não como bug.
    novos da mesma queda (`A26-22`, `A26-23`).
 2. ~~**Lote B, nobre**~~ (antes de ligar o §9 item 19a): A26-03, A26-04 e
    A26-14. ✅ **Feito em 2026-09-27** (§8.35).
-3. **Lote C:** A26-05, A26-06, A26-07, A26-08 e A26-12.
+3. ~~**Lote C:**~~ A26-05, A26-06, A26-07, A26-08 e A26-12. ✅ **Feito em
+   2026-09-27** (§8.36).
 4. A26-09 e A26-11 só depois de sondar o servidor.
 
 ## 8.33 ✅ `P-QUEDA-HUNTER` — a rede caiu e o 4º nobre não saiu (2026-09-27)
@@ -4739,14 +4744,95 @@ relatórios, inclusive o do 4º nobre, mandado à mão. **Sinal no log:**
 lealdade` ou `real loyalty from report`, no lugar de `no report data, using
 estimate`.
 
+## 8.36 ✅ Lote C da auditoria: Hunter, mercado e apoio (2026-09-27)
+
+Cinco achados da §8.32, todos P2. Nenhum tinha causado dano medido em campo.
+
+**A26-05, fila única no Hunter.** O `_run()` agora junta os comandos pendentes
+de **todos** os schedules numa lista só, ordenada por `send_time`. Antes a ordem
+era por schedule, e cada um era servido até o fim. O `sort` por "primeira saída
+do schedule" que já existia resolvia a ordem **entre** schedules, mas não a
+intercalação. Com A em T+10 e T+100 e B em T+50, o comando de B continuava
+morrendo. O fechamento do status de cada schedule (`complete`/`failed`) saiu
+do laço e roda uma vez no fim. `priority_mode` desliga no fim do laço, e o
+`finally` do `run()` continua cobrindo exceções.
+
+**A26-12, trava e merge no `schedules.json`.** Há três escritores: o Hunter, o
+planejador bárbaro (cancelamento por reserva de tribo) e o painel
+(`HunterReader.add_schedule`/`delete_schedule`, usado também pelo PvP e pelo
+planejador para criar). A correção tem três peças:
+- `core/file_lock.py`: trava do SO sobre `schedules.json.lock`, com as mesmas
+  primitivas do `InstanceLock`. Bloqueia com timeout de 10 s. Se o tempo
+  estourar, **segue sem a trava**, com WARNING. A trava é proteção e não pode
+  ser o motivo de um nobre não sair.
+- A trava cobre só o trecho curto de reler, mesclar e gravar, e **nunca a
+  espera de até 120 s** (senão o painel congelaria). Quem espera tem que
+  mesclar: `Hunter._save_schedules(schedules, baseline)` relê o disco e aplica
+  `merge_schedule_changes()`, que grava só o que este processo mudou desde a
+  leitura. Um schedule criado por outro lado continua no arquivo. Um schedule
+  apagado por outro lado não volta, e se o Hunter tinha mudado ele, loga que
+  descartou a mudança.
+- Depois da espera, antes de disparar, o Hunter relê o arquivo e **não envia**
+  se o schedule sumiu (6º padrão: reconferir no momento de agir). Se a
+  releitura falhar (JSON corrompido, arquivo vazio), envia assim mesmo.
+
+O painel passou a gravar de forma atômica (antes era `open(..., "w")`). Com
+arquivo ilegível, `add`/`delete` recusam em vez de trocar tudo por um arquivo
+com um schedule só.
+
+**A26-06, `trade_max_per_hour`.** O código passou a seguir o nome e o
+helpfile: o intervalo entre trocas de uma aldeia é `3600 / valor`, e `0` ou
+negativo desliga as trocas. Com o default 1 as duas leituras coincidem, e é
+por isso que o bug veio do bot base sem ninguém notar (17º padrão).
+⚠️ **Muda o comportamento em campo:** o `config.json` tem `12`. Até aqui isso
+era uma troca a cada 12 h por aldeia. Agora é até uma a cada 5 min, e na
+prática uma por visita da aldeia ao mercado (uma vez por ciclo). Para manter a
+cadência antiga, o valor equivalente é `0.083`.
+
+**A26-07, proporção da oferta.** Nova `ResourceManager.offer_is_acceptable()`.
+A oferta de outro jogador só é aceita se `wanted_amount <= offer_amount ×
+trade_bias`. `trade_bias` é a mesma proporção que o bot usa para criar a
+própria oferta (`market.trade_multiplier_value`, ou 1:1 com o multiplicador
+desligado). Em campo está `true`/`1.0`, então o teto é 1:1. As quatro regras
+antigas continuam valendo.
+
+**A26-08, `supported`.** O laço de apoio saiu de `update()` para
+`DefenceManager._support_others()`. No começo dele,
+`_release_finished_supports()` tira da lista quem não está mais sob ataque em
+`my_other_villages`. A lista continua impedindo apoio dobrado **no mesmo
+ataque**. Consequência aceita: ondas seguidas, sem nenhum ciclo limpo entre
+elas, contam como um ataque só.
+
+**Testes.**
+- `tests/test_hunter_schedule_queue.py` (8): a intercalação A/B/A, `priority_mode`,
+  o merge puro, schedule criado durante a espera que sobrevive, schedule
+  apagado durante a espera que nem sai nem volta (os dois com arquivo de
+  verdade num diretório temporário), releitura corrompida que não segura o
+  comando, `remove_schedule`, e a trava entre dois processos reais.
+- `tests/test_market_trade_rules.py` (8) e `tests/test_support_release.py` (6).
+- Os dublês de `_save_schedules` e `_load_raw` em 6 testes antigos ganharam os
+  parâmetros novos. `test_conquest_reservation_gate` troca
+  `Hunter.remove_schedule` pelo dict em memória, e `test_conquest_planner`
+  troca a trava por `nullcontext`, para nenhum dos dois tocar em `cache/hunter`.
+- Provado por mutação: com os fontes anteriores, falham 6 dos 8 do Hunter
+  (inclusive os três comportamentais: B perdido, schedule do painel apagado,
+  schedule apagado enviado), 8 de 8 do mercado e 6 de 6 do apoio. Tirar o
+  `try` da releitura derruba o teste dela.
+- Suíte: 76/76.
+
+**Sinal no log.** O apoio ainda não foi exercitado em campo (§6.2). Quando for,
+procure `vaga de apoio liberada`. No mercado, `oferta ... recusada pela
+proporcao` aparece em DEBUG.
+
 ---
 
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
 §8.33) e B (A26-03, 04, 14; §8.35) foram fechados em 2026-09-27, e **nenhum P1
-segue aberto**. O próximo é o Lote C (A26-05, 06, 07, 08, 12), e a ordem está no
-fim da §8.32. A decisão de encaixá-lo na fila abaixo é do usuário.
+segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
+(§8.36). Sobram A26-09 e A26-11, que pedem sondagem do servidor antes, e os
+P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

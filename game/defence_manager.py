@@ -416,45 +416,80 @@ class DefenceManager:
                 self.under_attack = False
                 return False
             self.under_attack = False
-
-            # my_other_villages já exclui a própria aldeia (village.py::
-            # setup_defence_manager), mas o twb.py sobrescreve o dict no fim
-            # do ciclo com um que a inclui -- daí a guarda continuar valendo.
-            for vil in self.my_other_villages:
-                if vil == self.village_id:
-                    continue
-                if len(self.supported) >= self.support_max_villages:
-                    self.logger.debug(
-                        "Already supported %d villages, ignoring", self.support_max_villages
-                    )
-                    break
-                if (
-                        not self.under_attack
-                        and self.my_other_villages[vil]
-                        and self.allow_support_send
-                ):
-                    if vil in self.supported:
-                        continue
-                    # Gate de urgência: `my_other_villages[vil]` só diz que há
-                    # ataque, não quando ele chega. Sem esta checagem um fake
-                    # com dias de viagem esvaziava 25% da defesa de cada
-                    # doadora no instante em que aparecia na tela.
-                    send, reason = self.support_timing(vil)
-                    if not send:
-                        self.logger.info(
-                            "Support %s -> %s adiado: %s",
-                            self.village_id, vil, reason
-                        )
-                        continue
-                    self.logger.info(
-                        "Support %s -> %s liberado: %s", self.village_id, vil, reason
-                    )
-                    if self.support_other(vil):
-                        self.supported.append(vil)
-                    ok = False
+            if self._support_others():
+                ok = False
         if ok:
             self.logger.info("Area OK for village %s, nice and quiet", self.village_id)
             # All is well
+
+    def _release_finished_supports(self):
+        """
+        A26-08: tira de `supported` quem nao esta mais sob ataque.
+
+        `supported` so crescia. Depois de apoiar `support_max_villages`
+        aldeias, a doadora nunca mais apoiava ninguem ate o bot reiniciar, e
+        tambem nao voltava a apoiar a mesma aldeia num ataque futuro. A lista
+        existe para nao mandar apoio duas vezes no MESMO ataque, entao ela
+        vale enquanto o ataque durar: quando a aldeia sai de "sob ataque" no
+        cache dela (`my_other_villages`), a vaga volta.
+
+        Consequencia aceita: ondas seguidas sem nenhum ciclo "limpo" no meio
+        contam como um ataque so, e recebem um apoio so desta doadora.
+        """
+        still = [v for v in self.supported if self.my_other_villages.get(v)]
+        for vil in self.supported:
+            if vil not in still:
+                self.logger.info(
+                    "Support %s -> %s: a aldeia nao esta mais sob ataque, "
+                    "vaga de apoio liberada", self.village_id, vil
+                )
+        self.supported = still
+
+    def _support_others(self):
+        """
+        Manda apoio para as outras aldeias sob ataque, dentro do limite
+        `support_max_villages`. True se alguma aldeia estava sob ataque e
+        passou pelo gate (enviado ou nao), que e quando o `update()` deixa de
+        logar "Area OK".
+        """
+        self._release_finished_supports()
+        acted = False
+        # my_other_villages já exclui a própria aldeia (village.py::
+        # setup_defence_manager), mas o twb.py sobrescreve o dict no fim
+        # do ciclo com um que a inclui -- daí a guarda continuar valendo.
+        for vil in self.my_other_villages:
+            if vil == self.village_id:
+                continue
+            if len(self.supported) >= self.support_max_villages:
+                self.logger.debug(
+                    "Already supported %d villages, ignoring", self.support_max_villages
+                )
+                break
+            if (
+                    not self.under_attack
+                    and self.my_other_villages[vil]
+                    and self.allow_support_send
+            ):
+                if vil in self.supported:
+                    continue
+                # Gate de urgência: `my_other_villages[vil]` só diz que há
+                # ataque, não quando ele chega. Sem esta checagem um fake
+                # com dias de viagem esvaziava 25% da defesa de cada
+                # doadora no instante em que aparecia na tela.
+                send, reason = self.support_timing(vil)
+                if not send:
+                    self.logger.info(
+                        "Support %s -> %s adiado: %s",
+                        self.village_id, vil, reason
+                    )
+                    continue
+                self.logger.info(
+                    "Support %s -> %s liberado: %s", self.village_id, vil, reason
+                )
+                if self.support_other(vil):
+                    self.supported.append(vil)
+                acted = True
+        return acted
 
     def _parse_incoming_urgency(self, main):
         """
