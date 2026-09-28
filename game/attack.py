@@ -1393,11 +1393,24 @@ class ConquestManager:
             troopmanager=troopmanager,
             map=map_obj,
         )
-        # Faixa real de queda de lealdade por nobre, do <mood> do mundo.
-        # WorldConfig.get() serve do cache em disco e so vai a rede a cada
-        # CACHE_TTL, entao chamar por instancia/ciclo e barato.
+        self._drop_min, self._drop_max = self.world_drop_range(config)
+        # A26-03: `_get_real_loyalty()` atualiza o `repman` uma vez por
+        # instancia antes de procurar o relatorio do nobre (ver la).
+        self._reports_refreshed = False
+
+    @staticmethod
+    def world_drop_range(config):
+        """
+        Faixa real (min, max) de queda de lealdade por nobre, do <mood> do
+        mundo. WorldConfig.get() serve do cache em disco e so vai a rede a cada
+        CACHE_TTL, entao chamar por instancia/ciclo e barato.
+
+        Estatico para o `BarbarianTrainPlanner` usar o MESMO numero ao gravar
+        `loyalty_after_train` (A26-03): ele usava `loyalty_drop_per_noble` (25)
+        onde o mundo diz 20, e gravava 0 onde o piso da faixa da 20.
+        """
         server_cfg = (config or {}).get("server", {})
-        self._drop_min, self._drop_max = WorldConfig.loyalty_drop_range(
+        return WorldConfig.loyalty_drop_range(
             WorldConfig.get(
                 server=server_cfg.get("server"),
                 endpoint=server_cfg.get("endpoint"),
@@ -2500,9 +2513,28 @@ class ConquestManager:
 
         Reports with extra["loyalty_after"] are populated by reports.py
         when it processes noble (snob) attack reports.
+
+        A26-03: o `repman` e o da aldeia ancora, e no inicio do ciclo (quando o
+        acompanhamento roda) a ultima leitura dele e do ciclo ANTERIOR -- horas
+        atras, possivelmente antes do pouso. Por isso le a lista de relatorios
+        aqui, uma vez por instancia. So se chega aqui depois da trava de nobre
+        em voo, entao a requisicao extra so acontece quando ha pouso a
+        conferir. `read()` e incremental (pula id ja visto), e a aldeia
+        reaproveita o mesmo objeto no `update_pre_run()` dela. Leitura que
+        falha nao decide nada: fica o que ja estava em memoria.
         """
         if not self.repman:
             return None
+        if not getattr(self, "_reports_refreshed", False):
+            self._reports_refreshed = True
+            try:
+                self.repman.read(full_run=False)
+            except Exception as e:
+                self.logger.warning(
+                    "Conquest: nao consegui atualizar os relatorios antes de "
+                    "ler a lealdade de %s (%s) -- usando o que ja estava lido",
+                    target_id, e
+                )
         best_ts = 0
         best_loyalty = None
         for rep_id, entry in self.repman.last_reports.items():

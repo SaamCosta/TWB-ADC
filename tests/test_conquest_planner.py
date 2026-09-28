@@ -113,6 +113,12 @@ class _FakeManager:
     def _note_failed_claim(self, target_id):
         _FakeManager.failed_claims.append(target_id)
 
+    @staticmethod
+    def world_drop_range(config):
+        # A faixa do br143 (<mood> 20..35). O `conquest.loyalty_drop_per_noble`
+        # da config (25) NAO e o piso do mundo -- era esse o A26-03.
+        return (20, 35)
+
 
 class _FakeHunter:
     duration = 3600.0
@@ -528,8 +534,10 @@ def test_promove_para_enviado_quando_o_hunter_despachou():
     assert store["49709"]["status"] == "train_sent"
     assert store["49709"]["hits_done"] == 4
     assert store["49709"]["noble_arrivals"] == [2000000000] * 4
-    # Pior caso de propósito: 4 x 25 = 100, a estimativa vira limite SUPERIOR
-    assert store["49709"]["loyalty_after_train"] == 0
+    # Pior caso de propósito com o PISO DO MUNDO: 4 x 20 = 80, sobra 20. Com
+    # 25 da config gravava 0, e a estimativa pos-pouso deixava de ser limite
+    # superior (A26-03).
+    assert store["49709"]["loyalty_after_train"] == 20
 
 
 def test_nao_promove_com_comando_ainda_pendente():
@@ -556,7 +564,95 @@ def test_envio_parcial_vira_extra_pending():
     p._promote_scheduled_trains()
     assert store["49709"]["status"] == "extra_pending"
     assert store["49709"]["hits_done"] == 3
-    assert store["49709"]["loyalty_after_train"] == 25
+    assert store["49709"]["loyalty_after_train"] == 40
+
+
+def test_piso_gravado_no_registro_vence_o_do_mundo():
+    """O que o agendamento gravou e o que a promocao usa."""
+    store = {"49709": {"status": "train_scheduled", "hunter_schedule_key": "k",
+                       "loyalty_drop_per_noble": 30}}
+    schedules = {"k": {"arrival_time": 2000000000, "attacks": [{"status": "sent"}] * 3}}
+    p, _ = _planner(store=store, schedules=schedules)
+    p._promote_scheduled_trains()
+    assert store["49709"]["loyalty_after_train"] == 10
+
+
+def test_agendamento_grava_a_faixa_do_mundo():
+    p, calls = _planner()
+    plan = p._build_plan("49709", p._noble_sources(), {})
+    p._schedule("49709", {}, plan, {})
+    entry = calls["store"]["49709"]
+    assert entry["loyalty_drop_per_noble"] == 20
+    assert entry["loyalty_drop_range"] == [20, 35]
+
+
+def test_chegada_vencida_com_comando_pendente_promove():
+    """
+    A26-04. O bot ficou parado durante a janela do trem: 3 sairam, o 4o ficou
+    `pending` e a chegada passou. Antes, o registro ficava em
+    `train_scheduled` para sempre e o planejador parava ("um trem por vez").
+    O schedule aqui continua `pending` de proposito: a guarda olha o relogio,
+    nao o campo que o Hunter deveria ter atualizado.
+    """
+    import time as _t
+    villages = _empire()
+    villages["41123"].units.conquest_reserve["barb_train:49709"] = {"axe": 300}
+    store = {"49709": {"status": "train_scheduled", "hunter_schedule_key": "k"}}
+    schedules = {"k": {"status": "pending", "arrival_time": _t.time() - 60, "attacks": [
+        {"status": "sent"}, {"status": "sent"}, {"status": "sent"},
+        {"status": "pending"},
+    ]}}
+    p, _ = _planner(villages=villages, store=store, schedules=schedules)
+    p._promote_scheduled_trains()
+    assert store["49709"]["status"] == "extra_pending"
+    assert store["49709"]["hits_done"] == 3
+    assert "barb_train:49709" not in villages["41123"].units.conquest_reserve
+
+
+def test_schedule_ja_falho_com_pendente_herdado_promove():
+    """
+    Registro gravado antes da correcao do Hunter: schedule `failed`, ataques
+    ainda `pending`. Chegada no futuro de proposito, para provar que o status
+    do schedule sozinho ja basta.
+    """
+    store = {"49709": {"status": "train_scheduled", "hunter_schedule_key": "k"}}
+    schedules = {"k": {"status": "failed", "arrival_time": 2000000000, "attacks": [
+        {"status": "pending"}, {"status": "pending"},
+    ]}}
+    p, _ = _planner(store=store, schedules=schedules)
+    p._promote_scheduled_trains()
+    assert store["49709"]["status"] == "invalid"
+
+
+def test_duracao_sondada_vira_send_time_no_schedule():
+    """
+    A26-14. O planejador ja sondou a duracao; o schedule nasce com a hora de
+    saida e o Hunter nao sonda de novo. Passa pelo HunterReader real, com o
+    arquivo trocado por memoria (o bot escreve no de verdade).
+    """
+    import webmanager.utils as wu
+    raw = {}
+    saved = (wu.HunterReader._load_raw, wu.HunterReader._save_raw)
+    wu.HunterReader._load_raw = staticmethod(lambda: raw)
+    wu.HunterReader._save_raw = staticmethod(lambda data: raw.update(data))
+    try:
+        p, _ = _planner()
+        plan = [
+            {"source_village_id": "41123", "troops": {"snob": 1, "axe": 100},
+             "duration_seconds": 3600.0},
+            {"source_village_id": "41140", "troops": {"snob": 1}},
+        ]
+        ok = BarbarianTrainPlanner._add_hunter_schedule(
+            p, "49709", "2030-01-01 12:00:00", plan
+        )
+    finally:
+        wu.HunterReader._load_raw, wu.HunterReader._save_raw = saved
+    assert ok
+    (sched,) = raw.values()
+    first, second = sched["attacks"]
+    assert first["send_time"] == sched["arrival_time"] - 3600.0
+    # Sem duracao conhecida continua None: o Hunter sonda, como sempre fez.
+    assert second["send_time"] is None
 
 
 def test_nenhum_comando_saiu_libera_o_alvo():

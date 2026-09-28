@@ -154,6 +154,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   e a resiliência a queda (`tests/test_crash_resilience.py` — sono de rede
   fora encurtado pelo Hunter, prime da origem num processo novo, quedas
   seguidas de `main()`, os `None` do A26-02; §8.33)
+  e a lealdade real e o schedule vencido
+  (`tests/test_conquest_loyalty_and_expiry.py` — `repman` entregue e relido
+  antes da lealdade, pouso lido pelo relatório sem nobre extra, ataque
+  `pending` de schedule vencido virando `arrival_passed`; §8.35)
   e os avisos de Telegram (`tests/test_telegram_notes.py` — Hunter,
   promoção do trem, conquista, queda de rede; §8.34). ⚠️ `Notification.send`
   só age depois de `Notification.arm()`, que só `twb.main()` chama: a suíte lê
@@ -217,11 +221,9 @@ priorizada e as notas de implementação de cada lote estão no fim do documento
 ⚠️ **Segunda auditoria, de 2026-09-26: 21 achados (`A26-01` a `A26-21`), em
 `docs/backend.md` §8.32.** O Lote A (A26-01, A26-02, A26-10) foi fechado em
 2026-09-27 (§8.33), depois de uma queda de rede derrubar o bot e custar o 4º
-nobre de um trem. Seguem abertos dois P1. A conquista bárbara pode mandar nobre
-extra contra a aldeia que acabou de conquistar, porque o `repman` não é passado
-e o planejador grava `loyalty_after_train: 0`; das três correções, só a de
-`_target_is_mine()` foi feita. E um schedule vencido no Hunter trava o
-planejador para sempre (A26-04).
+nobre de um trem. O Lote B (A26-03 autoconquista, A26-04 trem
+preso, A26-14 sonda dobrada) foi fechado no mesmo dia (§8.35): **nenhum P1
+aberto**. Próximo: Lote C (A26-05/06/07/08/12).
 
 ⚠️ **Aberto, fora da auditoria: rastreio de conquista sumiu sem explicação.**
 Em 2026-08-12 às 19:46 o `ConquestManager._get_my_conquest()` devolveu `None`

@@ -245,6 +245,26 @@ class Hunter:
             "todos os comandos terem saido" % sched_key
         )
 
+    def _expire_schedule(self, sched_key, sched):
+        """
+        A chegada passou: o schedule vira `failed` e cada ataque ainda
+        `pending` tambem, com `fail_reason: arrival_passed`.
+
+        A26-04: antes so o schedule mudava. Os ataques ficavam `pending` para
+        sempre, e todo consumidor que pergunta "ainda ha comando por sair?"
+        lendo os ataques respondia que sim: a promocao do trem barbaro
+        (`BarbarianTrainPlanner._promote_scheduled_trains`) nunca promovia, e
+        a reserva do PvP (`PvpConquestManager`, que soma a tropa dos ataques
+        `pending`) nunca soltava a tropa daquela origem.
+        """
+        pending = [a for a in sched.get("attacks", []) if a.get("status") == "pending"]
+        for atk in pending:
+            atk["status"] = "failed"
+            atk["fail_reason"] = "arrival_passed"
+        sched["status"] = "failed"
+        if pending:
+            self._note_expired(sched_key)
+
     def _ensure_source_ready(self, source_id, config):
         """
         Garante que a aldeia de origem tem AttackManager antes do envio.
@@ -284,10 +304,8 @@ class Hunter:
             if sched.get("status") != "pending":
                 continue
             if sched.get("arrival_time", 0) < now:
-                sched["status"] = "failed"
+                self._expire_schedule(sched_key, sched)
                 changed = True
-                if any(a.get("status") == "pending" for a in sched.get("attacks", [])):
-                    self._note_expired(sched_key)
                 continue
             target_id = sched["target_id"]
             for atk in sched.get("attacks", []):
@@ -328,8 +346,7 @@ class Hunter:
                     "Hunter: schedule %s arrival has passed without all attacks being sent — marking failed",
                     sched_key
                 )
-                self._note_expired(sched_key)
-                sched["status"] = "failed"
+                self._expire_schedule(sched_key, sched)
                 changed = True
                 continue
 

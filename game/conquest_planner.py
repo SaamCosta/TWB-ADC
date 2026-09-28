@@ -322,6 +322,8 @@ class BarbarianTrainPlanner:
             troopmanager=village.units,
             map_obj=village.area,
             config=self.config,
+            # A26-03: sem ele `_get_real_loyalty()` devolvia None sempre.
+            repman=getattr(village, "rep_man", None),
             reservation_board=self.reservation_board,
             world_villages=self.world_villages,
         )
@@ -546,6 +548,7 @@ class BarbarianTrainPlanner:
             per_source[atk["source_village_id"]] = per_source.get(
                 atk["source_village_id"], 0
             ) + 1
+        drop_min, drop_max = ConquestManager.world_drop_range(self.config)
 
         ConquestCache.set(target_id, {
             "status": "train_scheduled",
@@ -562,6 +565,10 @@ class BarbarianTrainPlanner:
             "target_name": target_meta.get("name") or ("Bárbara #%s" % target_id),
             "target_points": target_meta.get("points"),
             "target_location": target_meta.get("location"),
+            # A26-03: a faixa do MUNDO, gravada no agendamento para a promocao
+            # e o painel usarem o mesmo numero do ConquestManager._send_train.
+            "loyalty_drop_per_noble": drop_min,
+            "loyalty_drop_range": [drop_min, drop_max],
         })
 
         # Fase 2: avisa a alianca DEPOIS de o trem estar agendado, nunca antes.
@@ -642,6 +649,12 @@ class BarbarianTrainPlanner:
                     "source_village_id": atk["source_village_id"],
                     "troops": atk["troops"],
                     "is_fake": False,
+                    # A26-14: a duracao que `_schedule()` acabou de sondar no
+                    # servidor. Sem ela o schedule nascia com send_time None e
+                    # o Hunter sondava de novo (2 requisicoes por origem), e
+                    # cada sonda a mais era outra chance de falhar e deixar o
+                    # comando sem hora de saida.
+                    "duration_seconds": atk.get("duration_seconds"),
                 }
                 for atk in plan
             ],
@@ -898,16 +911,19 @@ class BarbarianTrainPlanner:
                 continue
 
             attacks = sched.get("attacks", [])
-            if any(atk.get("status") == "pending" for atk in attacks):
+            if (any(atk.get("status") == "pending" for atk in attacks)
+                    and not self._schedule_over(sched)):
                 continue  # ainda ha comando por sair
 
+            # Daqui em diante `pending` conta como "nao saiu": ou nao sobrou
+            # nenhum, ou a chegada ja passou e ele nao sai mais.
             sent = [atk for atk in attacks if atk.get("status") == "sent"]
             self._release(target_id)
 
             if not sent:
                 self.logger.warning(
                     "Conquest: nenhum comando do trem contra %s chegou a sair "
-                    "(Hunter marcou tudo como failed) -- alvo liberado",
+                    "(falha no Hunter ou chegada vencida) -- alvo liberado",
                     target_id
                 )
                 ConquestCache.set(target_id, {
@@ -925,9 +941,11 @@ class BarbarianTrainPlanner:
             arrival = int(sched.get("arrival_time") or 0) or None
             drop_min = data.get("loyalty_drop_per_noble")
             if drop_min is None:
-                drop_min = self.config.get("conquest", {}).get(
-                    "loyalty_drop_per_noble", 25
-                )
+                # A26-03: registro agendado antes de o planejador gravar a
+                # faixa. O piso vem do mundo (20 no br143), nao do
+                # `conquest.loyalty_drop_per_noble` (25), que zerava a
+                # estimativa de um trem de 4.
+                drop_min = ConquestManager.world_drop_range(self.config)[0]
             ConquestCache.set(target_id, {
                 **data,
                 "status": "train_sent" if len(sent) == len(attacks) else "extra_pending",
@@ -958,6 +976,31 @@ class BarbarianTrainPlanner:
                     "depois do pouso -- se quiser mandar na mao, e agora."
                     % (len(sent), len(attacks), conquest_label(target_id, data), landing)
                 )
+
+    @staticmethod
+    def _schedule_over(sched, now=None):
+        """
+        True quando nenhum comando `pending` deste schedule ainda pode sair.
+
+        A26-04: o Hunter marcava o schedule como `failed` ao passar a chegada
+        mas deixava os ataques em `pending`, e a promocao esperava `pending`
+        sumir. Com o bot parado (ou morto) durante a janela de ~9h de um trem,
+        o registro ficava em `train_scheduled` para sempre: planejador parado
+        ("um trem por vez"), reserva `barb_train:*` presa e alvo fora do farm.
+        O Hunter agora fecha esses ataques, mas esta guarda NAO se apoia nisso
+        (6o padrao: nao confiar no campo que pode estar inconsistente). Ela
+        olha o relogio -- chegada passada -- e o status do proprio schedule,
+        que o Hunter so tira de `pending` quando ja nao vai mandar mais nada.
+        Serve tambem para os registros gravados antes da correcao.
+        """
+        now = time.time() if now is None else now
+        if sched.get("status") not in (None, "pending"):
+            return True
+        try:
+            arrival = float(sched.get("arrival_time") or 0)
+        except (TypeError, ValueError):
+            return False
+        return 0 < arrival < now
 
     def _get_hunter(self):
         if self._hunter is None:

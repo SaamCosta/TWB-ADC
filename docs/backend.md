@@ -4345,9 +4345,8 @@ A queda de 25/09 (`not subscriptable`, cerca de 110 s depois do `TWB_START` da
 BBM 034) é d ou e. Sem o traceback não dá para saber qual: o
 `session_latest.log` daquela sessão já foi sobrescrito.
 
-**A26-03 — Risco de autoconquista.** *(1ª das 3 correções feita em 2026-09-27,
-§8.33: `_target_is_mine()` aceita `config["villages"]`. Faltam `repman` nos
-construtores e `_drop_min` no planejador.)* O mecanismo está confirmado no código,
+**✅ A26-03 — Risco de autoconquista.** *(As 3 correções feitas em 2026-09-27:
+`_target_is_mine()` na §8.33, `repman` e piso do mundo na §8.35.)* O mecanismo está confirmado no código,
 mas ainda não aconteceu em campo. A proteção pela lealdade real do relatório
 está morta, e a estimativa que sobra diz 0.
 - Nenhum dos dois construtores de `ConquestManager` passa `repman`
@@ -4374,8 +4373,8 @@ está morta, e a estimativa que sobra diz 0.
   ciclo e é a prova de posse mais fresca que o bot tem. Depois, passar `repman`
   nos dois construtores e usar `self._drop_min` do mundo no planejador.
 
-**A26-04 — Um trem agendado que o Hunter não chega a disparar trava a conquista
-bárbara para sempre.** Confirmado por código. Quando a chegada passa,
+**✅ A26-04 — Um trem agendado que o Hunter não chega a disparar trava a conquista
+bárbara para sempre.** *(Corrigido em 2026-09-27, §8.35.)* Confirmado por código. Quando a chegada passa,
 `Hunter.run()` marca o schedule como `failed` (`hunter.py:209` e `:247`), mas
 deixa os ataques em `pending`. `_promote_scheduled_trains()` só age quando
 nenhum ataque está `pending` (`conquest_planner.py:889`), então o registro fica
@@ -4462,7 +4461,7 @@ da §8.29, em outro arquivo.
   de 140 min (57 lotes medidos), contra um ciclo de 4 a 5 h, então o quartel
   fica ocioso na maior parte do tempo quando há recurso. É decisão de produto,
   não bug.
-- **A26-14** — O planejador sonda a duração da viagem e grava o schedule com
+- ✅ **A26-14** *(§8.35)* — O planejador sonda a duração da viagem e grava o schedule com
   `send_time: None`; o Hunter sonda de novo (2 requisições por origem, por
   trem). Cada sonda extra é mais uma chance de falhar e cair no A26-04. Passar
   adiante a duração já medida.
@@ -4506,7 +4505,8 @@ segue como ressalva de documentação (§5), não como bug.
 1. ~~**Lote A, estabilidade**~~ (não muda nenhuma decisão de jogo): A26-01,
    A26-02 e A26-10. ✅ **Feito em 2026-09-27** (§8.33), junto com dois achados
    novos da mesma queda (`A26-22`, `A26-23`).
-2. **Lote B, nobre** (antes de ligar o §9 item 19a): A26-03, A26-04 e A26-14.
+2. ~~**Lote B, nobre**~~ (antes de ligar o §9 item 19a): A26-03, A26-04 e
+   A26-14. ✅ **Feito em 2026-09-27** (§8.35).
 3. **Lote C:** A26-05, A26-06, A26-07, A26-08 e A26-12.
 4. A26-09 e A26-11 só depois de sondar o servidor.
 
@@ -4663,14 +4663,90 @@ real, senão o teste de captcha passaria sem exercitar o `send()`. Suíte: 72/72
 - avisos da conquista PvP. As falhas de envio dela já chegam pelo Hunter, e o
   desfecho fica para quando ela sair do semi-manual.
 
+## 8.35 ✅ Lote B da auditoria — nobre extra, trem preso e sonda dobrada (2026-09-27)
+
+Fecha os três itens do Lote B da §8.32. Nenhum aconteceu em campo, mas dois
+deles deixam de depender de sorte assim que o §9 item 19a (trens em paralelo)
+for ligado.
+
+**A26-03, 2ª e 3ª correções (a 1ª está na §8.33).**
+- *`repman`.* `Village.run_conquest()` passa o `ReportManager` da aldeia (e cria
+  se faltar, sem requisição), e o `_manager_for()` do planejador passa o da
+  origem. Só isso não bastava. O acompanhamento roda no **início** do ciclo
+  (§8.15), então a última leitura de relatórios da âncora é do ciclo anterior,
+  horas antes do pouso. Por isso `_get_real_loyalty()` chama `repman.read()` uma
+  vez por instância antes de procurar o relatório do nobre. Ele só é alcançado
+  depois da trava de nobre em voo, então a leitura só acontece quando há pouso a
+  conferir. `read()` é incremental, e a aldeia reaproveita o mesmo objeto no
+  próprio `update_pre_run()`: os relatórios baixados aqui seriam baixados de
+  qualquer forma, só mais tarde no ciclo. Leitura que falha loga WARNING e fica
+  com o que havia em memória. Vale também para nobre mandado na mão: o
+  relatório dele entra igual, porque o filtro é `dest` + `snob` enviado.
+- *Piso do mundo.* `ConquestManager.world_drop_range(config)` virou estático, e o
+  planejador usa o mesmo número. O agendamento grava `loyalty_drop_per_noble` e
+  `loyalty_drop_range` no registro, como o `_send_train` já fazia, e a promoção
+  cai no piso do mundo quando o registro é antigo. Um trem de 4 no br143 grava
+  `loyalty_after_train: 20`, e não mais 0.
+
+**A26-04.** Duas guardas independentes, de propósito:
+- `Hunter._expire_schedule()`: ao passar a chegada, o schedule e cada ataque
+  ainda `pending` viram `failed`, com `fail_reason: arrival_passed`. Os que
+  saíram ficam `sent`.
+- `BarbarianTrainPlanner._schedule_over()`: a promoção trata `pending` como "não
+  saiu" quando a chegada já passou ou quando o schedule não está mais `pending`.
+  Não depende de o Hunter ter feito a parte dele (6º padrão), e resolve também
+  os registros gravados antes da correção. Promovido, o registro sai de
+  `train_scheduled`, o `_release_orphan_reserves()` solta a `barb_train:*` e o
+  planejador volta a montar trem.
+
+Achado no caminho: a reserva PvP (`pvp_conquest.py`, reconstrução pelo Hunter)
+soma a tropa dos ataques `pending`. Com o schedule vencido, ela também ficava
+presa para sempre. A primeira guarda corrige esse caso de tabela.
+
+**A26-14.** O planejador passa `duration_seconds` (a duração que acabou de sondar),
+e `HunterReader.add_schedule()` grava `send_time = arrival_time - duração`, que
+é a mesma conta do Hunter. Sem duração, continua `None` e o Hunter sonda como
+sempre. São duas requisições a menos por origem em cada trem, e uma chance a
+menos de falhar e cair no A26-04.
+
+**Testes.**
+- `tests/test_conquest_loyalty_and_expiry.py` (15 checks) cobre:
+  - a expiração no Hunter, com aviso único;
+  - o `repman` entregue por `run_conquest`;
+  - a leitura única, e a falha de leitura;
+  - o caso ponta a ponta: relatório que só aparece na leitura nova, com
+    lealdade −7, fecha como `noble_report` sem chamar `_available_nobles()`.
+- Em `tests/test_conquest_planner.py`, os dois testes de promoção **afirmavam o
+  bug** (0 e 25, o piso da config). Foram corrigidos para 20 e 40. Entraram mais
+  cinco:
+  - o piso gravado vence o do mundo;
+  - o agendamento grava a faixa;
+  - chegada vencida com `pending` promove, com o schedule ainda `pending`;
+  - schedule `failed` herdado promove;
+  - `send_time` sai da duração, passando pelo `HunterReader` real com o arquivo
+    em memória.
+- Provado por mutação:
+  - com os fontes anteriores (stash), falham o Hunter e 6 testes do planejador;
+  - tirar `repman=` do `run_conquest` derruba o check do `repman`;
+  - tirar a leitura derruba o da lealdade.
+- Suíte: 73/73.
+
+**Estado em campo no momento da correção.** Nenhum schedule preso. A única
+conquista ativa é a 55647 (`extra_pending`, `loyalty_after_train: 25` pelo piso
+antigo, pouso às 23:59:47). Depois do reinício, o acompanhamento dela lê os
+relatórios, inclusive o do 4º nobre, mandado à mão. **Sinal no log:**
+`Noble report ... loyalty after = ...` seguido de `nosso relatorio marca
+lealdade` ou `real loyalty from report`, no lugar de `no report data, using
+estimate`.
+
 ---
 
 ## 9. Próximos passos
 
-**Auditoria de 2026-09-26 (§8.32):** 21 achados; o Lote A (A26-01, 02, 10) foi
-fechado em 2026-09-27 (§8.33). Seguem abertos os P1 de autoconquista (A26-03,
-1/3 feito) e trava do planejador (A26-04). A ordem sugerida
-está no fim da §8.32. A decisão de encaixá-la na fila abaixo é do usuário.
+**Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
+§8.33) e B (A26-03, 04, 14; §8.35) foram fechados em 2026-09-27, e **nenhum P1
+segue aberto**. O próximo é o Lote C (A26-05, 06, 07, 08, 12), e a ordem está no
+fim da §8.32. A decisão de encaixá-lo na fila abaixo é do usuário.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

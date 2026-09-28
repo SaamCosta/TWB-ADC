@@ -1410,11 +1410,22 @@ class HunterReader:
             troops = {u: int(q) for u, q in atk.get("troops", {}).items() if int(q) > 0}
             if not troops:
                 continue
+            # A26-14: quem ja sondou a duracao no servidor (o planejador de
+            # conquista) passa `duration_seconds`, e a saida sai da mesma conta
+            # que o Hunter faria (`arrival_time - duracao`). Sem ela, None: o
+            # Hunter sonda no proximo ciclo, como sempre fez.
+            send_time = None
+            try:
+                duration = float(atk.get("duration_seconds") or 0)
+            except (TypeError, ValueError):
+                duration = 0
+            if duration > 0:
+                send_time = arrival_ts - duration
             attack_entries.append({
                 "source_village_id": str(atk["source_village_id"]),
                 "troops": troops,
                 "is_fake": bool(atk.get("is_fake", False)),
-                "send_time": None,
+                "send_time": send_time,
                 "status": "pending",
             })
 

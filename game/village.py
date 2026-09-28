@@ -892,12 +892,22 @@ class Village:
             self.logger.debug("Conquest: map or troop data not ready, skipping")
             return
 
+        # A26-03: sem `repman` a lealdade real do relatorio do nobre nunca era
+        # lida (os 28 registros de cache/conquest tinham loyalty_source
+        # "estimate"). No inicio do ciclo esta aldeia pode ainda nao ter rodado
+        # neste processo; criar o objeto nao faz requisicao, e quem le a lista
+        # e o proprio `_get_real_loyalty()`, so quando ha pouso a conferir.
+        if not self.rep_man:
+            self.rep_man = ReportManager(
+                wrapper=self.wrapper, village_id=self.village_id
+            )
         conquest = ConquestManager(
             wrapper=self.wrapper,
             village_id=self.village_id,
             troopmanager=self.units,
             map_obj=self.area,
             config=self.config,
+            repman=self.rep_man,
             # Feature 35: injetado por twb.py no inicio do ciclo. Sem ele o
             # `_handle_existing()` desta aldeia nao veria reserva nova nascida
             # durante as ~4h de voo do trem.
