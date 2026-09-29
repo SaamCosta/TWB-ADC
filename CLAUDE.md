@@ -164,6 +164,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   processos reais; §8.36), as regras do mercado
   (`tests/test_market_trade_rules.py`) e a vaga de apoio liberada
   (`tests/test_support_release.py`)
+  e a aba da visão geral (`tests/test_overview_mode.py` — `mode=prod`
+  explícito, porque o jogo grava a última aba e o InFlight deixa em
+  Comandos; §8.37)
   e os avisos de Telegram (`tests/test_telegram_notes.py` — Hunter,
   promoção do trem, conquista, queda de rede; §8.34). ⚠️ `Notification.send`
   só age depois de `Notification.arm()`, que só `twb.main()` chama: a suíte lê

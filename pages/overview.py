@@ -245,8 +245,17 @@ class OverviewPage:
         self.parse_header_info()
 
     def _get_overview_villages_data(self):
-        """Get the overview villages data using the wrapper object."""
-        return self.wrapper.get_url("game.php?screen=overview_villages")
+        """Get the overview villages data using the wrapper object.
+
+        `mode=prod` NAO e opcional. Sem `mode`, o jogo serve a ultima aba
+        aberta na visao geral, e a aba fica gravada tambem quando vem pela
+        querystring: `InFlightTracker` le `mode=commands` todo ciclo, e a
+        leitura seguinte daqui recebia a tela de Comandos, sem nenhuma aldeia
+        (2026-09-29, 13:57 e 14:08). A aba Combinado tambem lista aldeias, mas
+        nao tem a `production_table` de que os pontos e o `is_premium` saem.
+        Conta sem premium so tem Producao, entao o parametro e neutro la.
+        """
+        return self.wrapper.get_url("game.php?screen=overview_villages&mode=prod")
 
     def parse_production_table(self):
         """Parse the production table to extract village data."""

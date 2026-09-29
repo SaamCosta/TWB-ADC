@@ -3557,7 +3557,10 @@ filtrar por grupo é uso normal, não caso exótico.
 o grupo escolhido na interface fica gravado como preferência do jogador, e é
 provável que o escolhido por querystring também fique — **não medido** —, caso
 em que o bot passaria a desfazer o filtro do usuário a cada ciclo (a armadilha
-"restaurar a tela do jogador" da §7.10); (b) a sessão do `cache/session.json`
+"restaurar a tela do jogador" da §7.10). *(2026-09-29, §8.37: medido para
+`mode`, não para `group`. A aba passada na querystring **fica** gravada: o
+`mode=commands` do `InFlightTracker` fez a leitura seguinte, sem `mode`, vir na
+aba Comandos.)* (b) a sessão do `cache/session.json`
 estava vencida e o bot parado (log parado às 16:50:56 de 2026-09-22), então não
 havia como capturar o markup de grupo/paginação, e fixture se copia, não se
 inventa. A sonda ficou em `cache/_probe_overview.py` para quando houver sessão.
@@ -4823,6 +4826,36 @@ elas, contam como um ataque só.
 **Sinal no log.** O apoio ainda não foi exercitado em campo (§6.2). Quando for,
 procure `vaga de apoio liberada`. No mercado, `oferta ... recusada pela
 proporcao` aparece em DEBUG.
+
+## 8.37 ✅ `P-OVERVIEW-ABA` — o próprio bot trocava a aba da visão geral e depois não achava aldeia (2026-09-29)
+
+**Sintoma.** Às 13:57 e às 14:08 de 2026-09-29, `get_overview` logou "a tela de
+visao geral nao devolveu NENHUMA aldeia, mas o config tem 38" e o bot dormiu
+~10 min a cada vez. Voltou sozinho às 14:18. O usuário já tinha visto isso
+antes e ligou à troca de aba da visão geral.
+
+**Causa.** `OverviewPage` pedia `screen=overview_villages` **sem `mode`**, e o
+jogo serve a última aba aberta. A aba passada na querystring também fica
+gravada, e `InFlightTracker` (§8.25, Feature 38) lê `mode=commands&page=-1`
+todo ciclo. A leitura seguinte da visão geral recebia a tela de Comandos, que
+não tem nenhum `quickedit-vn`. A guarda do B9 (`purge_refusal_reason`)
+segurou: nada foi apagado, só se perdeu o ciclo. Voltou quando alguém reabriu
+outra aba no navegador.
+
+**Segunda metade, que não gerava erro.** Mesmo na aba Combinado, que lista as
+aldeias, falta a `production_table`. Dela saem os pontos por aldeia
+(`villages_data`, §8.23) e o `is_premium`. Então, fora da aba Produção, o bot
+lia as aldeias e perdia os pontos em silêncio.
+
+**Correção.** `_get_overview_villages_data()` pede `mode=prod`, a aba para a
+qual o parser foi escrito e a única que existe em conta sem premium. Sondado
+com o `WebWrapper` do bot: 38 ids e `production_table` presente.
+`tests/test_overview_mode.py` exige o `mode=prod` e falha sem a correção.
+Suíte: 77/77.
+
+**Efeito colateral aceito.** O bot já gravava a aba do jogador (Comandos). Agora
+ela fica em Produção ou em Comandos, conforme quem leu por último. Não piorou,
+mas o navegador do usuário continua abrindo na aba que o bot deixou.
 
 ---
 
