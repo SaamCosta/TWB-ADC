@@ -76,6 +76,7 @@ class Map:
             )
             return False
         game_state = Extractor.game_state(res)
+        self.save_diplomacy(res, game_state)
         self.map_data = Extractor.map_data(res)
         # `TWMap.sectorPrefech` traz so o que a tela de mapa desenha de cara --
         # medido em 2026-08-31: 2 setores, e nao centrados na aldeia. A BBM 007
@@ -125,6 +126,37 @@ class Map:
                 # nao conta como fetch bem-sucedido, mesmo motivo do res=None.
                 self.last_fetch = previous_fetch
             return parsed
+        return True
+
+    DIPLOMACY_FILE = "cache/diplomacy.json"
+
+    def save_diplomacy(self, res, game_state):
+        """
+        Grava em `cache/diplomacy.json` como o jogo classifica aldeias no mapa
+        (paleta, diplomacia da tribo, amigos), para o webmanager pintar /map
+        com a legenda do jogo. Sai da mesma resposta de `screen=map` que este
+        método já baixou: nenhuma requisição a mais.
+
+        A diplomacia é da conta, não da aldeia, então toda aldeia regrava o
+        mesmo arquivo; a última leitura vence. Resposta que não é a tela de
+        mapa (None do parser) não sobrescreve a leitura boa anterior, e uma
+        falha de gravação nunca derruba a leitura do mapa, que é o que o farm
+        e a conquista consomem.
+        """
+        relations = Extractor.map_relations(res)
+        if relations is None:
+            return False
+        player = (game_state or {}).get("player") or {}
+        relations["player_id"] = str(player.get("id") or "") or None
+        relations["ally_id"] = str(player.get("ally") or "0")
+        relations["source_village"] = str(self.village_id)
+        relations["fetched_at"] = int(time.time())
+        try:
+            FileManager.save_json_file(relations, self.DIPLOMACY_FILE)
+        except Exception as exc:
+            logging.warning("Map: nao foi possivel gravar %s: %s",
+                            self.DIPLOMACY_FILE, exc)
+            return False
         return True
 
     def _fallback_location(self, game_state):

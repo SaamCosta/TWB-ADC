@@ -1,0 +1,27 @@
+	/** Village colors **/
+
+			TWMap.colors['this'] = [255, 255, 255];
+			TWMap.colors['player'] = [240, 200, 0];
+			TWMap.colors['friend'] = [69, 255, 146];
+			TWMap.colors['ally'] = [0, 0, 244];
+			TWMap.colors['partner'] = [0, 160, 244];
+			TWMap.colors['nap'] = [128, 0, 128];
+			TWMap.colors['enemy'] = [244, 0, 0];
+			TWMap.colors['other'] = [130, 60, 10];
+			TWMap.colors['sleep'] = [0, 0, 0];
+			TWMap.colors['grey'] = [150, 150, 150];
+			TWMap.colors['stronghold'] = [10, 150, 150];
+			TWMap.colors['highlight_village'] = [255, 0, 255];
+			TWMap.colors['highlight_player'] = [239, 165, 239];
+	
+    
+					TWMap.allyRelations[2] = 'nap';
+					TWMap.allyRelations[16] = 'partner';
+					TWMap.allyRelations[19] = 'partner';
+					TWMap.allyRelations[49] = 'enemy';
+					TWMap.allyRelations[2349] = 'nap';
+		
+                    TWMap.friends[900000001] = true;
+                    TWMap.friends[900000002] = true;
+        
+					TWMap.reservations[111059] = 'ally';

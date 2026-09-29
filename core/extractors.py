@@ -349,6 +349,47 @@ class Extractor:
             return result
 
     @staticmethod
+    def map_relations(res):
+        """
+        Como o jogo classifica aldeias no mapa: a paleta, a diplomacia da tribo
+        e os amigos do jogador. Tudo vem inline na tela `screen=map`, a mesma
+        resposta que `Map.get_map()` já baixa, em linhas como (br143,
+        2026-09-29, verbatim):
+
+            TWMap.colors['partner'] = [0, 160, 244];
+            TWMap.allyRelations[16] = 'partner';
+            TWMap.friends[900000001] = true;   (id anonimizado)
+
+        `allyRelations` usa os mesmos rótulos que indexam `colors`
+        (`partner`/`nap`/`enemy`), e conferido contra
+        `screen=ally&mode=contracts` na mesma data: 71 tribos nos dois lados,
+        o mesmo conjunto, sem paginação.
+
+        Devolve None quando a resposta não é a tela de mapa. A âncora é
+        `TWMap.colors[`, e não as relações: tribo sem diplomacia e jogador sem
+        amigos simplesmente não têm essas linhas, então a ausência delas é um
+        resultado legítimo (vazio), não uma falha.
+        """
+        res = _page_text(res)
+        if not res:
+            return None
+        colors = {
+            name: [int(c) for c in rgb.split(",")]
+            for name, rgb in re.findall(
+                r"TWMap\.colors\['(\w+)'\]\s*=\s*\[\s*([\d\s,]+?)\s*\]", res
+            )
+        }
+        if not colors:
+            return None
+        relations = dict(
+            re.findall(r"TWMap\.allyRelations\[(\d+)\]\s*=\s*'(\w+)'", res)
+        )
+        friends = sorted(
+            set(re.findall(r"TWMap\.friends\[(\d+)\]\s*=\s*true", res)), key=int
+        )
+        return {"colors": colors, "ally_relations": relations, "friends": friends}
+
+    @staticmethod
     def smith_data(res):
         """
         Gets smith data
@@ -525,6 +566,35 @@ class Extractor:
         res = _page_text(res)
         data = re.findall(r'(?s)<input.+?name="(.+?)".+?value="(.*?)"', res)
         return data
+
+    @staticmethod
+    def command_confirm_kind(res):
+        """
+        Que comando o jogo montou na tela de confirmação da praça
+        (`screen=place&try=confirm`): "support", "attack" ou None.
+
+        Lido do formulário que cria o comando, verbatim do br143 em
+        2026-09-29 (tests/fixtures/place_confirm_support_br143.html):
+
+            <form id="command-data-form" action="...&action=command&h=..." ...>
+                <h2>Confirmar apoio para BBM 002</h2>
+                <input type="hidden" name="support" value="true" />
+
+        Só o lado "support" foi capturado. "attack" é a leitura simétrica e
+        não foi vista: a sonda de ataque com 1 explorador foi recusada antes
+        ("É necessário enviar o mínimo de 5 Exploradores"). Quem depende disto
+        é o apoio, que exige "support" e trata qualquer outra coisa -- None
+        inclusive -- como não-apoio.
+        """
+        res = _page_text(res)
+        form = re.search(r'(?s)<form id="command-data-form".*?</form>', res)
+        if not form:
+            return None
+        kinds = set(re.findall(
+            r'<input type="hidden" name="(support|attack)" value="true"', form.group(0)))
+        if len(kinds) != 1:
+            return None
+        return kinds.pop()
 
     @staticmethod
     def attack_duration(res):

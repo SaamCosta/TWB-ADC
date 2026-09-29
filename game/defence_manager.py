@@ -91,6 +91,10 @@ class DefenceManager:
     # lida da própria visão geral. Só existe para ser publicada no cache e
     # lida pelas doadoras -- quem usa é o cálculo de viagem DELAS.
     support_speed_bonus_pct = 0
+    # Resultado do ultimo `support()`: motivo da falha e duracao lida na
+    # confirmacao (None = nao leu). Lidos por Village.run_tribe_support.
+    last_support_error = None
+    last_support_duration = None
 
     _can_change_flag = False
     # True once manage_flags() has confirmed the real flag state from the
@@ -922,27 +926,42 @@ class DefenceManager:
         # -- cada `return` acima e uma leitura que nao aconteceu.
         self._flags_fresh = True
 
-    def support(self, vid, troops=None):
+    def support(self, vid, troops=None, position=None):
+        """
+        Envia apoio desta aldeia para `vid` (ou só para a coordenada
+        `position`, quando o destino está longe demais para constar do cache
+        de aldeias -- o caso do apoio a membro da tribo, §8.39).
+
+        Deixa em `last_support_error` o motivo de uma recusa e em
+        `last_support_duration` a duração lida na confirmação.
+        """
+        self.last_support_error = None
+        self.last_support_duration = None
         # P2-38: a validacao da posicao vinha depois do GET da praca, entao a
         # requisicao (com o sleep de delay_factor) era desperdicada quando o
         # destino nao estava no mapa.
-        target_position = self._target_position(vid)
+        target_position = position or (self._target_position(vid) if vid else None)
         if target_position is None:
+            self.last_support_error = "destino sem coordenadas"
             self.logger.warning(
                 "[Support] %s -> %s: destino sem coordenadas no mapa/cache, abortando",
                 self.village_id, vid,
             )
             return False
         if troops is not None and not troops:
+            self.last_support_error = "contingente vazio"
             self.logger.info(
                 "[Support] %s -> %s: contingente vazio, nada a enviar",
                 self.village_id, vid,
             )
             return False
 
-        url = f"game.php?village={self.village_id}&screen=place&target={vid}"
+        url = f"game.php?village={self.village_id}&screen=place"
+        if vid:
+            url += f"&target={vid}"
         pre_support = self.wrapper.get_url(url)
         if pre_support is None:
+            self.last_support_error = "sem resposta da praça"
             self.logger.warning("[Support] %s -> %s: request timed out, aborting", self.village_id, vid)
             return False
         pre_data = {}
@@ -957,28 +976,51 @@ class DefenceManager:
         x, y = target_position
         post_data = {"x": x, "y": y, "target_type": "coord"}
         pre_data.update(post_data)
-        # O valor do submit e localizado ("Apoio" em pt-BR). Preserva o que a
-        # propria pagina forneceu; se algum tema nao renderizar o input, basta a
-        # presenca do nome da acao e usamos um fallback neutro.
-        pre_data.setdefault("support", "support")
+        # O formulario da praca tem DOIS botoes de envio, e `attack_form`
+        # recolhe os dois (verbatim, br143, 2026-09-29):
+        #   <input id="target_attack" ... name="attack" type="submit" value="Ataque" />
+        #   <input id="target_support" ... name="support" type="submit" value="Apoio" />
+        # Ate 2026-09-29 este metodo mandava os dois no POST -- exatamente o
+        # mesmo par de chaves que `AttackManager.attack()` manda e que o jogo
+        # trata como ATAQUE todo dia no farm. Ou seja, o apoio (que nunca
+        # tinha rodado em campo) montaria um ataque contra a aldeia apoiada.
+        # Um navegador so submete o botao clicado; aqui tambem.
+        pre_data.pop("attack", None)
+        pre_data["support"] = pre_data.get("support") or "Apoio"
 
         confirm_url = f"game.php?village={self.village_id}&screen=place&try=confirm"
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
         if conf is None:
+            self.last_support_error = "sem resposta da confirmação"
             self.logger.warning("[Support] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
             return False
         if '<div class="error_box">' in conf.text:
             # Era o unico dos quatro pontos de error_box do bot que nao logava
             # nada: o suporte simplesmente nao saia e nenhuma linha dizia por
             # que. Ver Extractor.error_box_text.
+            self.last_support_error = "recusado pelo jogo: %s" % Extractor.error_box_text(conf)
             self.logger.warning(
                 "[Support] %s -> %s recusado pelo jogo: %s",
                 self.village_id, vid, Extractor.error_box_text(conf)
             )
             return False
+        kind = Extractor.command_confirm_kind(conf)
+        if kind != "support":
+            # Segunda trava, independente da primeira: a tela de confirmacao
+            # diz que tipo de comando o jogo montou. Qualquer coisa que nao
+            # seja apoio -- inclusive "nao sei ler" -- para aqui, antes do
+            # passo que cria o comando.
+            self.last_support_error = "confirmação não é de apoio (%s)" % (kind or "ilegível")
+            self.logger.warning(
+                "[Support] %s -> %s: a confirmacao do jogo nao e de apoio (%s) -- abortando",
+                self.village_id, vid, kind or "ilegivel",
+            )
+            return False
         duration = Extractor.attack_duration(conf)
+        # 0 e o valor de falha do parser (sexto padrao), nao uma viagem nula.
+        self.last_support_duration = duration or None
         self.logger.info(
-            "[Support] %s -> %s duration %f.1 h",
+            "[Support] %s -> %s duration %.1f h",
             self.village_id, vid, duration / 3600
         )
 
@@ -1005,6 +1047,7 @@ class DefenceManager:
                 self.village_id, vid,
             )
             return result
+        self.last_support_error = "resposta final não confirmou o envio"
         self.logger.warning(
             "[Support] %s -> %s: resposta final nao confirmou o envio",
             self.village_id, vid,

@@ -451,39 +451,152 @@ class UnitTemplateManager:
         return True
 
 
-class MapBuilder:
+class DiplomacyReader:
+    """
+    Lê `cache/diplomacy.json`, gravado por `Map.save_diplomacy()` a partir da
+    tela `screen=map` que o bot já baixa: paleta do jogo, diplomacia da tribo
+    (`partner`/`nap`/`enemy` por id de tribo) e amigos do jogador.
+    """
+
     @staticmethod
-    def build(villages, current_village=None, size=None):
-        out_map = {}
+    def _path():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "diplomacy.json")
+
+    @staticmethod
+    def load():
+        """Dict do arquivo, ou None se o bot ainda não gravou (ou ilegível)."""
+        try:
+            with open(DiplomacyReader._path(), encoding="utf-8-sig") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+
+class MapBuilder:
+    # Paleta de br143 em 2026-09-29, verbatim de `TWMap.colors` na tela
+    # `screen=map`. Só vale enquanto o bot não gravou `cache/diplomacy.json`;
+    # depois disso a paleta vem de lá. `barbarian` usa o `grey` do jogo.
+    DEFAULT_COLORS = {
+        "this": [255, 255, 255],
+        "player": [240, 200, 0],
+        "friend": [69, 255, 146],
+        "ally": [0, 0, 244],
+        "partner": [0, 160, 244],
+        "nap": [128, 0, 128],
+        "enemy": [244, 0, 0],
+        "other": [130, 60, 10],
+        "grey": [150, 150, 150],
+    }
+
+    # Mesma ordem e redação da legenda do mapa do jogo.
+    LEGEND = [
+        ("this", "Aldeia atual"),
+        ("player", "Suas aldeias"),
+        ("friend", "Amigos"),
+        ("ally", "Sua tribo"),
+        ("barbarian", "Bárbaros"),
+        ("other", "Outros"),
+        ("partner", "Aliados"),
+        ("nap", "Pacto de não-agressão"),
+        ("enemy", "Inimigos"),
+    ]
+
+    @staticmethod
+    def classify(vdata, current_village=None, player_id=None, ally_id=None,
+                 relations=None, friends=None):
+        """
+        Categoria de uma aldeia na legenda do jogo.
+
+        A precedência é a de `TWMap.getColorByPlayer` em `merged/map.js` do
+        br143 (lido em 2026-09-29), sem as cores personalizadas:
+        sua aldeia → sua tribo → relação da tribo → amigo → outros. Amigo vem
+        DEPOIS da relação: um amigo numa tribo aliada aparece como Aliado, não
+        como Amigo — ao contrário do que a ordem da legenda sugere. Aldeia
+        atual e bárbara ficam fora dessa função no jogo; aqui a atual vence
+        tudo e bárbara (dono 0) é decidida antes de qualquer relação.
+        """
+        owner = str(vdata.get("owner") or "0")
+        tribe = str(vdata.get("tribe") or "0")
+        if current_village is not None and str(vdata.get("id")) == str(current_village):
+            return "this"
+        if owner == "0":
+            return "barbarian"
+        if player_id and owner == str(player_id):
+            return "player"
+        if ally_id and str(ally_id) != "0" and tribe == str(ally_id):
+            return "ally"
+        if tribe != "0" and (relations or {}).get(tribe) in ("partner", "nap", "enemy"):
+            return relations[tribe]
+        if owner in set(str(f) for f in (friends or ())):
+            return "friend"
+        return "other"
+
+    @staticmethod
+    def build(villages, current_village=None, size=None, diplomacy=None):
+        """
+        Grade do /map indexada como o jogo desenha: `grid[linha][coluna]`,
+        linha = y (cresce para o SUL) e coluna = x (cresce para o leste).
+
+        A versão anterior montava `grid[x][y]` e o template desenhava a
+        primeira chave como linha, então o mapa saía transposto (espelhado na
+        diagonal). E o `range(min, max)` exclusivo cortava a última linha e a
+        última coluna, deixando a aldeia central fora do meio.
+        """
         min_x = 999; max_x = 0; min_y = 999; max_y = 0
         current_location = None
+        center = None
         grid_vils = {}
-        extra_data = {}
         for v in villages:
             vdata = villages[v]
             x, y = vdata['location']
-            if x < min_x: min_x = x
-            if x > max_x: max_x = x
-            if y < min_y: min_y = y
-            if y > max_y: max_y = y
-            if current_village and vdata['id'] == current_village:
+            min_x = min(min_x, x); max_x = max(max_x, x)
+            min_y = min(min_y, y); max_y = max(max_y, y)
+            if current_village and str(vdata['id']) == str(current_village):
                 current_location = vdata['location']
-                extra_data['owner'] = vdata['owner']
-                extra_data['tribe'] = vdata['tribe']
-            grid_vils["%d:%d" % (x, y)] = vdata
+                center = vdata
+            grid_vils[(x, y)] = vdata
         if current_location and size:
             min_x = current_location[0] - size
             min_y = current_location[1] - size
             max_x = current_location[0] + size
             max_y = current_location[1] + size
-        for location_x in range(min_x, max_x):
-            if location_x not in out_map:
-                out_map[location_x - min_x] = {}
-            ylocs = {}
-            for location_y in range(min_y, max_y):
-                location = "%d:%d" % (location_x, location_y)
-                ylocs[location_y - min_y] = grid_vils[location] if location in grid_vils else None
-            out_map[location_x - min_x] = ylocs
+
+        diplomacy = diplomacy or {}
+        # Sem `cache/diplomacy.json` ainda, dono e tribo saem da aldeia central
+        # (que é gerenciada, logo nossa) -- e aliados/PNA/inimigos/amigos caem
+        # em "Outros" até o bot ler a tela de mapa.
+        player_id = diplomacy.get("player_id") or (center or {}).get("owner")
+        ally_id = diplomacy.get("ally_id") or (center or {}).get("tribe")
+        relations = diplomacy.get("ally_relations") or {}
+        friends = diplomacy.get("friends") or []
+        colors = dict(MapBuilder.DEFAULT_COLORS)
+        colors.update(diplomacy.get("colors") or {})
+        colors["barbarian"] = colors.get("grey", MapBuilder.DEFAULT_COLORS["grey"])
+
+        out_map = {}
+        for location_y in range(min_y, max_y + 1):
+            row = {}
+            for location_x in range(min_x, max_x + 1):
+                vdata = grid_vils.get((location_x, location_y))
+                if vdata is not None:
+                    vdata = dict(vdata, relation=MapBuilder.classify(
+                        vdata, current_village, player_id, ally_id, relations, friends))
+                row[location_x - min_x] = vdata
+            out_map[location_y - min_y] = row
+
+        extra_data = {
+            "origin": [min_x, min_y],
+            "colors": colors,
+            "legend": [
+                {"key": k, "label": label, "color": colors.get(k)}
+                for k, label in MapBuilder.LEGEND
+            ],
+            "diplomacy_loaded": bool(diplomacy),
+            "diplomacy_fetched_at": diplomacy.get("fetched_at"),
+            "relations_count": len(relations),
+            "friends_count": len(friends),
+        }
         return {"grid": out_map, "extra": extra_data}
 
 
@@ -3657,3 +3770,319 @@ class FarmScoreReader:
         farms.sort(key=sort_key)
         village_ids = sorted(set(f["reserved_by"] for f in farms if f["reserved_by"]))
         return farms, village_ids
+
+
+UNIT_LABELS_PT = {
+    "spear": "Lança", "sword": "Espada", "axe": "Machado", "archer": "Arqueiro",
+    "spy": "Explorador", "light": "Cav. leve", "marcher": "Arq. a cavalo",
+    "heavy": "Cav. pesada", "ram": "Aríete", "catapult": "Catapulta",
+    "knight": "Paladino", "snob": "Nobre",
+}
+
+
+class TribeSupportReader:
+    """
+    Painel /support: apoio a membros da tribo (docs/backend.md §8.39).
+
+    Lê o pedido (link do tópico, HTML do tópico ou texto colado), calcula o
+    plano com `core.support_planner` e grava em `cache/support/` pelas funções
+    de `core.support_store` -- as mesmas que o bot usa, com a mesma trava.
+    O painel só PROPÕE, APROVA e CANCELA; quem envia é
+    `Village.run_tribe_support()`, no ciclo da aldeia de origem.
+    """
+
+    # Uma busca de tópico a cada 30 s no máximo. O captcha do jogo é por taxa
+    # da CONTA, somando bot e painel (memória "nunca usar priority_mode").
+    FETCH_MIN_INTERVAL = 30
+    _last_fetch = 0.0
+
+    @staticmethod
+    def _config():
+        return FileManager.load_json_file("config.json") or {}
+
+    # -- entrada -----------------------------------------------------------
+
+    @staticmethod
+    def fetch_thread(forum_id, thread_id, link_text=""):
+        """(html, erro). Um GET com a sessão do bot, pelo próprio WebWrapper."""
+        from urllib.parse import urlparse
+        from core.request import WebWrapper
+
+        config = TribeSupportReader._config()
+        endpoint = (config.get("server") or {}).get("endpoint") or ""
+        host = urlparse(endpoint).netloc
+        link = re.search(r"https?://[^\s\"'<>]+", link_text or "")
+        if link and host and urlparse(link.group(0)).netloc != host:
+            return None, "o link é de outro servidor (%s); o bot joga em %s" % (
+                urlparse(link.group(0)).netloc, host)
+        wait = TribeSupportReader.FETCH_MIN_INTERVAL - (time.time() - TribeSupportReader._last_fetch)
+        if wait > 0:
+            return None, "aguarde %d s antes de buscar o tópico de novo" % int(wait + 1)
+        session = FileManager.load_json_file("cache/session.json") or {}
+        if not session.get("cookies"):
+            return None, "sem sessão do bot em cache/session.json"
+
+        class _PanelWrapper(WebWrapper):
+            # O `get_url` do bot espera o captcha ser resolvido, em laço. No
+            # painel isso congelaria a página: aqui captcha é erro na hora.
+            def _await_captcha_clear(self, probe_url, headers=None):
+                return None
+
+        wrapper = _PanelWrapper(endpoint, server=(config.get("server") or {}).get("server"),
+                                endpoint=endpoint)
+        wrapper.delay = 0.3
+        wrapper.headers["user-agent"] = (config.get("bot") or {}).get("user_agent") \
+            or wrapper.headers["user-agent"]
+        wrapper.web.cookies.update(session["cookies"])
+        village = next(iter(config.get("villages") or {}), "")
+        TribeSupportReader._last_fetch = time.time()
+        res = wrapper.get_url(
+            "game.php?village=%s&screen=forum&screenmode=view_thread&forum_id=%s&thread_id=%s"
+            % (village, forum_id, thread_id))
+        if res is None:
+            return None, "o jogo não respondeu (rede, ou captcha pendente no navegador)"
+        return res.text, None
+
+    @staticmethod
+    def load_input(text):
+        """Lê o pedido e grava cache/support/request.json. Devolve a mensagem."""
+        import hashlib
+        from core.support_request import (forum_link_ids, parse_forum_thread,
+                                          parse_pasted_text)
+        from core import support_store
+
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("Cole o link do tópico ou o texto do pedido.")
+        ids = forum_link_ids(text)
+        if ids and len(text) < 600:
+            page, error = TribeSupportReader.fetch_thread(ids[0], ids[1], text)
+            if error:
+                raise ValueError(error)
+            parsed = parse_forum_thread(page)
+            if parsed is None:
+                raise ValueError("a resposta não é um tópico do fórum (sessão vencida ou "
+                                 "captcha). Abra o jogo no navegador e tente de novo.")
+            source = {"kind": "forum", "forum_id": ids[0], "thread_id": ids[1]}
+            key = "forum:%s:%s" % ids
+        elif 'id="forum_post_list"' in text:
+            parsed = parse_forum_thread(text)
+            source = {"kind": "html"}
+            key = "html:" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+        else:
+            parsed = parse_pasted_text(text)
+            source = {"kind": "text", "text": text[:4000]}
+            key = "text:" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+        if parsed is None or not parsed.get("requests"):
+            raise ValueError((parsed or {}).get("error") or "nenhuma aldeia reconhecida no pedido")
+        support_store.save_request({
+            "key": key, "source": source, "parsed": parsed, "loaded_at": int(time.time()),
+        })
+        return "%d aldeias lidas%s." % (
+            len(parsed["requests"]),
+            (", %d respostas no tópico" % len(parsed["replies"])) if parsed.get("replies") else "")
+
+    @staticmethod
+    def reload_forum():
+        from core import support_store
+        req = support_store.load_request()
+        src = req.get("source") or {}
+        if src.get("kind") != "forum":
+            raise ValueError("o pedido atual não veio de um link do fórum")
+        return TribeSupportReader.load_input(
+            "screen=forum&forum_id=%s&thread_id=%s" % (src["forum_id"], src["thread_id"]))
+
+    # -- estado do império -------------------------------------------------
+
+    @staticmethod
+    def sources():
+        config = TribeSupportReader._config()
+        managed_ids = set((config.get("villages") or {}).keys())
+        base = os.path.join(os.path.dirname(__file__), "..", "cache", "managed")
+        out = []
+        for fname in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+            if not fname.endswith(".json"):
+                continue
+            vid = fname[:-5]
+            if managed_ids and vid not in managed_ids:
+                continue
+            try:
+                with open(os.path.join(base, fname), encoding="utf-8-sig") as fh:
+                    d = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            if d.get("x") is None or d.get("y") is None:
+                continue
+            home = {}
+            for unit, qty in (d.get("available_troops") or {}).items():
+                try:
+                    home[unit] = int(qty)
+                except (TypeError, ValueError):
+                    pass
+            out.append({
+                "vid": vid, "name": d.get("name") or vid, "x": int(d["x"]), "y": int(d["y"]),
+                "home": home, "under_attack": bool(d.get("under_attack")),
+                "incoming_eta": (d.get("incoming_attack") or {}).get("eta_seconds"),
+                "last_run": d.get("last_run"),
+            })
+        return out
+
+    @staticmethod
+    def hostiles(diplomacy):
+        diplomacy = diplomacy or {}
+        rel = diplomacy.get("ally_relations") or {}
+        friends = diplomacy.get("friends") or []
+        out = []
+        base = villages_cache_dir()
+        for fname in os.listdir(base) if os.path.isdir(base) else []:
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(base, fname), encoding="utf-8-sig") as fh:
+                    v = json.load(fh)
+            except (OSError, ValueError):
+                continue
+            cls = MapBuilder.classify(v, None, diplomacy.get("player_id"),
+                                      diplomacy.get("ally_id"), rel, friends)
+            if cls in ("enemy", "other") and v.get("location"):
+                out.append({"x": int(v["location"][0]), "y": int(v["location"][1]),
+                            "points": v.get("points") or 0, "relation": cls})
+        return out
+
+    @staticmethod
+    def speeds():
+        server = (TribeSupportReader._config().get("server") or {}).get("server")
+        data = FileManager.load_json_file("cache/world/units_%s.json" % server) if server else None
+        return (data or {}).get("speeds") or {}
+
+    # -- plano -------------------------------------------------------------
+
+    @staticmethod
+    def parse_options(form):
+        def num(name, default, cast=float):
+            raw = (form.get(name) or "").strip().replace(",", ".")
+            if raw == "":
+                return default
+            try:
+                return cast(raw)
+            except ValueError:
+                raise ValueError("valor inválido em %s: %r" % (name, raw))
+        units = [u for u in ("spear", "sword", "spy", "heavy") if form.get("unit_" + u)]
+        if not units:
+            raise ValueError("marque ao menos uma unidade")
+        reserve = num("reserve_pct", 20.0)
+        if not 0 <= reserve < 100:
+            raise ValueError("reserva deve ficar entre 0 e 99%")
+        max_h = num("max_travel_hours", None)
+        return {
+            "reserve_pct": reserve / 100.0,
+            "danger_radius": num("danger_radius", 15, int),
+            "exposed_threat": num("exposed_threat", 3.0),
+            "include_exposed": bool(form.get("include_exposed")),
+            "max_travel_hours": max_h if max_h else None,
+            "min_package_pop": num("min_package_pop", 100, int),
+            "min_hostile_points": num("min_hostile_points", 500, int),
+            "split_fast": bool(form.get("split_fast")),
+            "units": units,
+        }
+
+    @staticmethod
+    def compute(options):
+        from core import support_store
+        from core.support_planner import plan_support
+        from core.support_request import remaining
+
+        req = support_store.load_request()
+        if not req.get("parsed"):
+            raise ValueError("carregue um pedido antes de calcular")
+        speeds = TribeSupportReader.speeds()
+        if not speeds:
+            raise ValueError("tabela de velocidades ausente (cache/world/units_*.json); "
+                             "rode o bot uma vez")
+        missing = [r for r in remaining(req["parsed"]) if any(r["missing"].values())]
+        result = plan_support(missing, TribeSupportReader.sources(),
+                              TribeSupportReader.hostiles(DiplomacyReader.load()),
+                              speeds, options)
+        for line in result["lines"]:
+            line["reserve_pct"] = result["options"]["reserve_pct"]
+        ranking = [{k: s.get(k) for k in ("vid", "name", "x", "y", "tier", "threat",
+                                          "nearest_hostile", "hostiles_in_radius", "reasons",
+                                          "donatable", "home", "under_attack", "usable",
+                                          "last_run")} for s in result["sources"]]
+        count = support_store.replace_proposed(result["lines"], req["key"], ranking,
+                                               result["options"])
+        if count is None:
+            raise ValueError("cache/support/plan.json ilegível; nada foi gravado")
+
+        def store_uncovered(data):
+            data["uncovered"] = result["uncovered"]
+        support_store.update_plan(store_uncovered)
+        return "%d envios propostos%s." % (
+            count, (", %d aldeias sem cobertura total" % len(result["uncovered"]))
+            if result["uncovered"] else "")
+
+    # -- página ------------------------------------------------------------
+
+    @staticmethod
+    def view():
+        from core import support_store
+        from core.support_request import DEFAULT_UNIT_ORDER, remaining, reply_text
+        from core.support_planner import DEFAULT_OPTIONS
+
+        req = support_store.load_request()
+        plan = support_store.load_plan()
+        parsed = req.get("parsed") or {}
+        unit_order = parsed.get("unit_order") or list(DEFAULT_UNIT_ORDER)
+        rows = remaining(parsed) if parsed else []
+        # O organizador pode repetir a aldeia em duas linhas (no tópico de
+        # referência, a 25 e a 26 são a mesma 779|536). O plano atende as duas;
+        # a página avisa.
+        first_at = {}
+        for r in rows:
+            where = (r.get("x"), r.get("y"))
+            if where in first_at:
+                r["duplicate_of"] = first_at[where]
+            else:
+                first_at[where] = r.get("num")
+        totals = {}
+        for r in rows:
+            for u, q in r["missing"].items():
+                totals[u] = totals.get(u, 0) + q
+        now = int(time.time())
+        lines = plan.get("lines") or []
+        current = [l for l in lines if l.get("request_key") == req.get("key")]
+        by_status = collections.OrderedDict(
+            (s, []) for s in ("proposed", "approved", "dispatching", "sent", "failed", "cancelled"))
+        for l in current:
+            l = dict(l)
+            l["travel_h"] = round(l["travel_sec"] / 3600.0, 1) if l.get("travel_sec") else None
+            l["arrival_fmt"] = (datetime.datetime.fromtimestamp(l["arrival_at"]).strftime("%d/%m %H:%M")
+                                if l.get("arrival_at") else None)
+            by_status.setdefault(l.get("status"), []).append(l)
+        proposed_totals = {}
+        for l in by_status["proposed"]:
+            for u, q in l["troops"].items():
+                proposed_totals[u] = proposed_totals.get(u, 0) + q
+        sent_reply = reply_text([(l.get("num"), l.get("troops") or {}) for l in by_status["sent"]],
+                                unit_order) if by_status["sent"] else ""
+        options = dict(DEFAULT_OPTIONS)
+        options.update(plan.get("options") or {})
+        stale = [s for s in (plan.get("ranking") or [])
+                 if s.get("last_run") and now - int(s["last_run"]) > 6 * 3600]
+        diplomacy = DiplomacyReader.load()
+        same_request = bool(req.get("key")) and plan.get("request_key") == req.get("key")
+        return {
+            "request": req, "parsed": parsed, "rows": rows, "totals": totals,
+            "rows_missing": sum(1 for r in rows if any(r["missing"].values())),
+            "unit_order": unit_order, "labels": UNIT_LABELS_PT,
+            "by_status": by_status, "proposed_totals": proposed_totals,
+            "ranking": (plan.get("ranking") or []) if same_request else [],
+            "uncovered": (plan.get("uncovered") or []) if same_request else [],
+            "planned_at": plan.get("planned_at"), "options": options,
+            "sent_reply": sent_reply, "stale_sources": len(stale),
+            "diplomacy_loaded": bool(diplomacy), "now": now,
+            "loaded_fmt": datetime.datetime.fromtimestamp(req["loaded_at"]).strftime("%d/%m %H:%M")
+            if req.get("loaded_at") else None,
+            "planned_fmt": datetime.datetime.fromtimestamp(plan["planned_at"]).strftime("%d/%m %H:%M")
+            if plan.get("planned_at") else None,
+        }

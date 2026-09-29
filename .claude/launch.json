@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webmanager",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "webmanager.server", "5057"],
+      "port": 5057
+    }
+  ]
+}

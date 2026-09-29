@@ -24,6 +24,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.world_config import WorldConfig
 from game.defence_manager import DefenceManager
 
+# Formulario da confirmacao de APOIO, verbatim do br143 (2026-09-29), com os
+# tokens de sessao redigidos.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
+                       "place_confirm_support_br143.html"), encoding="utf-8") as _fh:
+    CONFIRM_SUPPORT = _fh.read()
+
 # Velocidades verbatim de interface.php?func=get_unit_info do br143, lidas em
 # 2026-08-22. Sao min/campo JA EFETIVOS (ver _parse_unit_speeds).
 BR143_UNIT_INFO = """<?xml version="1.0" encoding="UTF-8"?>
@@ -269,22 +275,21 @@ def test_support_envia_e_confirma_com_destino_so_no_cache():
             self.final_payload = None
 
         def get_url(self, url):
+            # Os dois botoes de envio, como o formulario real da praca traz
+            # (verbatim, br143, 2026-09-29).
             return SimpleNamespace(
                 text=(
                     '<input name="template_id" value="">'
-                    '<input name="support" value="Apoio">'
+                    '<input id="target_attack" tabindex="15" class="attack btn btn-attack '
+                    'btn-target-action" name="attack" type="submit" value="Ataque" />'
+                    '<input id="target_support" tabindex="16" class="support btn btn-support '
+                    'btn-target-action" name="support" type="submit" value="Apoio" />'
                 )
             )
 
         def post_url(self, url, data):
-            self.confirm_payload = data
-            return SimpleNamespace(
-                text=(
-                    '<span class="relative_time" data-duration="1234"></span>'
-                    '<input name="x" value="553"><input name="y" value="300">'
-                    '<input name="support" value="Apoio">'
-                )
-            )
+            self.confirm_payload = dict(data)
+            return SimpleNamespace(text=CONFIRM_SUPPORT)
 
         def get_api_action(self, village_id, action, params, data):
             self.final_payload = data
@@ -297,7 +302,46 @@ def test_support_envia_e_confirma_com_destino_so_no_cache():
     _check("x enviado", dm.wrapper.confirm_payload["x"], 553)
     _check("y enviado", dm.wrapper.confirm_payload["y"], 300)
     _check("acao localizada preservada", dm.wrapper.confirm_payload["support"], "Apoio")
+    # Com os dois botoes no POST o jogo monta ATAQUE: a sonda de 2026-09-29
+    # mandou attack+support e recebeu a recusa de ataque ("minimo de 5
+    # Exploradores"), identica a de mandar so attack.
+    _check("botao de ataque fora do POST", "attack" in dm.wrapper.confirm_payload, False)
+    _check("duracao lida da confirmacao real", dm.last_support_duration, 764)
     assert dm.wrapper.final_payload is not None
+
+
+def test_support_aborta_se_a_confirmacao_nao_for_de_apoio():
+    """Segunda trava: confirmacao que nao e de apoio nao chega ao passo final."""
+    print("test_support_aborta_se_a_confirmacao_nao_for_de_apoio")
+
+    class _Wrapper:
+        last_h = "csrf"
+        final_payload = None
+
+        def get_url(self, url):
+            return SimpleNamespace(text='<input name="support" value="Apoio">')
+
+        def post_url(self, url, data):
+            # A tela real de ataque nao foi capturada; a trava nao depende
+            # dela: o que nao for reconhecido como apoio para aqui.
+            return SimpleNamespace(text=CONFIRM_SUPPORT.replace(
+                'name="support" value="true"', 'name="attack" value="true"'))
+
+        def get_api_action(self, village_id, action, params, data):
+            self.final_payload = data
+            return {"success": True}
+
+    dm = DefenceManager(village_id="32056", wrapper=_Wrapper())
+    result = dm.support(None, troops={"spy": 1}, position=(578, 305))
+    _check("nao enviou", bool(result), False)
+    _check("passo final nao chamado", dm.wrapper.final_payload, None)
+    _check("motivo", dm.last_support_error, "confirmação não é de apoio (attack)")
+
+    dm = DefenceManager(village_id="32056", wrapper=_Wrapper())
+    dm.wrapper.post_url = lambda url, data: SimpleNamespace(text="<html>login</html>")
+    _check("tela ilegivel tambem para", bool(dm.support(None, troops={"spy": 1},
+                                                          position=(578, 305))), False)
+    _check("motivo ilegivel", dm.last_support_error, "confirmação não é de apoio (ilegível)")
 
 
 def test_support_other_nao_transforma_plano_vazio_em_todas_as_tropas():
@@ -337,6 +381,7 @@ if __name__ == "__main__":
     test_desconhecido_preserva_comportamento_antigo()
     test_destino_novo_resolvido_pelo_cache_do_mapa()
     test_support_envia_e_confirma_com_destino_so_no_cache()
+    test_support_aborta_se_a_confirmacao_nao_for_de_apoio()
     test_support_other_nao_transforma_plano_vazio_em_todas_as_tropas()
     test_eta_dict_e_por_instancia()
     print("\nOK - todos os testes do gate de urgencia passaram")

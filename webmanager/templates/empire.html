@@ -323,7 +323,7 @@
             <span id="empire-heatmap-legend" class="d-flex" style="flex:0 0 160px;height:12px;border:1px solid #555;border-radius:3px;overflow:hidden;"></span>
             <span class="text-muted" style="font-size:.75rem;">{{ heatmap.max_count | default(0) }}</span>
             <span class="ms-2" style="font-size:.75rem;">
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#27ae60;"></span>
+              <span style="display:inline-block;width:10px;height:10px;background:rgb(240,200,0);border:1px solid #fff;"></span>
               <span class="text-muted">aldeias próprias</span>
             </span>
           </div>
@@ -413,10 +413,17 @@
   var spanY = Math.max(1, maxY - minY);
 
   var PAD = 24;
+  // Mesma escala nos dois eixos: esticar x e y por fatores diferentes
+  // deforma distâncias e ângulos, e o mapa deixa de parecer o do jogo. O que
+  // sobra de um lado vira margem, centralizada. y cresce para baixo (sul),
+  // como no jogo.
+  var scale = Math.min((W - PAD * 2) / spanX, (H - PAD * 2) / spanY);
+  var offX = (W - spanX * scale) / 2;
+  var offY = (H - spanY * scale) / 2;
   function toPx(p) {
     return {
-      x: PAD + ((p.x - minX) / spanX) * (W - PAD * 2),
-      y: PAD + ((p.y - minY) / spanY) * (H - PAD * 2),
+      x: offX + (p.x - minX) * scale,
+      y: offY + (p.y - minY) * scale,
     };
   }
 
@@ -458,7 +465,8 @@
 
     own.forEach(function (p) {
       var px = toPx(p);
-      ctx.fillStyle = '#27ae60';
+      // Amarelo de "Suas aldeias" do mapa do jogo (TWMap.colors['player']).
+      ctx.fillStyle = 'rgb(240,200,0)';
       ctx.fillRect(px.x - 4, px.y - 4, 8, 8);
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 1;

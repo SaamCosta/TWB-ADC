@@ -168,7 +168,18 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   explícito, porque o jogo grava a última aba e o InFlight deixa em
   Comandos; §8.37)
   e os avisos de Telegram (`tests/test_telegram_notes.py` — Hunter,
-  promoção do trem, conquista, queda de rede; §8.34). ⚠️ `Notification.send`
+  promoção do trem, conquista, queda de rede; §8.34)
+  e a identificação e orientação do `/map` (`tests/test_map_relations.py` —
+  diplomacia e amigos lidos de `screen=map` com recorte verbatim, precedência
+  de `TWMap.getColorByPlayer` com amigo *depois* da relação da tribo, e
+  `grid[y][x]`; §8.38)
+  e o apoio a membros da tribo (`tests/test_tribe_support.py` — tópico do
+  fórum com markup verbatim e jogadores anonimizados, falta = tabela menos
+  respostas depois da edição, planejador por segurança da origem, ciclo
+  `proposed → approved → dispatching → sent` sem reenvio às cegas, executor
+  que manda o aprovado ou nada; §8.39). ⚠️ **O repositório é público**: fixture
+  de fórum de tribo, lista de amigos ou token de sessão (`h`, `ch`) entra
+  anonimizada/redigida. ⚠️ `Notification.send`
   só age depois de `Notification.arm()`, que só `twb.main()` chama: a suíte lê
   o `config.json` real, e sem essa trava rodar os testes com o Telegram ligado
   mandaria mensagem ao canal. Teste que precisa do `send()` de verdade arma
@@ -944,8 +955,14 @@ puxa o fio.**
   A condição invertida do laço em `DefenceManager.update()`, que impedia
   `support_other()` de ser chamado, foi corrigida no Lote 3 (P1-6) — junto com
   a leitura de `support_others_max_villages` do config. O suporte deixou de ser
-  código morto, mas **nenhum envio real jamais aconteceu** e o payload
-  `"support": "Ondersteunen"` nunca foi validado em pt-BR.
+  código morto, mas **nenhum envio real jamais aconteceu**.
+  ⚠️ **2026-09-29 (§8.39): o `support()` montava ATAQUE.** Mandava os dois
+  botões da praça (`attack` e `support`) no POST, e o jogo trata o par como
+  ataque. Sondado: só `support` → "Confirmar apoio"; os dois → a mesma recusa
+  de ataque que só `attack`. Corrigido com duas travas (POST só com
+  `support`, e `Extractor.command_confirm_kind` exigindo a confirmação de
+  apoio antes de criar o comando). O passo final (`popup_command` de apoio)
+  continua sem envio real.
   ⚠️ **Redação corrigida em 2026-09-21.** A anterior dizia que `support_others`
   "segue `false` em campo" e mandava "ligar em uma aldeia só, observando".
   Medido no `config.json`: está **`true` em 22 das 30 aldeias** (só o

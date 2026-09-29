@@ -1,0 +1,99 @@
+<form id="command-data-form" action="/game.php?village=41123&amp;screen=place&amp;action=command&amp;h=REDACTED" method="post" onsubmit="this.submit.disabled=true;" style="min-width: 800px">
+    <h2>Confirmar apoio para BBM 002</h2>
+
+    <input type="hidden" name="support" value="true" />
+
+    <input type="hidden" name="ch" value="REDACTED" />
+    <input type="hidden" name="cb" />
+    <input type="hidden" name="x" value="578" />
+    <input type="hidden" name="y" value="305" />
+    <input type="hidden" name="source_village" value="41123">
+    <input type="hidden" name="village" value="41123">
+    <div>
+        <table class="vis" width="360">
+            <tr>
+                <th  colspan="2">
+                                            <span id="default_name_span"><span id="default_name">Comando</span> <a href="#" onclick="editToggle('default_name_span', 'edit_name')"><img src="graphic/rename.png?1" alt="renomear" title="renomear" /></a></span>
+                        <span id="edit_name" style="display: none;"><input type="text" id="new_attack_name" onkeypress="if( (event.keyCode || event.which) != 13) return true; $('#attack_name_btn').click(); return false;" /><input id="attack_name_btn" class="btn" type="button" value="Salvar" onclick="renameAttack('new_attack_name','default_name', 'attack_name');editToggle('edit_name', 'default_name_span');" /></span>
+                        <input id="attack_name" name="attack_name" type="hidden" value="" />
+                                    </th>
+                            </tr>
+            <tr><td>Destino:</td><td><span class="village_anchor" data-player="5955651" data-id="38409"><a href="/game.php?village=41123&amp;screen=info_village&amp;id=38409" >BBM 002 (578|305) K35</a></span></td></tr>
+                            <tr><td>Jogador:</td><td><a href="/game.php?village=41123&amp;screen=info_player&amp;id=5955651" >sccj</a></td></tr>
+                        <tr><td>Duração:</td><td>0:12:44</td></tr>
+            <tr>
+                <td>Chegada:</td>
+                <td id="date_arrival">
+                <span class="relative_time" data-duration="764">
+                hoje às 20:07:19
+                </span>
+                </td>
+            </tr>
+                                                        </table>
+    </div>
+
+    <a href="#" id="troop_confirm_train" class="place-confirm-new-attack" style="display: none">
+        <img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/plus.webp" title="" alt="" class="" /> Adicionar ataque adicional
+    </a>
+
+    
+    <table class="vis" id="place_confirm_units" style="width: 100%">
+        <tr>
+            <th class="train-ui" style="display: none">
+                <div class="attacks-templates">
+                    <img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/questionmark.webp" title="Escolher um modelo para obter mais informações." alt="" class="template-help-icon" />
+                    <span>
+                        <a href='/game.php?village=41123&amp;screen=place&amp;mode=templates'>Modelo:</a>
+                    </span>
+                    <select id="attack_template_selector">
+                        <option value="">Escolher o modelo</option>
+                                                    <option value="all" title="Todas as tropas: Enviar todas as unidades presentes desta aldeia.">Todas as tropas</option>
+                                                    <option value="fake" title="Fake: Adiciona um espião e a quantidade mínima de catapultas necessárias para atingir o Limite de ataques falsos.">Fake</option>
+                                                    <option value="snob" title="Nobre: Cada ataque contém um nobre e as unidades ofensivas são equilibradas automaticamente.">Nobre</option>
+                                                    <option value="39" >Farm1</option>
+                                            </select>
+                </div>
+            </th>
+            <th width="50"><div class=""><a href="#" class="unit_link" data-unit="spear"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_spear.webp" title="Lanceiro" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="sword"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_sword.webp" title="Espadachim" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="axe"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_axe.webp" title="Bárbaro" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="spy"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_spy.webp" title="Explorador" alt="" class="" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="light"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_light.webp" title="Cavalaria leve" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="heavy"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_heavy.webp" title="Cavalaria pesada" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="ram"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_ram.webp" title="Aríete" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="catapult"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_catapult.webp" title="Catapulta" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="knight"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_knight.webp" title="Paladino" alt="" class="faded" /></a></div></th><th width="50"><div class=""><a href="#" class="unit_link" data-unit="snob"><img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_snob.webp" title="Nobre" alt="" class="faded" /></a></div></th>
+                    </tr>
+        <tr class="train-ui" style="display: none">
+            <th>Unidades da aldeia</th>
+            <td data-unit-count="4" class='unit-item unit-item-spear' >4</td><td data-unit-count="0" class='unit-item unit-item-sword hidden' >0</td><td data-unit-count="282" class='unit-item unit-item-axe' >282</td><td data-unit-count="100" class='unit-item unit-item-spy' >100</td><td data-unit-count="162" class='unit-item unit-item-light' >162</td><td data-unit-count="0" class='unit-item unit-item-heavy hidden' >0</td><td data-unit-count="187" class='unit-item unit-item-ram' >187</td><td data-unit-count="38" class='unit-item unit-item-catapult' >38</td><td data-unit-count="1" class='unit-item unit-item-knight' >1</td><td data-unit-count="1" class='unit-item unit-item-snob' >1</td>
+        </tr>
+        <tr class="units-row">
+            <th class="train-ui train-name" style="display: none"><span>Ataque #1</span></th>
+            <td data-unit-count="0" class='unit-item unit-item-spear hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-sword hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-axe hidden' >0</td><td data-unit-count="1" class='unit-item unit-item-spy' >1</td><td data-unit-count="0" class='unit-item unit-item-light hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-heavy hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-ram hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-catapult hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-knight hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-snob hidden' >0</td>
+                    </tr>
+        <tr class="train-ui units-sum" style="display: none">
+            <th>Total</th>
+            <td data-unit-count="0" class='unit-item unit-item-spear hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-sword hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-axe hidden' >0</td><td data-unit-count="1" class='unit-item unit-item-spy' >1</td><td data-unit-count="0" class='unit-item unit-item-light hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-heavy hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-ram hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-catapult hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-knight hidden' >0</td><td data-unit-count="0" class='unit-item unit-item-snob hidden' >0</td>
+        </tr>
+    </table>
+
+    <br />
+
+            <input type="hidden" name="spear" value="0" />
+            <input type="hidden" name="sword" value="0" />
+            <input type="hidden" name="axe" value="0" />
+            <input type="hidden" name="spy" value="1" />
+            <input type="hidden" name="light" value="0" />
+            <input type="hidden" name="heavy" value="0" />
+            <input type="hidden" name="ram" value="0" />
+            <input type="hidden" name="catapult" value="0" />
+            <input type="hidden" name="knight" value="0" />
+            <input type="hidden" name="snob" value="0" />
+    
+        
+    
+    <div id="train-unit-overflow-warning"></div>
+    <div id="train-fake-limit-warning"></div>
+
+    
+    <div id="train-unprotected-snob-warning"></div>
+
+    
+    <div id="train-defensive-only-warning"></div>
+
+    <input id="troop_confirm_submit" style="margin-bottom: 5px" class="troop_confirm_go btn btn-support" name="submit_confirm" type="submit" onload="this.disabled=false;" value="Enviar apoio" />
+
+    </form>

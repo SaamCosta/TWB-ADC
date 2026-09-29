@@ -137,6 +137,22 @@ var currentRadius = {{ radius }};
   var minY = Math.min.apply(null, ys) - currentRadius - 2;
   var maxY = Math.max.apply(null, ys) + currentRadius + 2;
 
+  // Alarga a janela do mundo até a proporção do canvas, para x e y terem a
+  // mesma escala. Sem isso cada eixo esticava por um fator diferente: o mapa
+  // saía deformado e o halo (desenhado com um raio só) não correspondia à
+  // distância real entre as aldeias. y cresce para baixo (sul), como no jogo.
+  (function () {
+    var aspect = (W - 2*PAD) / (H - 2*PAD);
+    var spanX = maxX - minX, spanY = maxY - minY;
+    if (spanX / spanY < aspect) {
+      var padX = (spanY * aspect - spanX) / 2;
+      minX -= padX; maxX += padX;
+    } else {
+      var padY = (spanX / aspect - spanY) / 2;
+      minY -= padY; maxY += padY;
+    }
+  })();
+
   function toCanvas(wx, wy) {
     var cx = PAD + ((wx - minX) / (maxX - minX)) * (W - 2*PAD);
     var cy = PAD + ((wy - minY) / (maxY - minY)) * (H - 2*PAD);

@@ -29,7 +29,7 @@
         <h2 class="twb-nav-label" id="nav-defesa">Defesa</h2>
         <ul class="twb-nav-list">
           <li><span class="twb-nav-future" aria-disabled="true"><span class="twb-nav-icon" aria-hidden="true">!</span>Ameaças <span class="twb-nav-note">futuro</span></span></li>
-          <li><span class="twb-nav-future" aria-disabled="true"><span class="twb-nav-icon" aria-hidden="true">↔</span>Apoios <span class="twb-nav-note">futuro</span></span></li>
+          <li><a class="twb-nav-link" href="/support" {% if request.path.startswith('/support') %}aria-current="page"{% endif %}><span class="twb-nav-icon" aria-hidden="true">↔</span>Apoios</a></li>
           <li><span class="twb-nav-future" aria-disabled="true"><span class="twb-nav-icon" aria-hidden="true">⌖</span>Mapa defensivo <span class="twb-nav-note">futuro</span></span></li>
         </ul>
       </section>

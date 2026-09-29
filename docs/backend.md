@@ -4857,6 +4857,166 @@ Suíte: 77/77.
 ela fica em Produção ou em Comandos, conforme quem leu por último. Não piorou,
 mas o navegador do usuário continua abrindo na aba que o bot deixou.
 
+## 8.38 ✅ `P-MAPA-WEB` — /map transposto e identificação de aldeias com a legenda do jogo (2026-09-29)
+
+**Orientação.** Dos três mapas do webmanager, só o `/map` estava com a
+orientação errada, e estava **transposto** (espelhado na diagonal).
+`MapBuilder.build` montava `grid[x][y]` e o `map.html` desenha a primeira
+chave como linha, então x ia para a vertical. De quebra, o `range(min, max)`
+exclusivo cortava a última linha e a última coluna, e a aldeia central ficava
+fora do meio. Agora é `grid[y][x]`, inclusivo, com `origin` exposto e rótulos
+de coordenada a cada 5 campos para dar para conferir de olho. Conferido na
+página renderizada: 209 aldeias em posição certa, 0 divergências, BBM 020
+(574|317) em `[15][15]`.
+`/empire` e `/zones` já tinham o eixo certo (y cresce para o sul, como no
+jogo), mas esticavam x e y por fatores diferentes. Nas zonas isso fazia o halo
+de raio não bater com a distância real entre as aldeias. Os dois passaram a
+usar a mesma escala nos dois eixos.
+
+**Identificação.** O `/map` pintava tudo que não fosse seu ou da sua tribo
+como "Inimigo", e chamava a própria tribo de "Tribo aliada". Agora usa a
+legenda e a paleta do jogo: Aldeia atual, Suas aldeias, Amigos, Sua tribo,
+Bárbaros, Outros, Aliados, PNA e Inimigos.
+
+- **Fonte:** a tela `screen=map`, que `Map.get_map()` **já baixava** (8h por
+  aldeia), traz inline `TWMap.colors[...]`, `TWMap.allyRelations[id] =
+  'partner'|'nap'|'enemy'` e `TWMap.friends[id] = true`. Zero requisições
+  novas. `Extractor.map_relations` lê isso e `Map.save_diplomacy` grava
+  `cache/diplomacy.json`, que o webmanager lê por `DiplomacyReader`.
+- **Completude conferida** (26º padrão): 71 tribos em `allyRelations`, 71 na
+  tela `screen=ally&mode=contracts`, o mesmo conjunto, sem paginação. Os
+  amigos batem com `screen=buddies`: 2 e 2. A terceira linha daquela tela é a
+  própria conta, destacada no ranking.
+- **Precedência lida do JS do jogo, não da legenda:** `TWMap.getColorByPlayer`
+  em `merged/map.js` decide personalizada → sua aldeia → sua tribo → relação da
+  tribo → **amigo** → outros. Amigo vem *depois* da relação, então um amigo
+  numa tribo aliada aparece como Aliado. Pela ordem da legenda eu teria
+  chutado o contrário, e os dois amigos atuais estão justamente na tribo 16,
+  que é `partner`. Cores personalizadas (`villageColors`/`playerColors`/
+  `allyColors`, as linhas "Próprias/Outros" da legenda do jogo) e `sleep` não
+  foram implementadas: estavam vazias na captura.
+- Sem `cache/diplomacy.json`, o `/map` cai em dono/tribo da aldeia central e
+  avisa na legenda que aliados, PNA, inimigos e amigos aparecem como Outros.
+
+Testes em `tests/test_map_relations.py`, com fixture verbatim
+`tests/fixtures/map_relations_br143.txt`: parser, precedência (incluindo o
+caso do amigo em tribo aliada), orientação da grade e "tela errada não
+sobrescreve a leitura boa". Probe em `cache/_probe_diplomacy.py`, só leitura.
+
+**Relevante para o apoio a membros da tribo** (próximo assunto):
+`cache/diplomacy.json` já carrega `player_id` e `ally_id`, e o cache de aldeias
+carrega a tribo de cada aldeia. Com isso, dá para identificar "aldeia de membro
+da tribo" sem nenhuma requisição nova.
+
+## 8.39 ✅ `P-APOIO-TRIBO` — apoio a membros da tribo: pedido do fórum, origem segura, aprovação (2026-09-29)
+
+**O que o usuário pediu.** Uma interface para apresentar as aldeias que
+precisam de apoio (colando o link do tópico do fórum ou o texto do pedido), em
+que o bot calcula **de quais aldeias próprias é mais seguro tirar tropa**. No
+br143 o apoio só vai para membro da própria tribo. Três decisões dele:
+segurança é propriedade da **origem**; o bot **propõe e ele aprova**; a falta é
+a **tabela menos as respostas postadas depois da última edição dela**.
+
+**O pedido real** (fórum Defesa, `forum_id=2513&thread_id=1639`, "BLINDAGEM
+FIXA - APOIO"): 36 aldeias de 8 jogadores, **todos membros da tribo 987**
+(conferido em `screen=ally&mode=members`, sem paginação), em K57/K47, a
+**213–293 campos** das aldeias do usuário (K25/K35). Viagem: explorador ~32 h,
+pesada ~39 h, lança ~64 h, espada ~78 h. O organizador mantém a tabela no
+primeiro post e a edita; quem envia responde `NN/lança/espada/exp/pesada`.
+Tópico de página única (`Forum.is_last_page = true`, 20 por página).
+
+### Bug encontrado no caminho: o `support()` montava ATAQUE
+
+O formulário da praça tem dois botões de envio, e `Extractor.attack_form`
+recolhe os dois:
+
+```
+<input id="target_attack" ... name="attack" type="submit" value="Ataque" />
+<input id="target_support" ... name="support" type="submit" value="Apoio" />
+```
+
+`DefenceManager.support()` mandava os dois no POST de `try=confirm`: o mesmo
+par de chaves que `AttackManager.attack()` manda e que o jogo trata como
+ataque no farm, todo dia. Sondado com autorização do usuário (3 POSTs em
+`try=confirm`, que só renderiza a confirmação; 1 explorador de BBM 001 para
+BBM 002; nenhum comando criado):
+
+| POST com | Resposta do jogo |
+|---|---|
+| só `support` | *"Confirmar apoio para BBM 002"*, duração 764 s |
+| só `attack` | recusa de ataque: *"É necessário enviar o mínimo de 5 Exploradores"* |
+| os dois (código antigo) | **a mesma recusa de ataque** |
+
+O terceiro caso podia ter desmentido a hipótese (13º padrão) e não desmentiu.
+O apoio entre aldeias próprias (`support_other`, ligado em 22 de 30 aldeias) e
+a evacuação (`evacuate`, que também chama `support()`) nunca tinham disparado
+em campo, então isso nunca virou comando real. Correção em duas travas
+independentes: o POST leva só `support`, e a confirmação precisa ser
+reconhecida como apoio por `Extractor.command_confirm_kind` antes do passo que
+cria o comando. A âncora é `<input type="hidden" name="support" value="true" />`
+dentro do `command-data-form` (fixture
+`tests/fixtures/place_confirm_support_br143.html`). Confirmação ilegível também
+para.
+
+### Como ficou
+
+- `core/support_request.py` — lê o tópico (tabela `bbcodetable`, colunas pelo
+  cabeçalho em português, respostas, "Editado por X hoje às HH:MM" com a data
+  do servidor de `id="serverDate"`), BBCode e texto livre. `remaining()`
+  aplica a regra da falta. Resposta no mesmo minuto da edição conta como não
+  descontada e sai marcada `ambiguous`.
+- `core/support_planner.py` — segurança da origem: ataque chegando exclui;
+  ameaça = soma de hostis num raio (inimigo 3, "outros" 1; aliado, PNA, amigo
+  e a própria tribo não contam), por tamanho e proximidade; faixas segura /
+  atenção / exposta (≥ 2,0, fora do plano salvo pedido). Reserva por unidade
+  (padrão 20%). Dentro da faixa, a origem que cobre **mais** vem antes (menos
+  comandos). Teto de viagem opcional por unidade. `split_fast` separa
+  pesada/explorador de lança/espada.
+- `core/support_store.py` — `cache/support/request.json` (só o painel
+  escreve) e `cache/support/plan.json` (painel e bot, sob `file_lock`, relendo
+  antes de gravar). Linha: `proposed → approved → dispatching → sent|failed`.
+  `dispatching` é gravado **antes** de tocar na praça e nunca é reclamado de
+  novo: queda no meio vira "resultado desconhecido", não reenvio. Aprovação
+  vale 24 h.
+- `Village.run_tribe_support()` — fase `apoio`, antes do farm e da coleta.
+  Reconfere na hora: ataque chegando adia sem gastar a aprovação; tropa em
+  casa abaixo de plano + reserva faz a linha falhar em vez de mandar menos.
+- `/support` no webmanager (item "Apoios" da navegação, que era "futuro") —
+  busca o tópico com o `WebWrapper` do bot (um GET, no máximo a cada 30 s; o
+  captcha vira erro na hora em vez de congelar a página). Mostra a falta por
+  aldeia, o ranking das origens, o plano com seleção, o andamento e o texto de
+  resposta para o tópico. O painel **não posta** no fórum.
+
+### O que os dados reais mostraram e mudaram
+
+A primeira rodada contra o tópico ao vivo expôs três coisas que a fixture não
+mostrava:
+
+1. **As 175 "hostis" eram quase todas de 26 pontos**, de contas sem tribo
+   abandonadas no início. Todas as 38 origens saíam "atenção", com "hostil a 1
+   campo". Com o piso de 500 pontos (`min_hostile_points`): 11 seguras e 27
+   em atenção.
+2. **111 envios, muitos de 10 a 50 unidades**: as origens "mais seguras" eram
+   as de pouca tropa, e o guloso espalhava cada pedido por uma dúzia delas.
+   Pacote mínimo de 100 de população (que não barra um pedido inteiro menor
+   que isso) e preferência pela origem que cobre mais dentro da faixa: 85
+   envios, já com `split_fast`.
+3. **O limiar de "exposta" em 3,0 não pegava nem uma inimiga a 2 campos**
+   (dava 2,6). Baixado para 2,0.
+
+A oferta cobre pouco do pedido: as origens podem ceder ~18 mil lanças, ~19 mil
+espadas, ~8 mil exploradores e ~4,6 mil pesadas, contra ~63 mil pesadas
+pedidas. 34 das 36 aldeias ficam sem cobertura total, e o painel lista a falta
+que sobra. As linhas 25 e 26 do tópico são a mesma aldeia (779|536); o painel
+avisa.
+
+**Não validado em campo:** nenhum apoio foi aprovado nem enviado. O primeiro
+envio real vai exercitar o `popup_command` do apoio, que o teste só cobre com
+um wrapper de mentira. Fixtures em `tests/fixtures/forum_support_thread_br143.html`
+(jogadores anonimizados, porque o repositório é público e o fórum da tribo não)
+e `place_confirm_support_br143.html` (tokens `h`/`ch` redigidos). Testes em
+`tests/test_tribe_support.py` e `tests/test_support_urgency_gate.py`.
+
 ---
 
 ## 9. Próximos passos

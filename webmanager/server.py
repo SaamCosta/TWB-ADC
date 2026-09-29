@@ -9,10 +9,10 @@ from core.exceptions import InvalidJSONException
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
+    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -205,7 +205,8 @@ def get_map():
     sync_data = sync()
     center_id = request.args.get("center", None)
     center = next(iter(sync_data['bot'])) if not center_id else center_id
-    map_data = json.dumps(MapBuilder.build(sync_data['villages'], current_village=center, size=15))
+    map_data = json.dumps(MapBuilder.build(sync_data['villages'], current_village=center, size=15,
+                                              diplomacy=DiplomacyReader.load()))
     return render_template('map.html', data=sync_data, map=map_data)
 
 @app.route('/villages', methods=['GET'])
@@ -382,6 +383,38 @@ def get_conquest():
         # alvo sem mostrar o parâmetro que mais manda nela.
         area=ConquestReader.area_of_interest(config),
     )
+
+@app.route('/support', methods=['GET', 'POST'])
+def get_support():
+    # Apoio a membros da tribo (docs/backend.md §8.39). O painel lê o pedido,
+    # propõe, aprova e cancela; quem envia é o bot, no ciclo da aldeia de
+    # origem (Village.run_tribe_support). Erros aparecem inline e nada é
+    # gravado quando a validação falha.
+    from core import support_store
+    error = None
+    message = request.args.get('msg')
+    if request.method == 'POST':
+        action = request.form.get('action')
+        try:
+            if action == 'load':
+                msg = TribeSupportReader.load_input(request.form.get('input', ''))
+            elif action == 'reload':
+                msg = TribeSupportReader.reload_forum()
+            elif action == 'plan':
+                msg = TribeSupportReader.compute(TribeSupportReader.parse_options(request.form))
+            elif action == 'approve':
+                n = support_store.approve(request.form.getlist('line_id'))
+                msg = "%d envios aprovados; o bot envia na próxima rodada de cada aldeia de origem." % n
+            elif action == 'cancel':
+                n = support_store.cancel(request.form.getlist('line_id'))
+                msg = "%d envios cancelados." % n
+            else:
+                raise ValueError("ação desconhecida")
+            return redirect(url_for('get_support', msg=msg))
+        except ValueError as e:
+            error = str(e)
+    return render_template('support.html', v=TribeSupportReader.view(),
+                           error=error, message=message)
 
 # Unidades disponíveis para o formulário de schedules
 HUNTER_UNITS = ["spear", "sword", "archer", "spy", "light", "marcher", "heavy", "axe", "ram", "catapult", "knight", "snob"]

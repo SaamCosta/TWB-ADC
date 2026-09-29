@@ -7,6 +7,7 @@ from codecs import decode
 from datetime import datetime
 
 from core import game_data_shadow
+from core import support_store
 from core.cycle_meter import meter_phase
 from core.extractors import Extractor
 from core.filemanager import FileManager
@@ -798,6 +799,77 @@ class Village:
         )
         sharing.run(current_resman=self.resman)
 
+    def run_tribe_support(self):
+        """
+        Envia as linhas APROVADAS no painel /support cuja origem é esta aldeia
+        (apoio a membro da tribo, docs/backend.md §8.39).
+
+        O plano foi calculado sobre o cache/managed, que pode ter horas; aqui
+        tudo é reconferido na hora de agir (sexto padrão): ataque chegando
+        nesta aldeia adia o envio sem gastar a aprovação, e tropa em casa
+        abaixo do plano + reserva faz a linha falhar em vez de mandar menos --
+        o número aprovado é o número que sai, ou nada sai.
+
+        Roda antes do farm e da coleta, que tiram lança/espada de casa.
+        """
+        try:
+            plan = support_store.load_plan()
+        except Exception as exc:
+            self.logger.warning("TribeSupport: plano ilegivel (%s), pulando", exc)
+            return
+        mine = [l for l in plan.get("lines", [])
+                if l.get("status") == "approved" and str(l.get("source_vid")) == str(self.village_id)]
+        if not mine:
+            return
+        blocked = None
+        if self.def_man and self.def_man.under_attack:
+            blocked = "ataque chegando na origem"
+        claimed = support_store.claim_lines(self.village_id, blocked_reason=blocked)
+        if blocked:
+            self.logger.info("TribeSupport: %d envio(s) adiado(s) em %s: %s",
+                             len(mine), self.village_id, blocked)
+        home = {u: int(q) for u, q in ((self.units.troops if self.units else {}) or {}).items()
+                if str(q).lstrip("-").isdigit()}
+        for line in claimed:
+            troops = {u: int(q) for u, q in (line.get("troops") or {}).items() if int(q) > 0}
+            short = support_store.home_check(home, troops, line.get("reserve_pct", 0.2))
+            if short:
+                self.logger.info("TribeSupport: %s -> %s nao enviado: %s",
+                                 self.village_id, line.get("target_name"), short)
+                support_store.finish_line(line["id"], False, error="tropa em casa: " + short)
+                continue
+            try:
+                result = self.def_man.support(
+                    line.get("target_vid"), troops=troops,
+                    position=(int(line["target_x"]), int(line["target_y"])),
+                )
+            except Exception as exc:
+                # A excecao pode ter vindo antes OU depois do passo que cria
+                # o comando. A linha fica em `dispatching` (resultado
+                # desconhecido, sem nova tentativa) e o ciclo segue.
+                self.logger.error("TribeSupport: %s -> %s excecao no envio (%s); "
+                                  "resultado desconhecido, confira no jogo",
+                                  self.village_id, line.get("target_name"), exc)
+                continue
+            if result:
+                duration = self.def_man.last_support_duration
+                now = int(time.time())
+                support_store.finish_line(
+                    line["id"], True, duration_sec=duration,
+                    arrival_at=(now + int(duration)) if duration else None,
+                )
+                for u, q in troops.items():
+                    home[u] = home.get(u, 0) - q
+                    if self.units and u in self.units.troops:
+                        self.units.troops[u] = str(max(0, int(self.units.troops[u]) - q))
+                self.logger.info("TribeSupport: %s -> %s enviado: %s",
+                                 self.village_id, line.get("target_name"), troops)
+            else:
+                error = self.def_man.last_support_error or "envio não confirmado"
+                support_store.finish_line(line["id"], False, error=error)
+                self.logger.warning("TribeSupport: %s -> %s falhou: %s",
+                                    self.village_id, line.get("target_name"), error)
+
     def manage_local_resources(self):
         to_dell = []
         for x in self.resman.requested:
@@ -1345,6 +1417,10 @@ class Village:
         with self._phase("pvp"):
             self.run_pvp_conquest()
         self._service_hunter()
+        # Apoio a membro da tribo aprovado no painel (§8.39). Antes do farm e
+        # da coleta, que tiram lança e espada de casa.
+        with self._phase("apoio"):
+            self.run_tribe_support()
         # A conquista barbara NAO e chamada daqui desde 2026-09-22: ela roda
         # uma vez por ciclo, no inicio, em TWB.run_barbarian_conquest().
         # Chamar de novo aqui seria, para 29 das 30 aldeias, um `return False`

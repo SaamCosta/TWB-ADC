@@ -34,12 +34,8 @@
     <div class="card mb-2" style="border-color:#c8a96e;">
       <div class="card-body p-2">
         <h6 class="card-title mb-2">Legenda</h6>
-        <div class="map-legend small">
-          <div class="mb-1"><span style="background:#27ae60;"></span>Suas aldeias</div>
-          <div class="mb-1"><span style="background:#2980b9;"></span>Tribo aliada</div>
-          <div class="mb-1"><span style="background:#c0392b;"></span>Inimigo</div>
-          <div class="mb-1"><span style="background:#7f8c8d;"></span>Bárbara</div>
-        </div>
+        <div id="map-legend" class="map-legend small"></div>
+        <div id="map-diplomacy-note" class="small text-muted mt-2"></div>
       </div>
     </div>
 
@@ -78,12 +74,48 @@ var mapData = {{ map | safe }};
   var ctx = canvas.getContext('2d');
   var tooltip = document.getElementById('map-tooltip');
 
-  var grid  = mapData.grid;
-  var extra = mapData.extra || {};
+  // grid[linha][coluna]: linha = y (cresce para o sul), coluna = x (leste),
+  // como o jogo desenha. `origin` é a coordenada da célula [0][0].
+  var grid   = mapData.grid;
+  var extra  = mapData.extra || {};
+  var colors = extra.colors || {};
+  var origin = extra.origin || [0, 0];
   var rows  = Object.keys(grid).map(Number).sort(function(a,b){return a-b;});
   var cols  = rows.length > 0
     ? Object.keys(grid[rows[0]]).map(Number).sort(function(a,b){return a-b;})
     : [];
+
+  function rgb(key) {
+    var c = colors[key];
+    return c ? 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')' : '#4a4a5a';
+  }
+  var labels = {};
+  (extra.legend || []).forEach(function(item) { labels[item.key] = item.label; });
+
+  // Legenda gerada da mesma paleta do canvas, para não poder divergir dele.
+  (function buildLegend() {
+    var box = document.getElementById('map-legend');
+    (extra.legend || []).forEach(function(item) {
+      var row = document.createElement('div');
+      row.className = 'mb-1';
+      var sw = document.createElement('span');
+      sw.style.background = rgb(item.key);
+      sw.style.border = '1px solid rgba(0,0,0,0.35)';
+      row.appendChild(sw);
+      row.appendChild(document.createTextNode(item.label));
+      box.appendChild(row);
+    });
+    var note = document.getElementById('map-diplomacy-note');
+    if (!extra.diplomacy_loaded) {
+      note.textContent = 'Diplomacia ainda não lida pelo bot: aliados, PNA, ' +
+        'inimigos e amigos aparecem como Outros até a próxima leitura da tela de mapa.';
+    } else {
+      var when = extra.diplomacy_fetched_at
+        ? new Date(extra.diplomacy_fetched_at * 1000).toLocaleString('pt-BR') : '—';
+      note.textContent = extra.relations_count + ' tribos com diplomacia, ' +
+        extra.friends_count + ' amigos. Lido em ' + when + '.';
+    }
+  })();
 
   if (!rows.length || !cols.length) {
     ctx.fillStyle = '#ccc'; ctx.font = '16px sans-serif'; ctx.textAlign = 'center';
@@ -91,17 +123,16 @@ var mapData = {{ map | safe }};
     return;
   }
 
-  var CELL = Math.floor(Math.min(W / cols.length, H / rows.length));
+  // Margem de 28 px à esquerda e no topo para os rótulos de coordenada.
+  var AXIS = 28;
+  var CELL = Math.floor(Math.min((W - AXIS) / cols.length, (H - AXIS) / rows.length));
   CELL = Math.max(4, Math.min(CELL, 28));
-  var offX = Math.floor((W - CELL * cols.length) / 2);
-  var offY = Math.floor((H - CELL * rows.length) / 2);
+  var offX = AXIS + Math.floor((W - AXIS - CELL * cols.length) / 2);
+  var offY = AXIS + Math.floor((H - AXIS - CELL * rows.length) / 2);
 
-  // Color scheme
   function cellColor(v) {
-    if (!v || !v.owner || v.owner === '0') return '#4a4a5a';  // barbarian
-    if (extra.owner && v.owner === extra.owner)  return '#27ae60';  // own
-    if (extra.tribe && extra.tribe !== '0' && v.tribe === extra.tribe) return '#2980b9';  // tribe
-    return '#c0392b';  // enemy
+    if (!v) return '#2a3244';  // campo vazio
+    return rgb(v.relation === 'barbarian' ? 'barbarian' : v.relation);
   }
 
   function draw() {
@@ -132,14 +163,29 @@ var mapData = {{ map | safe }};
         var pad = CELL > 8 ? 1 : 0;
         ctx.fillRect(x + pad, y + pad, CELL - pad*2, CELL - pad*2);
 
-        // Dot for own villages
-        if (v && extra.owner && v.owner === extra.owner && CELL > 10) {
-          ctx.fillStyle = '#fff';
-          ctx.beginPath();
-          ctx.arc(x + CELL/2, y + CELL/2, 2, 0, Math.PI*2);
-          ctx.fill();
+        // Contorno na aldeia atual: o branco dela some no fundo claro da célula.
+        if (v && v.relation === 'this') {
+          ctx.strokeStyle = '#000';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(x + pad + 0.5, y + pad + 0.5, CELL - pad*2 - 1, CELL - pad*2 - 1);
         }
       });
+    });
+
+    // Rótulos de coordenada a cada 5 campos: x no topo, y à esquerda.
+    ctx.fillStyle = 'rgba(200,200,200,0.7)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    cols.forEach(function(ci, cIdx) {
+      var wx = origin[0] + ci;
+      if (wx % 5 === 0) ctx.fillText(wx, offX + cIdx * CELL + CELL/2, offY - 4);
+    });
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    rows.forEach(function(ri, rIdx) {
+      var wy = origin[1] + ri;
+      if (wy % 5 === 0) ctx.fillText(wy, offX - 4, offY + rIdx * CELL + CELL/2);
     });
   }
 
@@ -166,14 +212,11 @@ var mapData = {{ map | safe }};
     tooltip.style.left = (e.clientX + 14) + 'px';
     tooltip.style.top  = (e.clientY - 10) + 'px';
 
-    var ownerLabel = v.owner === '0' ? 'Bárbara'
-      : (extra.owner && v.owner === extra.owner) ? 'Sua aldeia'
-      : (extra.tribe && v.tribe === extra.tribe) ? 'Tribo aliada'
-      : 'Inimigo';
+    var ownerLabel = labels[v.relation] || '—';
 
     tooltip.innerHTML =
       '<strong>' + (v.name || '—') + '</strong>' +
-      '<br/>Owner: ' + ownerLabel +
+      '<br/>' + ownerLabel +
       '<br/>Pontos: ' + (v.points || '—') +
       '<br/>Coord: ' + (v.location ? v.location[0] + '|' + v.location[1] : '—');
 

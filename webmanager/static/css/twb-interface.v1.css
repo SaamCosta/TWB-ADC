@@ -342,6 +342,9 @@ a:hover { color: var(--twb-brand-800); }
 .twb-row--danger { box-shadow: inset 4px 0 0 var(--twb-danger); }
 .twb-row--unknown { box-shadow: inset 4px 0 0 var(--twb-unknown); }
 .twb-row--divergent { box-shadow: inset 4px 0 0 var(--twb-warning); }
+.twb-row--muted td { color: var(--twb-ink-muted); }
+/* /support: tropa com ícone, inline e sem quebra entre ícone e número. */
+.twb-support-unit { display: inline-flex; align-items: center; gap: .25rem; margin-right: .75rem; white-space: nowrap; }
 .twb-number,
 .twb-coordinate,
 .twb-time { font-variant-numeric: tabular-nums; }
