@@ -168,6 +168,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   vereditos com os números reais da 61947, reservas de outros sistemas,
   trava em voo, falha ambígua no POST final × recusa limpa, aviso único por
   pouso; §8.41)
+  e os achados graves da auditoria do painel
+  (`tests/test_panel_field_audit.py` — pulso da conta com `incomings`
+  desarmado fora do `twb.main()`, ranking de farm sem aldeia própria, regra de
+  atenção única no `/conquest`, agendamento vencido no `/hunter`; §8.42)
   e a fila do Hunter e a gravação do `schedules.json`
   (`tests/test_hunter_schedule_queue.py` — intercalação entre schedules,
   merge com o que o painel criou ou apagou durante a espera, trava entre dois

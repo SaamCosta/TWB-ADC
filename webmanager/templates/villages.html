@@ -8,6 +8,7 @@
   {% if not v.last_run or not v.resources %}{% set ns.missing = ns.missing + 1 %}{% endif %}
   {% if v.queued %}{% set ns.queued = ns.queued + (v.queued | length) %}{% endif %}
 {% endfor %}
+{% set ns.missing = ns.missing + (data.missing_snapshot | default([]) | length) %}
 
 <header class="twb-page-header">
   <div>
@@ -20,8 +21,9 @@
 
 <section class="twb-health-strip" aria-label="Resumo das aldeias">
   <div class="twb-health-item"><span class="twb-health-label">Gerenciadas no cache</span><span class="twb-health-value">{{ data.bot | length }}</span><span class="twb-health-meta">Snapshots encontrados nesta leitura.</span></div>
-  <div class="twb-health-item"><span class="twb-health-label">Exceções observadas</span><span class="twb-health-value">{{ ns.under_attack }}</span><span class="twb-health-meta">Aldeias marcadas como sob ataque.</span></div>
-  <div class="twb-health-item"><span class="twb-health-label">Dados incompletos</span><span class="twb-health-value">{{ ns.missing }}</span><span class="twb-health-meta">Sem observação ou recursos no snapshot.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Exceções observadas</span><span class="twb-health-value">{{ ns.under_attack }}</span><span class="twb-health-meta">Aldeias marcadas como sob ataque no snapshot, que só é escrito quando a aldeia roda.</span></div>
+  {% with pulse = data.pulse %}{% include "_account_pulse.html" %}{% endwith %}
+  <div class="twb-health-item"><span class="twb-health-label">Dados incompletos</span><span class="twb-health-value">{{ ns.missing }}</span><span class="twb-health-meta">Sem observação ou recursos no snapshot{% if data.missing_snapshot %}, incluindo {{ data.missing_snapshot | length }} gerenciada(s) sem snapshot nenhum ({{ data.missing_snapshot | join(', ') }}){% endif %}.</span></div>
   <div class="twb-health-item"><span class="twb-health-label">Coleta configurada</span><span class="twb-health-value" id="gather-enabled-count">{{ data.gather.enabled }}/{{ data.gather.total }}</span><span class="twb-health-meta">Configuração persistida; execução ainda não confirmada.</span></div>
 </section>
 

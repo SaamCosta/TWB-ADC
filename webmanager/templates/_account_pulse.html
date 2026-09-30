@@ -1,0 +1,17 @@
+{# Item da faixa de saúde: ataques chegando segundo o jogo (core/account_pulse.py).
+   Espera `pulse` = data.pulse. O número vem de game_data.player.incomings da
+   última tela que o bot leu, de qualquer aldeia; por isso ele enxerga o que o
+   laço de aldeias ainda não alcançou (frontend 2.8 W1). #}
+{% set p = pulse or {} %}
+<div class="twb-health-item">
+  <span class="twb-health-label">Ataques chegando (jogo)</span>
+  <span class="twb-health-value">
+    {% if not p.available %}<span class="twb-status twb-status--unknown">Não lido</span>
+    {% elif p.incomings %}<span class="twb-status twb-status--danger">{{ p.incomings }}</span>
+    {% else %}<span class="twb-number">0</span>{% endif %}
+  </span>
+  <span class="twb-health-meta">
+    {% if not p.available %}O bot ainda não gravou <code>cache/account_pulse.json</code> (grava a partir da primeira tela depois de iniciar).
+    {% else %}Contador da conta inteira no <code>game_data</code> da última tela lida{% if p.at %}, <time class="twb-time" data-observed-at="{{ p.at|int }}">há {{ (p.age_seconds // 60) if p.age_seconds is not none else '?' }} min</time>{% endif %}.{% if p.age_seconds is not none and p.age_seconds > 1800 %} <span class="twb-status twb-status--warning">Leitura velha</span> o bot não lê tela nenhuma enquanto dorme.{% endif %}{% if p.supports %} {{ p.supports }} apoio(s) chegando.{% endif %}{% endif %}
+  </span>
+</div>

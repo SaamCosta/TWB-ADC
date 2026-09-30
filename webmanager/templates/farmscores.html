@@ -4,7 +4,7 @@
 <div class="row mb-2 align-items-center">
   <div class="col">
     <h5 class="mb-0">Farm Score — Ranking de Eficiência</h5>
-    <small class="text-muted">Ordenado por eficiência real (loot ÷ distância). Menor = mais eficiente.</small>
+    <small class="text-muted">Ordenado pelo saque médio registrado (<code>farm_score</code>): maior = rende mais. A distância não entra aqui; o bot escolhe a ordem de ataque por distância ÷ score.</small>
   </div>
   <div class="col-auto d-flex align-items-center">
     <select id="village-filter" class="form-control form-control-sm mr-2" style="max-width:160px">
@@ -18,11 +18,16 @@
       <option value="scored">Com score</option>
       <option value="new">Sem histórico</option>
       <option value="unsafe">Não seguro</option>
+      <option value="player">De jogador</option>
+      <option value="conquest">Alvo de conquista</option>
     </select>
     <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">↺ Atualizar</button>
   </div>
 </div>
 
+{% if conquest_unreadable %}
+<div class="alert alert-warning small mb-2">Não foi possível ler a lista de conquista: alvos de conquista, que o farm não ataca, podem aparecer no ranking sem o selo.</div>
+{% endif %}
 <div class="card">
   <div class="card-body p-0">
     <table class="table table-sm table-hover mb-0" id="farm-table">
@@ -44,7 +49,7 @@
             data-village="{{ entry.reserved_by }}"
             data-status="{{ entry.status_key }}">
           <td class="text-muted">{{ loop.index }}</td>
-          <td><code>{{ entry.target_id }}</code></td>
+          <td>{{ entry.target_label }} <small class="text-muted"><code>{{ entry.target_id }}</code></small></td>
           <td>
             {% if entry.reserved_by %}
               <small>{{ entry.reserved_by }}</small>
@@ -75,7 +80,11 @@
             {% endif %}
           </td>
           <td>
-            {% if entry.safe %}
+            {% if entry.conquest_block %}
+              <span class="badge badge-warning text-dark" title="O farm não ataca alvo da lista de conquista ({{ entry.conquest_block }}), desde o agendamento do trem até algumas horas depois do pouso.">Alvo de conquista</span>
+            {% elif entry.player_owned %}
+              <span class="badge badge-secondary" title="O mapa dá esta aldeia com dono. Está em additional_farms, então o farm a ataca, mas nunca de 23h às 8h.">De jogador</span>
+            {% elif entry.safe %}
               <span class="badge badge-success">Seguro</span>
             {% else %}
               <span class="badge badge-danger">Inseguro</span>
@@ -105,9 +114,28 @@
   </div>
 </div>
 
+{% if own_farms %}
+<details class="mt-2">
+  <summary class="small">{{ own_farms|length }} ex-farm(s) que viraram aldeia desta conta, fora do ranking</summary>
+  <p class="small text-muted mb-1">O histórico em <code>cache/attacks/</code> sobrevive à conquista. O farm não ataca aldeia da própria conta.</p>
+  <ul class="small mb-0">
+    {% for f in own_farms %}<li>{{ f.target_label }} <code>{{ f.target_id }}</code> — {{ f.attack_count }} ataque(s), último {{ f.last_attack_fmt }}</li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+{% if player_farms %}
+<details class="mt-2">
+  <summary class="small">{{ player_farms|length }} ex-farm(s) que o mapa já dá com dono, fora do ranking</summary>
+  <p class="small text-muted mb-1">O farm só ataca aldeia de jogador listada em <code>additional_farms</code> da aldeia de origem, e nenhuma destas está. O dono vem do scan de mapa (<code>cache/villages</code>), que atrasa no sentido bárbara → jogador: uma bárbara recém-conquistada pode ainda aparecer no ranking.</p>
+  <ul class="small mb-0">
+    {% for f in player_farms %}<li>{{ f.target_label }} <code>{{ f.target_id }}</code> — {{ f.attack_count }} ataque(s), último {{ f.last_attack_fmt }}</li>{% endfor %}
+  </ul>
+</details>
+{% endif %}
+
 <div class="text-muted small mt-2">
   <span id="visible-count">{{ farms | count }}</span> farms exibidos
-  &nbsp;·&nbsp; Score alto = muito loot por distância &nbsp;·&nbsp;
+  &nbsp;·&nbsp; Score alto = muito saque por ataque &nbsp;·&nbsp;
   "Novo" = ainda sem histórico (prioridade máxima de descoberta)
 </div>
 {% endblock %}

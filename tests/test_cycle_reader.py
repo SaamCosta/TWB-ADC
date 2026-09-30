@@ -158,6 +158,36 @@ def test_aborted_is_out_of_medians():
         check(out["last"]["requests"] == 1 + 32, "ultimo completo = c2: %r" % out["last"]["requests"])
 
 
+def test_idle_cycle_is_out_of_medians():
+    """
+    frontend 2.8 W7: o ciclo noturno (fora de active_hours) termina sem
+    aldeia nenhuma, so com os sistemas de conta -- o real de 22/09 23:40 durou
+    8m56 com 35 req. Misturado ao diurno, a mediana virou "2h00 em 14
+    aldeias", que nao descreve ciclo nenhum.
+    """
+    day = _cycle(NOW - 20000, {"100": {"farm": (3000.0, 400)},
+                               "200": {"farm": (3000.0, 400)}})
+    night = _cycle(NOW - 5000, {}, account=500.0,
+                   extra={"cycle": 2, "next_sleep_seconds": 2034.0})
+    with TempCycles({"d.json": day, "n.json": night}):
+        out = CycleReader.load(days=14, now=NOW)
+        check(out["complete_count"] == 1, "ocioso fora dos completos: %r" % out["complete_count"])
+        check(out["idle_count"] == 1, "ocioso contado a parte: %r" % out.get("idle_count"))
+        check(out["medians"]["villages"] == 2,
+              "mediana de aldeias do diurno, sem o 0 do noturno: %r" % out["medians"]["villages"])
+        check(out["medians"]["min_fmt"] == out["medians"]["max_fmt"],
+              "o ocioso nao vira a minima: %r" % out["medians"])
+        check(out["last"]["villages"] == 2, "'ultimo completo' e o diurno, nao o noturno")
+        idle_rows = [r for r in out["recent"] if r["idle"]]
+        check(len(idle_rows) == 1 and len(out["recent"]) == 2,
+              "o ocioso continua listado nos recentes, marcado: %r" % out["recent"])
+    # So ocioso: nenhum completo, e a pagina diz isso em vez de medianas vazias.
+    with TempCycles({"n.json": night}):
+        out = CycleReader.load(days=14, now=NOW)
+        check(out["complete_count"] == 0 and out["medians"] is None,
+              "so ocioso nao produz mediana")
+
+
 def test_village_mean_is_per_cycle_present():
     with TempCycles(_two_cycles_and_an_abort()):
         out = CycleReader.load(days=14, now=NOW, managed={
@@ -261,6 +291,7 @@ def test_page_renders_all_branches():
 for fn in [
     test_missing_and_empty_dir,
     test_aborted_is_out_of_medians,
+    test_idle_cycle_is_out_of_medians,
     test_village_mean_is_per_cycle_present,
     test_phase_shares_close_100,
     test_unphased_warning_threshold,

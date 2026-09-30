@@ -1082,6 +1082,68 @@ class ConquestReader:
         except (OSError, OverflowError, ValueError):
             return "—"
 
+    # Folga entre a chegada prevista e "vencida": o relatorio do nobre leva
+    # alguns segundos a minutos para existir, e a previsao vem da duracao
+    # arredondada da confirmacao.
+    OVERDUE_GRACE_SEC = 15 * 60
+    KNOWN_STATUSES = ("manual", "train_scheduled", "train_sent", "extra_pending",
+                      "conquered", "assumed_done", "lost", "invalid", "complete")
+
+    @staticmethod
+    def _ago(seconds):
+        seconds = int(max(0, seconds))
+        hours, rest = divmod(seconds, 3600)
+        return "%dh%02dmin" % (hours, rest // 60) if hours else "%dmin" % (rest // 60)
+
+    @staticmethod
+    def attention_reason(t, now=None):
+        """
+        Por que este registro pede olho humano, ou None.
+
+        Uma regra so, aqui. Antes o template a escrevia duas vezes -- no
+        contador e na lista -- e as duas copias divergiam (a da lista nao
+        conhecia `train_scheduled`, entao todo trem agendado aparecia como
+        "status fora do contrato" sem entrar no contador).
+
+        Chegada vencida sem fechamento entra (frontend 2.8 W6): um trem em
+        `train_sent` cujo ultimo nobre ja devia ter pousado e excecao por
+        definicao (6o padrao) -- posse e lealdade estao desconhecidas ate a vez
+        da aldeia dona, que pode levar um ciclo inteiro. `extra_pending` fica
+        de fora de proposito: ele e o estado "trem pousou, falta nobre", entao
+        chegada no passado e o normal dele, e o registro nao guarda quando a
+        ultima leitura aconteceu para separar os dois casos.
+        """
+        now = time.time() if now is None else now
+        status = t.get("status")
+        no_origin = not t.get("reserved_by") or t.get("reserved_by") == "—"
+        grace = ConquestReader.OVERDUE_GRACE_SEC
+        if status == "assumed_done":
+            return "Encerrado porque a estimativa chegou a zero, sem prova de posse."
+        if status == "lost":
+            owner = t.get("lost_to_owner")
+            return "Outro proprietário foi observado%s." % (": #%s" % owner if owner else "")
+        if status == "invalid":
+            return "Alvo manual invalidado: %s." % (t.get("invalid_reason") or "motivo não informado")
+        if status == "complete":
+            return "Registro anterior à separação entre confirmação e estimativa."
+        if status not in ConquestReader.KNOWN_STATUSES:
+            return "Status “%s” não pertence ao contrato atual." % status
+        if status in ("train_sent", "extra_pending") and no_origin:
+            return "Operação ativa sem aldeia de origem exposta."
+        last_hit = t.get("last_hit_ts") or 0
+        if status == "train_sent" and last_hit and now - last_hit > grace:
+            return ("O último nobre deveria ter pousado há %s e o registro segue "
+                    "“enviado”: posse e lealdade não foram reconciliadas. O bot "
+                    "confere na vez da aldeia dona (#%s); se isso não acontecer "
+                    "no próximo ciclo, confira no jogo." % (
+                        ConquestReader._ago(now - last_hit), t.get("reserved_by")))
+        planned = t.get("scheduled_arrival") or 0
+        if status == "train_scheduled" and planned and now - planned > grace:
+            return ("A chegada planejada passou há %s e o trem continua "
+                    "“agendado”: nenhum despacho foi registrado. Confira o Hunter "
+                    "e o jogo antes de cancelar." % ConquestReader._ago(now - planned))
+        return None
+
     @staticmethod
     def load():
         conquest_dir = os.path.join(os.path.dirname(__file__), "..", "cache", "conquest")
@@ -1175,6 +1237,7 @@ class ConquestReader:
                 "confirmed_by":   data.get("confirmed_by"),
                 "assumed_reason": data.get("assumed_reason"),
             })
+            targets[-1]["attention_reason"] = ConquestReader.attention_reason(targets[-1])
 
         # Ordenação por quanto pedem atenção, não por progresso: alvo manual na
         # fila primeiro, depois em andamento, depois os dois casos que pedem
@@ -1470,6 +1533,13 @@ class HunterReader:
                 "target_id":          sched.get("target_id", "?"),
                 "arrival_str":        arrival_str,
                 "arrival_ts":         arrival_ts,
+                # `pending` com a chegada no passado nao e agendamento vivo: a
+                # hora de fazer efeito ja foi (6o padrao). O Hunter fecha isso
+                # no ciclo seguinte (arrival_passed, backend 8.35); ate la, ou
+                # com o bot parado, o painel contava como "agendada" e mostrava
+                # contagem negativa (frontend 2.8 W11).
+                "expired":            bool(status == "pending" and arrival_ts
+                                           and arrival_ts < now),
                 "time_to_arrival":    time_to_arrival,
                 "time_to_arrival_fmt": time_to_arrival_fmt,
                 "status":             status,
@@ -1480,7 +1550,8 @@ class HunterReader:
 
         # Pendentes primeiro, depois por arrival_ts
         order = {"pending": 0, "sent": 1, "failed": 2, "complete": 3}
-        schedules.sort(key=lambda s: (order.get(s["status"], 9), s["arrival_ts"]))
+        schedules.sort(key=lambda s: (2 if s["expired"] else order.get(s["status"], 9),
+                                      s["arrival_ts"]))
         return schedules
 
     @staticmethod
@@ -2155,6 +2226,8 @@ class CycleReader:
       - ciclo ABORTADO (overview indisponivel) nao entra em media nenhuma --
         ele dura segundos e puxaria a mediana para baixo. E contado a parte,
         com o motivo;
+      - ciclo OCIOSO (terminou sem aldeia, janela fora de active_hours) sai
+        pelo mesmo motivo: e outro conjunto, nao um ciclo curto;
       - aldeia nao aparece em todo ciclo (horario ativo, pulada, perdida), entao
         a media por aldeia e por ciclo EM QUE ELA APARECEU, e `cycles_present`
         vai junto -- sem isso, uma aldeia que rodou 2 de 20 ciclos pareceria
@@ -2353,8 +2426,17 @@ class CycleReader:
 
         window = [c for c in all_cycles
                   if not days or c["started_at"] >= now - days * 86400]
-        complete = [c for c in window if not c.get("aborted")]
         aborted = [c for c in window if c.get("aborted")]
+        # Ciclo que terminou sem rodar aldeia nenhuma (fora de active_hours:
+        # so os sistemas de conta, ~9 min e ~35 req) nao e o mesmo conjunto
+        # que o ciclo diurno (~4h, ~800 req, ~35 aldeias). Misturado, a
+        # mediana deu "2h00 em 14 aldeias", que nao descreve ciclo nenhum
+        # (frontend 2.8 W7, decimo primeiro padrao). Sai pela mesma porta do
+        # abortado: contado a parte, fora de toda media.
+        idle = [c for c in window
+                if not c.get("aborted") and not CycleReader._cycle_villages(c)]
+        complete = [c for c in window
+                    if not c.get("aborted") and CycleReader._cycle_villages(c)]
         aborted_reasons = collections.Counter(str(c.get("aborted")) for c in aborted)
 
         result = dict(empty)
@@ -2363,6 +2445,7 @@ class CycleReader:
             "latest": latest_info,
             "window_count": len(window),
             "complete_count": len(complete),
+            "idle_count": len(idle),
             "aborted_count": len(aborted),
             "aborted_reasons": sorted(aborted_reasons.items(), key=lambda kv: -kv[1]),
             "first_fmt": CycleReader._fmt_ts(window[0]["started_at"]) if window else "—",
@@ -2379,6 +2462,7 @@ class CycleReader:
         for c in reversed(window[-CycleReader.RECENT_ROWS:]):
             total = float(c.get("total_seconds") or 0)
             result["recent"].append({
+                "idle": not c.get("aborted") and not CycleReader._cycle_villages(c),
                 "started_fmt": CycleReader._fmt_ts(c["started_at"]),
                 "cycle": c.get("cycle"),
                 "total_fmt": CycleReader._hms(total),
@@ -3288,10 +3372,15 @@ class ReportReader:
         # A regra do name=0 (barbara) mora em village_display_name -- ver la
         # a medicao que a justifica.
         name = village_display_name(entry, vid, fallback="#" + vid)
+        owner = entry.get("owner", pub.get("owner"))
         return {
             "name": name if not name.startswith("#") else "",
             "coords": coords,
             "own": own,
+            # Dono como o mapa viu ("0" = barbara, None = nao sabido). Em
+            # cache/villages ele atrasa no sentido barbara -> jogador (27o
+            # padrao), entao "jogador" aqui e confiavel e "barbara" nao.
+            "owner": None if owner is None else str(owner),
             "label": name + ((" (%s)" % coords) if coords else ""),
         }
 
@@ -3721,12 +3810,75 @@ class FarmExclusionReader:
 
 
 class FarmScoreReader:
+    """
+    Ranking de `cache/attacks/*.json` por `farm_score` (saque medio; maior =
+    rende mais).
+
+    Uma entrada em cache/attacks sobrevive a conquista: a 44167 e a 46676
+    foram farm, viraram BBM 031 e BBM 027 e seguiam em 1o e 4o lugar como
+    "Seguro" (frontend 2.8 W10). O farm nao as ataca (`own_villages` em
+    `AttackManager.get_targets`), mas o painel as recomendava. A fonte de
+    "propria" e a mesma do bot -- `config["villages"]`, que nao atrasa -- mais
+    cache/managed; aldeia recem-conquistada ainda nao tem managed.
+    """
+
+    ATTACKS_DIR = os.path.join(os.path.dirname(__file__), "..", "cache", "attacks")
+
     @staticmethod
-    def load():
-        attacks_dir = os.path.join(os.path.dirname(__file__), "..", "cache", "attacks")
+    def _own_ids():
+        own = set(str(v) for v in ((DataReader.config_grab() or {}).get("villages") or {}))
+        managed_dir = os.path.join(os.path.dirname(__file__), "..", "cache", "managed")
+        if os.path.isdir(managed_dir):
+            own.update(f[:-5] for f in os.listdir(managed_dir) if f.endswith(".json"))
+        return own
+
+    @staticmethod
+    def _extra_farm_ids():
+        """Uniao de `villages.*.additional_farms`: o unico caminho pelo qual o
+        farm ataca aldeia de jogador (`AttackManager.get_targets`)."""
+        out = set()
+        for vconf in ((DataReader.config_grab() or {}).get("villages") or {}).values():
+            for tid in ((vconf or {}).get("additional_farms") or []):
+                out.add(str(tid))
+        return out
+
+    @staticmethod
+    @staticmethod
+    def _conquest_blocked():
+        """{alvo: motivo} que o farm nao ataca por estar na lista de conquista.
+        A funcao do proprio bot (8.24), nao uma copia da regra. Ilegivel vira
+        None: a pagina diz que nao conseguiu conferir, em vez de afirmar que
+        nenhum alvo esta bloqueado."""
+        try:
+            from game.attack import ConquestCache
+            return ConquestCache.farm_blocked_targets()
+        except Exception:
+            return None
+
+    @staticmethod
+    def load(own_ids=None, labels=None, extra_farm_ids=None, conquest_blocked=False):
+        """
+        (farms, village_ids, own_farms, player_farms). Fora do ranking, cada
+        uma contada a parte para a pagina dizer por que sumiu:
+          - `own_farms`: viraram aldeia desta conta;
+          - `player_farms`: o mapa da dono e nenhuma aldeia as lista em
+            `additional_farms`, entao o farm nao as ataca.
+        Aldeia de jogador que ESTA em `additional_farms` segue no ranking, com
+        o selo, e alvo da lista de conquista tambem (a exclusao e temporaria),
+        marcado e no fim. `conquest_blocked` = False le do bot; None = ilegivel.
+        `own_ids`/`labels`/`extra_farm_ids` sao injetaveis no teste.
+        """
+        attacks_dir = FarmScoreReader.ATTACKS_DIR
         if not os.path.exists(attacks_dir):
-            return [], []
-        farms = []
+            return [], [], [], []
+        own_ids = FarmScoreReader._own_ids() if own_ids is None else set(own_ids)
+        labels = ReportReader._village_labels() if labels is None else labels
+        extra_farm_ids = (FarmScoreReader._extra_farm_ids() if extra_farm_ids is None
+                          else set(str(t) for t in extra_farm_ids))
+        if conquest_blocked is False:
+            conquest_blocked = FarmScoreReader._conquest_blocked()
+        blocked = conquest_blocked or {}
+        farms, own_farms, player_farms = [], [], []
         for fname in os.listdir(attacks_dir):
             if not fname.endswith(".json"):
                 continue
@@ -3744,14 +3896,35 @@ class FarmScoreReader:
                     last_attack_fmt = datetime.datetime.fromtimestamp(last_attack).strftime("%d/%m %H:%M")
                 except Exception:
                     pass
-            if not data.get("safe", False):
+            label_info = labels.get(target_id) or {}
+            target_label = label_info.get("label") or ("#%s" % target_id)
+            aside = {"target_id": target_id, "target_label": target_label,
+                     "attack_count": data.get("attack_count", 0),
+                     "last_attack_fmt": last_attack_fmt}
+            if target_id in own_ids or label_info.get("own"):
+                own_farms.append(aside)
+                continue
+            owner = label_info.get("owner")
+            player_owned = owner is not None and owner != "0"
+            if player_owned and target_id not in extra_farm_ids:
+                player_farms.append(aside)
+                continue
+            if target_id in blocked:
+                status_key = "conquest"
+            elif player_owned:
+                # Listada em additional_farms: e alvo, mas nunca de 23h as 8h.
+                status_key = "player"
+            elif not data.get("safe", False):
                 status_key = "unsafe"
             elif farm_score is None or farm_score == 9999:
                 status_key = "new"
             else:
                 status_key = "scored"
             farms.append({
-                "target_id": target_id, "farm_score": farm_score,
+                "target_id": target_id, "target_label": target_label,
+                "player_owned": player_owned,
+                "conquest_block": blocked.get(target_id),
+                "farm_score": farm_score,
                 "attack_count": data.get("attack_count", 0),
                 "last_attack": last_attack, "last_attack_fmt": last_attack_fmt,
                 "safe": data.get("safe", False), "scout": data.get("scout", False),
@@ -3763,13 +3936,17 @@ class FarmScoreReader:
 
         def sort_key(f):
             s = f["farm_score"]
+            if f["conquest_block"]: return (5, 0)
+            if f["player_owned"]: return (4, 0)
             if not f["safe"]: return (3, 0)
             if s is None or s == 9999: return (1, 0)
             return (0, -s)
 
         farms.sort(key=sort_key)
+        own_farms.sort(key=lambda f: f["target_label"])
+        player_farms.sort(key=lambda f: f["target_label"])
         village_ids = sorted(set(f["reserved_by"] for f in farms if f["reserved_by"]))
-        return farms, village_ids
+        return farms, village_ids, own_farms, player_farms, conquest_blocked is None
 
 
 UNIT_LABELS_PT = {

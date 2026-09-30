@@ -36,7 +36,7 @@
   <div class="twb-health-item">
     <span class="twb-health-label">Na janela</span>
     <span class="twb-health-value"><span class="twb-number">{{ cycles.complete_count }}</span> completo(s)</span>
-    <span class="twb-health-meta">{{ cycles.first_fmt }} → {{ cycles.last_fmt }}.{% if cycles.aborted_count %} Mais {{ cycles.aborted_count }} abortado(s), fora das médias ({% for reason, n in cycles.aborted_reasons %}{{ reason }} ×{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}).{% endif %} {{ cycles.on_disk }} arquivo(s) em disco.</span>
+    <span class="twb-health-meta">{{ cycles.first_fmt }} → {{ cycles.last_fmt }}.{% if cycles.idle_count %} Mais {{ cycles.idle_count }} sem aldeia (janela inativa: só os sistemas de conta rodaram), fora das médias.{% endif %}{% if cycles.aborted_count %} Mais {{ cycles.aborted_count }} abortado(s), fora das médias ({% for reason, n in cycles.aborted_reasons %}{{ reason }} ×{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}).{% endif %} {{ cycles.on_disk }} arquivo(s) em disco.</span>
   </div>
   <div class="twb-health-item">
     <span class="twb-health-label">Tempo sem fase nomeada</span>
@@ -133,14 +133,14 @@
       <thead><tr><th scope="col">Início</th><th scope="col">Nº</th><th scope="col">Duração</th><th scope="col">Requisições</th><th scope="col">Aldeias</th><th scope="col">Sono depois</th><th scope="col">Situação</th></tr></thead>
       <tbody>
       {% for r in cycles.recent %}
-        <tr class="{% if r.aborted %}twb-row--unknown{% endif %}">
+        <tr class="{% if r.aborted or r.idle %}twb-row--unknown{% endif %}">
           <td><time class="twb-time twb-time-cell">{{ r.started_fmt }}</time></td>
           <td class="twb-number">{{ r.cycle if r.cycle is not none else '—' }}</td>
           <td class="twb-number">{{ r.total_fmt }}</td>
           <td class="twb-number">{{ r.requests }}</td>
           <td class="twb-number">{{ r.villages }}</td>
           <td class="twb-number">{{ r.next_sleep_fmt }}</td>
-          <td>{% if r.aborted %}<span class="twb-status twb-status--warning">Abortado: {{ r.aborted }}</span>{% else %}<span class="twb-status twb-status--success">Completo</span>{% endif %}{% if r.captcha_fmt %} <span class="twb-status twb-status--warning">captcha {{ r.captcha_fmt }}</span>{% endif %}</td>
+          <td>{% if r.aborted %}<span class="twb-status twb-status--warning">Abortado: {{ r.aborted }}</span>{% elif r.idle %}<span class="twb-status twb-status--muted">Sem aldeia (fora das médias)</span>{% else %}<span class="twb-status twb-status--success">Completo</span>{% endif %}{% if r.captcha_fmt %} <span class="twb-status twb-status--warning">captcha {{ r.captcha_fmt }}</span>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>

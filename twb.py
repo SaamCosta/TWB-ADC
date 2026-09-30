@@ -136,6 +136,7 @@ import coloredlogs
 import requests
 
 from core.notification import Notification
+from core import account_pulse
 from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
@@ -1654,6 +1655,9 @@ def main():
     # So o processo do bot envia Telegram -- ver o item 3 do docstring de
     # core/notification.py (a suite de testes le o mesmo config.json).
     Notification.arm()
+    # Mesmo motivo: so o processo do bot grava cache/account_pulse.json, que o
+    # painel le (core/account_pulse.py).
+    account_pulse.arm()
     # A26-01: eram 3 tentativas na VIDA do processo, sem pausa e sem zerar --
     # e ate uma volta normal de t.start() gastava uma. Agora contam so quedas
     # SEGUIDAS: um processo que fechou pelo menos um ciclo completo antes de

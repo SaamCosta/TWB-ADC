@@ -5216,6 +5216,72 @@ trava só enxerga nobre que o bot registrou; nobre mandado à mão ainda precisa
 ser registrado à mão (como o `manual_extra` da 61947). Ler isso dos comandos do
 jogo (`cache/in_flight.json`) é outra tarefa.
 
+## 8.42 ✅ `P-PAINEL-CAMPO` — os cinco achados graves da auditoria do painel (2026-09-30)
+
+Os cinco de gravidade alta da `frontend.md` §2.8 (23/09), que eram o item 25 da
+§9: o painel contradizia o jogo. Todos reconferidos contra o código e o
+`cache/` atuais antes de mexer. Nenhum toca decisão do bot.
+
+- **W7 `/cycles`.** `CycleReader.load()` separa o ciclo **ocioso** (não
+  abortado e sem nenhuma aldeia: janela fora de `active_hours`, só os sistemas
+  de conta) e o conta à parte, fora de medianas, fases e aldeias, como já fazia
+  com o abortado. Dois reais na janela de 14 dias (22/09 23:40, 8m55, 35 req;
+  23/09 00:23). O ciclo cortado pela janela das 23h (26/09 22:27, 7 aldeias)
+  **fica**: é um ciclo de verdade, só menor.
+- **W10 `/farmscores`.** Das 155 entradas de `cache/attacks`, **33 eram
+  aldeias nossas** (BBM 003…038, ex-farms conquistados) e 106 o mapa dava com
+  dono, sem nenhuma em `additional_farms` do config. O ranking caiu para 16
+  bárbaras. "Própria" usa a mesma fonte do farm (`config["villages"]`, que não
+  atrasa) mais `cache/managed`. O dono vem de `cache/villages` (27º padrão: aí
+  "jogador" é confiável, "bárbara" não). As duas listas ficam recolhidas abaixo
+  do ranking, com a contagem. **Achado de brinde, fora da auditoria:** a 61947,
+  2ª do ranking, era o alvo da conquista ativa, que o farm não ataca desde a
+  §8.24. O painel agora usa a própria `ConquestCache.farm_blocked_targets()` e
+  a marca como "Alvo de conquista". Se essa leitura falhar, a página avisa em
+  vez de mostrar tudo sem selo. O cabeçalho dizia "loot ÷ distância, menor =
+  mais eficiente", errado nas duas metades: `farm_score` é saque médio (maior
+  = melhor) e a ordem por distância ÷ score é a do bot, não a da página.
+- **W11 `/hunter`.** `pending` com chegada no passado ganhou `expired`. Sai de
+  "agendadas", da tabela de ativos e dos próximos deadlines, e entra em
+  atenção e no histórico. **Não reproduzi o "30 × 0" literal**: o template não
+  muda desde 14/09 e os dois números usam o mesmo contador. Hoje o
+  `schedules.json` tem 10 registros, todos terminais. O que foi corrigido é a
+  hipótese da própria auditoria, que é real no código.
+- **W6 `/conquest`.** Achado ao abrir o template: a regra de "atenção" estava
+  escrita **duas vezes** (contador e lista), e a cópia da lista não conhecia
+  `train_scheduled`. Todo trem agendado aparecia na lista como "status fora do
+  contrato", sem entrar no contador. Agora é uma função só,
+  `ConquestReader.attention_reason()`, e o template só lê o motivo. Ela
+  acrescenta a chegada vencida sem fechamento: `train_sent` com o último nobre
+  pousado há mais de 15 min, e `train_scheduled` com a chegada planejada
+  vencida. `extra_pending` fica de fora de propósito, porque pouso no passado é
+  o normal dele e o registro não guarda quando foi a última leitura.
+- **W1/W4 `/` e `/villages`.** `core/account_pulse.py`: o `WebWrapper` passa o
+  `game_data` de toda resposta, e o pulso grava `player.incomings`/`supports`
+  com a hora do servidor em `cache/account_pulse.json` (quando muda, ou a cada
+  60 s). O painel mostra "Ataques chegando (jogo)" com a idade, e "Leitura
+  velha" acima de 30 min. Arquivo ausente ou ilegível aparece como "Não lido",
+  nunca como 0. Fica desarmado até `account_pulse.arm()`, que só `twb.main()`
+  chama: rodar a suíte inteira não criou o arquivo (conferido). No W4, aldeia
+  `managed` no config sem snapshot passa a contar em "dados incompletos" (hoje
+  são 0 de 38).
+  ⚠️ **Semântica não medida:** `"incomings":"0","supports":"0"` aparecem
+  verbatim em todas as capturas de `cache/debug/`, mas **nenhuma tem valor
+  diferente de zero**. "Contador de ataques chegando da barra do jogo" é
+  leitura do nome e do lugar do campo. Por isso o painel diz "segundo o jogo",
+  e nada no bot decide com isso.
+
+**Testes.** `tests/test_panel_field_audit.py` (pulso com o recorte verbatim do
+`test_overview_shadow.py`, trava de desarmado, as três páginas renderizadas,
+motivo de atenção com o caso real de 2h38, contador × lista, farmscores com os
+ids reais, Hunter vencido pela rota) e um caso novo em
+`tests/test_cycle_reader.py`. **Provado por mutação:** cada uma das oito
+correções, desligada à mão, derruba o teste.
+
+**⏳ Falta campo:** reiniciar o bot. `cache/account_pulse.json` nasce na
+primeira tela, e o primeiro ataque real recebido responde a semântica do
+`incomings`.
+
 ---
 
 ## 9. Próximos passos
@@ -5657,8 +5723,10 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     `send_squads` que o bot **já usa** aceitar N esquadrões num POST. A tela
     de coleta em massa talvez seja premium (KB não diz), mas o endpoint não
     necessariamente. Um envio real resolve; exige autorização.
-25. **Painel**: os cinco itens de gravidade alta da `frontend.md` §2.8 — todos
-    independem de recurso pago.
+25. ~~**Painel**: os cinco itens de gravidade alta da `frontend.md` §2.8~~ —
+    ✅ **feito em 2026-09-30** (§8.42). De brinde, a metade "ler
+    `game_data.player.incomings`" do item 23 (só para o painel; a defesa
+    continua por aldeia).
 
 **Camada 2 — ativável por detecção** (`game_data.features.*.active`, custo
 zero; prazo em `premium&mode=feature_log`):

@@ -14,6 +14,8 @@
   {% if v.queued %}{% set ns.queued = ns.queued + (v.queued | length) %}{% endif %}
   {% if v.last_run and v.last_run > ns.latest_run %}{% set ns.latest_run = v.last_run %}{% endif %}
 {% endfor %}
+{% set ns.missing_data = ns.missing_data + (data.missing_snapshot | default([]) | length) %}
+{% set pulse_incomings = data.pulse.incomings if data.pulse and data.pulse.available and data.pulse.incomings else 0 %}
 
 <header class="twb-page-header">
   <div>
@@ -45,24 +47,37 @@
   <div class="twb-health-item">
     <span class="twb-health-label">Exceções observáveis</span>
     <span class="twb-health-value">{{ ns.under_attack + ns.missing_data }}</span>
-    <span class="twb-health-meta">{{ ns.under_attack }} sob ataque · {{ ns.missing_data }} sem recursos</span>
+    <span class="twb-health-meta">{{ ns.under_attack }} marcadas sob ataque no snapshot · {{ ns.missing_data }} sem recursos ou sem snapshot</span>
   </div>
+  {% with pulse = data.pulse %}{% include "_account_pulse.html" %}{% endwith %}
 </section>
 
 <div class="row">
   <div class="col-xl-7">
-    <section class="twb-panel {% if ns.under_attack %}twb-panel--exception{% elif not data.bot or ns.missing_data %}twb-panel--unknown{% endif %}" aria-labelledby="titulo-atencao">
+    <section class="twb-panel {% if ns.under_attack or pulse_incomings %}twb-panel--exception{% elif not data.bot or ns.missing_data %}twb-panel--unknown{% endif %}" aria-labelledby="titulo-atencao">
       <div class="twb-panel-header">
         <h2 class="twb-panel-title" id="titulo-atencao">Requer atenção</h2>
-        <span class="twb-status {% if ns.under_attack %}twb-status--danger{% elif not data.bot or ns.missing_data %}twb-status--unknown{% else %}twb-status--muted{% endif %}">
-          {% if ns.under_attack %}Risco observado{% elif not data.bot or ns.missing_data %}Estado incompleto{% else %}Sem exceções conhecidas{% endif %}
+        <span class="twb-status {% if ns.under_attack or pulse_incomings %}twb-status--danger{% elif not data.bot or ns.missing_data %}twb-status--unknown{% else %}twb-status--muted{% endif %}">
+          {% if ns.under_attack or pulse_incomings %}Risco observado{% elif not data.bot or ns.missing_data %}Estado incompleto{% else %}Sem exceções conhecidas{% endif %}
         </span>
       </div>
       <div class="twb-panel-body">
         {% if not data.bot %}
           <div class="twb-empty"><strong>Nenhum snapshot de aldeia disponível</strong>O sistema não pode afirmar que a operação está saudável. Inicie o bot ou consulte os logs.</div>
-        {% elif ns.under_attack or ns.missing_data %}
+        {% elif ns.under_attack or ns.missing_data or pulse_incomings %}
           <ul class="twb-exception-list">
+            {% if pulse_incomings %}
+            <li class="twb-exception-item">
+              <div class="twb-exception-copy"><strong>{{ pulse_incomings }} ataque(s) chegando, segundo o jogo</strong><span>Contador da conta inteira na última tela lida pelo bot. {% if ns.under_attack %}{{ ns.under_attack }} aldeia(s) marcada(s) no snapshot;{% else %}Nenhuma aldeia marcada no snapshot ainda:{% endif %} a marcação por aldeia só acontece quando ela roda no laço. Confira os ataques recebidos no jogo.</span></div>
+              <a class="btn btn-outline-danger btn-sm" href="/villages">Ver aldeias</a>
+            </li>
+            {% endif %}
+            {% for vid in data.missing_snapshot | default([]) %}
+            <li class="twb-exception-item">
+              <div class="twb-exception-copy"><strong>Aldeia {{ vid }}</strong><span>Gerenciada no config e ainda sem snapshot: nada desta aldeia (ataque, recursos, tropas) aparece no painel até ela rodar no laço.</span></div>
+              <a class="btn btn-outline-secondary btn-sm" href="/village?id={{ vid }}">Ver aldeia</a>
+            </li>
+            {% endfor %}
             {% for vid, v in data.bot.items() if v.under_attack %}
             {% set pub = v.public or {} %}
             <li class="twb-exception-item">

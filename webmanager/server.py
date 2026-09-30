@@ -6,6 +6,7 @@ sys.path.insert(0, "../")
 from flask import Flask, jsonify, send_from_directory, request, render_template, redirect, url_for
 
 from core.exceptions import InvalidJSONException
+from core import account_pulse
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
@@ -149,10 +150,21 @@ def sync():
     config = DataReader.config_grab()
     managed = DataReader.cache_grab("managed")
     sort_reports = {k: v for k, v in sorted(reports.items(), key=lambda i: int(i[0]))}
+    # frontend 2.8 W4: aldeia gerenciada no config e sem snapshot (recem-
+    # conquistada, ainda nao rodou) sumia da contagem de "dados incompletos"
+    # em vez de aparecer nela.
+    missing_snapshot = [
+        vid for vid, vconf in ((config or {}).get("villages") or {}).items()
+        if (vconf or {}).get("managed", True) and vid not in managed
+    ]
     return {
         "attacks": attacks, "villages": villages, "config": config,
         "reports": {k: sort_reports[k] for k in list(sort_reports)[:100]},
-        "bot": managed, "status": bm.is_running()
+        "bot": managed, "status": bm.is_running(),
+        "missing_snapshot": missing_snapshot,
+        # frontend 2.8 W1: ataques chegando segundo o jogo, de qualquer tela
+        # que o bot leu por ultimo (core/account_pulse.py).
+        "pulse": account_pulse.read(),
     }
 
 
@@ -342,8 +354,10 @@ def get_logs():
 
 @app.route('/farmscores', methods=['GET'])
 def get_farm_scores():
-    farms, village_ids = FarmScoreReader.load()
-    return render_template('farmscores.html', farms=farms, village_ids=village_ids)
+    farms, village_ids, own_farms, player_farms, conquest_unreadable = FarmScoreReader.load()
+    return render_template('farmscores.html', farms=farms, village_ids=village_ids,
+                           own_farms=own_farms, player_farms=player_farms,
+                           conquest_unreadable=conquest_unreadable)
 
 @app.route('/conquest', methods=['GET', 'POST'])
 def get_conquest():

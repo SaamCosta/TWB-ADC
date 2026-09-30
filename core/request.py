@@ -4,6 +4,7 @@ Class for using one generic cookie jar, emulating a single tab
 
 import requests
 
+from core import account_pulse
 from core import game_data_shadow
 from core.cycle_meter import CycleMeter
 from core.filemanager import FileManager
@@ -74,6 +75,9 @@ class WebWrapper:
         # de `bot.reuse_game_data_max_age`.
         self.game_data_full = {}
         self.reuse_game_data_max_age = 0
+        # frontend 2.8 W1/W4: incomings/supports da conta, de toda resposta,
+        # para o painel. So grava depois de account_pulse.arm() (twb.main).
+        self.account_pulse = account_pulse.AccountPulse()
 
     def _remember_game_data(self, response):
         """Guarda o recorte do game_data desta resposta, se houver. Nunca
@@ -81,6 +85,8 @@ class WebWrapper:
         try:
             ajax = "json" in (response.headers.get("content-type") or "")
             gd = game_data_shadow.extract_game_data(response.text)
+            if gd and getattr(self, "account_pulse", None) is not None:
+                self.account_pulse.observe(gd)
             snap = game_data_shadow.snapshot(gd, source_url=response.url, ajax=ajax) if gd else None
             if snap:
                 self.game_data_seen[snap["village_id"]] = snap

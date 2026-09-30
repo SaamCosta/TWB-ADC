@@ -322,6 +322,16 @@ diagnóstico da otimização do ciclo, visto pelo lado de quem lê.
 
 Nada corrigido nesta passada: a lista é a entrada para decidir com o usuário.
 
+✅ **Os cinco de gravidade alta foram corrigidos em 2026-09-30** (`backend.md`
+§8.42). W1/W4 leem `player.incomings` de toda tela (`cache/account_pulse.json`),
+e a aldeia sem snapshot conta como incompleta. W6 tem uma regra de atenção só,
+com chegada vencida. W7 tira o ciclo sem aldeia das medianas. W10 tira as
+aldeias nossas e as de jogador do ranking, e marca o alvo de conquista. W11
+separa agendamento vencido de vivo. Do grupo de baixa gravidade saíram de
+carona: "menor = mais eficiente" em `/farmscores` e nome no lugar de id nessa
+página. O W11 literal ("30 × 0") não foi reproduzido: o template já usava um
+contador só, e o que se corrigiu foi o vencido contado como vivo.
+
 ---
 
 ## 3. Auditoria do que existia (2026-09-13)
