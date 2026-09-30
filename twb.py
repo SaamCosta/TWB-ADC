@@ -845,6 +845,14 @@ class TWB:
         exatamente o erro caro. Errar para o lado de primar demais custa ~4
         requisicoes; errar para o outro adia um trem inteiro por um ciclo.
 
+        3. (8.41) As ORIGENS de uma conquista cujo trem ja pousou -- as
+           `sources` do trem e a `extra_source_village_id` do ultimo extra. E
+           de la que costumam voltar os nobres que o extra pode usar, e a regra
+           2 nao as ve: tanto o objeto quanto o snapshot foram lidos com o
+           nobre fora, e dizem 0. Com a janela de um nobre so medida em ~6 h na
+           61947, esperar a volta cair no laco normal custaria um ciclo.
+           Enquanto ha nobre no ar nao se prima: nada pode sair antes do pouso.
+
         `already_primed` evita repetir o custo para quem a conquista PvP acabou
         de ler neste mesmo ciclo.
 
@@ -855,6 +863,11 @@ class TWB:
         for data in ConquestCache.active_conquests().values():
             if data.get("reserved_by"):
                 source_ids.add(str(data["reserved_by"]))
+            if (data.get("status") in ("train_sent", "extra_pending")
+                    and not ConquestCache.nobles_in_flight(data)):
+                source_ids.update(str(vid) for vid in (data.get("sources") or {}))
+                if data.get("extra_source_village_id"):
+                    source_ids.add(str(data["extra_source_village_id"]))
 
         for vid, village in managed_villages.items():
             if TWB._maybe_holds_noble(vid, village):

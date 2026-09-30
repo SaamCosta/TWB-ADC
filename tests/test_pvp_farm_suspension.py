@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from game.attack import conquest_origin_block_reason
 from game.pvp_conquest import FileManager, PvpConquestCache, PvpConquestManager
 from game.village import Village
 from webmanager.utils import PvpConquestReader
@@ -172,7 +173,16 @@ def test_locked_village_skips_all_routine_troop_spenders():
     village = _LockedVillage()
     assert Village.run_farming(village) is None
     assert Village.do_gather(village) is None
-    assert Village.run_conquest(village) is None
+    # 8.41: `run_conquest` deixou de ser gasto de tropa desta aldeia -- ela
+    # so ACOMPANHA a conquista (posse, lealdade), e o nobre extra escolhe a
+    # origem entre todas. A trava do PvP mora agora no portao de origem, o
+    # mesmo do trem do planejador: aldeia travada nunca manda nobre barbaro.
+    locked = SimpleNamespace(area=object(), units=object(),
+                             _pvp_troop_spending_suspended=lambda: True)
+    assert conquest_origin_block_reason({}, "100", locked) == "origem de conquista PvP"
+    free = SimpleNamespace(area=object(), units=object(),
+                           _pvp_troop_spending_suspended=lambda: False)
+    assert conquest_origin_block_reason({}, "100", free) is None
 
 
 def test_scout_report_expires_after_24_hours():

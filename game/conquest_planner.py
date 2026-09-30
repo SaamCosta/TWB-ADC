@@ -54,7 +54,10 @@ import time
 from core.filemanager import FileManager
 from core.notification import Notification
 from core.world_config import WorldConfig
-from game.attack import ConquestCache, ConquestManager, conquest_label, field_distance
+from game.attack import (
+    ConquestCache, ConquestManager, conquest_label, conquest_origin_block_reason,
+    field_distance, village_location,
+)
 from game.hunter import Hunter
 from game.reservations import manual_exclusion
 
@@ -229,20 +232,12 @@ class BarbarianTrainPlanner:
 
     def _village_may_conquer(self, vid, village):
         """
-        Mesmos portoes que Village.run_conquest() ja aplicava por aldeia -- o
-        planejador nao pode ser uma porta dos fundos para eles.
+        Mesmos portoes que Village.run_conquest() aplicava por aldeia -- o
+        planejador nao pode ser uma porta dos fundos para eles. Desde a 8.41 o
+        portao mora em `conquest_origin_block_reason` (attack.py), porque o
+        nobre extra tambem escolhe origem e as duas regras nao podem divergir.
         """
-        village_cfg = self.config.get("villages", {}).get(vid, {})
-        if not village_cfg.get("conquest_enabled", True):
-            return False
-        if not getattr(village, "area", None) or not getattr(village, "units", None):
-            return False
-        # Aldeia que e origem de clear/nobre de uma conquista PvP nao gasta
-        # tropa com barbaro (game/village.py::_pvp_troop_spending_suspended).
-        suspended = getattr(village, "_pvp_troop_spending_suspended", None)
-        if callable(suspended) and suspended():
-            return False
-        return True
+        return conquest_origin_block_reason(self.config, vid, village) is None
 
     # ------------------------------------------------------------------
     # Alvo
@@ -291,15 +286,9 @@ class BarbarianTrainPlanner:
         """
         locations = []
         for vid, _qty in sources:
-            village = self.villages.get(vid)
-            area = getattr(village, "area", None)
-            location = getattr(area, "my_location", None)
-            if not location:
-                cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
-                if cached.get("x") is not None and cached.get("y") is not None:
-                    location = [cached["x"], cached["y"]]
-            if location and len(location) == 2:
-                locations.append((int(location[0]), int(location[1])))
+            location = village_location(vid, self.villages.get(vid))
+            if location:
+                locations.append(location)
             else:
                 self.logger.warning(
                     "Conquest: aldeia %s tem nobre mas nao tem coordenada "

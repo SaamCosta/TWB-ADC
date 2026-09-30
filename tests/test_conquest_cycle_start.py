@@ -31,7 +31,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import time
+
 import twb
+from game.attack import ConquestCache as RealConquestCache
 from twb import TWB
 
 
@@ -79,6 +82,10 @@ class FakeConquestCache:
 
     def active_conquests(self):
         return dict(self._active)
+
+    # A trava de nobre em voo e funcao pura do registro: usa a de verdade,
+    # para o teste nao ensinar ao prime uma regra de "no ar" diferente.
+    nobles_in_flight = staticmethod(RealConquestCache.nobles_in_flight)
 
 
 def patched(file_manager=None, conquest_cache=None, planner=None):
@@ -178,6 +185,40 @@ def test_prime_nao_conta_aldeia_que_nao_deu_leitura():
     # nobre de um numero velho achando que e vivo.
     assert primed == {"100"}, primed
     print("OK: aldeia sem leitura viva nao entra no conjunto primado")
+
+
+def test_prime_inclui_origens_do_trem_que_ja_pousou():
+    """
+    8.41: o nobre extra pode sair de qualquer aldeia, e os nobres que ele usa
+    costumam ser os do proprio trem voltando. Essas aldeias foram lidas com o
+    nobre fora -- memoria e snapshot dizem 0 --, entao so entram no prime
+    pelas `sources` do registro. Com nobre no ar nao se prima ninguem a mais:
+    nada sai antes do pouso.
+    """
+    now = time.time()
+    villages = {vid: FakeVillage(vid, snob_in_memory=0)
+                for vid in ("74689", "41123", "55553", "51540", "60000")}
+    saved = patched(
+        file_manager=FakeFileManager({}),
+        conquest_cache=FakeConquestCache({
+            # Pousou (61947, o caso real): dona, origens e o ultimo extra.
+            "61947": {"status": "extra_pending", "reserved_by": "74689",
+                      "sources": {"74689": 3, "41123": 1},
+                      "extra_source_village_id": "55553",
+                      "noble_arrivals": [int(now) - 60]},
+            # Ainda no ar: so a dona, como antes.
+            "50833": {"status": "train_sent", "reserved_by": "51540",
+                      "sources": {"51540": 2, "60000": 2},
+                      "noble_arrivals": [int(now) + 3600]},
+        }),
+    )
+    try:
+        primed = TWB.prime_barbarian_sources(villages, {"conquest": {"enabled": True}})
+    finally:
+        restore(saved)
+    assert primed == {"74689", "41123", "55553", "51540"}, primed
+    assert villages["60000"].primed == 0
+    print("OK: origens do trem pousado entram no prime; trem no ar nao")
 
 
 # ----------------------------------------------------------------------
@@ -281,6 +322,7 @@ if __name__ == "__main__":
     test_maybe_holds_noble_pelas_duas_fontes()
     test_prime_inclui_ancora_sem_nobre_e_pula_o_que_o_pvp_ja_leu()
     test_prime_nao_conta_aldeia_que_nao_deu_leitura()
+    test_prime_inclui_origens_do_trem_que_ja_pousou()
     test_acompanhamento_roda_antes_do_planejador_e_uma_vez_por_ancora()
     test_ancora_sem_config_nao_e_chamada()
     print("\nTodos os testes passaram.")

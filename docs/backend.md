@@ -5124,8 +5124,97 @@ se saísse até ~13:45. O bot só tira o nobre extra da aldeia dona
 O usuário mandou 1 nobre da BBM 001 (chegada 20:49:58), e ele foi registrado
 em `cache/conquest/61947.json` (`noble_arrivals`, `status: extra_pending`,
 bloco `manual_extra`) para a trava de nobre em voo, que só enxerga nobre
-registrado pelo bot, não mandar outro por cima. **Aberto:** o nobre extra
-poder sair de qualquer aldeia de origem do trem, não só da dona.
+registrado pelo bot, não mandar outro por cima. ~~**Aberto:** o nobre extra
+poder sair de qualquer aldeia de origem do trem, não só da dona.~~ ✅ §8.41.
+
+---
+
+## 8.41 ✅ `P-CONQ-EXTRA-ORIGEM` — nobre extra de qualquer aldeia, pela chegada, com prazo (2026-09-30)
+
+**Sintoma.** O do fim da §8.40: com a 61947 a lealdade 1, o nobre extra só
+podia sair da dona (`reserved_by`, BBM 010), cujos nobres estavam voltando,
+enquanto a BBM 001 — que também era origem do trem — tinha nobre em casa. O
+usuário mandou à mão.
+
+**Causa.** `_handle_existing` usava `_available_nobles()`, `_build_escort()` e o
+`_attack_manager` da própria dona. Desde a fase 2 o trem é multi-origem
+(§8.6), mas o acompanhamento continuou com a visão de uma aldeia só.
+
+**O que mudou** (`game/attack.py`, `game/village.py`, `game/conquest_planner.py`,
+`twb.py`):
+
+1. **Origem.** `ConquestManager` recebe `villages` (o dict do `twb.py`, via
+   `Village.run_conquest`). O nobre extra sai da aldeia que **pousa primeiro**
+   entre as gerenciadas que passam no portão, têm nobre livre e fecham a
+   escolta. Nobre e escolta são contados pelo `ConquestManager` **daquela**
+   aldeia, então as reservas de outros sistemas (`pvp:*`, `barb_train:*`,
+   `tribe_support`) continuam descontadas pela regra de sempre. O envio usa o
+   `AttackManager` da própria `Village` (que tem a paz forçada), direto, sem
+   Hunter: é um comando só, não há o que sincronizar, e a chegada gravada é a
+   da confirmação do jogo. Sem o dict (testes, chamadas antigas) a única
+   candidata é a dona — o comportamento anterior.
+2. **Portão único.** `conquest_origin_block_reason()` (`conquest_enabled:
+   false`, sem dado de tropa/mapa, origem de PvP) é o mesmo para o trem do
+   planejador e para o extra. Ele saiu de `Village.run_conquest`, onde barrava
+   também o **acompanhamento** — posse, alvo perdido, leitura de lealdade — de
+   uma dona travada pelo PvP. Agora ele barra só quem **manda**.
+3. **Prazo.** `rank_extra_noble_origins()` ordena pela chegada (distância ×
+   velocidade do nobre, que é a unidade mais lenta do comando) e dá, por
+   origem, a lealdade prevista **na chegada**, o veredito (`certo` ≤ queda
+   mínima, `chance` ≤ queda máxima, `insuficiente`) e a última saída em que um
+   nobre só ainda basta. A regeneração conta do `when` do relatório, não do
+   `last_hit_timestamp` (que é a chegada *prevista* do último nobre
+   registrado; 6º padrão).
+4. **Política** (decidida pelo usuário): manda em `certo` e `chance` — nobre que
+   não conquista volta para casa (`units_losses` vazio nos quatro relatórios do
+   trem da 61947), então errar custa tempo, não o nobre. Em `insuficiente`
+   manda só se o golpe derruba mais do que a viagem regenera (`queda mínima >
+   regen × horas de voo`); senão cada extra pousaria numa lealdade maior que o
+   anterior, e o aviso sugere dois nobres juntos à mão.
+5. **Falha de envio.** Recusa **antes** do POST final (`last_attack_failure`
+   marcado, ou paz forçada) significa que o comando não existe, e a próxima
+   origem tenta no mesmo ciclo. Falha **no** POST final é ambígua — o comando
+   pode ter saído — e para tudo até o próximo ciclo. Só um nobre por chamada.
+6. **Avisos** (Telegram, uma vez por pouso e por tipo, marca `extra_alert` no
+   registro): nenhuma aldeia com nobre livre (com o prazo e a origem mais
+   rápida com alcance), e sem progresso. O aviso de envio diz a origem, a
+   lealdade prevista e o veredito.
+7. **Prime.** `prime_barbarian_sources` inclui as `sources` do trem e a
+   `extra_source_village_id` quando nenhum nobre está no ar: são as aldeias
+   para onde os nobres voltam, e memória e snapshot delas dizem 0 porque foram
+   lidas com o nobre fora.
+
+O registro ganha `extra_source_village_id` e `extra_prediction`
+(`loyalty_at_arrival`, `verdict`, `single_noble_deadline`, `sent_at`).
+`reserved_by` não muda: a dona só acompanha. Nenhuma chave de config nova.
+
+**O que continua valendo.** A trava `_noble_flight_guard` roda antes de tudo e
+é por **alvo**, por chegada e não por `status`: com nobre nosso no ar nada sai,
+venha de onde vier. Chegada 0 da confirmação vira `null`, que trava por tempo
+indeterminado.
+
+**Conferido sem rede.** Com `cache/managed` e a config de mundo em cache, o
+ranqueamento para a 61947 às 08:05:34 dá a BBM 001 pousando às 20:49 com
+lealdade prevista 14,4 (`certo`) e saída máxima às 13:43:19; o envio manual
+real saiu às 08:05:34 e pousou às 20:49:58. A BBM 010 teria até 13:52:11.
+Não houve sondagem: nenhuma tela nova, o envio é o mesmo `AttackManager.attack()`.
+
+**Testes.** `tests/test_conquest_extra_origin.py` (50 checks, números reais da
+61947): prazo, ordem, alcance, vereditos, os portões, reservas PvP e
+`tribe_support` pelo `TroopManager` de verdade, trava em voo, chegada 0,
+falha ambígua × recusa limpa, aviso único por pouso, sem progresso, sem o
+dict de aldeias, e a regen pela hora do relatório ponta a ponta. Provado por
+mutação: cada guarda desligada à mão derruba o teste. Ajustados:
+`test_conquest_cycle_start.py` (prime das origens do trem pousado),
+`test_conquest_planner.py` (isola o `FileManager` de `attack.py`, de onde vem a
+coordenada agora) e `test_pvp_farm_suspension.py` (a trava do PvP é conferida
+no portão de origem, não mais no `run_conquest`).
+
+**⏳ Falta campo:** a linha `nobre extra enviado de <origem> contra <alvo>` com
+uma origem diferente da `reserved_by`. Limite conhecido, fora deste escopo: a
+trava só enxerga nobre que o bot registrou; nobre mandado à mão ainda precisa
+ser registrado à mão (como o `manual_extra` da 61947). Ler isso dos comandos do
+jogo (`cache/in_flight.json`) é outra tarefa.
 
 ---
 

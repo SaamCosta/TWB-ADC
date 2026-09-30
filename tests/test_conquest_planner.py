@@ -25,6 +25,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import game.attack as attack_mod
 import game.conquest_planner as planner_mod
 from game.conquest_planner import BarbarianTrainPlanner
 
@@ -171,6 +172,10 @@ def _install(store=None, schedules=None, active=None):
 
     planner_mod.ConquestCache = _Cache
     planner_mod.FileManager = _FM
+    # 8.41: a coordenada da origem saiu para `village_location` (attack.py),
+    # que le cache/managed pelo FileManager DAQUELE modulo. Sem trocar os
+    # dois, o teste passaria a ler o cache/ real.
+    attack_mod.FileManager = _FM
     planner_mod.ConquestManager = type(
         "M", (_FakeManager,), {"TRAIN_SIZE": 4}
     )

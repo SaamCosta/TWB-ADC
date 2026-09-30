@@ -62,6 +62,185 @@ def field_distance(a, b):
     return math.sqrt(((a[0] - b[0]) ** 2) + ((a[1] - b[1]) ** 2))
 
 
+def village_location(vid, village):
+    """
+    (x, y) de uma aldeia GERENCIADA, ou None.
+
+    Duas fontes, nesta ordem: o scan de mapa deste ciclo
+    (`village.area.my_location`, o mesmo ponto que o `Map.get_dist` usa) e o
+    `cache/managed/{vid}.json`, que serve quando o scan falhou (`get_map()`
+    devolve False e `my_location` fica None). Sem nenhuma das duas devolve
+    None em vez de (0, 0): (0, 0) e coordenada valida no mapa e faria a conta
+    de distancia medir de um ponto que nao existe.
+    """
+    area = getattr(village, "area", None)
+    location = getattr(area, "my_location", None)
+    if not location:
+        cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+        if cached.get("x") is not None and cached.get("y") is not None:
+            location = [cached["x"], cached["y"]]
+    if location and len(location) == 2:
+        return int(location[0]), int(location[1])
+    return None
+
+
+def conquest_origin_block_reason(config, vid, village):
+    """
+    None quando a aldeia `vid` pode mandar nobre na conquista barbara; senao
+    o motivo, para o log.
+
+    Um portao so para os dois caminhos que despacham nobre -- o trem do
+    `BarbarianTrainPlanner` e o nobre extra do `ConquestManager` --, senao
+    viram duas regras para divergir em silencio. Sao os portoes que
+    `Village.run_conquest()` aplicava por aldeia: `conquest_enabled: false`,
+    aldeia sem dado de tropa/mapa neste ciclo e aldeia que e origem de clear/
+    nobre de uma conquista PvP (`_pvp_troop_spending_suspended`).
+    """
+    village_cfg = ((config or {}).get("villages") or {}).get(vid) or {}
+    if not village_cfg.get("conquest_enabled", True):
+        return "conquest_enabled: false"
+    if not getattr(village, "area", None) or not getattr(village, "units", None):
+        return "sem dado de tropa/mapa neste ciclo"
+    suspended = getattr(village, "_pvp_troop_spending_suspended", None)
+    if callable(suspended) and suspended():
+        return "origem de conquista PvP"
+    return None
+
+
+# ----------------------------------------------------------------------------
+# Nobre extra: de onde sai e se ainda basta (docs/backend.md 8.41)
+# ----------------------------------------------------------------------------
+EXTRA_CERTAIN = "certo"
+EXTRA_CHANCE = "chance"
+EXTRA_SHORT = "insuficiente"
+
+
+def loyalty_at_time(loyalty, loyalty_at, regen, when):
+    """
+    Lealdade no instante `when`, partindo de `loyalty` lida em `loyalty_at`.
+
+    Teto de 100 porque a lealdade nao passa disso. Antes de `loyalty_at` nao
+    se volta no tempo: a leitura e o piso.
+    """
+    hours = max(0.0, (when - loyalty_at) / 3600.0)
+    return min(100.0, loyalty + hours * regen)
+
+
+def single_noble_deadline(loyalty, loyalty_at, regen, drop_min):
+    """
+    Ultimo instante de POUSO em que um nobre so ainda conquista com certeza,
+    ou None quando nenhum pouso garante (a lealdade ja passa da queda minima
+    no proprio relatorio).
+
+    A conta e `lealdade na chegada <= queda minima`, com a lealdade subindo
+    `regen` por hora desde o relatorio. Caso real, Barbara #61947 em
+    2026-09-30: lealdade 1 as 07:27:42, regen 1/h, queda minima 20 -> um nobre
+    so basta se pousar ate 02:27:42 do dia seguinte.
+    """
+    if loyalty > drop_min:
+        return None
+    if regen <= 0:
+        return float("inf")
+    return loyalty_at + (drop_min - loyalty) / float(regen) * 3600.0
+
+
+def rank_extra_noble_origins(origins, target_location, unit_speeds, noble_range,
+                             now, loyalty, loyalty_at, regen, drop_min, drop_max):
+    """
+    Ordena as aldeias que poderiam mandar o nobre extra pela CHEGADA.
+
+    `origins` e [(vid, (x, y) ou None)]. Devolve `(ranked, dropped)`:
+
+      - `ranked`: uma entrada por origem alcancavel, da que pousa primeiro
+        para a que pousa por ultimo, com `distance`, `travel_seconds`,
+        `arrival_ts`, `loyalty_at_arrival`, `verdict` (certo / chance /
+        insuficiente), `latest_departure` (ultima saida em que um nobre so
+        ainda basta) e `progress` (se o golpe derruba mais do que a viagem
+        regenera);
+      - `dropped`: [(vid, motivo)] das que ficaram de fora -- sem coordenada
+        ou alem do alcance do nobre no mundo.
+
+    O tempo de viagem e o do NOBRE: o comando anda na velocidade da unidade
+    mais lenta, e o nobre (35 min/campo no br143) e mais lento que qualquer
+    escolta (ariete e catapulta, 30). Conferido contra o envio manual da
+    61947: 21,84 campos da BBM 001 dao 12h44m24s, e o comando saiu as
+    08:05:34 e pousou as 20:49:58.
+
+    Sem tabela de velocidade (`unit_speeds` vazio) a ordem continua certa --
+    todas as origens andam na mesma velocidade, entao chegar primeiro e estar
+    mais perto --, mas chegada e veredito ficam None: "nao sei" nao vira
+    numero (segundo padrao do CLAUDE.md).
+    """
+    ranked = []
+    dropped = []
+    deadline = single_noble_deadline(loyalty, loyalty_at, regen, drop_min)
+    target = tuple(target_location) if target_location and len(target_location) == 2 else None
+    for vid, location in origins:
+        if not location:
+            dropped.append((vid, "sem coordenada conhecida"))
+            continue
+        if target is None:
+            distance = None
+        else:
+            distance = field_distance(tuple(location), target)
+            if noble_range and distance > noble_range:
+                dropped.append((vid, "%.1f campos, acima do alcance do nobre (%s)"
+                                % (distance, noble_range)))
+                continue
+        travel = (WorldConfig.travel_seconds(unit_speeds, distance, {"snob": 1})
+                  if distance is not None else None)
+        entry = {
+            "vid": vid,
+            "distance": distance,
+            "travel_seconds": travel,
+            "arrival_ts": None,
+            "loyalty_at_arrival": None,
+            "verdict": None,
+            "latest_departure": None,
+            "progress": True,
+        }
+        if travel is not None:
+            arrival = now + travel
+            at_arrival = loyalty_at_time(loyalty, loyalty_at, regen, arrival)
+            if at_arrival <= drop_min:
+                verdict = EXTRA_CERTAIN
+            elif at_arrival <= drop_max:
+                verdict = EXTRA_CHANCE
+            else:
+                verdict = EXTRA_SHORT
+            entry.update({
+                "arrival_ts": arrival,
+                "loyalty_at_arrival": at_arrival,
+                "verdict": verdict,
+                "latest_departure": (deadline - travel) if deadline is not None else None,
+                "progress": drop_min > regen * travel / 3600.0,
+            })
+        ranked.append(entry)
+    ranked.sort(key=lambda e: (
+        e["distance"] if e["distance"] is not None else float("inf"), str(e["vid"])
+    ))
+    return ranked, dropped
+
+
+def extra_noble_worth_sending(entry):
+    """
+    Politica do nobre extra, decidida pelo usuario em 2026-09-30:
+
+      - `certo` e `chance`: manda. Nobre que nao conquista volta para casa
+        (os relatorios do trem da 61947 trazem `units_losses` vazio), entao o
+        custo de errar e tempo, nao o nobre;
+      - `insuficiente`: manda so se o golpe derruba mais do que a viagem
+        regenera (`queda minima > regen x horas de voo`). Senao cada extra
+        pousa numa lealdade maior que a anterior e a conquista nunca fecha --
+        dai o certo e mandar dois juntos, que e decisao de uma pessoa;
+      - veredito desconhecido (sem tabela de velocidade): manda, que e o
+        comportamento de antes desta mudanca.
+    """
+    if entry.get("verdict") in (EXTRA_CERTAIN, EXTRA_CHANCE, None):
+        return True
+    return bool(entry.get("progress"))
+
+
 class AttackManager:
     """
     Attackmanager class
@@ -1368,9 +1547,13 @@ class ConquestManager:
     # ser default de classe, e tambem imutavel do ponto de vista do 1o padrao
     # -- a instancia guarda estado, mas o default aqui e None.
     world_villages = None
+    # 8.41: {village_id: Village} de todas as aldeias gerenciadas, para o nobre
+    # extra sair de qualquer uma. None (testes, chamadas antigas) = so esta
+    # aldeia, como antes. O dict e do twb.py e nunca e mutado aqui.
+    villages = None
 
     def __init__(self, wrapper, village_id, troopmanager, map_obj, config, repman=None,
-                 reservation_board=None, world_villages=None):
+                 reservation_board=None, world_villages=None, villages=None):
         self.wrapper = wrapper
         self.village_id = village_id
         self.troopmanager = troopmanager
@@ -1386,6 +1569,7 @@ class ConquestManager:
         # pelo mesmo motivo do quadro de reservas: injetado por twb.py, ausente
         # nos testes antigos, e quando e None o pool se comporta como antes.
         self.world_villages = world_villages
+        self.villages = villages
         self.logger = logging.getLogger(f"Conquest:{self.village_id}")
         self._attack_manager = AttackManager(
             wrapper=wrapper,
@@ -2154,7 +2338,7 @@ class ConquestManager:
     # Train dispatch
     # ------------------------------------------------------------------
 
-    def _arrival_of_last_attack(self):
+    def _arrival_of_last_attack(self, attack_manager=None):
         """
         Timestamp de chegada do ataque que o AttackManager acabou de enviar,
         derivado da duracao que o proprio jogo devolveu na tela de
@@ -2164,8 +2348,15 @@ class ConquestManager:
         Nao recalculamos distancia x velocidade aqui de proposito: o servidor
         ja aplica velocidade de mundo, bonus e arredondamento, e duplicar essa
         conta seria uma segunda fonte de verdade para divergir da primeira.
+        (A estimativa de `rank_extra_noble_origins` so ORDENA as origens e
+        prevê o prazo; a chegada gravada e sempre esta.)
+
+        `attack_manager` e o que de fato mandou -- o do nobre extra pode ser o
+        de outra aldeia (8.41). Ausente, o desta aldeia, como antes.
         """
-        duration = getattr(self._attack_manager, "last_attack_duration", None)
+        if attack_manager is None:
+            attack_manager = self._attack_manager
+        duration = getattr(attack_manager, "last_attack_duration", None)
         if not duration:
             self.logger.warning(
                 "Conquest: o jogo nao devolveu a duracao do ataque -- registro "
@@ -2507,9 +2698,19 @@ class ConquestManager:
         return owner
 
     def _get_real_loyalty(self, target_id):
+        """So a lealdade de `_get_real_loyalty_report()`, sem o instante."""
+        return self._get_real_loyalty_report(target_id)[0]
+
+    def _get_real_loyalty_report(self, target_id):
         """
         Tries to extract real loyalty from the most recent noble attack report
-        against target_id. Returns float loyalty value or None if not available.
+        against target_id. Returns `(loyalty, when)` -- float loyalty and the
+        report's `when` (epoch) -- or `(None, None)` if not available.
+
+        8.41: o `when` volta junto porque e dele que a regeneracao conta. O
+        `last_hit_timestamp` do cache e a chegada PREVISTA do ultimo nobre que o
+        bot registrou; o relatorio e o pouso que aconteceu (6o padrao: separar
+        "quando mandei" de "quando aconteceu").
 
         Reports with extra["loyalty_after"] are populated by reports.py
         when it processes noble (snob) attack reports.
@@ -2524,7 +2725,7 @@ class ConquestManager:
         falha nao decide nada: fica o que ja estava em memoria.
         """
         if not self.repman:
-            return None
+            return None, None
         if not getattr(self, "_reports_refreshed", False):
             self._reports_refreshed = True
             try:
@@ -2545,6 +2746,7 @@ class ConquestManager:
         # so cai, entao o empate se resolve pela MENOR.
         best_key = None
         best_loyalty = None
+        best_when = None
         for rep_id, entry in self.repman.last_reports.items():
             if str(entry.get("dest")) != str(target_id):
                 continue
@@ -2560,7 +2762,12 @@ class ConquestManager:
             if best_key is None or key > best_key:
                 best_key = key
                 best_loyalty = loyalty
-        return best_loyalty
+                best_when = extra.get("when")
+        try:
+            best_when = int(best_when) if best_when else None
+        except (TypeError, ValueError):
+            best_when = None
+        return best_loyalty, best_when
 
     def _handle_existing(self, conquest_data, cfg):
         """
@@ -2572,13 +2779,13 @@ class ConquestManager:
         3. Nobre ainda no ar — nao se estima nada antes do pouso
         4. Real loyalty from noble attack report (reports.py extracts it)
         5. Mathematical estimate (fallback)
+
+        Depois disso, o nobre extra sai da aldeia que POUSA PRIMEIRO entre
+        todas as gerenciadas com nobre livre, escolta e alcance -- nao mais so
+        desta (8.41). Ver `_send_extra_noble()`.
         """
         target_id = conquest_data["target_id"]
         regen = cfg.get("loyalty_regen_per_hour", 1)
-        # Piso da faixa, mesma razao do _send_train: a estimativa vira um
-        # limite superior da lealdade que sobrou, em vez de um numero que se
-        # acredita exato.
-        loyalty_drop = self._drop_min
 
         # --- Priority 1: ownership check (prova dos 9) ---
         # Precisa continuar sendo o primeiro, *antes* da trava de nobre em
@@ -2700,7 +2907,7 @@ class ConquestManager:
             return False
 
         # --- Priority 4: real loyalty from report ---
-        real_loyalty = self._get_real_loyalty(target_id)
+        real_loyalty, report_when = self._get_real_loyalty_report(target_id)
         last_hit = conquest_data.get("last_hit_timestamp", 0)
 
         if real_loyalty is not None and real_loyalty <= 0:
@@ -2737,9 +2944,14 @@ class ConquestManager:
             return False
 
         if real_loyalty is not None:
-            # Apply regen since that report's timestamp
-            hours_since_report = (time.time() - last_hit) / 3600
-            current_loyalty = min(100.0, real_loyalty + (hours_since_report * regen))
+            # Regen a partir do POUSO que o relatorio registra (8.41). O
+            # `last_hit_timestamp` e a chegada prevista do ultimo nobre
+            # registrado -- em geral o mesmo instante, mas e o relatorio que
+            # diz quando a lealdade foi medida. Sem `when`, cai no de antes.
+            loyalty_base = real_loyalty
+            loyalty_at = report_when or last_hit
+            current_loyalty = loyalty_at_time(real_loyalty, loyalty_at, regen, time.time())
+            hours_since_report = max(0.0, (time.time() - loyalty_at) / 3600)
             loyalty_source = "report"
             self.logger.info(
                 "Conquest: target %s — real loyalty from report: %.1f, "
@@ -2751,6 +2963,8 @@ class ConquestManager:
             loyalty_after = conquest_data.get("loyalty_after_train", 0)
             hours_elapsed = (time.time() - last_hit) / 3600
             current_loyalty = min(100.0, loyalty_after + (hours_elapsed * regen))
+            loyalty_base = loyalty_after
+            loyalty_at = last_hit
             loyalty_source = "estimate"
             self.logger.info(
                 "Conquest: target %s — no report data, using estimate: %.1f "
@@ -2792,66 +3006,324 @@ class ConquestManager:
             return False
 
         self.logger.info(
-            "Conquest: target %s loyalty = %.1f — sending extra noble(s)",
-            target_id, current_loyalty
+            "Conquest: target %s loyalty = %.1f — procurando origem para o "
+            "nobre extra", target_id, current_loyalty
+        )
+        return self._send_extra_noble(
+            target_id, conquest_data, cfg,
+            loyalty=loyalty_base, loyalty_at=loyalty_at,
+            current_loyalty=current_loyalty, loyalty_source=loyalty_source,
+            regen=regen,
         )
 
-        available_nobles = self._available_nobles()
-        if available_nobles < 1:
-            self.logger.info("Conquest: no noble available for extra hit, waiting")
-            return False
+    # ------------------------------------------------------------------
+    # Nobre extra multi-origem (8.41)
+    # ------------------------------------------------------------------
 
-        escort_per_attack = self._build_escort(cfg)
-        if escort_per_attack is None:
-            return False
+    def _extra_origin_candidates(self):
+        """
+        `(candidatas, excluidas)`: [(vid, Village ou None)] das aldeias que
+        podem mandar o nobre extra, e [(vid, motivo)] das que o portao barrou.
 
-        troops = dict(escort_per_attack)
-        troops["snob"] = 1
-        result = self._attack_manager.attack(target_id, troops=troops)
+        Com `self.villages` (injetado por `Village.run_conquest`) entra toda
+        aldeia gerenciada que passa em `conquest_origin_block_reason` -- o
+        mesmo portao do trem do planejador. Sem ele, so esta aldeia e sem
+        portao nenhum, que e o comportamento de antes (os portoes moravam em
+        `Village.run_conquest`, que agora so os aplica a quem MANDA).
+        """
+        if not self.villages:
+            return [(self.village_id, None)], []
+        candidates, excluded = [], []
+        for vid, village in sorted(self.villages.items()):
+            reason = conquest_origin_block_reason(self.config, vid, village)
+            if reason:
+                excluded.append((vid, reason))
+            else:
+                candidates.append((vid, village))
+        return candidates, excluded
 
-        if result and result != "forced_peace":
-            new_loyalty = max(0.0, current_loyalty - loyalty_drop)
-            arrival = self._arrival_of_last_attack()
-            ConquestCache.set(target_id, {
-                **conquest_data,
-                # .get("hits", ...) e fallback p/ arquivos antigos gravados
-                # antes da correção do mismatch de chave (ver _send_train).
-                "hits_done": conquest_data.get("hits_done", conquest_data.get("hits", 0)) + 1,
-                "hits_needed": conquest_data.get("hits_needed", self.TRAIN_SIZE),
-                "loyalty_after_train": new_loyalty,
-                "loyalty_source": loyalty_source,
-                # Só este nobre: chegamos aqui através de _noble_flight_guard,
-                # que garante que todos os anteriores já pousaram.
-                "noble_arrivals": [arrival],
-                "last_hit_timestamp": arrival or int(time.time()),
-                # Mesmos parametros do _send_train, para o dashboard refazer a
-                # conta identica em vez de cair nos defaults dele.
-                "loyalty_drop_per_noble": self._drop_min,
-                "loyalty_drop_range": [self._drop_min, self._drop_max],
-                "loyalty_regen_per_hour": regen,
-                # Nunca "complete" aqui. O nobre acabou de sair e leva horas
-                # para pousar; marcar a conquista como resolvida no envio foi
-                # o que pintou a aldeia de verde no dashboard às 20:19:37 de
-                # 2026-08-12 com o nobre ainda no mapa, e o que fez o alvo
-                # deixar de ser rastreado. Quem fecha é _target_is_mine() ou a
-                # lealdade zerada *depois* do pouso, no topo deste método.
-                "status": "extra_pending",
-            })
-            landing = (datetime.fromtimestamp(arrival).strftime("%H:%M:%S")
-                       if arrival else "horário desconhecido")
+    def _extra_origin_location(self, vid, village):
+        if village is None and vid == self.village_id:
+            location = getattr(self.map, "my_location", None)
+            if location and len(location) == 2:
+                return int(location[0]), int(location[1])
+        return village_location(vid, village)
+
+    def _extra_sender(self, vid, village):
+        """
+        `(ConquestManager, AttackManager)` da aldeia `vid`.
+
+        O manager e o DAQUELA aldeia, para `_available_nobles()` e
+        `_build_escort()` descontarem as reservas dela (PvP, trem barbaro,
+        apoio a tribo) com a mesma regra de sempre. O AttackManager preferido
+        e o da propria `Village` (`ensure_attack_manager` copia a paz forcada
+        para ele); o do manager e o fallback, como no caminho antigo.
+        """
+        if vid == self.village_id:
+            manager = self
+        else:
+            manager = ConquestManager(
+                wrapper=self.wrapper,
+                village_id=vid,
+                troopmanager=village.units,
+                map_obj=village.area,
+                config=self.config,
+                repman=getattr(village, "rep_man", None),
+                reservation_board=self.reservation_board,
+                world_villages=self.world_villages,
+            )
+        attack_manager = getattr(village, "attack", None) or manager._attack_manager
+        return manager, attack_manager
+
+    def _world_travel_params(self):
+        """`(velocidades por unidade, alcance do nobre)` do mundo, do cache."""
+        server_cfg = (self.config or {}).get("server", {})
+        server = server_cfg.get("server")
+        endpoint = server_cfg.get("endpoint")
+        speeds = WorldConfig.unit_speeds(server, endpoint)
+        noble_range = WorldConfig.noble_max_distance(
+            WorldConfig.get(server=server, endpoint=endpoint)
+        )
+        return speeds, noble_range
+
+    @staticmethod
+    def _village_name(vid):
+        cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+        return cached.get("name") or str(vid)
+
+    @staticmethod
+    def _fmt_ts(ts):
+        if ts is None or ts == float("inf"):
+            return "?"
+        return datetime.fromtimestamp(ts).strftime("%d/%m %H:%M")
+
+    def _alert_extra_once(self, target_id, conquest_data, kind, loyalty_at, message):
+        """
+        Aviso de nobre extra UMA vez por pouso e por tipo.
+
+        O acompanhamento roda todo ciclo, e sem a marca o mesmo "nenhuma
+        aldeia tem nobre" chegaria no Telegram a cada ciclo ate o nobre da
+        dona voltar. A chave e o instante da leitura de lealdade: pouso novo,
+        situacao nova, aviso novo.
+        """
+        key = "%s:%s" % (kind, int(loyalty_at or 0))
+        self.logger.warning("Conquest: %s", message)
+        if (conquest_data.get("extra_alert") or {}).get("key") == key:
+            return
+        Notification.send(message)
+        conquest_data["extra_alert"] = {"key": key, "at": int(time.time())}
+        stored = {k: v for k, v in conquest_data.items() if k != "target_id"}
+        ConquestCache.set(target_id, stored)
+
+    def _send_extra_noble(self, target_id, conquest_data, cfg, loyalty, loyalty_at,
+                          current_loyalty, loyalty_source, regen):
+        """
+        Manda UM nobre extra da aldeia que pousa primeiro, ou avisa por que nao.
+
+        Antes (ate 2026-09-30) o extra so saia da `reserved_by`. Com o trem
+        multi-origem isso deixou a Barbara #61947 a lealdade 1 com o nobre da
+        BBM 001 parado em casa: os da BBM 010 estavam voltando, e com regen
+        1/h e 12h40 de voo um nobre so bastava com certeza se saisse ate
+        ~13:45. O usuario mandou a mao.
+
+        Ordem: cada aldeia que passa no portao, ordenada pela chegada
+        (`rank_extra_noble_origins`); a primeira com nobre livre e escolta
+        manda. Se o envio falha ANTES do POST final (recusa na confirmacao,
+        rede fora, paz forcada), o comando nao existe e a proxima origem tenta
+        -- esperar um ciclo custaria horas de um prazo de ~6 h. Se falha NO
+        POST final, para tudo: o comando pode ter saido, e um segundo nobre por
+        cima e o incidente de 2026-08-12. So um nobre sai por chamada.
+
+        Quem chega aqui ja passou por `_noble_flight_guard`: nenhum nobre nosso
+        esta no ar, entao "um por vez" continua valendo venha de onde vier.
+        """
+        now = time.time()
+        drop_min, drop_max = self._drop_min, self._drop_max
+        label = conquest_label(target_id, conquest_data)
+        target_location = (conquest_data.get("target_location")
+                           or self._get_village_meta(target_id).get("location"))
+
+        candidates, excluded = self._extra_origin_candidates()
+        for vid, reason in excluded:
+            log = self.logger.info if vid == self.village_id else self.logger.debug
+            log("Conquest: aldeia %s nao manda nobre extra (%s)", vid, reason)
+
+        villages = dict(candidates)
+        speeds, noble_range = self._world_travel_params()
+        ranked, dropped = rank_extra_noble_origins(
+            [(vid, self._extra_origin_location(vid, village)) for vid, village in candidates],
+            target_location, speeds, noble_range, now,
+            loyalty, loyalty_at, regen, drop_min, drop_max,
+        )
+        for vid, reason in dropped:
+            self.logger.debug("Conquest: aldeia %s fora do nobre extra (%s)", vid, reason)
+
+        deadline = single_noble_deadline(loyalty, loyalty_at, regen, drop_min)
+        sent = None
+        refused = []
+        viable = 0
+        for entry in ranked:
+            vid = entry["vid"]
+            manager, attack_manager = self._extra_sender(vid, villages.get(vid))
+            if manager._available_nobles() < 1:
+                continue
+            escort = manager._build_escort(cfg)
+            if escort is None:
+                self.logger.info(
+                    "Conquest: aldeia %s tem nobre mas nao fecha a escolta minima "
+                    "para o extra", vid
+                )
+                continue
+            viable += 1
+            # So a PRIMEIRA viavel e julgada: as seguintes pousam depois, entao
+            # se esta nao progride nenhuma progride.
+            if viable == 1 and not extra_noble_worth_sending(entry):
+                self._alert_extra_once(
+                    target_id, conquest_data, "sem_progresso", loyalty_at,
+                    "Conquista: o nobre extra mais rapido para %s sai da %s e voa "
+                    "%.1f h -- regenera %.0f de lealdade no caminho, mais que a "
+                    "queda minima (%d). Nao mando: cada extra pousaria numa "
+                    "lealdade maior que a anterior. Para fechar, mande dois "
+                    "nobres juntos a mao."
+                    % (label, self._village_name(vid), entry["travel_seconds"] / 3600.0,
+                       regen * entry["travel_seconds"] / 3600.0, drop_min)
+                )
+                return False
+
+            troops = dict(escort)
+            troops["snob"] = 1
+            result = attack_manager.attack(target_id, troops=troops)
+            if result and result != "forced_peace":
+                sent = (entry, attack_manager)
+                break
+
+            # Falhou. Seguir para a proxima origem so e seguro quando o jogo
+            # com certeza NAO criou o comando: `AttackManager.attack()` marca
+            # `last_attack_failure` (sem coordenada, rede fora ou recusa na
+            # etapa `try=confirm`) e devolve "forced_peace" sempre ANTES do
+            # POST final. Falso sem marcador e o POST final sem resposta -- o
+            # comando pode ter saido, e um segundo nobre por cima e o incidente
+            # de 2026-08-12. Nesse caso para tudo ate o proximo ciclo.
+            failure = getattr(attack_manager, "last_attack_failure", None)
+            if result != "forced_peace" and not failure:
+                self.logger.warning(
+                    "Conquest: nobre extra da aldeia %s contra %s sem resposta "
+                    "no envio final -- pode ter saido; nenhuma outra origem "
+                    "tenta neste ciclo", vid, target_id
+                )
+                return False
+            refused.append((vid, failure or result))
             self.logger.info(
-                "Conquest: extra noble sent to %s, estimated loyalty now %.1f "
-                "(pouso em %s)",
-                target_id, new_loyalty, landing
+                "Conquest: nobre extra da aldeia %s contra %s nao saiu (%s) -- "
+                "o comando nao foi criado, tento a proxima origem",
+                vid, target_id, failure or result
             )
-            Notification.send(
-                "Conquista: nobre extra enviado contra %s (lealdade estimada "
-                "antes do pouso: %.0f; pouso as %s)."
-                % (conquest_label(target_id, conquest_data), current_loyalty, landing)
-            )
-            return True
 
-        return False
+        if sent is None:
+            if refused:
+                # Havia nobre, e o envio nao saiu: nao e caso de "falta nobre".
+                self.logger.warning(
+                    "Conquest: nenhuma origem conseguiu mandar o nobre extra "
+                    "contra %s (%s) -- tento no proximo ciclo",
+                    target_id, ", ".join("%s: %s" % r for r in refused)
+                )
+                return False
+            if deadline is None:
+                window = ("um nobre so ja nao basta (lealdade %.0f no relatorio, "
+                          "queda minima %d)" % (loyalty, drop_min))
+            elif ranked and ranked[0]["latest_departure"] is not None:
+                first = ranked[0]
+                if first["latest_departure"] > now:
+                    window = ("um nobre so basta se pousar ate %s -- da %s, a "
+                              "mais rapida com alcance, saindo ate %s"
+                              % (self._fmt_ts(deadline), self._village_name(first["vid"]),
+                                 self._fmt_ts(first["latest_departure"])))
+                else:
+                    window = ("o prazo de um nobre so (pouso ate %s) ja passou "
+                              "para todas as origens" % self._fmt_ts(deadline))
+            else:
+                window = "um nobre so basta se pousar ate %s" % self._fmt_ts(deadline)
+            self._alert_extra_once(
+                target_id, conquest_data, "sem_origem", loyalty_at,
+                "Conquista: %s precisa de nobre extra (lealdade agora ~%.0f), mas "
+                "nenhuma aldeia tem nobre livre com escolta e alcance. %s."
+                % (label, current_loyalty, window)
+            )
+            return False
+
+        entry, attack_manager = sent
+        origin = entry["vid"]
+        origin_name = self._village_name(origin)
+
+        arrival = self._arrival_of_last_attack(attack_manager)
+        at_arrival = entry["loyalty_at_arrival"]
+        if arrival:
+            at_arrival = loyalty_at_time(loyalty, loyalty_at, regen, arrival)
+        basis = at_arrival if at_arrival is not None else current_loyalty
+        new_loyalty = max(0.0, basis - drop_min)
+        stored = {k: v for k, v in conquest_data.items() if k != "target_id"}
+        ConquestCache.set(target_id, {
+            **stored,
+            # .get("hits", ...) e fallback p/ arquivos antigos gravados
+            # antes da correção do mismatch de chave (ver _send_train).
+            "hits_done": conquest_data.get("hits_done", conquest_data.get("hits", 0)) + 1,
+            "hits_needed": conquest_data.get("hits_needed", self.TRAIN_SIZE),
+            # Piso da faixa, mesma razao do _send_train: limite SUPERIOR da
+            # lealdade que sobra, sobre a lealdade prevista NA CHEGADA.
+            "loyalty_after_train": new_loyalty,
+            "loyalty_source": loyalty_source,
+            # Só este nobre: chegamos aqui através de _noble_flight_guard,
+            # que garante que todos os anteriores já pousaram.
+            "noble_arrivals": [arrival],
+            "last_hit_timestamp": arrival or int(time.time()),
+            # Mesmos parametros do _send_train, para o dashboard refazer a
+            # conta identica em vez de cair nos defaults dele.
+            "loyalty_drop_per_noble": drop_min,
+            "loyalty_drop_range": [drop_min, drop_max],
+            "loyalty_regen_per_hour": regen,
+            # 8.41: de onde saiu e o que se previa. `reserved_by` NAO muda --
+            # ela so acompanha a conquista; quem manda pode ser qualquer uma.
+            "extra_source_village_id": origin,
+            "extra_prediction": {
+                "loyalty_at_arrival": at_arrival,
+                "verdict": entry["verdict"],
+                "single_noble_deadline": (None if deadline in (None, float("inf"))
+                                          else int(deadline)),
+                "sent_at": int(now),
+            },
+            # Nunca "complete" aqui. O nobre acabou de sair e leva horas
+            # para pousar; marcar a conquista como resolvida no envio foi
+            # o que pintou a aldeia de verde no dashboard às 20:19:37 de
+            # 2026-08-12 com o nobre ainda no mapa, e o que fez o alvo
+            # deixar de ser rastreado. Quem fecha é _target_is_mine() ou a
+            # lealdade zerada *depois* do pouso, no topo deste método.
+            "status": "extra_pending",
+        })
+        landing = (datetime.fromtimestamp(arrival).strftime("%H:%M:%S")
+                   if arrival else "horário desconhecido")
+        verdict_text = {
+            EXTRA_CERTAIN: "basta com certeza",
+            EXTRA_CHANCE: "pode bastar (queda %d a %d)" % (drop_min, drop_max),
+            EXTRA_SHORT: ("NAO basta sozinho -- o bot manda outro depois do "
+                          "pouso; para fechar antes, mande dois juntos a mao"),
+        }.get(entry["verdict"], "prazo desconhecido (sem velocidade do nobre)")
+        at_text = "%.0f" % at_arrival if at_arrival is not None else "?"
+        self.logger.info(
+            "Conquest: nobre extra enviado de %s contra %s, lealdade prevista na "
+            "chegada %s, um nobre %s (pouso em %s)",
+            origin, target_id, at_text, verdict_text, landing
+        )
+        Notification.send(
+            "Conquista: nobre extra enviado contra %s da %s (lealdade prevista "
+            "na chegada: %s -- um nobre %s; pouso as %s)."
+            % (label, origin_name, at_text, verdict_text, landing)
+        )
+        self.wrapper.reporter.report(
+            origin, "TWB_CONQUEST",
+            "Nobre extra -> %s | pouso %s | acompanhado por %s"
+            % (target_id, landing, self.village_id)
+        )
+        return True
 
     def _get_my_conquest(self):
         """

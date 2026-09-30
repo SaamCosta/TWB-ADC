@@ -991,26 +991,17 @@ class Village:
         o que sobrou e lealdade real do relatorio, nobre extra, confirmacao de
         posse e alvo perdido.
 
-        Os portoes abaixo continuam valendo: conquista desligada, aldeia com
-        `conquest_enabled: false`, aldeia que e origem de uma operacao PvP, ou
-        dado de mapa/tropa que nao carregou neste ciclo.
+        Portoes: conquista desligada, e dado de mapa/tropa que nao carregou
+        neste ciclo (o manager le o mapa desta aldeia).
+
+        8.41: `conquest_enabled: false` e "origem de operacao PvP" deixaram de
+        barrar o ACOMPANHAMENTO. Eles dizem que esta aldeia nao gasta tropa
+        com barbaro, e antes cancelavam junto a confirmacao de posse, o alvo
+        perdido e a leitura de lealdade -- coisas que nao gastam nada. Agora
+        valem so para quem MANDA o nobre extra (`conquest_origin_block_reason`,
+        o mesmo portao do trem), e o extra pode sair de qualquer aldeia.
         """
         if not self.config.get("conquest", {}).get("enabled", False):
-            return
-
-        if self._pvp_troop_spending_suspended():
-            self.logger.info(
-                "PvpConquest: barbarian conquest suspended in village %s "
-                "while it is a clear/noble source",
-                self.village_id,
-            )
-            return
-
-        village_cfg = self.config.get("villages", {}).get(self.village_id, {})
-        if not village_cfg.get("conquest_enabled", True):
-            self.logger.debug(
-                "Conquest: skipping village %s (conquest_enabled: false)", self.village_id
-            )
             return
 
         if not self.area or not self.units:
@@ -1037,6 +1028,10 @@ class Village:
             # `_handle_existing()` desta aldeia nao veria reserva nova nascida
             # durante as ~4h de voo do trem.
             reservation_board=self.reservation_board,
+            # 8.41: o nobre extra escolhe a origem entre TODAS as aldeias. O
+            # dict e posto por twb.py antes da conquista barbara; sem ele, so
+            # esta aldeia -- ainda sob o portao de origem.
+            villages=self.pvp_conquest_villages or {self.village_id: self},
         )
         conquest.run()
 

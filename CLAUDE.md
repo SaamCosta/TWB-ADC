@@ -31,7 +31,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   Motivo: `units`/`area` só existiam depois que a aldeia rodava, e um ciclo
   completo mede ~4h com 30 aldeias. `Village.run_pvp_conquest()` ainda roda
   por aldeia (prioridade sobre o farm daquela aldeia); `Village.run_conquest()`
-  não — ele é chamado só para a aldeia `reserved_by` da conquista ativa.
+  não — ele é chamado só para a aldeia `reserved_by` da conquista ativa, que
+  só **acompanha**: o nobre extra sai de qualquer aldeia gerenciada, a que
+  pousa primeiro (§8.41), sob o mesmo portão do trem
+  (`conquest_origin_block_reason`).
 - **Managers de jogo (`game/`)**:
   - `attack.py` — `AttackManager` (farm) e `ConquestManager` (noble trains contra bárbaros)
   - `defence_manager.py` — `DefenceManager` (bandeiras, evacuação, suporte entre aldeias)
@@ -160,6 +163,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `pending` de schedule vencido virando `arrival_passed`; §8.35; e o empate
   do trem que pousa no mesmo segundo, que agora fica com a MENOR lealdade;
   §8.40)
+  e o nobre extra multi-origem (`tests/test_conquest_extra_origin.py` —
+  origem pela chegada entre todas as aldeias, prazo de um nobre só e
+  vereditos com os números reais da 61947, reservas de outros sistemas,
+  trava em voo, falha ambígua no POST final × recusa limpa, aviso único por
+  pouso; §8.41)
   e a fila do Hunter e a gravação do `schedules.json`
   (`tests/test_hunter_schedule_queue.py` — intercalação entre schedules,
   merge com o que o painel criou ou apagou durante a espera, trava entre dois
