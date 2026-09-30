@@ -27,11 +27,9 @@ envia é `Village.run_tribe_support()`.
 """
 import math
 
+from core.support_store import DEFAULT_GATHER_SHARE
+from core.templates import GATHER_UNITS, UNIT_POP
 from core.world_config import WorldConfig
-
-# População por unidade (tabela padrão do jogo), só para descartar pacote
-# irrisório com `min_package_pop`.
-UNIT_POP = {"spear": 1, "sword": 1, "archer": 1, "spy": 2, "heavy": 6, "knight": 10}
 
 RELATION_WEIGHT = {"enemy": 3.0, "other": 1.0}
 
@@ -56,6 +54,9 @@ DEFAULT_OPTIONS = {
     # noutro. Juntos, tudo anda na velocidade da espada: a pesada que chegaria
     # em ~50 h chega em ~100 h. Custa um comando a mais por par.
     "split_fast": False,
+    # Fatia das unidades da coleta que uma aldeia que coleta pode ceder de
+    # apoio, sobre o total dela. Ver donatable().
+    "gather_share": DEFAULT_GATHER_SHARE,
     "units": ["spear", "sword", "spy", "heavy"],
 }
 
@@ -110,13 +111,42 @@ def source_safety(source, hostiles, options):
     }
 
 
-def donatable(home, options):
-    """O que pode sair de cada unidade, deixando `reserve_pct` em casa."""
+def donatable(home, options, gather_enabled=False, total=None, sent=None, pending=None):
+    """
+    O que pode sair de cada unidade.
+
+    - Unidade que a coleta não usa (explorador): o que está em casa menos
+      `reserve_pct`.
+    - Em aldeia com coleta ligada, unidade da coleta (`GATHER_UNITS`): até
+      `gather_share` do TOTAL da aldeia. "A coleta é prioridade", mas pode
+      ceder uma fatia (usuário, 2026-09-29). Sobre o total, e não sobre o que
+      está em casa, porque entre ciclos a tropa da coleta passa 6-7 h fora --
+      em casa quase sempre há ~0. Com 20% nas 38 aldeias, pela fórmula do
+      próprio jogo (Scavenging.js: duração = (100·cap²·fator²)^0,45 + 1800),
+      a coleta perde 2,7% de recurso/h e libera ~9,7 mil lanças, ~9,6 mil
+      espadas e ~2,5 mil pesadas (§8.39).
+
+    `sent` e `pending` ({unidade: qtd}) são o que esta aldeia já tem no
+    plano, enviado e aprovado-ainda-não-enviado. Apoio enviado continua no
+    TOTAL da aldeia (fica fora, não some), então sem descontá-lo cada novo
+    plano ofereceria mais uma fatia por cima: a fatia é um teto acumulado.
+    Para unidade fora da coleta, o enviado já saiu de casa; só o pendente
+    desconta.
+    """
     reserve = float(options["reserve_pct"])
+    share = float(options.get("gather_share") or 0)
+    sent = sent or {}
+    pending = pending or {}
     out = {}
     for unit in options["units"]:
+        if gather_enabled and unit in GATHER_UNITS:
+            give = int(math.floor(int((total or {}).get(unit) or 0) * share))
+            give -= int(sent.get(unit, 0)) + int(pending.get(unit, 0))
+            if give > 0:
+                out[unit] = give
+            continue
         have = int(home.get(unit) or 0)
-        give = have - int(math.ceil(have * reserve))
+        give = have - int(math.ceil(have * reserve)) - int(pending.get(unit, 0))
         if give > 0:
             out[unit] = give
     return out
@@ -154,9 +184,15 @@ def plan_support(requests, sources, hostiles, speeds, options=None):
     ranking = []
     for src in sources:
         safety = source_safety(src, hostiles, opts)
-        give = donatable(src.get("home") or {}, opts)
+        give = donatable(src.get("home") or {}, opts, src.get("gather_enabled"),
+                         src.get("total"), src.get("sent"), src.get("pending"))
         usable = safety["tier"] in ("safe", "caution") or (
             safety["tier"] == "exposed" and opts["include_exposed"])
+        held = [u for u in opts["units"] if src.get("gather_enabled") and u in GATHER_UNITS]
+        if held:
+            safety["reasons"].append("coleta ligada: cede até %d%% de %s; o resto fica na coleta"
+                                     % (round(float(opts.get("gather_share") or 0) * 100),
+                                        ", ".join(held)))
         ranking.append(dict(src, **safety, donatable=give, usable=usable))
     tier_order = {"safe": 0, "caution": 1, "exposed": 2, "excluded": 3}
     ranking.sort(key=lambda s: (tier_order[s["tier"]], s["threat"],

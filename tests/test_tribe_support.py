@@ -163,6 +163,46 @@ res = plan_support([dict(reqs[0], missing={"heavy": 10})], sources[1:2], [], SPE
 check(res["lines"] and res["lines"][0]["troops"] == {"heavy": 10},
       "10 pesadas (60 pop) passam pelo piso de 100: %r" % res["lines"])
 
+# Coleta e prioridade, com fatia: aldeia que coleta cede ate `gather_share`
+# do TOTAL das unidades da coleta (a tropa passa 6-7 h fora, em casa ha ~0);
+# explorador, que a coleta nao usa, segue a regra de casa + reserva.
+res = plan_support([dict(reqs[0], missing={"spear": 500, "spy": 50})],
+                   [dict(sources[1], home={"spear": 25, "spy": 100}, total={"spear": 1000, "spy": 100},
+                         gather_enabled=True)],
+                   [], SPEEDS, {"min_package_pop": 0, "gather_share": 0.2})
+src0 = res["sources"][0]
+check(src0["donatable"] == {"spear": 200, "spy": 80},
+      "coleta ligada: 20%% do total de lanca (nao do que esta em casa) + explorador: %r"
+      % src0["donatable"])
+check(any("coleta" in r and "20%" in r for r in src0["reasons"]), "o ranking diz por que: %r" % src0["reasons"])
+check([l["troops"] for l in res["lines"]] == [{"spear": 200, "spy": 50}], "plano: %r" % res["lines"])
+res = plan_support([dict(reqs[0], missing={"spear": 500})],
+                   [dict(sources[1], home={}, total={"spear": 1000}, gather_enabled=True)],
+                   [], SPEEDS, {"min_package_pop": 0, "gather_share": 0})
+check(res["lines"] == [], "fatia 0: a coleta fica com tudo")
+
+# A fatia e um teto ACUMULADO: apoio enviado continua no total da aldeia, e
+# o aprovado ainda vai sair. Sem descontar, cada recalculo daria mais 20%.
+res = plan_support([dict(reqs[0], missing={"spear": 500, "spy": 50})],
+                   [dict(sources[1], home={"spear": 25, "spy": 100}, total={"spear": 1000, "spy": 100},
+                         gather_enabled=True, sent={"spear": 150}, pending={"spear": 30, "spy": 20})],
+                   [], SPEEDS, {"min_package_pop": 0, "gather_share": 0.2})
+check(res["sources"][0]["donatable"] == {"spear": 20, "spy": 60},
+      "200 de fatia - 150 enviados - 30 pendentes = 20; explorador: 80 - 20 pendentes: %r"
+      % res["sources"][0]["donatable"])
+
+# A coleta desconta o que mandou da tropa em casa (o cache/managed deixa de
+# mostrar como "em casa" o que esta coletando).
+from game.troopmanager import TroopManager  # noqa: E402
+tm = object.__new__(TroopManager)
+tm.troops = {"spear": "1925", "heavy": "750", "spy": "200"}
+tm._deduct_gathered({"squad_requests[0][candidate_squad][unit_counts][spear]": "1900",
+                     "squad_requests[0][candidate_squad][unit_counts][heavy]": "750",
+                     "squad_requests[0][candidate_squad][unit_counts][light]": "0",
+                     "squad_requests[0][option_id]": "4"})
+check(tm.troops == {"spear": "25", "heavy": "0", "spy": "200"},
+      "desconto da coleta: %r" % tm.troops)
+
 # -- 5. ciclo de vida do plano ------------------------------------------------
 tmp = tempfile.mkdtemp(prefix="twb-support-")
 orig_plan = support_store.PLAN_PATH
@@ -205,7 +245,7 @@ try:
     # -- 6. executor ----------------------------------------------------------
     from game.village import Village
 
-    def make_village(under_attack=False, spear="1000", raise_exc=False):
+    def make_village(under_attack=False, spear="1000", raise_exc=False, gathering=False):
         v = object.__new__(Village)
         v.village_id = "safe"
         v.logger = SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None,
@@ -220,7 +260,11 @@ try:
 
         v.def_man = SimpleNamespace(under_attack=under_attack, support=support,
                                     last_support_duration=3600, last_support_error=None)
-        v.units = SimpleNamespace(troops={"spear": spear, "axe": "5"})
+        v.units = SimpleNamespace(troops={"spear": spear, "axe": "5", "spy": "300"},
+                                  total_troops={"spear": 1000, "axe": 5, "spy": 300},
+                                  conquest_reserve={})
+        v.get_village_config = lambda vid, parameter=None, default=None: (
+            gathering if parameter == "gather_enabled" else default)
         return v, sent
 
     def approve_one(**extra):
@@ -250,6 +294,46 @@ try:
     got = [l for l in support_store.load_plan()["lines"] if l["id"] == lid][0]
     check(sent == [] and got["status"] == "approved", "ataque chegando adia: %r" % got)
     support_store.cancel([lid])
+
+    # Coleta com fatia de 20% (total 1000 lancas = 200). Linha antiga acima
+    # da fatia falha sem ir a praca; dentro da fatia mas coletando, ESPERA e
+    # vira reserva que a coleta respeita; explorador sai.
+    big = approve_one(gather_share=0.2)                                   # 800 > 200
+    v, sent = make_village(gathering=True, spear="25")
+    v.run_tribe_support()
+    got = [l for l in support_store.load_plan()["lines"] if l["id"] == big][0]
+    check(sent == [] and got["status"] == "failed" and "fatia da coleta" in got["error"],
+          "acima da fatia: falha: %r" % got)
+
+    wait_id = approve_one(troops={"spear": 150}, gather_share=0.2)
+    v, sent = make_village(gathering=True, spear="25")
+    v.run_tribe_support()
+    got = [l for l in support_store.load_plan()["lines"] if l["id"] == wait_id][0]
+    check(sent == [] and got["status"] == "approved" and "coleta voltar" in got.get("note", ""),
+          "dentro da fatia mas coletando: espera, aprovada: %r" % got)
+    check(v.units.conquest_reserve.get("tribe_support") == {"spear": 150},
+          "a espera reserva a fatia para a coleta nao levar: %r" % v.units.conquest_reserve)
+    v, sent = make_village(gathering=True, spear="1000")                  # a tropa voltou
+    v.run_tribe_support()
+    got = [l for l in support_store.load_plan()["lines"] if l["id"] == wait_id][0]
+    check(sent == [(None, {"spear": 150}, (520, 500))] and got["status"] == "sent",
+          "com a tropa em casa, a linha que esperava sai: %r" % got)
+    check("tribe_support" not in v.units.conquest_reserve, "reserva liberada depois do envio")
+
+    # Linha aprovada antes de a fatia ser gravada nela: vale o padrao (20%),
+    # nao 0% -- 150 lancas cabem em 20% de 1000 e esperam a coleta voltar.
+    legacy = approve_one(troops={"spear": 150})
+    v, sent = make_village(gathering=True, spear="25")
+    v.run_tribe_support()
+    got = [l for l in support_store.load_plan()["lines"] if l["id"] == legacy][0]
+    check(got["status"] == "approved" and "coleta voltar" in got.get("note", ""),
+          "linha sem gather_share usa o padrao de 20%%: %r" % got)
+    support_store.cancel([legacy])
+
+    spy_id = approve_one(troops={"spy": 100}, gather_share=0.2)
+    v, sent = make_village(gathering=True, spear="25")
+    v.run_tribe_support()
+    check(sent == [(None, {"spy": 100}, (520, 500))], "explorador sai com a coleta ligada: %r" % sent)
 
     lid = approve_one()
     v, sent = make_village(raise_exc=True)

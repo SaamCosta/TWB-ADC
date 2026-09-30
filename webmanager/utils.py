@@ -3922,6 +3922,12 @@ class TribeSupportReader:
             out.append({
                 "vid": vid, "name": d.get("name") or vid, "x": int(d["x"]), "y": int(d["y"]),
                 "home": home, "under_attack": bool(d.get("under_attack")),
+                "gather_enabled": bool(((config.get("villages") or {}).get(vid) or {})
+                                       .get("gather_enabled")),
+                # Total da aldeia (em casa + fora). A fatia da coleta é sobre
+                # ele: a tropa da coleta passa 6-7 h fora entre ciclos.
+                "total": {u: int(q) for u, q in (d.get("troops") or {}).items()
+                          if str(q).lstrip("-").isdigit()},
                 "incoming_eta": (d.get("incoming_attack") or {}).get("eta_seconds"),
                 "last_run": d.get("last_run"),
             })
@@ -3974,6 +3980,9 @@ class TribeSupportReader:
         if not 0 <= reserve < 100:
             raise ValueError("reserva deve ficar entre 0 e 99%")
         max_h = num("max_travel_hours", None)
+        share = num("gather_share", 20.0)
+        if not 0 <= share <= 100:
+            raise ValueError("fatia da coleta deve ficar entre 0 e 100%")
         return {
             "reserve_pct": reserve / 100.0,
             "danger_radius": num("danger_radius", 15, int),
@@ -3983,6 +3992,7 @@ class TribeSupportReader:
             "min_package_pop": num("min_package_pop", 100, int),
             "min_hostile_points": num("min_hostile_points", 500, int),
             "split_fast": bool(form.get("split_fast")),
+            "gather_share": share / 100.0,
             "units": units,
         }
 
@@ -4000,11 +4010,27 @@ class TribeSupportReader:
             raise ValueError("tabela de velocidades ausente (cache/world/units_*.json); "
                              "rode o bot uma vez")
         missing = [r for r in remaining(req["parsed"]) if any(r["missing"].values())]
-        result = plan_support(missing, TribeSupportReader.sources(),
+        # O que cada aldeia já tem no plano (de qualquer pedido): enviado
+        # continua no total dela, e aprovado ainda vai sair. Sem isso cada
+        # recálculo daria mais uma fatia da coleta por cima da anterior.
+        committed = {}
+        for line in support_store.load_plan().get("lines") or []:
+            bucket = {"sent": "sent", "approved": "pending",
+                      "dispatching": "pending"}.get(line.get("status"))
+            if not bucket:
+                continue
+            acc = committed.setdefault(str(line.get("source_vid")), {}).setdefault(bucket, {})
+            for u, q in (line.get("troops") or {}).items():
+                acc[u] = acc.get(u, 0) + int(q)
+        sources = TribeSupportReader.sources()
+        for src in sources:
+            src.update(committed.get(src["vid"], {}))
+        result = plan_support(missing, sources,
                               TribeSupportReader.hostiles(DiplomacyReader.load()),
                               speeds, options)
         for line in result["lines"]:
             line["reserve_pct"] = result["options"]["reserve_pct"]
+            line["gather_share"] = result["options"]["gather_share"]
         ranking = [{k: s.get(k) for k in ("vid", "name", "x", "y", "tier", "threat",
                                           "nearest_hostile", "hostiles_in_radius", "reasons",
                                           "donatable", "home", "under_attack", "usable",

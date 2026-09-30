@@ -2535,7 +2535,15 @@ class ConquestManager:
                     "ler a lealdade de %s (%s) -- usando o que ja estava lido",
                     target_id, e
                 )
-        best_ts = 0
+        # Empate no `when` e o caso NORMAL de um trem: os nobres pousam no
+        # mesmo segundo. Em 2026-09-30 os quatro relatorios da Barbara #61947
+        # tinham `when` identico e lealdade 79, 49, 23 e 1; o `>` estrito ficava
+        # com o primeiro da iteracao (79, o do PRIMEIRO nobre) e o bot achou
+        # que a aldeia estava a 79 quando estava a 1. No caso inverso -- o
+        # ultimo nobre conquistando (<= 0) -- a mesma leitura errada manda nobre
+        # extra contra a aldeia ja nossa. Dentro do mesmo instante a lealdade
+        # so cai, entao o empate se resolve pela MENOR.
+        best_key = None
         best_loyalty = None
         for rep_id, entry in self.repman.last_reports.items():
             if str(entry.get("dest")) != str(target_id):
@@ -2547,10 +2555,11 @@ class ConquestManager:
             units_sent = extra.get("units_sent", {})
             if "snob" not in units_sent:
                 continue
-            when = extra.get("when", 0)
-            if when > best_ts:
-                best_ts = when
-                best_loyalty = float(extra["loyalty_after"])
+            loyalty = float(extra["loyalty_after"])
+            key = (extra.get("when", 0), -loyalty)
+            if best_key is None or key > best_key:
+                best_key = key
+                best_loyalty = loyalty
         return best_loyalty
 
     def _handle_existing(self, conquest_data, cfg):

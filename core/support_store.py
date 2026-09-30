@@ -33,6 +33,12 @@ from core.filemanager import FileManager
 REQUEST_PATH = "cache/support/request.json"
 PLAN_PATH = "cache/support/plan.json"
 
+# Fatia padrão das unidades da coleta que pode ir de apoio (usuário,
+# 2026-09-29: "a coleta é prioridade", com taxa de ~0,2). Vale também para
+# linha aprovada antes de a fatia ser gravada em cada linha -- sem isso ela
+# era lida como 0% e toda lança/espada/pesada falhava.
+DEFAULT_GATHER_SHARE = 0.2
+
 # Aprovação vale 24 h. Um plano aprovado e esquecido não pode sair dias depois
 # com tropa calculada sobre um estado que já não existe.
 APPROVAL_TTL = 24 * 3600
@@ -133,7 +139,7 @@ def cancel(ids, now=None):
     return set_status(ids, "cancelled", ("proposed", "approved"), now=now)
 
 
-def claim_lines(village_id, now=None, blocked_reason=None):
+def claim_lines(village_id, now=None, blocked_reason=None, only_ids=None, waiting=None):
     """
     Linhas aprovadas cuja origem é `village_id`, marcadas `dispatching` e
     devolvidas (cópias) para o bot enviar.
@@ -141,8 +147,11 @@ def claim_lines(village_id, now=None, blocked_reason=None):
     - aprovação com mais de APPROVAL_TTL vira `failed` sem ser tentada;
     - com `blocked_reason` (ex.: ataque chegando na origem), nada é
       reclamado: as linhas continuam aprovadas, com a nota do motivo, e o
-      bot tenta de novo no próximo ciclo da aldeia até a aprovação vencer.
+      bot tenta de novo no próximo ciclo da aldeia até a aprovação vencer;
+    - `only_ids`: só estas podem ser reclamadas; `waiting` ({id: motivo}):
+      estas ficam aprovadas com a nota (tropa da coleta ainda fora).
     """
+    waiting = waiting or {}
     now = int(now or time.time())
     village_id = str(village_id)
 
@@ -159,6 +168,12 @@ def claim_lines(village_id, now=None, blocked_reason=None):
             if blocked_reason:
                 line["note"] = "adiado: %s" % blocked_reason
                 line["note_at"] = now
+                continue
+            if line.get("id") in waiting:
+                line["note"] = waiting[line["id"]]
+                line["note_at"] = now
+                continue
+            if only_ids is not None and line.get("id") not in only_ids:
                 continue
             line["status"] = "dispatching"
             line["dispatching_at"] = now
@@ -184,6 +199,39 @@ def finish_line(line_id, ok, now=None, **fields):
         return False
 
     return bool(update_plan(mutate))
+
+
+def line_readiness(troops, home, total, reserve_pct, gathering, gather_share, gather_units):
+    """
+    ("send" | "wait" | "fail", motivo) para uma linha aprovada, na hora de agir.
+
+    - Unidade da coleta numa aldeia que coleta: o limite é `gather_share` do
+      TOTAL. Acima dele, falha (a coleta tem prioridade sobre o resto). Dentro
+      dele mas fora de casa (coletando), ESPERA: a linha continua aprovada e
+      a coleta deixa essa fatia em casa quando a tropa voltar.
+    - Qualquer outra unidade: precisa estar em casa, deixando `reserve_pct`.
+    """
+    wait, fail = [], []
+    for unit, qty in (troops or {}).items():
+        qty = int(qty)
+        have = int((home or {}).get(unit) or 0)
+        owned = int((total or {}).get(unit) or 0)
+        if gathering and unit in gather_units:
+            cap = int(math.floor(owned * float(gather_share or 0)))
+            if qty > cap:
+                fail.append("%s: plano %d acima da fatia da coleta (%d%% de %d = %d)"
+                            % (unit, qty, round(float(gather_share or 0) * 100), owned, cap))
+            elif have < qty:
+                wait.append("%s: %d em casa, %d coletando" % (unit, have, owned - have))
+        else:
+            keep = int(math.ceil(have * float(reserve_pct or 0)))
+            if have - qty < keep:
+                fail.append("%s: em casa %d, plano %d, reserva %d" % (unit, have, qty, keep))
+    if fail:
+        return "fail", "; ".join(fail)
+    if wait:
+        return "wait", "aguardando a coleta voltar (%s)" % "; ".join(wait)
+    return "send", None
 
 
 def home_check(home, troops, reserve_pct):

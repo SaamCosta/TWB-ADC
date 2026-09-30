@@ -2,7 +2,8 @@
 Identificação e orientação do /map do webmanager (docs/backend.md §8.38).
 
 1. `Extractor.map_relations` lê paleta, diplomacia e amigos da tela
-   `screen=map` -- fixture verbatim do br143 em 2026-09-29, com os ids dos`n   amigos trocados por 90000000N (o repositorio e publico)
+   `screen=map` -- fixture verbatim do br143 em 2026-09-29, com os ids dos
+   amigos trocados por 90000000N (o repositorio e publico)
    (tests/fixtures/map_relations_br143.txt).
 2. `MapBuilder.classify` segue a precedência de `TWMap.getColorByPlayer`
    (merged/map.js do br143): amigo vem DEPOIS da relação da tribo.

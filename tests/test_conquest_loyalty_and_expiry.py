@@ -183,6 +183,38 @@ check(manager(rm)._get_real_loyalty("55647") is None,
       "leitura que falha nao derruba: fica o que havia em memoria")
 check(manager(None)._get_real_loyalty("55647") is None, "sem repman, None como antes")
 
+# Trem que pousa no MESMO segundo: os quatro relatorios da Barbara #61947 em
+# 2026-09-30 (ids e lealdades reais, `when` identico). O `>` estrito ficava
+# com o primeiro da iteracao -- 79, o do primeiro nobre -- e o bot achou a
+# aldeia a 79 quando estava a 1. Dentro do mesmo instante a lealdade so cai:
+# vale a MENOR, em qualquer ordem de iteracao.
+import itertools  # noqa: E402
+
+TRAIN = [("166237693", 79.0), ("166237695", 49.0), ("166237696", 23.0), ("166237697", 1.0)]
+
+
+class TrainRepman:
+    def __init__(self, order):
+        self.last_reports = {
+            rid: {"type": "attack", "dest": "61947",
+                  "extra": {"loyalty_after": loy, "when": 1790764063,
+                            "units_sent": {"axe": 26, "snob": 1}}}
+            for rid, loy in order}
+
+    def read(self, full_run=False):
+        pass
+
+
+orders = list(itertools.permutations(TRAIN))
+got = {manager(TrainRepman(o))._get_real_loyalty("61947") for o in orders}
+check(got == {1.0}, "empate no pouso: sempre a menor lealdade, em %d ordens: %r" % (len(orders), got))
+# Um nobre posterior (extra) vence o trem inteiro, mesmo com lealdade maior.
+later = TrainRepman(TRAIN)
+later.last_reports["166300000"] = {"type": "attack", "dest": "61947",
+                                   "extra": {"loyalty_after": 5.0, "when": 1790800000,
+                                             "units_sent": {"snob": 1}}}
+check(manager(later)._get_real_loyalty("61947") == 5.0, "relatorio mais novo vence")
+
 
 # --------------------------------------------------------------------------
 # A26-03 ponta a ponta: pouso lido pelo relatorio, sem nobre extra

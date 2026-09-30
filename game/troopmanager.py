@@ -8,7 +8,7 @@ import time
 
 from core import game_data_shadow
 from core.extractors import Extractor
-from core.templates import UNIT_BUILDING
+from core.templates import GATHER_UNITS, UNIT_BUILDING, UNIT_CARRY
 from game.resources import ResourceManager
 
 logger = logging.getLogger("TroopManager")
@@ -671,15 +671,13 @@ class TroopManager:
                 if unit in troops:
                     troops[unit] = str(max(0, int(troops[unit]) - reserved_qty))
 
+        # A lista vem de GATHER_UNITS, a mesma que o apoio a membros da tribo
+        # usa para nunca planejar tropa que a coleta vai usar (§8.39). Mesma
+        # ordem e mesmas cargas de antes (UNIT_CARRY).
         haul_dict = [
-            "spear:25",
-            "sword:15",
-            "heavy:50",
-            "axe:10",
-            "light:80"
+            "%s:%d" % (unit, UNIT_CARRY[unit]) for unit in GATHER_UNITS
+            if unit not in ("archer", "marcher") or "archer" in self.total_troops
         ]
-        if "archer" in self.total_troops:
-            haul_dict.extend(["archer:10", "marcher:50"])
 
         # ADVANCED GATHER: Goes from gather_selection to 1, trying the same time (approximately) for every gather. Active hours exclude LC and Axes, at night everything is used for gather (except Paladin)
 
@@ -747,12 +745,14 @@ class TroopManager:
                             payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = "0"
                     payload["squad_requests[0][candidate_squad][carry_max]"] = str(curr_haul)
                     payload["h"] = self.wrapper.last_h
-                    self.wrapper.get_api_action(
+                    sent = self.wrapper.get_api_action(
                         action="send_squads",
                         params={"screen": "scavenge_api"},
                         data=payload,
                         village_id=self.village_id,
                     )
+                    if sent:
+                        self._deduct_gathered(payload)
                     sleep += random.randint(1, 5)
                     time.sleep(sleep)
                     self.last_gather = int(time.time())
@@ -796,12 +796,14 @@ class TroopManager:
                     payload["squad_requests[0][candidate_squad][carry_max]"] = str(total_carry)
                     if total_carry > 0:
                         payload["h"] = self.wrapper.last_h
-                        self.wrapper.get_api_action(
+                        sent = self.wrapper.get_api_action(
                             action="send_squads",
                             params={"screen": "scavenge_api"},
                             data=payload,
                             village_id=self.village_id,
                         )
+                        if sent:
+                            self._deduct_gathered(payload)
                         self.last_gather = int(time.time())
                         self.logger.info(f"Using troops for gather operation: {selection}")
                         # Basic mode assigns the whole available army to one
@@ -815,6 +817,32 @@ class TroopManager:
                     continue
         self.logger.info("All gather operations are underway.")
         return True
+
+    def _deduct_gathered(self, payload):
+        """
+        Tira de `self.troops` (tropa em casa) o que um envio de coleta levou.
+
+        Sem isto, `self.troops` continuava com a leitura de ANTES da coleta, e
+        é ela que `Village.set_cache_vars` grava como `available_troops` no
+        cache/managed. Em 2026-09-29 o plano de apoio contou 1.925 lanças e 750
+        pesadas "em casa" na BBM 003 que estavam todas coletando, e 24 envios
+        aprovados falharam na hora (§8.39). Só desconta com resposta boa do
+        jogo: envio incerto mantém o número antigo, como era.
+        """
+        prefix = "squad_requests[0][candidate_squad][unit_counts]["
+        for key, value in payload.items():
+            if not key.startswith(prefix):
+                continue
+            unit = key[len(prefix):-1]
+            try:
+                qty = int(value)
+            except (TypeError, ValueError):
+                continue
+            if qty > 0 and unit in self.troops:
+                try:
+                    self.troops[unit] = str(max(0, int(self.troops[unit]) - qty))
+                except (TypeError, ValueError):
+                    pass
 
     def cancel(self, building, id):
         """

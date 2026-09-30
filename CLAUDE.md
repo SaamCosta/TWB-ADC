@@ -157,7 +157,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   e a lealdade real e o schedule vencido
   (`tests/test_conquest_loyalty_and_expiry.py` — `repman` entregue e relido
   antes da lealdade, pouso lido pelo relatório sem nobre extra, ataque
-  `pending` de schedule vencido virando `arrival_passed`; §8.35)
+  `pending` de schedule vencido virando `arrival_passed`; §8.35; e o empate
+  do trem que pousa no mesmo segundo, que agora fica com a MENOR lealdade;
+  §8.40)
   e a fila do Hunter e a gravação do `schedules.json`
   (`tests/test_hunter_schedule_queue.py` — intercalação entre schedules,
   merge com o que o painel criou ou apagou durante a espera, trava entre dois
@@ -961,8 +963,11 @@ puxa o fio.**
   ataque. Sondado: só `support` → "Confirmar apoio"; os dois → a mesma recusa
   de ataque que só `attack`. Corrigido com duas travas (POST só com
   `support`, e `Extractor.command_confirm_kind` exigindo a confirmação de
-  apoio antes de criar o comando). O passo final (`popup_command` de apoio)
-  continua sem envio real.
+  apoio antes de criar o comando). **Validado em campo no mesmo dia**: o
+  primeiro apoio real (BBM 001 → La Rochelle, 80 exploradores) apareceu na
+  lista de comandos do jogo como "Apoio para…". ⚠️ Todas as aldeias coletam:
+  apoio com lança/espada/pesada usa a fatia `gather_share` do total e espera
+  a tropa voltar da coleta (§8.39).
   ⚠️ **Redação corrigida em 2026-09-21.** A anterior dizia que `support_others`
   "segue `false` em campo" e mandava "ligar em uma aldeia só, observando".
   Medido no `config.json`: está **`true` em 22 das 30 aldeias** (só o

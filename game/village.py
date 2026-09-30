@@ -11,7 +11,7 @@ from core import support_store
 from core.cycle_meter import meter_phase
 from core.extractors import Extractor
 from core.filemanager import FileManager
-from core.templates import TemplateManager, resolve_troop_template
+from core.templates import GATHER_UNITS, TemplateManager, resolve_troop_template
 from core.twstats import TwStats
 from core.world_config import WorldConfig
 from game.attack import AttackManager, ConquestManager
@@ -799,18 +799,29 @@ class Village:
         )
         sharing.run(current_resman=self.resman)
 
+    # Dono da reserva que a coleta e o farm respeitam (TroopManager.
+    # conquest_reserve) enquanto um apoio aprovado espera a tropa voltar.
+    TRIBE_SUPPORT_RESERVE = "tribe_support"
+
     def run_tribe_support(self):
         """
         Envia as linhas APROVADAS no painel /support cuja origem é esta aldeia
         (apoio a membro da tribo, docs/backend.md §8.39).
 
         O plano foi calculado sobre o cache/managed, que pode ter horas; aqui
-        tudo é reconferido na hora de agir (sexto padrão): ataque chegando
-        nesta aldeia adia o envio sem gastar a aprovação, e tropa em casa
-        abaixo do plano + reserva faz a linha falhar em vez de mandar menos --
-        o número aprovado é o número que sai, ou nada sai.
+        tudo é reconferido na hora de agir (sexto padrão), linha a linha, com
+        `support_store.line_readiness`:
 
-        Roda antes do farm e da coleta, que tiram lança/espada de casa.
+        - ataque chegando nesta aldeia adia tudo sem gastar a aprovação;
+        - unidade da coleta (aldeia que coleta) acima da fatia `gather_share`
+          do total falha -- a coleta tem prioridade sobre o resto;
+        - dentro da fatia mas coletando, a linha ESPERA e a fatia vira reserva
+          (`conquest_reserve["tribe_support"]`), que a coleta deixa em casa
+          quando a tropa voltar; o apoio sai no ciclo seguinte;
+        - qualquer outra falta faz a linha falhar em vez de mandar menos: o
+          número aprovado é o número que sai, ou nada sai.
+
+        Roda antes do farm e da coleta, que tiram tropa de casa.
         """
         try:
             plan = support_store.load_plan()
@@ -819,24 +830,67 @@ class Village:
             return
         mine = [l for l in plan.get("lines", [])
                 if l.get("status") == "approved" and str(l.get("source_vid")) == str(self.village_id)]
+        if self.units is not None:
+            self.units.conquest_reserve.pop(self.TRIBE_SUPPORT_RESERVE, None)
         if not mine:
             return
-        blocked = None
+        gathering = self.get_village_config(self.village_id, parameter="gather_enabled",
+                                            default=False)
+
+        def troops_of(line):
+            return {u: int(q) for u, q in (line.get("troops") or {}).items() if int(q) > 0}
+
+        def reserve(lines):
+            held = {}
+            for line in lines:
+                for u, q in troops_of(line).items():
+                    if gathering and u in GATHER_UNITS:
+                        held[u] = held.get(u, 0) + q
+            if held and self.units is not None:
+                self.units.conquest_reserve[self.TRIBE_SUPPORT_RESERVE] = held
+            return held
+
         if self.def_man and self.def_man.under_attack:
             blocked = "ataque chegando na origem"
-        claimed = support_store.claim_lines(self.village_id, blocked_reason=blocked)
-        if blocked:
+            support_store.claim_lines(self.village_id, blocked_reason=blocked)
+            reserve(mine)
             self.logger.info("TribeSupport: %d envio(s) adiado(s) em %s: %s",
                              len(mine), self.village_id, blocked)
+            return
+
         home = {u: int(q) for u, q in ((self.units.troops if self.units else {}) or {}).items()
                 if str(q).lstrip("-").isdigit()}
+        total = dict(getattr(self.units, "total_troops", None) or {})
+        # Decide primeiro, sobre uma cópia da tropa em casa, na ordem do plano:
+        # duas linhas da mesma aldeia disputam o mesmo estoque.
+        sim = dict(home)
+        ready, waiting, failed = [], {}, {}
+        for line in mine:
+            troops = troops_of(line)
+            verdict, reason = support_store.line_readiness(
+                troops, sim, total, line.get("reserve_pct", 0.2), gathering,
+                line.get("gather_share", support_store.DEFAULT_GATHER_SHARE), GATHER_UNITS)
+            if verdict == "send":
+                ready.append(line["id"])
+                for u, q in troops.items():
+                    sim[u] = sim.get(u, 0) - q
+            elif verdict == "wait":
+                waiting[line["id"]] = reason
+            else:
+                failed[line["id"]] = reason
+        claimed = support_store.claim_lines(
+            self.village_id, only_ids=set(ready) | set(failed), waiting=waiting)
+        held = reserve([l for l in mine if l["id"] in waiting])
+        if waiting:
+            self.logger.info("TribeSupport: %d envio(s) de %s aguardando a coleta voltar; "
+                             "reservado para o apoio: %s", len(waiting), self.village_id, held)
+
         for line in claimed:
-            troops = {u: int(q) for u, q in (line.get("troops") or {}).items() if int(q) > 0}
-            short = support_store.home_check(home, troops, line.get("reserve_pct", 0.2))
-            if short:
+            troops = troops_of(line)
+            if line["id"] in failed:
                 self.logger.info("TribeSupport: %s -> %s nao enviado: %s",
-                                 self.village_id, line.get("target_name"), short)
-                support_store.finish_line(line["id"], False, error="tropa em casa: " + short)
+                                 self.village_id, line.get("target_name"), failed[line["id"]])
+                support_store.finish_line(line["id"], False, error=failed[line["id"]])
                 continue
             try:
                 result = self.def_man.support(
@@ -859,7 +913,6 @@ class Village:
                     arrival_at=(now + int(duration)) if duration else None,
                 )
                 for u, q in troops.items():
-                    home[u] = home.get(u, 0) - q
                     if self.units and u in self.units.troops:
                         self.units.troops[u] = str(max(0, int(self.units.troops[u]) - q))
                 self.logger.info("TribeSupport: %s -> %s enviado: %s",

@@ -5010,12 +5010,122 @@ pedidas. 34 das 36 aldeias ficam sem cobertura total, e o painel lista a falta
 que sobra. As linhas 25 e 26 do tópico são a mesma aldeia (779|536); o painel
 avisa.
 
-**Não validado em campo:** nenhum apoio foi aprovado nem enviado. O primeiro
-envio real vai exercitar o `popup_command` do apoio, que o teste só cobre com
-um wrapper de mentira. Fixtures em `tests/fixtures/forum_support_thread_br143.html`
-(jogadores anonimizados, porque o repositório é público e o fórum da tribo não)
-e `place_confirm_support_br143.html` (tokens `h`/`ch` redigidos). Testes em
+Fixtures em `tests/fixtures/forum_support_thread_br143.html` (jogadores
+anonimizados, porque o repositório é público e o fórum da tribo não) e
+`place_confirm_support_br143.html` (tokens `h`/`ch` redigidos). Testes em
 `tests/test_tribe_support.py` e `tests/test_support_urgency_gate.py`.
+
+### Primeira rodada em campo (2026-09-29, 20:29 em diante)
+
+O usuário aprovou 83 envios. **O primeiro apoio real do bot foi validado de
+ponta a ponta**: BBM 001 → La Rochelle, 80 exploradores; a confirmação leu
+42,5 h, o `popup_command` foi aceito, e a lista de comandos do jogo
+(`overview_villages&mode=commands&page=-1`, a mesma URL do InFlight, para
+não mudar o filtro que o jogo grava) mostrou *"Apoio para La Rochelle
+(737|540) K57"* com o ícone `command/support` e chegada em 01/10 15:01:13.
+
+E expôs um erro de premissa: **24 das primeiras 35 linhas falharam com "em
+casa 0"**. Todas as 38 aldeias têm coleta ligada, e a tropa da coleta passa
+6-7 h fora entre ciclos. Pior, o `available_troops` do cache/managed mostrava
+essa tropa como "em casa": `TroopManager.gather()` relia a praça antes de
+mandar a coleta e não descontava o que mandou (BBM 003: cache com 1.925
+lanças e 750 pesadas, em casa 25 e 0, total inalterado). A trava da hora de
+agir segurou tudo; nada saiu pela metade.
+
+### A coleta tem prioridade, com fatia
+
+Decisão do usuário: *"a coleta é prioridade"*, e logo depois *"não precisa
+cortar completamente, só definir uma taxa, 0,2 ou algo assim, faça umas
+contas"*. As contas saíram da fórmula do próprio jogo, lida no
+`Scavenging.js` do br143 (`calcLoot` e `calcDurationSeconds`), com os
+parâmetros da tela (`duration_exponent` 0,45, `duration_initial_seconds`
+1800, `duration_factor` 1; o `loot_factor` 1,2 é o bônus premium):
+
+    saque = capacidade × fator      duração = (100·cap²·fator²)^0,45 + 1800 s
+
+A duração cresce com cap^0,9, então o saque por hora quase não depende do
+tamanho da tropa. Com as tropas reais das 38 aldeias e a divisão 15:6:3:2 do
+bot na seleção 4:
+
+| Fatia | Coleta (rec/h) | Perda | Libera (lança / espada / pesada) |
+|---|---|---|---|
+| 10% | 120.523 | −1,3% | 4.845 / 4.814 / 1.233 |
+| **20%** | **118.770** | **−2,7%** | **9.701 / 9.638 / 2.471** |
+| 30% | 116.826 | −4,3% | 14.558 / 14.460 / 3.709 |
+| 50% | 112.091 | −8,2% | 24.272 / 24.114 / 6.191 |
+
+Implementado com 20% como padrão (`gather_share`, ajustável no painel):
+
+- `core/templates.py::GATHER_UNITS` é a lista única das unidades da coleta.
+  A coleta monta a lista dela daqui, e o apoio as trata como da coleta.
+- Planejador: em aldeia que coleta, unidade da coleta cede até
+  `gather_share` do **total** (não do que está em casa); explorador segue a
+  regra de casa + reserva.
+- Executor (`support_store.line_readiness`): acima da fatia falha; dentro da
+  fatia mas coletando, a linha **espera** aprovada e a fatia vira
+  `conquest_reserve["tribe_support"]`, que `gather()` e o farm já
+  respeitam. Quando a tropa volta, a coleta deixa a fatia em casa e o apoio
+  sai no ciclo seguinte. A reserva é recalculada a cada ciclo e some quando
+  não há linha esperando.
+- `gather()` desconta o que mandou (`_deduct_gathered`), e o cache deixa de
+  mostrar como "em casa" a tropa que está coletando.
+
+### Revisão de 2026-09-30
+
+O bot dormiu às 22:59 depois da BBM 023 e foi reiniciado às 07:50 já com a
+fatia. Estado: 31 enviados, 29 falhas (todas "tropa em casa", do código
+antigo) e 23 linhas ainda aprovadas. **Os 31 envios conferem 1 a 1 com o
+jogo**: origem e destino de cada linha `sent` contra os 31 comandos de apoio
+do `cache/in_flight.json` das 07:51, sem sobra nem falta.
+
+Dois furos achados na revisão, ambos sobre linhas e planos anteriores à
+fatia:
+
+- **Linha aprovada sem `gather_share` era lida como 0%**, e toda lança,
+  espada ou pesada falharia com "acima da fatia (0%)". O executor passou a
+  usar `support_store.DEFAULT_GATHER_SHARE` (0,2) quando a linha não traz o
+  campo, e as 23 linhas pendentes ganharam o campo no `plan.json` (sob a
+  trava), para o processo já em execução aplicar a regra sem reinício. Das
+  23, 12 cabem (saem ou esperam a coleta) e 11 passam dos 20% e vão falhar
+  com o motivo registrado (ex.: BBM 028, 1.040 lanças contra teto de 260).
+- **A fatia não era acumulada.** Apoio enviado continua no total da aldeia,
+  então cada recálculo ofereceria outros 20% por cima do que já saiu (a BBM
+  020 mandou 812 lanças pela regra antiga). O painel agora soma, por aldeia,
+  o que está `sent` e o que está `approved`/`dispatching` no plano, e o
+  planejador desconta isso da fatia (e o pendente, do explorador em casa).
+
+
+## 8.40 ✅ `P-CONQ-EMPATE` — trem que pousa no mesmo segundo: o bot lia a lealdade do PRIMEIRO nobre (2026-09-30)
+
+**Sintoma.** O trem de 4 nobres contra a Bárbara #61947 (583|285) pousou às
+07:27:42 de 2026-09-30. Os quatro relatórios (166237693/695/696/697) traziam
+lealdade 79, 49, 23 e **1**, todos com o mesmo `when`. O bot logou *"real
+loyalty from report: 79.0"* e decidiu por nobres extras contra uma aldeia a 79.
+
+**Causa.** `ConquestManager._get_real_loyalty()` escolhia o relatório de maior
+`when` com `>` estrito. Trem pousa no mesmo segundo, então todos empatam e
+vencia o primeiro da iteração do dict, que aqui era o do primeiro nobre. O
+estrago aqui foi zero só porque a aldeia dona (BBM 010) não tinha nobre em
+casa. No caso inverso, com o último nobre conquistando (lealdade ≤ 0), a
+mesma leitura errada mandaria nobre extra contra a aldeia já nossa, que é a
+autoconquista do A26-03 entrando por outra porta.
+
+**Correção.** A chave passou a ser `(when, -lealdade)`: no mesmo instante a
+lealdade só cai, então o empate fica com a **menor**. Teste em
+`tests/test_conquest_loyalty_and_expiry.py` com os quatro relatórios reais nas
+24 ordens de iteração (com o código antigo sairiam quatro valores diferentes)
+e um relatório posterior vencendo o trem. Depois do reinício das 08:05 o bot
+logou *"real loyalty from report: 1.0"*.
+
+**Nobre extra do mesmo episódio, enviado à mão.** Com lealdade 1, regeneração
+de 1/h e ~12h40 de viagem, um nobre só bastaria com certeza (queda mínima 20)
+se saísse até ~13:45. O bot só tira o nobre extra da aldeia dona
+(`reserved_by`), e os 3 nobres da BBM 010 estavam voltando (chegam às 20:03).
+O usuário mandou 1 nobre da BBM 001 (chegada 20:49:58), e ele foi registrado
+em `cache/conquest/61947.json` (`noble_arrivals`, `status: extra_pending`,
+bloco `manual_extra`) para a trava de nobre em voo, que só enxerga nobre
+registrado pelo bot, não mandar outro por cima. **Aberto:** o nobre extra
+poder sair de qualquer aldeia de origem do trem, não só da dona.
 
 ---
 

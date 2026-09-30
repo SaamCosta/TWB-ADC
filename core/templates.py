@@ -57,6 +57,13 @@ UNIT_POP = {
     "catapult": 8,
 }
 
+# Unidades que a coleta (`TroopManager.gather`) manda, na ordem em que ela as
+# enche. Fonte unica: a coleta monta a lista daqui e o apoio a membros da
+# tribo (§8.39) exclui estas unidades das aldeias que coletam -- decisao do
+# usuario em 2026-09-29: "a coleta e prioridade". Arqueiros so entram em mundo
+# que os tem; a coleta os tira pela lista de unidades desabilitadas.
+GATHER_UNITS = ("spear", "sword", "heavy", "axe", "light", "archer", "marcher")
+
 # Edificios que aparecem como chave dentro de "build".
 RECRUIT_BUILDINGS = set(UNIT_BUILDING.values())
 
