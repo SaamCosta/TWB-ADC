@@ -163,6 +163,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `pending` de schedule vencido virando `arrival_passed`; §8.35; e o empate
   do trem que pousa no mesmo segundo, que agora fica com a MENOR lealdade;
   §8.40)
+  e os trens bárbaros em paralelo (`tests/test_conquest_parallel.py` — teto
+  `conquest.max_parallel_trains`, reserva `barb_train:*` reconstruída do
+  Hunter depois de reinício para o mesmo nobre não entrar em dois trens;
+  §8.43)
   e o nobre extra multi-origem (`tests/test_conquest_extra_origin.py` —
   origem pela chegada entre todas as aldeias, prazo de um nobre só e
   vereditos com os números reais da 61947, reservas de outros sistemas,

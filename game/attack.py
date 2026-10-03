@@ -1382,12 +1382,11 @@ class ConquestCache:
         {target_id: data} de toda conquista barbara em andamento, de qualquer
         aldeia -- agendada, em voo ou aguardando nobre extra.
 
-        O planejador usa isto para manter a invariante de UM trem barbaro por
-        vez no imperio. Ela ja existia de fato no modelo por aldeia, so que
-        por acidente: cada ConquestManager so via a propria aldeia e precisava
-        de 4 nobres proprios, entao dois trens simultaneos eram raros. Com o
-        planejador juntando nobres do imperio inteiro, nada garantiria isso --
-        e dois trens concorrentes disputariam os mesmos nobres.
+        O planejador usa isto para o teto de trens simultaneos
+        (`conquest.max_parallel_trains`, 8.43; ate la, um trem por vez). Dois
+        trens nao disputam os mesmos nobres porque o trem agendado os segura na
+        reserva `barb_train:*` -- reconstruida do Hunter a cada ciclo, para
+        sobreviver a reinicio -- e o trem em voo ja nao os tem em casa.
         """
         active = {}
         for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
@@ -1639,9 +1638,19 @@ class ConquestManager:
         # real e o envio do noble extra so voltavam a ser avaliados quando a
         # aldeia acumulasse 4 nobles novos, o que pode levar dias. Nesse meio
         # tempo a lealdade do alvo regenerava e o progresso se perdia.
-        existing = self._get_my_conquest()
+        # 8.43: TODAS as conquistas que esta aldeia acompanha, nao a primeira.
+        # Com trens paralelos a ancora (`reserved_by`, quem manda mais nobres)
+        # costuma ser a mesma aldeia para dois trens, e devolver so o primeiro
+        # registro deixava o segundo sem confirmacao de posse, sem leitura de
+        # lealdade e sem nobre extra -- calado, porque nada no log diria que
+        # havia um segundo.
+        existing = self._get_my_conquests()
         if existing:
-            return self._handle_existing(existing, cfg)
+            dispatched = False
+            for conquest_data in existing:
+                if self._handle_existing(conquest_data, cfg):
+                    dispatched = True
+            return dispatched
 
         # Sem conquista em andamento nesta aldeia nao ha nada a fazer aqui: a
         # montagem do trem e do planejador global. A reserva de escolta que o
@@ -3195,6 +3204,7 @@ class ConquestManager:
             result = attack_manager.attack(target_id, troops=troops)
             if result and result != "forced_peace":
                 sent = (entry, attack_manager)
+                self._discount_sent_troops(getattr(manager, "troopmanager", None), troops)
                 break
 
             # Falhou. Seguir para a proxima origem so e seguro quando o jogo
@@ -3325,11 +3335,42 @@ class ConquestManager:
         )
         return True
 
-    def _get_my_conquest(self):
+    @staticmethod
+    def _discount_sent_troops(troopmanager, troops):
         """
-        Returns active conquest data reserved by this village, or None.
+        Tira da contagem em memoria a tropa que acabou de sair.
+
+        `AttackManager.attack()` nao mexe em `troopmanager.troops`, e a origem
+        so e relida no proximo prime. Com uma conquista por ancora isso nao
+        importava; com trens paralelos (8.43) a mesma chamada de `run()`
+        acompanha duas conquistas, e a segunda contaria como livre o nobre que
+        a primeira acabou de mandar -- o jogo recusaria na confirmacao, mas so
+        depois de gastar a requisicao, e o motivo no log seria "falta tropa"
+        numa aldeia que o bot acha que tem. Mesma conta que o Hunter faz depois
+        de despachar (`hunter.py`, "Keep TroopManager in sync").
         """
-        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+        units = getattr(troopmanager, "troops", None)
+        if units is None:
+            return
+        for unit, qty in troops.items():
+            try:
+                current = int(units.get(unit, 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            units[unit] = str(max(0, current - int(qty)))
+
+    def _get_my_conquests(self):
+        """
+        [data] de toda conquista em voo ou aguardando nobre extra que esta
+        aldeia acompanha (`reserved_by`), cada uma com `target_id`, em ordem de
+        alvo. Lista vazia quando nao ha nenhuma.
+
+        Era `_get_my_conquest()` e devolvia so o primeiro registro: com um trem
+        por vez no imperio nao fazia diferenca, com trens paralelos (8.43)
+        deixava os outros sem acompanhamento.
+        """
+        mine = []
+        for fname in sorted(FileManager.list_directory("cache/conquest", ends_with=".json")):
             target_id = fname.replace(".json", "")
             data = FileManager.load_json_file(f"cache/conquest/{fname}")
             if (
@@ -3338,5 +3379,5 @@ class ConquestManager:
                 and data.get("status") in ("train_sent", "extra_pending")
             ):
                 data["target_id"] = target_id
-                return data
-        return None
+                mine.append(data)
+        return mine

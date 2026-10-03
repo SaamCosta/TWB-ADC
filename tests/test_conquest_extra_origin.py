@@ -487,4 +487,86 @@ check(captured.get("villages") is v.pvp_conquest_villages,
       "o dict de aldeias do twb.py chega ao manager")
 
 
+# --------------------------------------------------------------------------
+# 8.43: duas conquistas no mesmo run() e um nobre so
+# --------------------------------------------------------------------------
+# Com trens paralelos a mesma ancora acompanha dois alvos na mesma chamada.
+# `AttackManager.attack()` nao mexe na contagem em memoria, entao sem o
+# desconto o segundo alvo veria livre o nobre que o primeiro acabou de mandar.
+# Aqui o FakeAttack sempre aceita, de proposito: no jogo a recusa viria na
+# confirmacao, e o teste tem de provar que o bot nem tenta.
+vs = empire()
+with Env(MANUAL_DEPARTURE) as env:
+    cm = anchor(vs, MANUAL_DEPARTURE)
+    first = send(cm)
+    second_record = dict(RECORD, target_id="61999")
+    second = cm._send_extra_noble(
+        "61999", second_record, CFG, loyalty=1.0, loyalty_at=REPORT_WHEN,
+        current_loyalty=2.0, loyalty_source="report", regen=1)
+check(first is True and second is False,
+      "o primeiro alvo leva o unico nobre livre, o segundo fica sem: %r %r"
+      % (first, second))
+check(len(vs["41123"].attack.calls) == 1,
+      "a BBM 001 mandou uma vez so: %r" % vs["41123"].attack.calls)
+check(vs["41123"].units.troops["snob"] == "0"
+      and vs["41123"].units.troops["axe"] == "700"
+      and vs["41123"].units.troops["light"] == "350",
+      "nobre e escolta descontados da memoria: %r" % vs["41123"].units.troops)
+check(any("61999" in m or "#61999" in m or "nenhuma aldeia" in m
+          for m in env.notes.messages[1:]),
+      "o segundo alvo avisa que falta nobre: %r" % env.notes.messages)
+
+# O desconto em si: valor ilegivel nao derruba, e nunca fica negativo.
+units = {"snob": "1", "axe": "x", "light": 10}
+ConquestManager._discount_sent_troops(SimpleNamespace(troops=units),
+                                      {"snob": 1, "axe": 5, "light": 50})
+check(units == {"snob": "0", "axe": "x", "light": "0"},
+      "desconto tolerante: %r" % units)
+ConquestManager._discount_sent_troops(None, {"snob": 1})
+
+
+# --------------------------------------------------------------------------
+# 8.43: a ancora acompanha TODAS as conquistas dela
+# --------------------------------------------------------------------------
+STORE = {
+    "61947": {"status": "train_sent", "reserved_by": "74689"},
+    "61999": {"status": "extra_pending", "reserved_by": "74689"},
+    "62000": {"status": "train_sent", "reserved_by": "41123"},
+    "62001": {"status": "conquered", "reserved_by": "74689"},
+    "62002": {"status": "train_scheduled", "reserved_by": "74689"},
+}
+
+
+class StoreFM:
+    @staticmethod
+    def list_directory(directory, ends_with=None):
+        return ["%s.json" % k for k in STORE]
+
+    @staticmethod
+    def load_json_file(path, **k):
+        data = STORE.get(os.path.basename(path).replace(".json", ""))
+        return dict(data) if data else None
+
+
+saved_fm = attack_module.FileManager
+attack_module.FileManager = StoreFM
+try:
+    cm = anchor(empire(), MANUAL_DEPARTURE)
+    mine = cm._get_my_conquests()
+    handled = []
+    cm._handle_existing = lambda data, cfg: handled.append(data["target_id"]) or (
+        data["target_id"] == "61999")
+    cm.config = {"conquest": {"enabled": True}}
+    ran = cm.run()
+finally:
+    attack_module.FileManager = saved_fm
+
+check([d["target_id"] for d in mine] == ["61947", "61999"],
+      "as duas em andamento da 74689, sem a de outra ancora, a encerrada e a "
+      "agendada (que e do planejador): %r" % mine)
+check(handled == ["61947", "61999"],
+      "run() acompanha as duas, nao so a primeira: %r" % handled)
+check(ran is True, "um envio em qualquer uma conta como envio")
+
+
 print("OK: %d checks" % checks)

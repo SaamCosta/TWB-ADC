@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.7",
+    "version": "4.8",
     "author": "stefan2200"
   },
   "server": {
@@ -132,6 +132,7 @@
     "priority": "fill_gaps",
     "min_points": 100,
     "max_points": 3000,
+    "max_parallel_trains": 1,
     "area_of_interest": {
       "enabled": false,
       "x_min": 0,

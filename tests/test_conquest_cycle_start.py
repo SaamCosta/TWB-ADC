@@ -245,7 +245,8 @@ def test_acompanhamento_roda_antes_do_planejador_e_uma_vez_por_ancora():
     saved = patched(
         conquest_cache=FakeConquestCache({
             # Duas entradas ativas da MESMA ancora: o acompanhamento e por
-            # aldeia (`_get_my_conquest` casa por reserved_by), nao por alvo.
+            # aldeia (`_get_my_conquests` casa por reserved_by e acompanha
+            # todas as da ancora numa chamada so, 8.43), nao por alvo.
             "44155": {"status": "train_sent", "reserved_by": "900"},
             "44156": {"status": "extra_pending", "reserved_by": "900"},
             "44157": {"status": "train_scheduled", "reserved_by": "901"},

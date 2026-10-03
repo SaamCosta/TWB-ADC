@@ -97,6 +97,11 @@ class BarbarianTrainPlanner:
     # sono quando ha send_time proximo (`nearest_send_time`).
     ARRIVAL_MARGIN_SECONDS = 600
 
+    # `conquest.max_parallel_trains` ausente ou ilegivel. 1 e o comportamento
+    # de antes da 8.43 (um trem por vez no imperio), entao config velha, valor
+    # torto ou chave apagada caem no lado conhecido em vez de liberar trens.
+    DEFAULT_MAX_PARALLEL_TRAINS = 1
+
     def __init__(self, wrapper, villages, config, hunter=None, reservation_board=None,
                  world_villages=None, reservation_writer=None):
         self.wrapper = wrapper
@@ -120,6 +125,14 @@ class BarbarianTrainPlanner:
         """
         Monta e agenda no maximo um trem barbaro por ciclo.
         Devolve o target_id agendado, ou None.
+
+        Ate a 8.43 havia tambem um trem por vez no IMPERIO. Agora o teto e
+        `conquest.max_parallel_trains` (default 1, o comportamento antigo), e
+        continua saindo no maximo UM trem novo por ciclo: com ciclo de ~4 h e
+        trem de 7 a 23 h entre agendar e pousar, um por ciclo ja enche o
+        teto, e cabe na escrita por ciclo do quadro da tribo
+        (`ReservationWriter.MAX_WRITES_PER_CYCLE`), que um segundo trem no
+        mesmo ciclo encontraria gasta -- e ficaria sem reserva anunciada.
         """
         cfg = self.config.get("conquest", {})
         if not cfg.get("enabled", False):
@@ -145,6 +158,12 @@ class BarbarianTrainPlanner:
         # a reserva de ALVO um ciclo tarde demais -- e, pior, num ciclo em que
         # o registro ainda diria "train_scheduled".
         self._release_finished_target_claims()
+        # 8.43: depois das quatro acima, que podem tirar um alvo de
+        # `train_scheduled`, e ANTES de contar nobre livre. A reserva de um trem
+        # agendado vive na memoria e o agendamento vive em disco; sem isto,
+        # depois de um reinicio os nobres que esperam o `send_time` contariam
+        # como livres e entrariam num segundo trem.
+        self._sync_scheduled_reserves()
 
         if not self.config.get("hunter", {}).get("enabled", False):
             self.logger.warning(
@@ -154,13 +173,21 @@ class BarbarianTrainPlanner:
             )
             return None
 
-        # Invariante: um trem barbaro por vez no imperio inteiro.
+        # Teto de trens simultaneos no imperio (8.43). Conta toda conquista em
+        # andamento -- agendada, em voo, esperando nobre extra, ou com nobre no
+        # ar sob status errado: `active_conquests()` e a mesma fonte que o farm
+        # e o find_target() usam, entao "ocupa vaga" e "alvo reservado" nao
+        # divergem. Os nobres de um trem ja agendado estao na reserva
+        # `barb_train:*` e os de um trem em voo nao estao em casa, entao o
+        # `_noble_sources()` abaixo so enxerga o que sobra.
         active = ConquestCache.active_conquests()
-        if active:
+        limit = self._max_parallel_trains(cfg)
+        if len(active) >= limit:
             self.logger.info(
-                "Conquest: ja existe conquista barbara em andamento (%s) -- "
-                "o planejador nao monta outra ate ela resolver",
-                ", ".join(sorted(active))
+                "Conquest: %d conquista(s) barbara(s) em andamento (%s), teto de "
+                "%d (conquest.max_parallel_trains) -- o planejador nao monta "
+                "outra neste ciclo",
+                len(active), ", ".join(sorted(active)), limit
             )
             return None
 
@@ -168,9 +195,12 @@ class BarbarianTrainPlanner:
         total = sum(qty for _vid, qty in sources)
         if total < ConquestManager.TRAIN_SIZE:
             self.logger.info(
-                "Conquest: %d/%d nobres no imperio inteiro (%s) -- aguardando",
+                "Conquest: %d/%d nobres livres no imperio inteiro (%s)%s -- aguardando",
                 total, ConquestManager.TRAIN_SIZE,
-                ", ".join("%s:%d" % (vid, qty) for vid, qty in sources) or "nenhum"
+                ", ".join("%s:%d" % (vid, qty) for vid, qty in sources) or "nenhum",
+                (" com %d de %d trem(ns) em andamento (%s)"
+                 % (len(active), limit, ", ".join(sorted(active))))
+                if active else ""
             )
             return None
 
@@ -197,6 +227,28 @@ class BarbarianTrainPlanner:
             if anchor:
                 self._manager_for(anchor)._note_failed_claim(target_id)
         return scheduled
+
+    def _max_parallel_trains(self, cfg):
+        """
+        `conquest.max_parallel_trains` como inteiro >= 1.
+
+        Valor ilegivel, zero ou negativo cai no default (1) com WARNING, em vez
+        de virar "nenhum trem" ou "trens sem teto": os dois mudariam o
+        comportamento do bot por causa de um erro de digitacao no painel, e so
+        um deles seria visivel.
+        """
+        raw = cfg.get("max_parallel_trains", self.DEFAULT_MAX_PARALLEL_TRAINS)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            value = 0
+        if value < 1:
+            self.logger.warning(
+                "Conquest: conquest.max_parallel_trains=%r nao e um inteiro >= 1 "
+                "-- usando %d", raw, self.DEFAULT_MAX_PARALLEL_TRAINS
+            )
+            return self.DEFAULT_MAX_PARALLEL_TRAINS
+        return value
 
     # ------------------------------------------------------------------
     # Nobres disponiveis no imperio
@@ -542,7 +594,7 @@ class BarbarianTrainPlanner:
         ConquestCache.set(target_id, {
             "status": "train_scheduled",
             # Quem "reserva" e o imperio, mas o campo e lido por
-            # _get_my_conquest() para decidir qual aldeia acompanha a conquista
+            # _get_my_conquests() para decidir qual aldeia acompanha a conquista
             # depois. A ancora e a que manda mais nobres.
             "reserved_by": max(per_source, key=lambda v: (per_source[v], v)),
             "scheduled_at": int(time.time()),
@@ -781,7 +833,7 @@ class BarbarianTrainPlanner:
         Fase 2: devolve a vaga do quadro da alianca quando a conquista acabou.
 
         NAO e uma reavaliacao de "interesse": o gatilho e o mesmo conjunto que
-        ja governa a invariante de um trem por vez -- `active_conquests()`.
+        ja governa o teto de trens simultaneos -- `active_conquests()`.
         Alvo que saiu dali resolveu (conquistado, perdido, bloqueado,
         cancelado) e a reserva nao tem mais o que defender. Inventar aqui uma
         segunda nocao de "o bot ainda quer este alvo" criaria uma politica
@@ -866,6 +918,79 @@ class BarbarianTrainPlanner:
                     self.logger.info(
                         "Conquest: soltando reserva orfa %s da aldeia %s -- o "
                         "trem correspondente nao existe mais", key, vid
+                    )
+
+    def _sync_scheduled_reserves(self):
+        """
+        Alinha a reserva `barb_train:<alvo>` de cada trem AGENDADO aos comandos
+        que ainda faltam sair no `cache/hunter/schedules.json`.
+
+        A reserva mora no `TroopManager`, na memoria do processo; o agendamento
+        mora em disco e dura horas (a origem mais perto do alvo e a ultima a
+        sair, porque a chegada e comum). Todo reinicio -- e sessao vencida reinicia o
+        bot quase todo dia -- apagava a reserva e deixava o schedule. Com um
+        trem por vez isso so expunha a escolta ao farm; com trens paralelos
+        (8.43) os nobres que esperam o `send_time` apareceriam livres no
+        `_noble_sources()` e entrariam num SEGUNDO trem, e o primeiro comando a
+        sair levaria o nobre do outro. E o mesmo desenho do
+        `PvpConquestManager._sync_scheduled_reserves` (8.20).
+
+        So comandos `pending` reservam: um comando `sent` ja levou a tropa, e
+        reserva-la descontaria de casa o que nao esta mais em casa. De brinde,
+        isto encolhe a reserva quando o trem sai aos pedacos (origens com
+        `send_time` diferentes), coisa que a reserva inteira so soltava na
+        promocao.
+
+        Arquivo vazio ou ilegivel, ou schedule do alvo ausente, NAO mexe em
+        nada: perder o arquivo nao pode ser lido como "todos os comandos ja
+        sairam" -- seria soltar justamente os nobres que esta funcao protege.
+        Aldeia sem `units` (ainda nao primada neste processo) fica para o
+        proximo ciclo; as origens de um trem tem nobre em casa e sao primadas
+        antes do planejador (`TWB.prime_barbarian_sources`).
+        """
+        scheduled = {}
+        for fname in FileManager.list_directory("cache/conquest", ends_with=".json"):
+            data = FileManager.load_json_file(f"cache/conquest/{fname}") or {}
+            if data.get("status") == "train_scheduled" and data.get("hunter_schedule_key"):
+                scheduled[fname.replace(".json", "")] = data["hunter_schedule_key"]
+        if not scheduled:
+            return
+        schedules = FileManager.load_json_file(Hunter.SCHEDULE_CACHE)
+        if not schedules:
+            return
+
+        for target_id, sched_key in sorted(scheduled.items()):
+            sched = schedules.get(sched_key)
+            if not sched:
+                continue
+            wanted = {}
+            for atk in sched.get("attacks") or []:
+                if atk.get("status") != "pending":
+                    continue
+                bucket = wanted.setdefault(str(atk.get("source_village_id")), {})
+                for unit, qty in (atk.get("troops") or {}).items():
+                    try:
+                        bucket[unit] = bucket.get(unit, 0) + int(qty)
+                    except (TypeError, ValueError):
+                        continue
+
+            key = "%s:%s" % (self.RESERVE_PREFIX, target_id)
+            for vid, village in self.villages.items():
+                reserve = getattr(getattr(village, "units", None), "conquest_reserve", None)
+                if reserve is None:
+                    continue
+                troops = wanted.get(str(vid))
+                if troops:
+                    if reserve.get(key) != troops:
+                        self.logger.info(
+                            "Conquest: reserva do trem contra %s na aldeia %s "
+                            "alinhada ao Hunter: %s", target_id, vid, troops
+                        )
+                        reserve[key] = dict(troops)
+                elif reserve.pop(key, None):
+                    self.logger.info(
+                        "Conquest: reserva do trem contra %s solta na aldeia %s "
+                        "(nenhum comando dela pendente no Hunter)", target_id, vid
                     )
 
     # ------------------------------------------------------------------

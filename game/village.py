@@ -1472,7 +1472,7 @@ class Village:
         # A conquista barbara NAO e chamada daqui desde 2026-09-22: ela roda
         # uma vez por ciclo, no inicio, em TWB.run_barbarian_conquest().
         # Chamar de novo aqui seria, para 29 das 30 aldeias, um `return False`
-        # imediato (`_get_my_conquest()` casa so pelo `reserved_by`), e para a
+        # imediato (`_get_my_conquests()` casa so pelo `reserved_by`), e para a
         # 30a um segundo passe de `_handle_existing()` no mesmo ciclo -- ou
         # seja, um segundo caminho capaz de comprometer nobre pelo mesmo alvo.
         # A reserva de escolta que a aldeia precisa respeitar ja esta em

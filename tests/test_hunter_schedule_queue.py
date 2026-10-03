@@ -46,6 +46,13 @@ def _sched(target, attacks, arrival):
             "status": "pending", "attacks": attacks}
 
 
+# Folga do send_time nos testes que tocam disco. Com 0.05 s o setup (gravar o
+# JSON, construir o Hunter) as vezes passava da hora de saida no Windows, o
+# comando era recusado como atrasado antes de o "painel" agir, e a asserção
+# acusava "o schedule apagado voltou" -- falhava ~1 em 5 sem regressao nenhuma.
+_FILE_MARGIN = 0.5
+
+
 class _TmpRoot:
     """Troca a raiz do FileManager por um diretorio temporario."""
 
@@ -156,7 +163,7 @@ def test_merge_preserva_o_que_o_outro_lado_criou_e_apagou():
 def test_schedule_criado_durante_a_espera_sobrevive():
     now = time.time()
     with _TmpRoot() as root:
-        root.write({"A": _sched("1", [_atk("41123", now + 0.05)], now + 3600)})
+        root.write({"A": _sched("1", [_atk("41123", now + _FILE_MARGIN)], now + 3600)})
         hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
 
         def send(batch, target):
@@ -180,12 +187,15 @@ def test_schedule_apagado_durante_a_espera_nao_sai_nem_volta():
     now = time.time()
     with _TmpRoot() as root:
         root.write({
-            "A": _sched("1", [_atk("41123", now + 0.05)], now + 3600),
+            "A": _sched("1", [_atk("41123", now + _FILE_MARGIN)], now + 3600),
             "B": _sched("2", [_atk("74690", now + 9000)], now + 9999),
         })
         hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
 
+        reached = []
+
         def panel_deletes(_source_id, _config):
+            reached.append(1)
             disk = root.read()
             disk.pop("A")
             root.write(disk)
@@ -195,6 +205,8 @@ def test_schedule_apagado_durante_a_espera_nao_sai_nem_volta():
         hunter._send_attack_batch = lambda batch, target: sent.append(target) or True
         hunter.run({"hunter": {"enabled": True}})
 
+        assert reached, ("o Hunter recusou o comando como atrasado antes da "
+                         "janela -- folga do teste curta, nao regressao")
         assert sent == [], "o comando de um schedule apagado saiu"
         disk = root.read()
         assert "A" not in disk, "o schedule apagado voltou"

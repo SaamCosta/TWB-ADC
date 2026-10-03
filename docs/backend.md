@@ -5282,6 +5282,112 @@ correções, desligada à mão, derruba o teste.
 primeira tela, e o primeiro ataque real recebido responde a semântica do
 `incomings`.
 
+## 8.43 ✅ `P-CONQ-PARALELO` — mais de um trem bárbaro ao mesmo tempo (2026-10-03)
+
+O §9 item 19a, pedido pelo usuário em 23/09. Os Lotes B (§8.35) e a §8.41 eram
+pré-requisito declarado.
+
+**A medição que o item pedia antes de implementar.** Feita só com o `cache/`
+(sem rede), em 2026-10-03:
+- De 22/09 a 03/10 saíram **10 trens em 12 dias**, nunca dois no mesmo dia.
+  Os 12 registros do planejador levaram de 7h13 a 22h51 entre agendar e
+  pousar (mediana ~11 h; a 53691, agendada às 10:57, pousa em 04/10 às
+  09:48), e a janela ativa é das 6h às 23h. Com a trava, o segundo trem do dia
+  não cabia nunca.
+- Às 15:32, os snapshots de `cache/managed` davam **8 nobres em casa**:
+  41123 com 4, 74689 com 3 e 37318 com 1. Quatro estavam reservados para o
+  trem da 53691, e **quatro estavam livres e parados**. O planejador logava
+  `ja existe conquista barbara em andamento (53691)` a cada ciclo.
+- Num trem, só o nobre que conquista é consumido; os outros três voltam. A
+  conta de nobres cresce, e a trava não acompanhava.
+
+**O que mudou.**
+1. **Teto configurável.** `conquest.max_parallel_trains` (padrão **1**, que é
+   o comportamento anterior; valor ilegível, zero ou negativo cai em 1 com
+   WARNING). Conta como vaga toda entrada de `active_conquests()`: agendada,
+   em voo, esperando nobre extra, ou com nobre no ar sob status errado. É a
+   mesma fonte do farm e do `find_target()`.
+2. **Um trem novo por ciclo, no máximo.** Com ciclo de ~4 h e trem de 7 a
+   23 h, um por ciclo já enche o teto. Também cabe no orçamento de uma escrita
+   por ciclo do quadro da tribo (`MAX_WRITES_PER_CYCLE = 1`): um segundo trem
+   no mesmo ciclo encontraria o orçamento gasto e voaria sem reserva
+   anunciada, sem nada que tentasse de novo depois.
+3. **A reserva `barb_train:*` sobrevive a reinício.** Este é o ponto que
+   decidia se dava para ligar. A reserva mora no `TroopManager` (memória), e o
+   agendamento mora em disco por horas. Sessão vencida reinicia o bot quase
+   todo dia. Com a trava, perder a reserva só expunha a escolta ao farm. Sem a
+   trava, os nobres esperando o `send_time` contariam como livres e entrariam
+   num segundo trem. `BarbarianTrainPlanner._sync_scheduled_reserves()` agora
+   reconstrói a reserva a cada ciclo a partir do `cache/hunter/schedules.json`,
+   no mesmo desenho do `PvpConquestManager._sync_scheduled_reserves` (§8.20).
+   Só comando `pending` reserva. Arquivo vazio ou schedule ausente não solta
+   nada. De brinde, a reserva encolhe quando o trem sai aos pedaços, o que
+   antes só acontecia na promoção. Roda depois da promoção, do cancelamento e
+   da limpeza de órfãs, e **antes** de contar nobre.
+4. **O acompanhamento atende todas as conquistas da âncora.**
+   `_get_my_conquest()` devolvia o **primeiro** registro com `reserved_by`
+   igual. A âncora é quem manda mais nobres, então tende a ser a mesma aldeia
+   em dois trens. O segundo ficaria sem confirmação de posse, sem leitura de
+   lealdade e sem nobre extra, e nada no log diria que ele existia. Agora é
+   `_get_my_conquests()` (lista), e o `run()` chama `_handle_existing()` para
+   cada uma.
+5. **O nobre extra desconta da memória a tropa que mandou**
+   (`_discount_sent_troops`, a mesma conta do Hunter depois de despachar).
+   `AttackManager.attack()` não mexe em `troopmanager.troops`. Com duas
+   conquistas na mesma chamada, a segunda veria livre o nobre que a primeira
+   acabou de mandar. O jogo recusaria na confirmação, mas só depois de gastar a
+   requisição, e o log diria "falta tropa" numa aldeia que o bot acha que tem.
+
+**O que já estava certo e foi conferido, sem mudança.**
+- `_noble_sources()` e `_available_troops()` já descontam `barb_train:*` de
+  outro alvo (só a chave `barbarian_conquest` fica de fora).
+- `find_target()` exclui `all_reserved()` e os alvos com nobre no ar. Alvo
+  manual agendado sai de `manual`, e o próximo da fila é o que entra.
+- `_promote_scheduled_trains`, `_cancel_reserved_targets`,
+  `_release_orphan_reserves`, `_release_finished_target_claims`,
+  `prime_barbarian_sources`, `farm_blocked_targets` e o Hunter (fila única
+  desde a §8.36) já iteravam sobre todos os registros.
+- O painel `/conquest` lista todos.
+
+**Troca de risco que vale saber antes de subir o teto.** Um trem novo pode
+levar os nobres que uma conquista anterior usaria como nobre extra, se o trem
+dela pousar curto. Essa conquista então espera um nobre voltar, e o aviso de
+Telegram de sempre sai com o prazo. Não reservei nobre para extra: com 8 em
+casa, reservar 1 por trem ativo impediria o segundo trem. A frequência medida
+é baixa: dos 11 trens do planejador que já pousaram, só a 61947 precisou de
+extra, e a 55647 saiu incompleta (3 de 4, o 4º à mão).
+
+**Config.** Chave nova em `config.example.json` (`build.version` 4.7 → 4.8,
+**só** no exemplo) e em `helpfile.py`. O merge foi conferido antes contra o
+`config.json` vivo: nenhuma seção ou entrada existe só nele, então nada some.
+O merge também injeta o `bot.reuse_game_data_max_age`, que faltava ali (60,
+igual ao padrão do código). **O merge entrega 1**, ou seja, nada muda até o
+usuário subir o valor. Para três trens: `conquest.max_parallel_trains: 3`, e
+`reserve_max_slots` já está em 3.
+
+**Testes.**
+- `tests/test_conquest_parallel.py` (15 casos) cobre o teto e a leitura
+  tolerante, e um trem por ciclo. Cobre também o caso de campo depois de um
+  reinício (8 nobres, 4 no trem da 53691, e o trem novo sai com 41123 ×3 e
+  74689 ×1), o caso sem sobra que não monta trem, e as guardas da
+  reconstrução (só `pending`, arquivo vazio, schedule ausente, trem já
+  promovido, reserva de outro dono, aldeia sem `units`).
+- `tests/test_conquest_extra_origin.py` ganhou dois casos: duas conquistas com
+  um nobre só (manda uma vez, e a segunda avisa), e a âncora acompanhando as
+  duas dela.
+- Provado por mutação: desligar a reconstrução, voltar a trava antiga, deixar
+  `sent` reservar, devolver só a primeira conquista e tirar o desconto. Cada
+  uma derruba o teste correspondente.
+- Suíte: 82/82.
+
+**⏳ Falta campo:** reiniciar o bot e subir o teto. Os sinais no log são, nesta
+ordem:
+1. `reserva do trem contra <alvo> na aldeia <id> alinhada ao Hunter`, logo
+   depois do reinício, com o trem da 53691 ainda agendado;
+2. `trem de 4 nobres agendado` com outra conquista ainda ativa;
+3. depois do pouso, a mesma âncora acompanhando duas conquistas no mesmo
+   ciclo.
+
 ---
 
 ## 9. Próximos passos
@@ -5540,7 +5646,13 @@ P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
 **Acrescentado em 2026-09-23, pedido do usuário (§8.28):**
 
-19a. **`P-CONQ-PARALELO` — mais de um trem bárbaro ao mesmo tempo.** O
+19a. ~~**`P-CONQ-PARALELO`**~~ — ✅ **feito em 2026-10-03** (§8.43):
+    `conquest.max_parallel_trains` (padrão 1), um trem novo por ciclo, a
+    reserva `barb_train:*` reconstruída do Hunter a cada ciclo, e o
+    acompanhamento de todas as conquistas da âncora. Medido antes: 4 nobres
+    livres parados com o trem da 53691 agendado. **⏳ Falta:** o usuário subir
+    o teto, e o campo. Texto original do pedido:
+    **`P-CONQ-PARALELO` — mais de um trem bárbaro ao mesmo tempo.** O
     usuário vai ter 3 trens de nobres disponíveis na maior parte do tempo e
     precisa expandir rápido dentro do alcance de 70 campos. Hoje
     `BarbarianTrainPlanner.run()` sai quando existe **qualquer** conquista em

@@ -900,9 +900,10 @@ class TWB:
 
         ORDEM: ACOMPANHAR ANTES DE PLANEJAR, E ISSO NAO E ESTETICO
         ----------------------------------------------------------
-        `BarbarianTrainPlanner.run()` mantem a invariante de UM trem barbaro
-        por vez e desiste cedo quando `ConquestCache.active_conquests()` nao
-        esta vazio. Quem tira um alvo dali e justamente o acompanhamento
+        `BarbarianTrainPlanner.run()` mantem um teto de trens barbaros
+        simultaneos (`conquest.max_parallel_trains`, 1 por default) e desiste
+        cedo quando `ConquestCache.active_conquests()` ja o enche. Quem tira um
+        alvo dali e justamente o acompanhamento
         (`ConquestManager._handle_existing()`): posse confirmada, alvo perdido
         para outro jogador, alvo reservado pela tribo. No modelo antigo o laco
         de aldeias rodava antes do planejador e essa ordem acontecia por
@@ -911,9 +912,10 @@ class TWB:
         a proxima por um ciclo inteiro -- e um ciclo aqui mede horas.
 
         O acompanhamento e chamado apenas para as aldeias que sao `reserved_by`
-        de um registro ativo. Nao e uma amostra: `_get_my_conquest()` casa
+        de um registro ativo. Nao e uma amostra: `_get_my_conquests()` casa
         exatamente por esse campo, entao as outras 29 aldeias que chamavam
-        `run_conquest()` no laco sempre saiam no primeiro `return False`.
+        `run_conquest()` no laco sempre saiam no primeiro `return False`. Uma
+        ancora com dois trens e chamada uma vez e acompanha os dois (8.43).
         """
         anchors = []
         for data in ConquestCache.active_conquests().values():
