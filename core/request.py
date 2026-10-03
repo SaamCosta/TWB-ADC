@@ -6,6 +6,7 @@ import requests
 
 from core import account_pulse
 from core import game_data_shadow
+from core.reward_gate import RewardGate
 from core.cycle_meter import CycleMeter
 from core.filemanager import FileManager
 from core.notification import Notification
@@ -78,6 +79,9 @@ class WebWrapper:
         # frontend 2.8 W1/W4: incomings/supports da conta, de toda resposta,
         # para o painel. So grava depois de account_pulse.arm() (twb.main).
         self.account_pulse = account_pulse.AccountPulse()
+        # 8.44: recompensas de missao prontas, por aldeia, lidas de toda tela
+        # HTML -- decide se o GET do popup de missoes vale a requisicao.
+        self.reward_gate = RewardGate()
 
     def _remember_game_data(self, response):
         """Guarda o recorte do game_data desta resposta, se houver. Nunca
@@ -90,6 +94,8 @@ class WebWrapper:
             snap = game_data_shadow.snapshot(gd, source_url=response.url, ajax=ajax) if gd else None
             if snap:
                 self.game_data_seen[snap["village_id"]] = snap
+                if getattr(self, "reward_gate", None) is not None:
+                    self.reward_gate.observe(snap["village_id"], response.text)
                 game_data_shadow.remember_full(self, snap["village_id"], gd, response.text)
         except Exception:
             pass

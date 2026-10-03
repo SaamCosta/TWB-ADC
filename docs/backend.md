@@ -5388,6 +5388,73 @@ ordem:
 3. depois do pouso, a mesma âncora acompanhando duas conquistas no mesmo
    ciclo.
 
+## 8.44 ✅ `P-MISSAO-POPUP` — o popup de missões só quando há recompensa (2026-10-03)
+
+§9 item 20 (Camada 1, grátis): cortar requisição que o próprio bot repete.
+
+**A medição.** Em `cache/cycles/` (50 ciclos, até 02/10), a fase `missoes`
+fez **946 GETs** de `new_quests ajax=quest_popup` e **5** `claim_reward`.
+`Village.get_quest_rewards()` baixava o popup em toda aldeia, todo ciclo: ~39
+por ciclo diurno, ~12 s cada com o sono entre requisições, ou ~8 min de ciclo.
+Os 5 resgates (29/09 09:21, 30/09 12:12, 01/10 10:30 e 19:28, 03/10 10:58)
+foram todos na primeira aldeia a rodar depois de a recompensa aparecer.
+
+**Dois candidatos medidos e descartados antes deste, no mesmo passo.**
+- *A lista de relatórios por aldeia* (`report/all`, ~40 por ciclo). A
+  hipótese era que cada aldeia rebaixava relatório que outra já tinha lido.
+  Falsa: o `ReportManager` já é **um só** para o ciclo (`twb.py`, `rm`), e a
+  conferência por data de criação × modificação em `cache/reports` deu **0
+  relatórios reescritos** nos quatro últimos ciclos. A leitura da lista por
+  aldeia é o que mantém os relatórios frescos para o farm da aldeia seguinte;
+  cortar pioraria decisão.
+- *53 `upgrade_flag` numa aldeia só* (52876, ciclo de 01/10). Parecia o laço
+  de upgrade antigo. Não era: o inventário dela hoje não tem nenhum nível com
+  3 ou mais bandeiras e `upgrade_attempts` está vazio. Foi uma cascata única
+  (3 de nível N → 1 de N+1, tipos 3/4/5/6/8 até o 7), custo de uma vez.
+
+**O dado de custo zero, e o que ele significa.** Toda tela HTML do jogo traz
+`RewardSystem.setUnlockableRewardsCount(N)` (27 capturas em `cache/`, todas
+com 0). O nome sugere "recompensas a desbloquear", e isso seria inútil. O JS
+do jogo (`merged/game.47097f.js`) diz outra coisa: a função grava a variável
+`m`, a mesma que, depois de um resgate, recebe `unlocked_rewards_count` do
+servidor; `m` vira o badge "(N)" da aba de recompensas e o ícone de recursos
+no botão de missões. A sonda de 03/10 (`cache/_probe_reward_gate.py`, só
+leitura, dois GETs com o wrapper do bot) separou as duas leituras: o popup da
+41123 trazia **4** recompensas em `setUnlockableRewards` (futuras, presas a
+nível de edifício) e **0** prontas, e o N da tela era **0**. Se N contasse as
+futuras, seria 4. O que nenhuma fonte deu ainda é um N > 0 ao lado de uma
+recompensa pronta.
+
+**O que mudou.**
+- `Extractor.unlocked_rewards_count()` lê N. Ausência devolve `None`, não 0.
+- `core/reward_gate.py`. O `WebWrapper` anota N **por aldeia** de toda
+  resposta que traz a chamada (`post_process`). Resposta AJAX não traz e não
+  apaga o anterior. `Village.get_quest_rewards()` só faz o GET quando não há N
+  desta aldeia, quando ele tem mais de 600 s, ou quando N > 0.
+- **Rede de proteção:** com N = 0, uma conferência de verdade a cada 3 h,
+  para o império inteiro. Se ela achar recompensa pronta, sai um WARNING e o
+  gate se desliga até reiniciar. O bot volta então ao GET em toda aldeia. O
+  pior caso é uma recompensa resgatada até 3 h mais tarde, e é a conferência
+  que vai produzir a evidência que falta.
+- Wrapper sem gate (mock, teste antigo) faz o GET como antes.
+
+**Testes.** `tests/test_reward_gate.py`: parser com o recorte verbatim da
+praça e ausência ≠ zero, decisão (sem contador, velho, positivo, conferência
+e sua janela, outra aldeia), desligamento só no caso que perderia recompensa,
+o fio wrapper → gate, e `get_quest_rewards()` sem GET com N = 0. A variante
+N > 0 só troca o dígito do recorte, porque não há captura com N > 0. O
+diálogo de recompensa do último caso é montado, não capturado, e testa o
+gate, não o `get_quest_rewards` do Extractor. Provado por mutação: decisão que
+sempre busca, `check` que não desliga, `observe` no-op e parser que devolve 0
+derrubam 12, 3, 15 e 9 checagens. Suíte: 83/83.
+
+**⏳ Falta campo.** Reiniciar o bot. No `/cycles`, a fase `missoes` cai de
+~39 para 1 ou 2 requisições por ciclo. No log,
+`Recompensas: conferencia na aldeia X -- contador 0 e popup sem recompensa
+pronta` uma ou duas vezes por ciclo. O sinal que importa é o próximo resgate:
+ele tem que sair com o motivo `contador_positivo`, numa aldeia cuja tela
+dizia N > 0, e nunca pelo WARNING de gate desligado.
+
 ---
 
 ## 9. Próximos passos
@@ -5821,6 +5888,13 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     de relatório**, o maior candidato depois das releituras); `market/send` 60
     + a confirmação dela 35; `place` 52 + 52 + 51 no farm; `main` 40;
     `market/other_offer` 38.
+    ✅ **2026-10-03 (§8.44):** o popup de missões (`new_quests
+    ajax=quest_popup`, ~39 por ciclo, 946 GETs para 5 resgates) só sai quando
+    a tela diz que há recompensa pronta. No mesmo passo, duas hipóteses de
+    corte foram medidas e **descartadas**: a lista de relatórios não é
+    rebaixada entre aldeias (o `ReportManager` já é um só e nenhum relatório
+    foi reescrito), e os 53 `upgrade_flag` da 52876 foram uma cascata única,
+    não laço.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a

@@ -338,6 +338,26 @@ class Extractor:
         return rewards
 
     @staticmethod
+    def unlocked_rewards_count(res):
+        """
+        Quantas recompensas de missao estao prontas para resgate, lido de
+        `RewardSystem.setUnlockableRewardsCount(N)` -- presente em toda tela
+        HTML do jogo. None quando a resposta nao traz a chamada (AJAX, tela
+        sem o cabecalho, sessao caida): ausencia NAO e zero.
+
+        Significado conferido no JS do jogo (`merged/game.47097f.js`,
+        2026-10-03), nao no nome: a funcao grava a mesma variavel que, depois
+        de um resgate, recebe `unlocked_rewards_count` do servidor; e ela vira
+        o badge "(N)" da aba de recompensas e o icone de recursos no botao de
+        missoes. E a contagem de status "unlocked", o mesmo filtro de
+        `get_quest_rewards()` acima.
+        """
+        match = re.search(
+            r'RewardSystem\.setUnlockableRewardsCount\(\s*(\d+)\s*\)', _page_text(res)
+        )
+        return int(match.group(1)) if match else None
+
+    @staticmethod
     def map_data(res):
         """
         Detects other villages on the map page

@@ -1527,6 +1527,17 @@ class Village:
         return False
 
     def get_quest_rewards(self):
+        # 8.44: o popup era baixado em toda aldeia, todo ciclo -- 946 GETs para
+        # 5 resgates em 50 ciclos. Toda tela HTML ja diz quantas recompensas
+        # estao prontas; o gate pula o GET quando esse numero e 0 e fresco, e
+        # confere de verdade de tempos em tempos (core/reward_gate.py).
+        gate = getattr(self.wrapper, "reward_gate", None)
+        reason = None
+        if gate is not None:
+            fetch, reason = gate.decide(self.village_id)
+            if not fetch:
+                self.logger.debug("Quest rewards: nenhuma pronta segundo o jogo, sem GET")
+                return False
         result = self.wrapper.get_api_data(
             action="quest_popup",
             village_id=self.village_id,
@@ -1543,6 +1554,8 @@ class Village:
             return False
         # The data is escaped for JS, so unescape it before sending it to the extractor.
         rewards = Extractor.get_quest_rewards(decode(dialog, 'unicode-escape'))
+        if gate is not None:
+            gate.check(self.village_id, reason, len(rewards))
         for reward in rewards:
             # First check if there is enough room for storing the reward
             for t_resource in reward["reward"]:
