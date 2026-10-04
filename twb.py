@@ -142,6 +142,7 @@ from core.filemanager import FileManager
 from core.request import WebWrapper
 from core.cycle_meter import close_and_report, meter_phase
 from game.village import Village
+from game.reports import ReportManager
 from game.attack import ConquestCache
 from game.conquest_planner import BarbarianTrainPlanner
 from game.hunter import Hunter
@@ -221,14 +222,31 @@ class TWB:
         # docs/backend.md
         self.villages = []
         self.found_villages = []
+        # §8.47: UM leitor de relatorios por processo. Ver _new_village.
+        self.report_manager = None
 
     def _new_village(self, village_id):
         """Create an isolated village state object on the shared HTTP wrapper.
 
         The wrapper is deliberately shared: it owns the authenticated session,
         cookies, connection pool and the latest CSRF hash for the account.
+
+        O `ReportManager` tambem (§8.47). A lista de relatorios e da CONTA, nao
+        da aldeia, e o laco de aldeias ja compartilhava um objeto so (`rm`),
+        mas ele nascia dentro do laco -- depois do prime da conquista. Cada
+        aldeia primada no inicio do ciclo criava o seu, e cada um relia os
+        1.000 arquivos de `cache/reports` no primeiro `read()` e guardava um
+        `last_reports` proprio. Medido em 2026-10-04 01:28: tres
+        `First run, re-reading cache entries` em 42 s. Injetado aqui, na
+        criacao, nenhum caminho que roda antes do laco chega a criar outro.
         """
-        return Village(wrapper=self.wrapper, village_id=village_id)
+        village = Village(wrapper=self.wrapper, village_id=village_id)
+        if self.report_manager is None:
+            self.report_manager = ReportManager(
+                wrapper=self.wrapper, village_id=village_id
+            )
+        village.rep_man = self.report_manager
+        return village
 
     @staticmethod
     def internet_online():
@@ -989,7 +1007,6 @@ class TWB:
             # another village.  Every village must keep this same live wrapper.
             self.villages.append(self._new_village(vid))
         # setup additional builder
-        rm = None
         defense_states = {}
         while self.should_run:
             if not self.internet_online():
@@ -1339,10 +1356,9 @@ class TWB:
                             % village.village_id
                         )
                         continue
-                    if not rm:
-                        rm = village.rep_man
-                    else:
-                        village.rep_man = rm
+                    # O ReportManager ja e um so, injetado em _new_village()
+                    # (§8.47); antes ele era amarrado aqui, tarde demais para o
+                    # prime da conquista no inicio do ciclo.
                     if (
                             "auto_set_village_names" in config["bot"]
                             and config["bot"]["auto_set_village_names"]

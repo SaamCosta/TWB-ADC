@@ -15,6 +15,7 @@ Sem rede. A fixture e o recorte verbatim de `screen=report&mode=all`
 import logging
 import os
 import sys
+from types import SimpleNamespace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -157,10 +158,44 @@ list_urls = [u for u in rm.wrapper.urls if "&view=" not in u]
 check(len(list_urls) == ReportManager.MAX_PAGES,
       "deveria parar em %d paginas: %d" % (ReportManager.MAX_PAGES, len(list_urls)))
 
-# Resposta None na lista nao derruba.
+# Resposta None na lista nao derruba -- e nao conta como leitura recente.
 rm = manager({})
 rm.wrapper.get_url = lambda url: None
 rm.read(full_run=False)
+check(rm.last_list_read is None, "lista que falhou nao pode marcar leitura recente")
+
+
+# --- 3. §8.47: max_age pula a releitura so quando pedido ---------------------
+
+clock = [1000.0]
+reports_mod.time = SimpleNamespace(time=lambda: clock[0])
+rm = manager({0: LIST_HTML})
+rm.read(full_run=False)
+lists = lambda: [u for u in rm.wrapper.urls if "&view=" not in u and "from=" not in u]
+check(len(lists()) == 1, "primeira leitura baixa a lista")
+clock[0] += 120
+rm.read(full_run=False, max_age=300)
+check(len(lists()) == 1, "lista lida ha 120 s com max_age 300 nao e relida: %d" % len(lists()))
+rm.read(full_run=False)
+check(len(lists()) == 2, "sem max_age (laco de aldeias, lealdade) le sempre: %d" % len(lists()))
+clock[0] += 301
+rm.read(full_run=False, max_age=300)
+check(len(lists()) == 3, "lista mais velha que max_age e relida: %d" % len(lists()))
+
+
+# --- 4. §8.47: um ReportManager por processo, injetado na criacao da aldeia --
+
+from twb import TWB  # noqa: E402
+
+bot = TWB()
+bot.wrapper = object()
+first, second = bot._new_village("101"), bot._new_village("202")
+check(first.rep_man is not None and first.rep_man is second.rep_man,
+      "as aldeias tem de nascer com o MESMO ReportManager")
+check(first.rep_man is bot.report_manager,
+      "o leitor compartilhado e o do TWB")
+check(TWB()._new_village("303").rep_man is not first.rep_man,
+      "outra instancia de TWB (retry de main()) tem o seu proprio")
 
 if failures:
     print("FAIL test_report_list:")

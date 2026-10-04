@@ -240,7 +240,14 @@ class Village:
         ):
             self.twp.run(world=self.get_config(section="server", parameter="server"))
 
-    def update_pre_run(self):
+    # §8.47: no prime da conquista, a lista de relatorios lida ha menos que
+    # isto nao e relida. O prime percorre as aldeias de origem em sequencia
+    # (~25 s cada) e baixava a mesma lista -- que e da conta -- uma vez por
+    # aldeia. Nao vale para o laco de aldeias, onde a leitura por aldeia e o
+    # que mantem os relatorios frescos para o farm da seguinte (§8.44).
+    PRIME_REPORT_MAX_AGE = 300
+
+    def update_pre_run(self, report_max_age=0):
         """
         Manage defence, resources and reports
         """
@@ -258,7 +265,7 @@ class Village:
             self.rep_man = ReportManager(
                 wrapper=self.wrapper, village_id=self.village_id
             )
-        self.rep_man.read(full_run=False)
+        self.rep_man.read(full_run=False, max_age=report_max_age)
 
         if not self.def_man:
             self.def_man = DefenceManager(
@@ -1129,7 +1136,7 @@ class Village:
                 return False
 
             self.set_world_config()
-            self.update_pre_run()
+            self.update_pre_run(report_max_age=self.PRIME_REPORT_MAX_AGE)
             self.units_get_template()
             self.units.update_totals()
             # Read before ensure_attack_manager(), which copies both fields

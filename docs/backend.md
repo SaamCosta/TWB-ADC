@@ -5598,6 +5598,53 @@ comercio gravado(s) pela lista, sem abrir`. No `/cycles`, `report/all/view`
 cai de ~90–140 para ~30–45 por ciclo diurno. Conferir também que a fase
 `farm` não muda: os relatórios de ataque continuam sendo abertos.
 
+✅ **Visto em campo em 2026-10-04 às 01:28:09**, no primeiro ciclo depois do
+reinício: `Reports: 4 relatorio(s) de comercio gravado(s) pela lista, sem
+abrir` na BBM 015, e a única página aberta no ciclo foi uma exploração
+(`report/all/view (1)`). Os quatro arquivos têm `type: "trade"` e o `extra`
+previsto. Falta o ciclo diurno para o número do `/cycles`.
+
+## 8.47 ✅ `P-RELATORIO-UNICO` — um leitor de relatórios por processo (2026-10-04)
+
+**O que o log de 01:28 mostrou.** Três `First run, re-reading cache entries`
+em 42 s, um para cada aldeia de origem preparada pela conquista (BBM 015, 001
+e 010). Cada um relia os 1.000 arquivos de `cache/reports` e baixava a lista
+de relatórios de novo.
+
+**Por quê.** A lista de relatórios é da conta, e o laço de aldeias já usava um
+`ReportManager` só (`rm`, em `twb.py`). Só que esse objeto era amarrado
+**dentro** do laço, na vez de cada aldeia. Desde a §8.15 o prime da conquista
+roda antes do laço, e `Village.update_pre_run()` criava um leitor por aldeia
+primada. Cada um tinha o seu `last_reports`, ou seja, três visões do mesmo
+cache em memória.
+
+**O que mudou.**
+- `TWB._new_village()` cria um `ReportManager` por instância de `TWB` e o
+  injeta em toda aldeia na criação. O `rm` do laço saiu. Um retry de `main()`
+  cria um `TWB` novo e, com ele, um leitor novo, que é o comportamento de
+  antes.
+- `ReportManager.read(max_age=...)`: com valor, não relê a lista se a
+  primeira página foi lida com sucesso há menos que isso. Lista que falhou
+  não conta como leitura. O prime passa `Village.PRIME_REPORT_MAX_AGE` (300
+  s). O laço de aldeias e a lealdade do nobre (`_get_real_loyalty`) continuam
+  lendo sempre: no laço, a leitura por aldeia é o que mantém o farm da aldeia
+  seguinte com relatório fresco (§8.44). Na lealdade, o pouso pode ter
+  acontecido segundos antes.
+
+**Ganho.** Uma leitura de 1.000 arquivos por processo em vez de uma por aldeia
+primada. E N−1 GETs da lista por ciclo, onde N é o número de aldeias primadas
+(3 na noite de 04/10; a PvP prima mais).
+
+**Testes.** `tests/test_report_list.py` ganhou: mesmo objeto nas aldeias de
+um `TWB`, objeto próprio num `TWB` novo, `max_age` pulando só quando pedido e
+só dentro da janela, e lista `None` sem marcar leitura. Provado por mutação:
+sem a injeção, sem o pulo e marcando a leitura antes do GET. Suíte: 85/85.
+
+**⏳ Falta campo.** Reiniciar o bot. No log, uma linha só de `First run,
+re-reading cache entries` por processo. No prime, a partir da segunda aldeia
+de origem, nenhum GET de `screen=report&mode=all` (a linha
+`Reports: lista lida ha Ns` é DEBUG).
+
 ---
 
 ## 9. Próximos passos

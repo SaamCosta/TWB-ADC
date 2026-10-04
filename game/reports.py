@@ -4,6 +4,7 @@ Report management
 import json
 import logging
 import re
+import time
 from datetime import datetime
 
 from core.extractors import Extractor
@@ -41,6 +42,8 @@ class ReportManager:
         # Mutavel por instancia (ver CLAUDE.md): read() reatribui, mas
         # last_reports[...] = res tambem e escrito direto em dois pontos.
         self.last_reports = {}
+        # time.time() da ultima primeira pagina lida com sucesso (§8.47).
+        self.last_list_read = None
 
     def has_resources_left(self, vid):
         possible_reports = []
@@ -161,9 +164,26 @@ class ReportManager:
     # paginas no recorte medido), abrindo cada ataque dele.
     MAX_PAGES = 4
 
-    def read(self, page=0, full_run=False, offset=0):
+    def read(self, page=0, full_run=False, offset=0, max_age=0):
+        """
+        Le a lista de relatorios e processa os novos.
+
+        `max_age` (segundos, §8.47): se a primeira pagina foi lida com sucesso
+        ha menos que isso, nao faz nada. Default 0 = sempre le, que e o que o
+        laco de aldeias e a lealdade do nobre precisam. Quem passa valor e o
+        prime da conquista, que le varias aldeias em sequencia no inicio do
+        ciclo e baixava a mesma lista uma vez por aldeia.
+        """
         if not self.logger:
             self.logger = logging.getLogger("Reports")
+
+        if (page == 0 and max_age and self.last_list_read is not None
+                and time.time() - self.last_list_read < max_age):
+            self.logger.debug(
+                "Reports: lista lida ha %.0fs (< %ss), sem reler",
+                time.time() - self.last_list_read, max_age
+            )
+            return
 
         if len(self.last_reports) == 0:
             self.logger.info("First run, re-reading cache entries")
@@ -181,6 +201,8 @@ class ReportManager:
             self.logger.warning("Reports: request timed out for page %d, skipping report read", page)
             return
 
+        if page == 0:
+            self.last_list_read = time.time()
         self.game_state = Extractor.game_state(result)
         new = 0
         from_list = 0

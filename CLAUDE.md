@@ -199,7 +199,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `grid[y][x]`; §8.38)
   e a lista de relatórios (`tests/test_report_list.py` — comércio gravado
   pela miniatura da linha sem abrir a página, recorte verbatim de
-  `screen=report&mode=all`, paginação pelo tamanho real da página; §8.46)
+  `screen=report&mode=all`, paginação pelo tamanho real da página; §8.46;
+  e um `ReportManager` só por processo, injetado em `TWB._new_village()`,
+  com o prime da conquista sem reler a lista lida há < 300 s; §8.47)
   e as zonas por torre de vigia (`tests/test_zone_watchtower.py` — tabela de
   alcance contra o recorte verbatim de `screen=watchtower`, torre mais
   próxima, `covered` por qualquer torre que alcance, fallback por raio sem
