@@ -119,9 +119,66 @@ class SnobManager:
                 "No more snobs available, awaiting snob creating, snob death or village loss"
             )
             return False
+        # "Ainda podem ser produzidos" e' o limite da CONTA (moedas/aldeias),
+        # nao diz se ESTA aldeia paga o nobre. Antes daqui o bot mandava o
+        # action=train as cegas e o jogo recusava calado: em toda aldeia
+        # recrutadora, todo ciclo, sem nunca pedir o recurso do nobre (8.52).
+        next_cost = self.next_snob_cost(result.text)
+        if next_cost:
+            self.resman.requested.pop("snob", None)
+            if not self.has_enough(next_cost, request=True):
+                self.is_incomplete = True
+                self.logger.info(
+                    "Nobre: sem recurso para formar (custo %s, tem %s), pedido registrado",
+                    {r: next_cost[r] for r in ("wood", "stone", "iron")},
+                    {r: self.resman.actual.get(r) for r in ("wood", "stone", "iron")},
+                )
+                return False
+        blocked = self.train_blocked_reason(result.text)
+        if blocked:
+            # Recurso basta (ou o custo nao foi lido) e o jogo ainda assim
+            # nao oferece o botao -- populacao, por exemplo. Nao e' falta de
+            # recurso, entao nao trava o recrutamento da aldeia.
+            self.logger.info("Nobre: academia nao deixa formar agora: %s", blocked)
+            return False
         train_snob_url = f"game.php?village={self.village_id}&screen=snob&action=train&h={self.wrapper.last_h}"
         self.wrapper.get_url(train_snob_url)
         return True
+
+    @staticmethod
+    def next_snob_cost(text):
+        """
+        Custo do proximo nobre, do script da propria academia:
+        `BuildingSnob.Modes.train.next_snob = {"id":"next_snob","wood":40000,...}`
+        (br143, 2026-10-04). E' o mesmo numero de `next_snob_cost_*` na tabela,
+        ja' com o que o mundo/bandeira mudar. None quando nao ha' o script ou ele
+        nao parseia -- quem chama segue como antes, sem gate.
+        """
+        match = re.search(
+            r"BuildingSnob\.Modes\.train\.next_snob\s*=\s*(\{.+?\})", text or ""
+        )
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(1))
+            return {r: int(data[r]) for r in ("wood", "stone", "iron")}
+        except (ValueError, KeyError, TypeError):
+            return None
+
+    @staticmethod
+    def train_blocked_reason(text):
+        """
+        Texto da celula "Formar" quando o jogo a marca inativa
+        (`<td id="train_snob_cell" class="inactive">Recursos disponiveis ...</td>`),
+        ou None. So' a forma inativa foi capturada; qualquer outra coisa passa.
+        """
+        match = re.search(
+            r'(?s)id="train_snob_cell"\s+class="inactive"\s*>(.*?)</td>', text or ""
+        )
+        if not match:
+            return None
+        reason = re.sub(r"<[^>]+>", " ", match.group(1))
+        return " ".join(reason.split()) or "inativa"
 
     def storage_item(self, result):
         """

@@ -173,6 +173,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   verbatim, `error_level: true` como "nível máximo" para o `light: 3` dos
   templates num mundo de nível único, GET só com pesquisa pendente ou a cada
   24 h; §8.50)
+  e o portão de recurso antes de formar nobre
+  (`tests/test_snob_train_gate.py` — custo de `next_snob` e célula "Formar"
+  inativa, recorte verbatim da academia; vaga da conta ≠ recurso da aldeia;
+  §8.52)
   e a tropa em casa da coleta (`tests/test_gather_units_home.py` —
   `unit_counts_home` da tela de coleta igual à linha "Desta aldeia" de
   `place/units`, com recorte verbatim de uma aldeia com apoio recebido; sem

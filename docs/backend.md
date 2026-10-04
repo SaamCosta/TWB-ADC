@@ -5880,6 +5880,80 @@ ciclo diurno, ~5 a 8 min a ~15 s cada.
 **⏳ Falta campo.** Reiniciar o bot. No `/cycles`, `coleta place/units` cai
 para zero (ou para o número de aldeias em que a tela veio sem o campo).
 
+## 8.52 ✅ `P-NOBRE-TREINO` — o bot mandava formar nobre sem conferir o custo (2026-10-04)
+
+Achado ao procurar o próximo GET repetido do §9 item 20, e é pior que um GET
+repetido.
+
+**A medição.** Na fase `nobre` dos ciclos gravados, `snob action=train`
+aparece em 17, 17, 21 e 16 de 17 a 23 leituras da academia, em ciclos com
+zero moeda cunhada. Na sessão de 04/10 (bot das 10:29), o mesmo GET saiu da
+BBM 003, 007, 011 e 012, e as quatro seguem com `snob: 0` no
+`cache/managed`. A BBM 007 tinha 109.357 / 28.071 / 6.641 às 11:28.
+
+**A captura** (`cache/_probe_snob.py`, um GET pelo `get_action` do wrapper,
+sem POST e sem `priority_mode`; BBM 007, às 13:50). A academia diz, ao mesmo
+tempo:
+- "Ainda podem ser produzidos: **1**" (limite 49, 8 existentes, 40 aldeias);
+- `BuildingSnob.Modes.train.next_snob = {"wood":40000,"stone":50000,"iron":50000}`;
+- `<td id="train_snob_cell" class="inactive">Recursos disponíveis amanhã às 03:04</td>`,
+  com a aldeia em 125.501 / 58.805 / 11.546.
+
+**O defeito.** `SnobManager.attempt_recruit` só lia a primeira linha. Ela é o
+limite da **conta** (moedas e aldeias), não diz se a aldeia paga o nobre.
+Sendo > 0, o código pulava `need_reserve()` e mandava `action=train` às
+cegas, sem olhar a resposta, e devolvia `True`. Três efeitos, desde o bot
+base:
+1. Um GET recusado por aldeia recrutadora, todo ciclo (hoje até 8, com o
+   `NobleRecruitGate`; antes dele, até 21).
+2. **A aldeia nunca pedia o recurso do nobre.** Os pedidos `snob` só nasciam
+   no caminho da moeda (vaga = 0). Com vaga aberta, nem o compartilhamento nem
+   o mercado sabiam que ela juntava para um nobre, e a vaga ficava esperando o
+   acaso de uma aldeia acumular 40k/50k/50k sozinha.
+3. `is_incomplete` ficava `False`, então `prioritize_snob` (hoje desligado em
+   todas) também não funcionaria nesse caso.
+
+**O que mudou** (`game/snobber.py`):
+- `SnobManager.next_snob_cost(text)` lê o custo do script da academia
+  (`None` se faltar ou não parsear). Com custo lido e recurso curto, não há
+  GET. O que falta vai para `requested["snob"]` (fonte de déficit, igual à
+  moeda; `SHORTFALL_SOURCES` do compartilhamento) e `is_incomplete` fica
+  `True`. O pedido antigo é limpo antes, porque moeda e nobre gravam na mesma
+  chave e `request()` só sobrescreve recurso a recurso: sem isso, a madeira
+  pedida para uma moeda ficaria pendurada no pedido do nobre.
+- `SnobManager.train_blocked_reason(text)`: com a célula "Formar" inativa
+  (população, por exemplo), não há GET e o motivo do jogo vai para o log. Não
+  é falta de recurso, então não trava o recrutamento.
+- Falha aberta: sem o script de custo e sem a forma inativa da célula, o
+  caminho antigo segue igual.
+- Log: `Nobre: sem recurso para formar (custo …, tem …), pedido registrado`,
+  e `Nobre: academia nao deixa formar agora: <texto do jogo>`.
+
+**Efeito de comportamento, de propósito.** As até 8 aldeias recrutadoras
+passam a pedir o recurso do nobre quando a conta tem vaga. O compartilhamento
+(regra de necessidade) e o mercado passam a abastecê-las. Nada se perde
+quando uma delas ocupa a vaga: as outras voltam a ver vaga 0 e o pedido vira
+pedido de moeda, que é da conta inteira.
+
+**Não verificado.** A forma **ativa** da célula, e se o
+`GET …&action=train&h=` realmente forma o nobre quando o recurso basta. Nada
+nos dados de hoje mostra um nobre formado por esse GET, e o usuário recruta à
+mão na mesma conta (9º padrão). O teste do caso ativo usa uma célula suposta.
+Como o código só reconhece a forma inativa, ele não depende disso. A primeira
+aldeia que juntar 40k/50k/50k com vaga aberta responde: `snob` subindo no
+`cache/managed` sem ação manual.
+
+**Testes.** `tests/test_snob_train_gate.py` (9), com fixture verbatim
+(`tests/fixtures/snob_train_short_br143.html`, o recorte da tabela de
+formação até o `storage_item`, sem o formulário que carrega o `h`). Provado
+por mutação: sem o gate de custo, sem limpar o pedido antigo e sem a célula
+inativa, cada um derruba o teste. Suíte: 89/89.
+
+**⏳ Falta campo.** Reiniciar o bot. No `/cycles`, `nobre snob action=train`
+cai para o número de nobres de fato formados. No log, `Nobre: sem recurso
+para formar` nas recrutadoras, e `required_resources.snob` no
+`cache/managed` delas.
+
 ---
 
 ## 9. Próximos passos
@@ -6331,6 +6405,10 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     32 por ciclo diurno). A tropa em casa sai do `unit_counts_home` da tela de
     coleta, que ela já baixava, e isso foi conferido numa aldeia com apoio
     recebido.
+    ✅ **2026-10-04 (§8.52):** o `snob action=train` (até 8 por ciclo, até
+    21 antes da §8.48) era mandado às cegas a toda aldeia recrutadora, com
+    o jogo recusando. Ele só sai quando a academia diz que o recurso basta.
+    No mesmo passo, a aldeia passou a pedir o recurso do nobre.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a

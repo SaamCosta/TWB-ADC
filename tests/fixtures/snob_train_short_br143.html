@@ -1,0 +1,65 @@
+<table class="vis">
+<tr><th>Unidade</th><th colspan="2">Requerimentos</th><th>Duração<br />(hh:mm:ss)</th><th>Na Aldeia/<br />Total</th><th>Formar</th></tr>
+<tr>
+<td class="nowrap">
+	<a href="#" class="unit_link" data-unit="snob">
+		<img src="https://dsbr.innogamescdn.com/asset/07afad24/graphic/unit/unit_snob.webp" title="Nobre" alt="Nobre" class="" /> Nobre
+	</a>
+</td>
+<td class="nowrap">
+    <span class="nowrap" id="next_snob_cost_wood"><span class="icon header wood"> </span>40<span class="grey">.</span>000</span>
+    <span class="nowrap" id="next_snob_cost_stone"><span class="icon header stone"> </span>50<span class="grey">.</span>000</span>
+    <span class="nowrap" id="next_snob_cost_iron"><span class="icon header iron" > </span>50<span class="grey">.</span>000</span>
+</td>
+<td><span class="icon header population" title="Trabalhadores"> </span>100</td>
+
+<td>3:08:41</td>
+
+<td>0/0</td>
+<td id="train_snob_cell" class="inactive">Recursos disponíveis amanhã às 03:04</td>
+</tr>
+</table>
+<br />
+
+<script>
+    $(function(){
+        BuildingSnob.Modes.train.next_snob = {"id":"next_snob","wood":40000,"stone":50000,"iron":50000};
+    });
+    var snob_error = 'Recursos disponíveis amanhã às 03:04';
+    var snob_link = '<a href="" class="btn btn-recruit">Formar unidade</a>';
+</script><h4>Quantidade de Nobres que ainda podem ser formados</h4>
+<table class="vis">
+	<tr><td>Limite de Nobres:</td><td>49</td></tr>
+	<tr>
+		<td>- Nobres existentes:</td>
+		<td>
+							<a href="#" onclick="UI.AjaxPopup(event, 'snob_existing', '/game.php?village=40314&amp;screen=snob&amp;ajax=existing_popup', 'Nobres existentes', null, null, 400, 400); return false;">8</a>
+					</td>
+	</tr>
+	<tr>
+		<td>- Nobres em produção:</td>
+		<td>
+							0
+					</td>
+	</tr>
+	<tr><td>- Número de aldeias conquistadas:</td><td>40</td></tr>
+	<tr><th>Ainda podem ser produzidos:</th><th>1</th></tr>
+</table><br />
+
+
+<script type="text/javascript">
+//<![CDATA[
+	$(function(){
+		UI.ToolTip($('.snob_tooltip'));
+
+			});
+//]]>
+</script>
+<script type="text/javascript">
+//<![CDATA[
+	$(function(){
+        BuildingSnob.Modes.train.storage_item = {"wood":24640,"stone":26400,"iron":22000,"id":"coin"};
+        BuildingSnob.Modes.train.initGold();
+	});
+//]]>
+</script>
