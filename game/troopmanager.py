@@ -710,6 +710,38 @@ class TroopManager:
                 )
         return True
 
+    @staticmethod
+    def units_home_from_scavenge(village_data):
+        """
+        Tropa propria em casa, do `unit_counts_home` do `var village` da tela
+        de coleta, no mesmo formato de `Extractor.units_in_village()`: unidade
+        -> quantidade em str, so as maiores que zero.
+
+        Medido em 2026-10-04 na BBM 035, que tinha apoio da BBM 010
+        estacionado: `unit_counts_home` e a linha "Desta aldeia" de
+        `units_home` (75/244/0/28/113), nao o "Total" (87/244/743/28/484).
+        Ou seja, apoio recebido fica de fora, como na leitura de place/units
+        que isto substitui. Fixture: tests/fixtures/scavenge_units_home_br143.html.
+
+        Devolve None quando o campo falta ou nao e legivel (o chamador volta ao
+        GET), e {} quando ele diz que nao ha ninguem em casa: os dois nao podem
+        se confundir.
+        """
+        if not isinstance(village_data, dict):
+            return None
+        counts = village_data.get("unit_counts_home")
+        if not isinstance(counts, dict) or not counts:
+            return None
+        home = {}
+        for unit, qty in counts.items():
+            try:
+                qty = int(qty)
+            except (TypeError, ValueError):
+                return None
+            if qty > 0:
+                home[str(unit)] = str(qty)
+        return home
+
     def gather(self, selection=1, disabled_units=None, advanced_gather=True):
         """
         Used for the gather resources functionality where it uses two options:
@@ -740,15 +772,22 @@ class TroopManager:
 
         self.troops = {}
 
-        get_all = f"game.php?village={self.village_id}&screen=place&mode=units&display=units"
-        result_all = self.wrapper.get_url(get_all)
-        if result_all is None:
-            self.logger.warning("Gather: units request timed out, skipping this cycle")
-            return False
+        # P-COLETA-UNIDADES: a tela de coleta que acabou de chegar ja traz a
+        # tropa em casa. O GET de place/units so volta quando ela nao der.
+        home = self.units_home_from_scavenge(village_data)
+        if home is not None:
+            self.troops = home
+            self.logger.debug("Gather: tropa em casa lida da tela de coleta, sem GET de place/units")
+        else:
+            get_all = f"game.php?village={self.village_id}&screen=place&mode=units&display=units"
+            result_all = self.wrapper.get_url(get_all)
+            if result_all is None:
+                self.logger.warning("Gather: units request timed out, skipping this cycle")
+                return False
 
-        for u in Extractor.units_in_village(result_all):
-            k, v = u
-            self.troops[k] = v
+            for u in Extractor.units_in_village(result_all):
+                k, v = u
+                self.troops[k] = v
 
         troops = dict(self.troops)
 

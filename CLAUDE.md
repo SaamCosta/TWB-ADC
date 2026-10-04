@@ -173,6 +173,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   verbatim, `error_level: true` como "nível máximo" para o `light: 3` dos
   templates num mundo de nível único, GET só com pesquisa pendente ou a cada
   24 h; §8.50)
+  e a tropa em casa da coleta (`tests/test_gather_units_home.py` —
+  `unit_counts_home` da tela de coleta igual à linha "Desta aldeia" de
+  `place/units`, com recorte verbatim de uma aldeia com apoio recebido; sem
+  o campo, o GET antigo volta; §8.51)
   e os trens bárbaros em paralelo (`tests/test_conquest_parallel.py` — teto
   `conquest.max_parallel_trains`, reserva `barb_train:*` reconstruída do
   Hunter depois de reinício para o mesmo nobre não entrar em dois trens;

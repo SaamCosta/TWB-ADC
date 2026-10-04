@@ -5827,6 +5827,59 @@ reconferência e unidade nova ignorada. Cada uma derruba o teste. Suíte: 87/87.
 pesquisas pedidas resolvidas` por aldeia sem pendência. No `/cycles`,
 `recrutamento smith` cai de ~40 para o número de aldeias com pendência.
 
+## 8.51 ✅ `P-COLETA-UNIDADES` — a coleta deixa de pedir `place/units` (2026-10-04)
+
+§9 item 20 (Camada 1, grátis). Escolhido ao reler os dois documentos: o resto
+da Camada 1 é configuração do usuário (21), já está feito (22 à mão, 23 pela
+§8.15) ou pede envio real autorizado (24), e os itens abertos da §8.32
+(A26-09, A26-11) pedem sondagem de erro ou estão atrás de gate desligado.
+
+**A medição.** No último ciclo diurno gravado (03/10, `1791069538.json`, 21
+aldeias, 593 requisições), `place/units` aparece **duas vezes por aldeia**:
+20 na fase `recrutamento` (`update_totals`) e 20 na `coleta`. A segunda é
+`TroopManager.gather()`, que baixa `screen=place&mode=scavenge` e, logo em
+seguida, `place&mode=units` só para saber quem está em casa. A tela de coleta
+já traz isso no `var village`: `unit_counts_home`. A do recrutamento fica,
+porque dela também saem `units_owned_total` (apoio enviado, §8.26).
+
+**A sondagem, montada para poder falhar.** Numa aldeia sem apoio recebido, a
+tropa "em casa" e a tropa "na aldeia" coincidem, e o teste não distinguiria
+nada. Um GET de `overview_villages&mode=units` achou a BBM 035 (52876) com
+apoio da BBM 010 estacionado. As duas telas dela, lidas com 40 s de
+intervalo pelo `WebWrapper` do bot (`cache/_probe_scavenge_units.py`, 3 GETs
+no total, sem `priority_mode`), deram:
+- `unit_counts_home`: lança 75, espada 244, machado 0, espião 28, leve 113;
+- `units_home`, linha "Desta aldeia": 75 / 244 / 0 / 28 / 113;
+- `units_home`, linha "Total": 87 / 244 / **743** / 28 / 484.
+
+Ou seja, `unit_counts_home` é a tropa **própria** em casa, sem o apoio
+recebido, que é exatamente o que `Extractor.units_in_village()` lia.
+
+**O que mudou.** `TroopManager.units_home_from_scavenge(village_data)` converte
+o campo para o formato de antes (str, só > 0). Devolve `None` quando o campo
+falta ou tem valor ilegível, e aí o GET antigo volta. Devolve `{}` quando o
+jogo diz que não há ninguém em casa: as duas coisas não se confundem (6º
+padrão). Nada mais muda. `_deduct_gathered` continua descontando o envio de
+`self.troops`, que vai para o `cache/managed`.
+
+**Efeito indireto conferido.** Antes, a última tela HTML antes do mercado era
+`place/units`, e agora é a de coleta. O reaproveitamento de `game_data` do
+mercado (§9 item 20a, ≤ 60 s) continua valendo: é HTML de jogo com
+`updateGameData`, e um `send_squads` (JSON) segue invalidando o guardado.
+
+**Testes.** `tests/test_gather_units_home.py`, com fixture verbatim
+(`tests/fixtures/scavenge_units_home_br143.html`: a linha `var village` e a
+tabela `units_home` da BBM 035). Cobre a equivalência no caso com apoio, os
+`None` e o `{}`, a coleta sem GET de `place/units` com o esquadrão saindo com
+a tropa da tela, e a volta ao GET sem o campo. Provado por mutação: ignorar o
+campo e devolver sempre `None` derrubam o teste. Suíte: 88/88.
+
+**Ganho esperado.** Um GET por aldeia que coleta, por ciclo: 20 a 32 por
+ciclo diurno, ~5 a 8 min a ~15 s cada.
+
+**⏳ Falta campo.** Reiniciar o bot. No `/cycles`, `coleta place/units` cai
+para zero (ou para o número de aldeias em que a tela veio sem o campo).
+
 ---
 
 ## 9. Próximos passos
@@ -6274,6 +6327,10 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     dos relatórios abertos, ~187 GETs por dia) deixou de ser aberta: a
     miniatura da linha da lista já basta. No caminho, a paginação da lista
     passou a usar o tamanho real da página (50, não 12).
+    ✅ **2026-10-04 (§8.51):** a coleta deixou de pedir `place/units` (~20 a
+    32 por ciclo diurno). A tropa em casa sai do `unit_counts_home` da tela de
+    coleta, que ela já baixava, e isso foi conferido numa aldeia com apoio
+    recebido.
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a
@@ -6284,6 +6341,10 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
 23. **Módulos de conta fora do laço de aldeias**: fechar conquista que pousou
     sem esperar a vez da `reserved_by` (achado 6), e ler
     `game_data.player.incomings` (grátis, toda tela) para defesa e painel.
+    *(Nota de 2026-10-04: a primeira metade já está feita desde a §8.15. O
+    acompanhamento da `reserved_by` roda no início de todo ciclo, também no
+    noturno, em `TWB.run_barbarian_conquest()`, e não espera mais a vez da
+    aldeia.)*
 24. **Hipótese a testar, possivelmente grátis:** o endpoint `scavenge_api`
     `send_squads` que o bot **já usa** aceitar N esquadrões num POST. A tela
     de coleta em massa talvez seja premium (KB não diz), mas o endpoint não
