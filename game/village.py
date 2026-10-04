@@ -95,6 +95,13 @@ class Village:
     # isolado, nos testes e no smoke.
     reservation_board = None
 
+    # 8.48: {vid: decisao} do NobleRecruitGate deste ciclo, instalado por
+    # twb.py junto dos de cima e com a mesma nota: sempre reatribuido, nunca
+    # mutado. None ou aldeia fora do dict = recruta como a config manda.
+    noble_recruit_plan = None
+    # Ultimo modo logado ("recruit"/"mint"), para logar so na troca.
+    _noble_mode_logged = None
+
     twp = TwStats()
 
     def __init__(self, village_id=None, wrapper=None):
@@ -659,6 +666,11 @@ class Village:
         mint_only = not wanted and self.get_village_config(
             self.village_id, parameter="mint_coins", default=False
         )
+        # 8.48: longe dos alvos de conquista, a aldeia deixa de recrutar e so
+        # cunha -- a moeda serve a conta inteira, o nobre ficaria parado aqui.
+        if wanted and self._noble_too_far():
+            wanted = 0
+            mint_only = True
         if (wanted or mint_only) and self.builder.get_level("snob") > 0:
             if not self.snobman:
                 self.snobman = SnobManager(
@@ -666,10 +678,45 @@ class Village:
                 )
                 self.snobman.troop_manager = self.units
                 self.snobman.resman = self.resman
+            if mint_only:
+                # Cunhar nunca pede recurso (`coin_item(request=False)`), mas
+                # um pedido "snob" de quando a aldeia ainda recrutava sobrevive
+                # no ResourceManager entre ciclos, vai para `required_resources`
+                # do cache/managed e faria o compartilhamento seguir mandando
+                # recurso para um nobre que nao vai ser feito. Mesmo motivo
+                # para `is_incomplete`: com `prioritize_snob` ele barra o
+                # recrutamento de tropa da aldeia.
+                if self.resman:
+                    self.resman.requested.pop("snob", None)
+                self.snobman.is_incomplete = False
             self.snobman.wanted = wanted
             self.snobman.mint_only = bool(mint_only)
             self.snobman.building_level = self.builder.get_level("snob")
             self.snobman.run()
+
+    def _noble_too_far(self):
+        """
+        True quando o NobleRecruitGate deste ciclo tirou esta aldeia dos
+        recrutadores (8.48). Sem plano, ou aldeia fora dele, e False: recrutar
+        e o comportamento de antes, entao "nao sei" nao desliga nobre.
+        """
+        decision = (self.noble_recruit_plan or {}).get(self.village_id)
+        if not decision:
+            return False
+        mode = "recruit" if decision.get("recruit") else "mint"
+        if mode != self._noble_mode_logged:
+            hours = decision.get("hours")
+            self.logger.info(
+                "Nobre: %s -- 3o alvo de conquista a %.1f campos%s, posicao %d de %d "
+                "(recrutam as %s mais perto)",
+                "recruta" if mode == "recruit" else "so cunha moeda",
+                decision.get("distance", 0.0),
+                " (~%.1f h)" % hours if hours is not None else "",
+                decision.get("rank", 0), decision.get("of", 0),
+                (self.config.get("conquest") or {}).get("max_noble_recruiters"),
+            )
+            self._noble_mode_logged = mode
+        return mode == "mint"
 
     def check_forced_peace(self):
         """

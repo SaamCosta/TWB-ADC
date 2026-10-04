@@ -418,7 +418,7 @@ class BarbarianTrainPlanner:
         remaining = ConquestManager.TRAIN_SIZE
         noble_range = self._noble_range()
 
-        for vid, available in sources:
+        for vid, available in self._order_by_arrival(sources, target_location):
             if remaining <= 0:
                 break
             if not self._source_reaches(vid, target_location, noble_range):
@@ -451,6 +451,42 @@ class BarbarianTrainPlanner:
             )
             return None
         return plan
+
+    def _order_by_arrival(self, sources, target_location):
+        """
+        `sources` reordenado da origem mais perto do alvo para a mais longe.
+
+        `_noble_sources()` ordena por QUANTIDADE de nobres livres, e ate
+        2026-10-04 o plano pegava as origens nessa ordem. So que a chegada comum
+        do trem e a da origem mais lenta (`_schedule`: `longest`), e todo
+        comando anda na velocidade do nobre (35 min/campo no br143) -- entao um
+        nobre parado no sul da conta entrava no trem so por estar numa aldeia
+        com mais nobres, e atrasava os quatro. Medido nesse dia: as aldeias do
+        sul ficam a 35-40 campos da area de interesse (20-23 h de viagem), as
+        do norte a menos de 17 (menos de 10 h), e cada hora a mais e uma hora
+        de lealdade regenerando no alvo.
+
+        Mesma velocidade para todos, entao "chega primeiro" e "esta mais
+        perto": distancia basta, sem sondar duracao. Empate fica com quem tem
+        mais nobres (menos comandos, escolta mais concentrada) e depois com o
+        id, para a ordem ser deterministica.
+
+        Sem coordenada do alvo nao ha o que medir e a ordem de entrada vale
+        inteira -- o comportamento anterior. Origem sem coordenada vai para o
+        FIM, e nao para o comeco: "nao sei onde fica" nao pode ganhar de "sei
+        que esta perto" (segundo padrao do CLAUDE.md).
+        """
+        if not target_location or len(target_location) != 2:
+            return list(sources)
+        target = (int(target_location[0]), int(target_location[1]))
+
+        def key(item):
+            vid, available = item
+            location = village_location(vid, self.villages.get(vid))
+            distance = field_distance(target, location) if location else float("inf")
+            return (distance, -available, vid)
+
+        return sorted(sources, key=key)
 
     def _noble_range(self):
         """

@@ -5647,6 +5647,81 @@ de origem, nenhum GET de `screen=report&mode=all` (a linha
 
 ---
 
+## 8.48 ✅ `P-NOBRE-LONGE` — origem do trem pela chegada, e aldeia longe dos alvos só cunha (2026-10-04)
+
+**A pergunta do usuário.** "Algumas aldeias ficam fora do alcance de qualquer
+alvo de conquista; elas deveriam parar de produzir nobre?"
+
+**O que a medição mostrou, antes de mexer.** Ninguém está fora do alcance.
+`conquest.max_radius` é 70, o próprio `<snob><max_dist>` do br143. Pelo
+`map/village.txt`, a pior aldeia (BBM 019) tem 172 bárbaras elegíveis a 70
+campos. Uma regra "pare quando não houver alvo no alcance" seria código que
+nunca dispara (15º padrão). O problema real é **tempo de viagem**. O nobre
+anda a 35 min/campo, e a área de interesse fica no norte. Das aldeias com
+academia, a BBM 029 está a 18 campos do 3º alvo elegível (~11 h) e a BBM 019
+a 42 (~25 h). Pior: **o norte não tem academia** (BBM 030 a 040 com academia
+0), então os produtores reais formam um contínuo de 11 a 25 h, sem degrau.
+
+**Parte 1 — o planejador escolhe origens pela chegada.**
+`_noble_sources()` ordena por quantidade de nobres livres, e `_build_plan()`
+pegava as origens nessa ordem. Como a chegada comum é a da origem mais lenta,
+o nobre parado na BBM 015 (o único fora da BBM 001/010 em 04/10) entraria
+num trem só por estar ali, atrasando os quatro. Agora
+`BarbarianTrainPlanner._order_by_arrival()` ordena por distância até o alvo
+(todos andam na velocidade do nobre, então distância = chegada). O empate fica
+com quem tem mais nobres, e origem sem coordenada vai para o **fim**: "não
+sei onde fica" não ganha de "sei que está perto". Sem coordenada do alvo vale
+a ordem antiga. A âncora que **pontua** os alvos continua sendo a aldeia com
+mais nobres, e agora ela pode não entrar no trem. Não é defeito: o alvo
+continua dentro da área de interesse, e o trem é o mais rápido para ele.
+
+**Parte 2 — `NobleRecruitGate` (`game/noble_recruit_gate.py`).** Uma vez por
+ciclo, em `twb.py`, depois do planejador bárbaro (o alvo recém-agendado já
+sai da conta) e antes do laço de aldeias:
+- Candidatas: aldeias com `snobs > 0`, academia > 0 (do builder, ou de
+  `cache/managed` no primeiro ciclo) e `noble_ignore_distance` desligado.
+- Métrica: distância até o **3º** alvo elegível mais próximo. Os filtros são
+  os de `find_target()` que não dependem de quem manda: dono, faixa de pontos,
+  `excluded_targets`, reserva de outro jogador no quadro e conquista ativa.
+  Vale a mesma partição da área de interesse (dentro primeiro). O 3º, e não o
+  1º, porque a BBM 024 tinha **uma** bárbara a 10 campos e nenhuma outra a
+  menos de 35: pelo 1º ela pareceria da linha de frente até o primeiro trem.
+- Régua: as `conquest.max_noble_recruiters` mais perto recrutam (0 =
+  desligado, o default do template). As outras passam a se comportar como
+  `snobs: 0` + `mint_coins: true`. A moeda é da conta e aumenta quantos nobres
+  as aldeias perto podem recrutar. É relativa, e não um teto em horas, pelo
+  contínuo descrito acima: um teto fixo ou não cortava ninguém ou zerava a
+  produção, e envelheceria sozinho (14º padrão). Quando uma aldeia do norte
+  ganhar academia, ela entra no ranking e empurra a mais distante para fora.
+- Ao passar a cunhar, a aldeia solta `resman.requested["snob"]` e
+  `is_incomplete`. O pedido sobrevive entre ciclos e vai para
+  `required_resources` em `cache/managed`, então sem isso o compartilhamento
+  seguiria mandando recurso para um nobre que não vai ser feito.
+- Falha aberta: sem lista do mundo, sem alvo, aldeia sem coordenada ou erro
+  no portão, todo mundo recruta como a config manda.
+
+**Em campo.** `max_noble_recruiters: 8` no `config.json`. Smoke offline com
+a config, a lista do mundo e `cache/managed` reais: recrutam BBM 029, 022, 012,
+011, 003, 001, 007 e 010 (12,5 a 18 h). As 15 restantes só cunham (19 a
+24,6 h). Nobre já recrutado longe continua existindo e entra em trem quando
+estiver entre os mais perto do alvo. Para PvP no sul, ligar
+`noble_ignore_distance` na aldeia.
+
+**Testes.** `tests/test_noble_recruit_gate.py` (20), com as coordenadas reais
+de 04/10: as 23 aldeias com academia e as 53 bárbaras elegíveis da área. Em
+`tests/test_conquest_planner.py`, mais 3 para a ordem por chegada. Provado
+por mutação: sem a ordem, sem soltar o pedido "snob", sem o filtro de
+academia, com o 1º alvo no lugar do 3º e sem o portão na `Village`. O dublê
+de `tests/test_snob_mint_only.py` ganhou o método novo. Suíte: 86/86.
+
+**⏳ Falta campo.** Reiniciar o bot. O bump 4.8 → 4.9 dispara o merge, que
+foi simulado antes e não descarta nada. No log: uma linha `Conquest: recrutam
+nobre as 8 aldeias…` por ciclo, e `Nobre: so cunha moeda` uma vez por aldeia
+cortada. Nas cortadas, `required_resources` em `cache/managed` sem a chave
+`snob` a partir do ciclo seguinte.
+
+---
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

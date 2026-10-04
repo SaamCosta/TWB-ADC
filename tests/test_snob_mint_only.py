@@ -285,8 +285,12 @@ def _village(snobs=0, mint_coins=False, snob_level=1):
         snobman=None,
         units=types.SimpleNamespace(wanted={}, total_troops={}),
         resman=FakeResman(),
+        # 8.48: sem plano do NobleRecruitGate a aldeia segue a config.
+        noble_recruit_plan=None,
+        _noble_mode_logged=None,
     )
     vil.get_village_config = types.MethodType(Village.get_village_config, vil)
+    vil._noble_too_far = types.MethodType(Village._noble_too_far, vil)
     vil.run_snob_recruit = types.MethodType(Village.run_snob_recruit, vil)
     return vil
 

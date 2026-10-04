@@ -329,6 +329,53 @@ def test_escolta_e_redistribuida_quando_a_aldeia_manda_menos_de_quatro():
     assert da_41140[0]["troops"]["axe"] == 400  # 100 * (4/1)
 
 
+def _norte_e_sul():
+    """
+    Coordenadas reais de 2026-10-04: a BBM 019 (579|318) no sul e as BBM 038
+    (572|287) e BBM 036 (575|287) no norte, com o alvo em 570|280, dentro da
+    area de interesse. O sul tem MAIS nobres -- era isso que o colocava na
+    frente do trem.
+    """
+    return {
+        "35059": _Village("35059", {"snob": 4, "axe": 4000}, [579, 318]),
+        "55553": _Village("55553", {"snob": 2, "axe": 3000}, [572, 287]),
+        "57689": _Village("57689", {"snob": 2, "axe": 3000}, [575, 287]),
+    }
+
+
+def test_plano_pega_as_origens_mais_perto_do_alvo():
+    """
+    A chegada comum e a da origem mais lenta, e todo comando anda na
+    velocidade do nobre. 4 nobres da BBM 019 (39 campos, ~22,7 h) davam um
+    trem pior que 2+2 do norte (~7 e ~9 campos) so por estarem juntos.
+    """
+    p, _ = _planner(villages=_norte_e_sul())
+    plan = p._build_plan("49709", p._noble_sources(), {},
+                         target_location=[570, 280])
+    origens = [atk["source_village_id"] for atk in plan]
+    assert "35059" not in origens
+    assert origens.count("55553") == 2 and origens.count("57689") == 2
+
+
+def test_sem_coordenada_do_alvo_vale_a_ordem_por_quantidade():
+    """Controle do teste acima: sem alvo localizado nao ha o que medir."""
+    p, _ = _planner(villages=_norte_e_sul())
+    plan = p._build_plan("49709", p._noble_sources(), {})
+    assert [atk["source_village_id"] for atk in plan] == ["35059"] * 4
+
+
+def test_origem_sem_coordenada_vai_para_o_fim():
+    """
+    "Nao sei onde fica" nao pode ganhar de "sei que esta perto". Se a falta
+    de coordenada virasse distancia 0, a origem desconhecida furaria a fila.
+    """
+    villages = _norte_e_sul()
+    villages["55553"].area.my_location = None
+    p, _ = _planner(villages=villages)
+    ordem = [vid for vid, _ in p._order_by_arrival(p._noble_sources(), [570, 280])]
+    assert ordem == ["57689", "35059", "55553"]
+
+
 def test_origem_fora_do_alcance_do_nobre_fica_de_fora():
     """
     O alvo entra na lista por estar no raio de ALGUMA aldeia com nobre; isso

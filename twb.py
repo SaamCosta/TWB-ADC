@@ -153,6 +153,7 @@ from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
 from game.reservation_sniper import ReservationSniper
 from game.world_villages import WorldVillages
+from game.noble_recruit_gate import NobleRecruitGate
 from game.player_stats import PlayerStats
 from game.in_flight import InFlight
 from manager import VillageManager
@@ -1328,6 +1329,28 @@ class TWB:
                             world_villages=world_villages,
                             reservation_writer=reservation_writer,
                         )
+
+                # 8.48: quem recruta nobre e quem so cunha, decidido uma vez
+                # para o imperio. Depois do planejador de proposito: o alvo que
+                # ele acabou de agendar ja sai da conta de alvos disponiveis.
+                # Erro aqui nao derruba o ciclo -- sem plano, toda aldeia
+                # recruta como a config manda, que e o comportamento de antes.
+                noble_recruit_plan = None
+                if config.get("conquest", {}).get("enabled", False):
+                    try:
+                        noble_recruit_plan = NobleRecruitGate(
+                            config=config,
+                            world_villages=world_villages,
+                            reservation_board=reservation_board,
+                            active_targets=ConquestCache.active_conquests(),
+                        ).decide(managed_villages_dict)
+                    except Exception as e:
+                        logging.exception(
+                            "Conquest: falha ao decidir quem recruta nobre (%s) -- "
+                            "todas as aldeias recrutam como a config manda", e
+                        )
+                for _v in self.villages:
+                    _v.noble_recruit_plan = noble_recruit_plan
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):

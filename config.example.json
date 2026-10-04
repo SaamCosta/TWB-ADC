@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.8",
+    "version": "4.9",
     "author": "stefan2200"
   },
   "server": {
@@ -115,6 +115,7 @@
     "advanced_gather": true,
     "snobs": 0,
     "mint_coins": false,
+    "noble_ignore_distance": false,
     "evacuate_fragile_units_on_attack": false,
     "evacuate_on_zone_attack": false,
     "zone_attack_threshold": 1,
@@ -133,6 +134,7 @@
     "min_points": 100,
     "max_points": 3000,
     "max_parallel_trains": 1,
+    "max_noble_recruiters": 0,
     "area_of_interest": {
       "enabled": false,
       "x_min": 0,
