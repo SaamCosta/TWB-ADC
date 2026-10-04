@@ -4484,7 +4484,10 @@ da §8.29, em outro arquivo.
 - **A26-17** — Com a rede fora e o TTL vencido, `WorldConfig.get()` refaz o
   fetch (timeout de 30 s) em cada chamada, e são dezenas por ciclo. Guardar a
   tentativa que falhou.
-- **A26-18** — O Hunter liga `priority_mode` e só desliga no fim do schedule,
+- ✅ **A26-18** *(§8.33, de tabela; banner acrescentado em 2026-10-04)* —
+  `Hunter.run()` devolve `priority_mode` a `False` num `finally`, e o código
+  já citava este item. A lista continuava dando-o como aberto.
+  O Hunter liga `priority_mode` e só desliga no fim do schedule,
   fora de `try/finally` (`hunter.py:291` e `:339`). Uma exceção no envio deixa
   o bot sem pausa entre requisições, que é o gatilho de captcha por taxa.
 - **A26-19** — Tropa evacuada ou mandada de apoio nunca é chamada de volta:
@@ -5763,6 +5766,67 @@ com 1 amostra só. `ReportSupport` (53 em 3 dias) ainda não foi aberto desde o
 **⏳ Falta campo.** Reiniciar o bot. No log, `gold N` dentro da linha
 `gravado(s) pela lista`, e nenhum `Processed ReportAutoMintingSessionEnd`.
 
+
+## 8.50 ✅ `P-FERREIRO-GATE` — a tela do ferreiro só é lida quando há pesquisa por fazer (2026-10-04)
+
+§9 item 20 (Camada 1, grátis). Depois do §8.46/§8.49, o maior GET repetido por
+aldeia que ninguém tinha olhado era `smith`.
+
+**A medição.** O ciclo diurno de 03/10 (15:23, `cache/cycles/1791051798.json`)
+leu o ferreiro **44 vezes** na fase `recrutamento`, praticamente uma por
+aldeia. `TroopManager.attempt_upgrade()` fazia o GET em toda aldeia que tivesse
+qualquer `upgrades` no estágio do template, todo ciclo. Do outro lado,
+`cache/logs/twb_*.log` tem **56** `TWB_UPGRADE` em toda a história, cerca de
+duas pesquisas por dia no império inteiro, quase todas em aldeia recém-conquistada.
+
+**Por que um gate por nível não bastaria.** Os templates pedem `light: 3`,
+`axe: 3`, `spear: 3` e outros níveis acima de 1, e o br143 tem pesquisa
+simplificada (`<tech>2</tech>`), de nível único. "Nível ≥ pedido" nunca
+fecharia e o gate não pularia nada (15º padrão ao contrário). O dado que
+resolve está na própria resposta: o `BuildingSmith.techs` marca com
+`"error_level": true` a unidade que já está no nível máximo. Isso vale em
+qualquer mundo, e o bot não precisa deduzir o máximo pelo tipo de pesquisa.
+O código antigo já tratava esses pedidos como resolvidos, só que por acaso:
+`can_research` vem ausente na unidade pesquisada.
+
+**O que mudou** (`game/troopmanager.py`):
+- `TroopManager.smith_settled_levels(smith_data, wanted)` devolve, das
+  unidades pedidas, as resolvidas: nível ≥ pedido, ou `error_level: true`
+  (entra como `inf`). Unidade pesquisável, sem edifício (`error_buildings`),
+  com falta de recurso ou ausente da tela fica de fora.
+- `smith_read_needed()`: sem GET quando **todo** pedido atual já foi visto
+  resolvido numa leitura com menos de `SMITH_RECHECK_SECONDS` (24 h). Pedido
+  novo (estágio novo do template) reabre a leitura na hora. Com qualquer
+  pendência, a aldeia continua lendo todo ciclo, como antes, porque o builder
+  pode ter subido o edifício que faltava.
+- Leitura falha não arma o gate. O estado mora na instância (1º padrão) e só
+  em memória, então um reinício custa um GET por aldeia.
+- Uma linha INFO por aldeia, quando ela fecha: `Smith: todas as pesquisas
+  pedidas resolvidas (...)`. A pulada é DEBUG.
+
+**Smoke contra o servidor** (`cache/_probe_smith_gate.py`, um GET pelo
+`get_action` do wrapper): a BBM 001 veio hoje com as 8 unidades em nível 1 e
+`error_level: true`, ou seja, o markup de 20/08 continua valendo e essa aldeia
+fecha o gate na primeira leitura.
+
+**Ganho esperado:** perto de 40 GETs por ciclo diurno nas aldeias sem
+pendência (~10 min a 15 s cada), e um GET por aldeia por dia depois disso. A
+fração exata depende de quantas aldeias têm pedido travado por edifício, o que
+não dá para medir sem ler o ferreiro de todas. O `/cycles` vai dizer.
+
+**Testes.** `tests/test_smith_gate.py`, fixture verbatim
+(`tests/fixtures/smith_techs_br143.html`, o `<script>` de
+`cache/_smith_br143.html`): o parser com os campos que o gate usa, as
+resolvidas (incluindo `light: 3` num mundo de nível único), quando ler, o
+`attempt_upgrade()` pulando, relendo depois de 24 h, relendo e tentando
+pesquisar com pedido novo, leitura falha e estado por aldeia. Provado por
+mutação: sem `error_level`, gate desligado, sem reset na pendência, sem
+reconferência e unidade nova ignorada. Cada uma derruba o teste. Suíte: 87/87.
+
+**⏳ Falta campo.** Reiniciar o bot. No log, uma linha `Smith: todas as
+pesquisas pedidas resolvidas` por aldeia sem pendência. No `/cycles`,
+`recrutamento smith` cai de ~40 para o número de aldeias com pendência.
+
 ---
 
 ## 9. Próximos passos
@@ -6203,6 +6267,9 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     rebaixada entre aldeias (o `ReportManager` já é um só e nenhum relatório
     foi reescrito), e os 53 `upgrade_flag` da 52876 foram uma cascata única,
     não laço.
+    ✅ **2026-10-04 (§8.50):** a tela do ferreiro (`smith`, ~40 por ciclo
+    diurno) só é lida quando há pesquisa pedida e ainda não resolvida, com
+    reconferência diária.
     ✅ **2026-10-04 (§8.46):** a página de cada relatório de comércio (72%
     dos relatórios abertos, ~187 GETs por dia) deixou de ser aberta: a
     miniatura da linha da lista já basta. No caminho, a paginação da lista

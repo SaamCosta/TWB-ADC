@@ -96,6 +96,11 @@ class TroopManager:
         # da classe -- há uma instância deste manager por aldeia, e um dict de
         # classe seria compartilhado por todas (1º padrão do CLAUDE.md).
         self.keep_resources = {}
+        # Gate da leitura do ferreiro (ver smith_settled_levels). {unidade:
+        # nivel que o jogo confirmou como resolvido}, e a hora da leitura.
+        # Dict mutavel: instancia, nao classe (1o padrao do CLAUDE.md).
+        self._smith_settled = {}
+        self._smith_settled_at = 0
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
@@ -269,6 +274,69 @@ class TroopManager:
         parts = [int(x) for x in time_str.split(":")]
         return parts[2] + (parts[1] * 60) + (parts[0] * 60 * 60)
 
+    # Reconferencia do ferreiro mesmo com tudo resolvido. Pesquisa nao regride
+    # no br143 (`<tech>2</tech>`, simplificada), entao isto so cobre um mundo
+    # onde regrida e um estado que o bot nao viu mudar (o usuario joga na
+    # mesma conta). Um dia custa 1 GET por aldeia, contra ~3 por dia sem gate.
+    SMITH_RECHECK_SECONDS = 24 * 3600
+
+    @staticmethod
+    def smith_settled_levels(smith_data, wanted_levels):
+        """
+        Das unidades pedidas, quais o ferreiro ja resolveu: {unidade: nivel}.
+
+        Resolvida e a unidade cujo nivel ja alcanca o pedido, ou que o jogo
+        marca com `error_level: true` -- o servidor dizendo que ela esta no
+        nivel maximo. O segundo caso e o comum aqui: os templates pedem
+        `light: 3` e o br143 so tem um nivel, entao "nivel >= pedido" nunca
+        fecharia e o gate nao pularia nada. Unidade no nivel maximo entra com
+        `inf`, porque nenhum pedido futuro a reabre.
+
+        Tudo o que nao e isso fica de fora e mantem a leitura viva: unidade
+        ausente da tela, pesquisa possivel (`can_research`), falta de recurso
+        ou de edificio (`error_buildings`, que muda quando o builder sobe).
+        """
+        settled = {}
+        if not isinstance(smith_data, dict):
+            return settled
+        available = smith_data.get("available")
+        if not isinstance(available, dict):
+            return settled
+        for unit, wanted in (wanted_levels or {}).items():
+            data = available.get(unit)
+            if not isinstance(data, dict):
+                continue
+            if data.get("error_level") is True:
+                settled[unit] = math.inf
+                continue
+            try:
+                level = int(data.get("level"))
+            except (TypeError, ValueError):
+                continue
+            if level >= int(wanted):
+                settled[unit] = level
+        return settled
+
+    @staticmethod
+    def smith_read_needed(wanted_levels, settled, settled_at, now,
+                          recheck=SMITH_RECHECK_SECONDS):
+        """
+        Se a tela do ferreiro precisa ser lida de novo.
+
+        Nao precisa quando todo pedido atual ja foi visto resolvido numa
+        leitura com menos de `recheck` segundos. O pedido vem do estagio do
+        template, entao um estagio novo com unidade nova reabre a leitura
+        sozinho.
+        """
+        if not wanted_levels:
+            return False
+        if not settled or now - settled_at >= recheck:
+            return True
+        for unit, wanted in wanted_levels.items():
+            if settled.get(unit, -1) < int(wanted):
+                return True
+        return False
+
     def attempt_upgrade(self):
         """
         Attempts to upgrade or research a (new) unit type
@@ -283,11 +351,33 @@ class TroopManager:
         if not unit_levels:
             self.logger.debug("Not upgrading because nothing is requested")
             return
+        # §9 item 20: a tela do ferreiro era lida em toda aldeia, todo ciclo
+        # (~40 GETs por ciclo diurno), para uma pesquisa iniciada a cada meio
+        # dia no imperio inteiro. Com tudo resolvido, nao ha o que fazer nela.
+        if not self.smith_read_needed(
+                unit_levels, self._smith_settled, self._smith_settled_at, time.time()):
+            self.logger.debug(
+                "Smith: pesquisas pedidas %s ja resolvidas, sem GET", str(unit_levels)
+            )
+            return False
         result = self.wrapper.get_action(village_id=self.village_id, action="smith")
         smith_data = Extractor.smith_data(result)
         if not smith_data:
             self.logger.debug("Error reading smith data")
             return False
+        settled = self.smith_settled_levels(smith_data, unit_levels)
+        if len(settled) == len(unit_levels):
+            if not self._smith_settled:
+                self.logger.info(
+                    "Smith: todas as pesquisas pedidas resolvidas (%s) -- "
+                    "ferreiro so volta a ser lido com pedido novo ou em %d h",
+                    ", ".join(sorted(unit_levels)), self.SMITH_RECHECK_SECONDS // 3600,
+                )
+            self._smith_settled = settled
+            self._smith_settled_at = time.time()
+            return False
+        self._smith_settled = {}
+        self._smith_settled_at = 0
         for unit_type in unit_levels:
             if not smith_data or unit_type not in smith_data["available"]:
                 self.logger.warning(

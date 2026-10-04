@@ -169,6 +169,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `RewardSystem.setUnlockableRewardsCount` com recorte verbatim, ausência ≠
   zero, conferência a cada 3 h que desliga o gate se o contador mentir;
   §8.44)
+  e o gate do ferreiro (`tests/test_smith_gate.py` — `BuildingSmith.techs`
+  verbatim, `error_level: true` como "nível máximo" para o `light: 3` dos
+  templates num mundo de nível único, GET só com pesquisa pendente ou a cada
+  24 h; §8.50)
   e os trens bárbaros em paralelo (`tests/test_conquest_parallel.py` — teto
   `conquest.max_parallel_trains`, reserva `barb_train:*` reconstruída do
   Hunter depois de reinício para o mesmo nobre não entrar em dois trens;
