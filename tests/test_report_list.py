@@ -147,6 +147,24 @@ check(TRADE in opened, "comercio com icone de comando deveria ser aberto: %s" % 
 check(saved.get(TRADE, {}).get("extra") == {"list_icon": "report_trade"},
       "o aberto guarda a miniatura para a tabela poder crescer: %s" % saved.get(TRADE))
 
+# §8.49: fim de cunhagem automatica (miniatura report_gold), linha verbatim da
+# pagina from=50. Antes eram ~30 GETs na primeira leitura de cada processo.
+with open(os.path.join(ROOT, "tests", "fixtures", "report_list_gold_br143.html"),
+          encoding="utf-8") as fh:
+    GOLD_HTML = fh.read()
+GOLD = "175571825"
+check(Extractor.report_list_icons(GOLD_HTML) == {GOLD: {"thumb": "report_gold", "commands": []}},
+      "linha de cunhagem: %s" % Extractor.report_list_icons(GOLD_HTML))
+saved.clear()
+rm = manager({0: LIST_HTML + GOLD_HTML})
+rm.read(full_run=False)
+opened = [u.rsplit("view=", 1)[1] for u in rm.wrapper.urls if "&view=" in u]
+check(GOLD not in opened, "cunhagem nao deveria ser aberta: %s" % opened)
+check(saved.get(GOLD) == {"type": "gold", "origin": None, "dest": None, "losses": {},
+                          "extra": {"source": "report_list", "list_icon": "report_gold"}},
+      "registro de cunhagem pela lista: %s" % saved.get(GOLD))
+check(GOLD in rm.last_reports, "cunhagem gravada pela lista tem de entrar em last_reports")
+
 # Teto de paginas: todas as paginas sempre novas param em MAX_PAGES.
 def fresh_page(n):
     return LIST_HTML.replace("data-id=\"174", "data-id=\"9%02d" % n).replace("report-174", "report-9%02d" % n)

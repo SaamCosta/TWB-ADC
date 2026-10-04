@@ -205,6 +205,7 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   e a lista de relatórios (`tests/test_report_list.py` — comércio gravado
   pela miniatura da linha sem abrir a página, recorte verbatim de
   `screen=report&mode=all`, paginação pelo tamanho real da página; §8.46;
+  e o fim de cunhagem automática pela miniatura `report_gold`; §8.49;
   e um `ReportManager` só por processo, injetado em `TWB._new_village()`,
   com o prime da conquista sem reler a lista lida há < 300 s; §8.47)
   e as zonas por torre de vigia (`tests/test_zone_watchtower.py` — tabela de

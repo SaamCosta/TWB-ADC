@@ -5720,6 +5720,49 @@ nobre as 8 aldeias…` por ciclo, e `Nobre: so cunha moeda` uma vez por aldeia
 cortada. Nas cortadas, `required_resources` em `cache/managed` sem a chave
 `snob` a partir do ciclo seguinte.
 
+✅ **Visto em campo em 2026-10-04, sessão das 10:29.** Merge 4.8 → 4.9 sem
+perda de chave; `Conquest: recrutam nobre as 8 aldeias mais perto do 3o alvo`
+uma vez; `Nobre: so cunha moeda ... posicao 9 de 23` na BBM 001. O trem
+contra a 61990 saiu das duas origens mais perto (41123 ×3, 74689 ×1, ~28
+campos), e o Hunter disparou a 74689 no segundo marcado.
+
+## 8.49 ✅ `P-RELATORIO-OURO` — fim de cunhagem automática gravado pela lista (2026-10-04)
+
+**O que o log mostrou.** A primeira leitura de relatórios da sessão das 10:29
+levou 4 min (10:29:54 → 10:33:56), e a maior parte foram ~33
+`ReportAutoMintingSessionEnd` abertos um a um, a ~5 s cada. Nenhum consumidor
+lê esse tipo. O §8.46 já previa isso: relatório não-ataque aberto guarda a
+miniatura em `extra.list_icon`, para a tabela crescer por medição.
+
+**Medição.** No `cache/reports`, os 26 relatórios abertos depois do §8.46 com
+`list_icon: report_gold` são todos `ReportAutoMintingSessionEnd`, e nenhum
+outro tipo veio com essa miniatura (`ReportAMStockpileDistribution`,
+`ReportRelic*`, `ReportSupportBack` e `ReportSupportAttackMerged` vieram sem
+miniatura). Um GET da página `from=50` com a sessão do bot confirmou do outro
+lado: as 26 linhas `report_gold` da página casam, por id, com 26
+`ReportAutoMintingSessionEnd` do cache, todas sem ícone de comando.
+
+**O que mudou.** `LIST_ONLY_THUMBS` ganhou `"report_gold": "gold"`. O tipo
+gravado é o nome da miniatura, não o do jogo, pelo mesmo motivo do `trade`:
+26 de 26 não prova que o jogo não use o ícone em outro tipo. O `/reports`
+rotula "Cunhagem automática (pela lista)". A linha de log passou a ser
+`Reports: N relatorio(s) gravado(s) pela lista, sem abrir (gold X, trade Y)`.
+
+**Testes.** `tests/test_report_list.py` com uma linha verbatim nova
+(`tests/fixtures/report_list_gold_br143.html`): a miniatura lida, o relatório
+não aberto e gravado como `gold`. Provado por mutação: sem a entrada na
+tabela, o teste cai. Suíte: 86/86.
+
+**Ganho esperado.** ~30 GETs (~2,5 min) na primeira leitura de cada processo,
+e um GET por sessão de cunhagem concluída depois disso (8 h por aldeia).
+
+**Próximo candidato:** `report_notes_sharing` (`ReportVillageNotesSharing`),
+com 1 amostra só. `ReportSupport` (53 em 3 dias) ainda não foi aberto desde o
+§8.46, então a miniatura dele segue desconhecida.
+
+**⏳ Falta campo.** Reiniciar o bot. No log, `gold N` dentro da linha
+`gravado(s) pela lista`, e nenhum `Processed ReportAutoMintingSessionEnd`.
+
 ---
 
 ## 9. Próximos passos

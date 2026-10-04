@@ -155,7 +155,13 @@ class ReportManager:
     # `report_trade` cobre tambem o `ReportAccept`, e gravar o nome do jogo
     # seria inventar uma distincao que a lista nao da. Miniatura fora desta
     # tabela, ou linha com icone de comando, continua sendo aberta.
-    LIST_ONLY_THUMBS = {"report_trade": "trade"}
+    #
+    # §8.49: `report_gold` -> "gold". Medido em 2026-10-04: as 26 linhas com
+    # essa miniatura na pagina `from=50` eram todas `ReportAutoMintingSessionEnd`
+    # ja abertos, e nenhum outro tipo aberto desde o §8.46 veio com ela. O
+    # nome gravado e o da miniatura, nao o do jogo, pelo mesmo motivo do
+    # "trade": 26 de 26 nao prova que o jogo nao use o icone em outro tipo.
+    LIST_ONLY_THUMBS = {"report_trade": "trade", "report_gold": "gold"}
 
     # Paginas lidas no maximo por chamada quando TODA a pagina e nova. A lista
     # vem com 50 por pagina no br143 (medido em 2026-10-04); 4 paginas = 200
@@ -205,7 +211,7 @@ class ReportManager:
             self.last_list_read = time.time()
         self.game_state = Extractor.game_state(result)
         new = 0
-        from_list = 0
+        from_list = {}
 
         ids = Extractor.report_table(result)
         icons = Extractor.report_list_icons(result)
@@ -220,7 +226,7 @@ class ReportManager:
                     "source": "report_list", "list_icon": row["thumb"],
                 })
                 self.last_reports[report_id] = res
-                from_list += 1
+                from_list[list_type] = from_list.get(list_type, 0) + 1
                 continue
 
             url = f"game.php?village={self.village_id}&screen=report&mode=all&group_id=0&view={report_id}"
@@ -246,8 +252,9 @@ class ReportManager:
 
         if from_list:
             self.logger.info(
-                "Reports: %d relatorio(s) de comercio gravado(s) pela lista, sem abrir",
-                from_list
+                "Reports: %d relatorio(s) gravado(s) pela lista, sem abrir (%s)",
+                sum(from_list.values()),
+                ", ".join("%s %d" % kv for kv in sorted(from_list.items()))
             )
 
         # Pagina seguinte so quando a pagina inteira era nova -- senao o resto

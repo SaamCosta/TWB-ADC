@@ -3307,6 +3307,8 @@ class ReportReader:
         # §8.46: gravado pela miniatura da lista, sem abrir o relatorio --
         # junta ReportTrade e ReportAccept, que a lista nao distingue.
         "trade": "Comércio (pela lista)",
+        # §8.49: miniatura `report_gold`; nas 26 medidas, cunhagem automática.
+        "gold": "Cunhagem automática (pela lista)",
     }
 
     # Caches de processo, deliberadamente atributos de classe mutaveis: o
