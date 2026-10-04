@@ -5522,6 +5522,82 @@ raio), e o painel volta ao desenho antigo sozinho, porque lê `mode` com default
 `radius`. Depois de reiniciar, o log mostra
 `ZoneManager (watchtower): 40 village(s) → 3 zone(s), 14 covered`.
 
+## 8.46 ✅ `P-RELATORIO-LISTA` — relatório de comércio deixa de ser aberto (2026-10-04)
+
+§9 item 20 (Camada 1, grátis): cortar requisição que o próprio bot repete. O
+maior candidato que sobrava depois das releituras da visão geral (§9 item 20a)
+e do popup de missões (§8.44) era `report/all/view`.
+
+**A medição.** `cache/cycles/`: os ciclos diurnos de 01/10 a 03/10 abriram
+**89, 92, 102, 125 e 139** páginas de relatório cada, a ~15,3 s por requisição
+(sono + rede). `ReportManager.read()` abre **todo** relatório novo da lista, e
+para tudo que não é `ReportAttack` grava só o tipo, com `origin`, `dest` e
+`extra` vazios. Nenhum consumidor do bot lê esse tipo: `safe_to_engage`,
+`farm_manager`, o índice de exploração do PvP e a lealdade do nobre olham só
+`attack`/`scout`; o painel só mostra o rótulo. Dos 780 relatórios criados em
+`cache/reports` de 01/10 a 03/10, **534 eram `ReportTrade` e 26
+`ReportAccept` (72%)**.
+Uma armadilha de medição no caminho: contei primeiro por mtime ("793 em 7
+dias") e o número não fechava com 100+ aberturas por ciclo. O
+`manager.farm_manager` poda `cache/reports` em `bot.max_cached_reports`
+(1.000) por ctime, então o diretório guarda só ~4 dias. O ritmo real é de 240
+a 300 relatórios por dia, e nenhum é reaberto (0 arquivos com mtime > ctime).
+
+**A captura** (`cache/_probe_report_list.py`, um GET com o wrapper do bot,
+`cache/debug/report_list_all.html`). A linha da lista já diz o que é:
+relatório de combate traz os ícones de comando (`graphic/command/attack_small`,
+`spy`); relatório que não é de combate traz uma miniatura
+`graphic/icons/report_*.webp` com `class="report-thumb"`. Cruzado contra o tipo
+gravado em `cache/reports` para as 50 linhas da página: `report_trade` → 27
+`ReportTrade` e **1 `ReportAccept`**. Ou seja, a miniatura não é o tipo. O
+rótulo da linha distinguiria ("forneceu" × "aceitou a sua oferta"), mas é texto
+renomeável (`quickedit`), então não serve de chave.
+
+**Achado de brinde: a lista tem 50 por página, e o código assumia 12.**
+`read()` paginava com `new == 12` e `from=page*12`. Com 50, uma página inteira
+nova (50 novos) **nunca** paginava e o 51º em diante não era lido. E 12 novos
+exatos pediam `from=12`, uma página sobreposta.
+
+**O que mudou.**
+- `Extractor.report_list_icons()` devolve, por id, a miniatura e os ícones de
+  comando da linha. Linha que o regex não reconhece não entra no dict.
+- `ReportManager.LIST_ONLY_THUMBS = {"report_trade": "trade"}`. Linha com essa
+  miniatura **e sem ícone de comando** é gravada sem GET, com
+  `type: "trade"` e `extra: {"source": "report_list", "list_icon":
+  "report_trade"}`. O tipo é `trade`, e não `ReportTrade`, porque a lista não
+  separa as duas coisas e gravar o nome do jogo seria inventar a distinção.
+  Qualquer outra linha (miniatura desconhecida, sem ícone, ou combinação nunca
+  vista) é aberta como antes.
+- Relatório não-ataque que **é** aberto passa a guardar `list_icon` no
+  `extra`. É o dado para a tabela crescer a partir de medição: `ReportSupport`
+  (53 em 3 dias), `ReportAutoMintingSessionEnd` (34) e `ReportFoundMaterial`
+  (24) são os próximos candidatos, e nenhum tem a miniatura capturada ainda.
+- Paginação: página seguinte quando a página **inteira** era nova, a partir do
+  tamanho real dela (`offset + len(ids)`), com teto `MAX_PAGES = 4` (200
+  relatórios). Sem teto, um cache vazio paginaria o histórico inteiro (18
+  páginas no recorte) abrindo cada ataque.
+- `/reports` rotula o tipo novo como "Comércio (pela lista)". Os
+  `ReportTrade`/`ReportAccept` antigos continuam no cache com o nome antigo até
+  a poda levar.
+
+**Ganho esperado:** ~187 GETs por dia (560 em 3 dias), ou ~48 min de ciclo por
+dia a 15,3 s cada; nos ciclos diurnos, cerca de 60 a 100 requisições a menos.
+
+**Testes.** `tests/test_report_list.py`, com fixture verbatim
+(`tests/fixtures/report_list_br143.html`, 5 das 50 linhas, nomes de terceiros
+anonimizados): o parser nas cinco formas de linha (exploração, ataque,
+comércio, oferta aceita, fila do gerente sem ícone), o `read()` abrindo só
+ataque, exploração e o desconhecido, o registro gravado pela lista, a
+combinação miniatura + ícone de comando sendo aberta, a paginação a partir de
+5 numa página de 5, o teto de páginas e a lista `None`. Provado por mutação:
+tabela vazia, paginação antiga, ignorar os ícones de comando e um regex de
+miniatura quebrado derrubam cada um o teste correspondente. Suíte: 85/85.
+
+**⏳ Falta campo.** Reiniciar o bot. No log, `Reports: N relatorio(s) de
+comercio gravado(s) pela lista, sem abrir`. No `/cycles`, `report/all/view`
+cai de ~90–140 para ~30–45 por ciclo diurno. Conferir também que a fase
+`farm` não muda: os relatórios de ataque continuam sendo abertos.
+
 ---
 
 ## 9. Próximos passos
@@ -5962,6 +6038,10 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     rebaixada entre aldeias (o `ReportManager` já é um só e nenhum relatório
     foi reescrito), e os 53 `upgrade_flag` da 52876 foram uma cascata única,
     não laço.
+    ✅ **2026-10-04 (§8.46):** a página de cada relatório de comércio (72%
+    dos relatórios abertos, ~187 GETs por dia) deixou de ser aberta: a
+    miniatura da linha da lista já basta. No caminho, a paginação da lista
+    passou a usar o tamanho real da página (50, não 12).
 21. **Filtro de relatório na fonte** (achado 4): 46% do cache é transporte. A
     KB descreve o filtro sem restrição premium (no mesmo artigo em que cita as
     restrições de publicar e arquivar) → grátis com confiança média, **a

@@ -637,6 +637,41 @@ class Extractor:
         return data
 
     @staticmethod
+    def report_list_icons(res):
+        """
+        Icones de cada linha da lista de relatorios (`screen=report&mode=all`),
+        por id: `{"174926018": {"thumb": "report_trade", "commands": []}, ...}`.
+
+        - `thumb`: a miniatura `graphic/icons/<nome>.webp` (classe
+          `report-thumb`) que o jogo poe no lugar do icone de comando em
+          relatorio que nao e de combate. `None` quando a linha nao tem.
+        - `commands`: os icones `graphic/command/<nome>.webp` do canto da
+          linha (`attack_small`, `spy`, ...), na ordem do markup.
+
+        Existe para o `ReportManager` nao abrir a pagina de um relatorio que
+        ele so ia gravar como tipo (§8.46). Linha que o regex nao reconhece
+        simplesmente nao entra no dict: quem consome trata ausencia como "nao
+        sei" e abre a pagina, como antes.
+
+        ⚠️ A miniatura NAO e o tipo do relatorio. Medido em 2026-10-04 contra
+        `cache/reports`: `report_trade` aparece tanto em `ReportTrade`
+        ("X forneceu Y") quanto em `ReportAccept` ("Z aceitou a sua oferta").
+        O rotulo da linha distinguiria, mas e texto livre que o jogador pode
+        renomear (`quickedit`), entao nao serve de chave.
+        """
+        res = _page_text(res)
+        out = {}
+        for rid, row in re.findall(
+                r'(?s)<tr class="[^"]*\breport-(\d+)"[^>]*>(.*?)</tr>', res):
+            thumb = re.search(
+                r'graphic/icons/(report_\w+)\.\w+"[^>]*class="report-thumb"', row)
+            out[rid] = {
+                "thumb": thumb.group(1) if thumb else None,
+                "commands": re.findall(r'graphic/command/(\w+)\.\w+', row),
+            }
+        return out
+
+    @staticmethod
     def error_box_text(res):
         """
         Texto legivel do primeiro `error_box` de uma resposta do jogo. Aceita a

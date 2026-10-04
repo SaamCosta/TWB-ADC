@@ -145,7 +145,23 @@ class ReportManager:
                     return 0
         return -1
 
-    def read(self, page=0, full_run=False):
+    # §8.46: miniatura da linha da lista -> tipo gravado SEM abrir a pagina.
+    # So entra aqui miniatura medida contra relatorios ja abertos, e so quando
+    # nenhum consumidor do bot le aquele tipo (todos leem apenas "attack" e
+    # "scout"). O tipo gravado e "trade", nao "ReportTrade": a miniatura
+    # `report_trade` cobre tambem o `ReportAccept`, e gravar o nome do jogo
+    # seria inventar uma distincao que a lista nao da. Miniatura fora desta
+    # tabela, ou linha com icone de comando, continua sendo aberta.
+    LIST_ONLY_THUMBS = {"report_trade": "trade"}
+
+    # Paginas lidas no maximo por chamada quando TODA a pagina e nova. A lista
+    # vem com 50 por pagina no br143 (medido em 2026-10-04); 4 paginas = 200
+    # relatorios novos entre duas leituras, o que so acontece depois de o bot
+    # ficar parado. Sem teto, um cache vazio pagina o historico inteiro (18
+    # paginas no recorte medido), abrindo cada ataque dele.
+    MAX_PAGES = 4
+
+    def read(self, page=0, full_run=False, offset=0):
         if not self.logger:
             self.logger = logging.getLogger("Reports")
 
@@ -154,9 +170,8 @@ class ReportManager:
             self.last_reports = ReportCache.cache_grab()
             self.logger.info("Got %d reports from cache", len(self.last_reports))
 
-        offset = page * 12
         url = f"game.php?village={self.village_id}&screen=report&mode=all"
-        if page > 0:
+        if offset > 0:
             url += f"&from={offset}"
 
         result = self.wrapper.get_url(url)
@@ -168,12 +183,24 @@ class ReportManager:
 
         self.game_state = Extractor.game_state(result)
         new = 0
+        from_list = 0
 
         ids = Extractor.report_table(result)
+        icons = Extractor.report_list_icons(result)
         for report_id in ids:
             if report_id in self.last_reports:
                 continue
             new += 1
+            row = icons.get(report_id) or {}
+            list_type = self.LIST_ONLY_THUMBS.get(row.get("thumb"))
+            if list_type and not row.get("commands"):
+                res = self.put(report_id, report_type=list_type, data={
+                    "source": "report_list", "list_icon": row["thumb"],
+                })
+                self.last_reports[report_id] = res
+                from_list += 1
+                continue
+
             url = f"game.php?village={self.village_id}&screen=report&mode=all&group_id=0&view={report_id}"
             data = self.wrapper.get_url(url)
 
@@ -189,15 +216,30 @@ class ReportManager:
                     self.attack_report(data.text, report_id)
                     continue
                 else:
-                    res = self.put(report_id, report_type=report_type)
+                    # A miniatura vai junto para a tabela LIST_ONLY_THUMBS
+                    # poder crescer a partir de dado medido, nao de palpite.
+                    extra = {"list_icon": row["thumb"]} if row.get("thumb") else {}
+                    res = self.put(report_id, report_type=report_type, data=extra)
                     self.last_reports[report_id] = res
 
-        if new == 12 or full_run and page < 20:
+        if from_list:
+            self.logger.info(
+                "Reports: %d relatorio(s) de comercio gravado(s) pela lista, sem abrir",
+                from_list
+            )
+
+        # Pagina seguinte so quando a pagina inteira era nova -- senao o resto
+        # ja foi lido antes. A versao anterior pedia `new == 12` e pulava
+        # `from=page*12`, escrita para uma lista de 12 por pagina; com 50, uma
+        # pagina inteira nova (50) nunca paginava e o 13o-em-diante sumia, e
+        # exatamente 12 novos pediam `from=12`, uma pagina sobreposta.
+        max_pages = 20 if full_run else self.MAX_PAGES
+        if ids and (full_run or new == len(ids)) and page + 1 < max_pages:
             page += 1
             self.logger.debug(
                 "%d new reports where added, also checking page %d", new, page
             )
-            return self.read(page, full_run=full_run)
+            return self.read(page, full_run=full_run, offset=offset + len(ids))
 
     def re_unit(self, inp):
         output = {}

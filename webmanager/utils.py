@@ -3304,6 +3304,9 @@ class ReportReader:
 
     TYPE_LABELS = {
         "attack": "Ataque", "scout": "Scout", "support": "Apoio",
+        # §8.46: gravado pela miniatura da lista, sem abrir o relatorio --
+        # junta ReportTrade e ReportAccept, que a lista nao distingue.
+        "trade": "Comércio (pela lista)",
     }
 
     # Caches de processo, deliberadamente atributos de classe mutaveis: o
