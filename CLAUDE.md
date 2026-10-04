@@ -42,7 +42,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   - `buildingmanager.py` — fila de construção
   - `resources.py` / `resource_sharing.py` — mercado e transferência direta entre aldeias
   - `hunter.py` — agendamento de ataques coordenados (Feature 10)
-  - `zone_manager.py` — clustering geográfico de aldeias (Feature 11)
+  - `zone_manager.py` — zonas geográficas (Feature 11): cada aldeia na zona da
+    torre de vigia (`profile: watchtower`) mais próxima, com `covered` pelo
+    alcance real; sem torre designada, cai no agrupamento por `zones.radius` (§8.45)
   - `pvp_conquest.py` — conquista PvP semi-manual (Feature 13)
   - `simulator.py` — simulador de batalha (usado pelo PvP conquest)
 - **`core/`** — infraestrutura: `request.py` (HTTP/sessão), `extractors.py` (regex sobre
@@ -195,6 +197,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   diplomacia e amigos lidos de `screen=map` com recorte verbatim, precedência
   de `TWMap.getColorByPlayer` com amigo *depois* da relação da tribo, e
   `grid[y][x]`; §8.38)
+  e as zonas por torre de vigia (`tests/test_zone_watchtower.py` — tabela de
+  alcance contra o recorte verbatim de `screen=watchtower`, torre mais
+  próxima, `covered` por qualquer torre que alcance, fallback por raio sem
+  torre designada, e as 40 aldeias reais; §8.45)
   e o apoio a membros da tribo (`tests/test_tribe_support.py` — tópico do
   fórum com markup verbatim e jogadores anonimizados, falta = tabela menos
   respostas depois da edição, planejador por segurança da origem, ciclo

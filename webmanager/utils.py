@@ -1699,14 +1699,25 @@ class ZoneReader:
         """
         zone_data = ZoneReader.load_raw()
         if not zone_data:
-            return {"zones": [], "radius": 10, "all_villages": []}
+            return {"zones": [], "radius": 10, "all_villages": [],
+                    "mode": "radius", "covered": 0}
 
         radius = zone_data.get("radius", 10)
+        # §8.45: zones.json de antes da troca não tem estas chaves -- o painel
+        # cai no desenho antigo (modo raio) até o bot gravar o próximo.
+        mode = zone_data.get("mode", "radius")
+        towers = zone_data.get("towers", {}) or {}
+        vinfo = zone_data.get("villages", {}) or {}
         zones_out = []
         all_villages = []
 
         for i, (zone_name, village_ids) in enumerate(zone_data.get("zones", {}).items()):
             color = ZoneReader.ZONE_COLORS[i % len(ZoneReader.ZONE_COLORS)]
+            tower = towers.get(zone_name)
+            if tower:
+                tvdata = managed_cache.get(tower.get("village_id"), {})
+                tpub = tvdata.get("public", {}) or {}
+                tower = dict(tower, name=tpub.get("name", "Aldeia %s" % tower.get("village_id")))
             villages = []
             for vid in village_ids:
                 vdata = managed_cache.get(vid, {})
@@ -1723,6 +1734,9 @@ class ZoneReader:
                     "under_attack": vdata.get("under_attack", False),
                     "zone": zone_name,
                     "color": color,
+                    "is_tower": bool(tower) and tower.get("village_id") == vid,
+                    "covered": bool((vinfo.get(vid) or {}).get("covered")),
+                    "distance": (vinfo.get(vid) or {}).get("distance"),
                 }
                 villages.append(entry)
                 all_villages.append(entry)
@@ -1732,9 +1746,13 @@ class ZoneReader:
                 "color": color,
                 "villages": villages,
                 "count": len(villages),
+                "tower": tower,
+                "covered": sum(1 for v in villages if v["covered"]),
             })
 
-        return {"zones": zones_out, "radius": radius, "all_villages": all_villages}
+        return {"zones": zones_out, "radius": radius, "all_villages": all_villages,
+                "mode": mode,
+                "covered": sum(1 for v in all_villages if v["covered"])}
 
 
 class EmpireReader:

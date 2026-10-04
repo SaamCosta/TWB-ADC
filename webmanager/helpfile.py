@@ -228,9 +228,12 @@ help_file = {
     'hunter.schedules': 'Exemplo do formato de um agendamento. O estado real vive em '
                         'cache/hunter/schedules.json e é gerenciado pela página /hunter — editar '
                         'aqui não agenda nada',
-    'zones': 'Agrupamento geográfico de aldeias em zonas por proximidade (Feature 11)',
+    'zones': 'Agrupamento geográfico de aldeias em zonas (Feature 11). Centro = aldeias com '
+             'perfil "watchtower": cada aldeia entra na zona da torre mais próxima, e '
+             'cache/zones.json marca "covered" quando alguma torre a alcança com o nível atual',
     'zones.enabled': 'Ativar o sistema de zonas geográficas',
-    'zones.radius': 'Raio em campos para agrupar aldeias na mesma zona (padrão: 10)',
+    'zones.radius': 'Raio em campos do agrupamento antigo, usado SÓ quando nenhuma aldeia tem '
+                    'perfil "watchtower" (padrão: 10). Com torre designada, não tem efeito',
     'pvp_conquest': 'Agendamento semi-manual de conquistas PvP com scout + simulação + Hunter (Feature 13)',
     'pvp_conquest.enabled': 'Ativar o módulo de conquista PvP',
     'pvp_conquest.clear_ratio': 'Fração das tropas da aldeia ofensiva usada no clear (ex: 0.8 = 80%)',

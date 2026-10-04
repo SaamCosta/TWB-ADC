@@ -21,7 +21,14 @@
   </h4>
   <div class="d-flex align-items-center gap-2">
     <span class="badge bg-secondary mr-2">{{ zone_data.zones | length }} zona(s)</span>
+    {% if zone_data.mode == 'watchtower' %}
+    <span class="badge bg-info mr-2">Centro: torres de vigia</span>
+    <span class="badge {% if zone_data.covered < zone_data.all_villages|length %}badge-warning{% else %}badge-success{% endif %} mr-3">
+      {{ zone_data.covered }}/{{ zone_data.all_villages|length }} cobertas
+    </span>
+    {% else %}
     <span class="badge bg-info mr-3">Radius atual: {{ radius }} campos</span>
+    {% endif %}
     <button id="btn-toggle-zones"
             class="btn btn-sm {% if enabled %}btn-success{% else %}btn-danger{% endif %}"
             onclick="toggleZones()">
@@ -56,7 +63,13 @@
     <div class="card mb-3" style="border-color:#c8a96e;">
       <div class="card-body">
         <h6 class="card-title">Configuração</h6>
-        <label class="small fw-bold">Radius de agrupamento</label>
+        <p class="small text-muted mb-2">
+          As zonas são centradas nas aldeias com perfil <code>watchtower</code>:
+          cada aldeia entra na zona da torre mais próxima. O radius abaixo só
+          vale quando nenhuma aldeia tem esse perfil.
+          {% if zone_data.mode == 'watchtower' %}<strong>Hoje ele não está em uso.</strong>{% endif %}
+        </p>
+        <label class="small fw-bold">Radius de agrupamento (sem torres)</label>
         <div class="d-flex align-items-center mt-1">
           <input type="range" id="radius-slider" min="1" max="50"
                  value="{{ radius }}" class="flex-grow-1 mr-2"
@@ -89,12 +102,22 @@
               </div>
               <span class="badge badge-secondary">{{ zone.count }} aldeia(s)</span>
             </div>
+            {% if zone.tower %}
+            <div class="small text-muted ml-3">
+              Torre: {{ zone.tower.name }} — nível {{ zone.tower.level }}
+              ({{ zone.tower.range }} campos) · {{ zone.covered }}/{{ zone.count }} cobertas
+            </div>
+            {% endif %}
             <ul class="list-unstyled mb-0 mt-1 ml-3">
               {% for v in zone.villages %}
               <li class="small text-muted">
                 {% if v.under_attack %}⚠{% endif %}
+                {% if v.is_tower %}🗼{% endif %}
                 {{ v.name }}
                 <span class="text-muted">({{ v.x }}|{{ v.y }})</span>
+                {% if zone_data.mode == 'watchtower' and not v.covered %}
+                  <span class="badge badge-warning" style="font-size:0.65rem" title="Nenhuma torre alcança esta aldeia com o nível atual">sem cobertura</span>
+                {% endif %}
                 {% if v.profile == 'offensive' %}
                   <span class="badge badge-danger" style="font-size:0.65rem">OFF</span>
                 {% elif v.profile == 'defensive' %}
@@ -130,12 +153,16 @@ var currentRadius = {{ radius }};
   if (!villages.length) return;
 
   // Coordinate bounds
+  var towerMode = zoneData.mode === 'watchtower';
+  // Modo torre: a margem é o alcance máximo da torre (nível 20 = 15 campos),
+  // que é o maior círculo desenhado; o radius do config não está em uso.
+  var margin = towerMode ? 15 : currentRadius;
   var xs = villages.map(function(v){ return v.x; });
   var ys = villages.map(function(v){ return v.y; });
-  var minX = Math.min.apply(null, xs) - currentRadius - 2;
-  var maxX = Math.max.apply(null, xs) + currentRadius + 2;
-  var minY = Math.min.apply(null, ys) - currentRadius - 2;
-  var maxY = Math.max.apply(null, ys) + currentRadius + 2;
+  var minX = Math.min.apply(null, xs) - margin - 2;
+  var maxX = Math.max.apply(null, xs) + margin + 2;
+  var minY = Math.min.apply(null, ys) - margin - 2;
+  var maxY = Math.max.apply(null, ys) + margin + 2;
 
   // Alarga a janela do mundo até a proporção do canvas, para x e y terem a
   // mesma escala. Sem isso cada eixo esticava por um fator diferente: o mapa
@@ -183,10 +210,32 @@ var currentRadius = {{ radius }};
       ctx.beginPath(); ctx.moveTo(PAD, cy); ctx.lineTo(W - PAD, cy); ctx.stroke();
     }
 
-    // Zone radius halos
+    // Zone halos
     (zoneData.zones || []).forEach(function(zone) {
+      if (towerMode) {
+        if (!zone.tower) return;
+        var tp = toCanvas(zone.tower.x, zone.tower.y);
+        // Tracejado: alcance no nível 20 (referência). Cheio: alcance real hoje.
+        ctx.beginPath();
+        ctx.arc(tp[0], tp[1], 15 * scale, 0, Math.PI * 2);
+        ctx.strokeStyle = zone.color + '55';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (zone.tower.range > 0) {
+          ctx.beginPath();
+          ctx.arc(tp[0], tp[1], zone.tower.range * scale, 0, Math.PI * 2);
+          ctx.fillStyle = zone.color + '22';
+          ctx.fill();
+          ctx.strokeStyle = zone.color + 'aa';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+        return;
+      }
       if (!zone.villages.length) return;
-      // Use first village as zone anchor for halo
+      // Modo raio: a semente da zona é a primeira aldeia (menor id)
       var anchor = zone.villages[0];
       var p = toCanvas(anchor.x, anchor.y);
       var r = currentRadius * scale;
@@ -230,9 +279,12 @@ var currentRadius = {{ radius }};
       ctx.beginPath(); ctx.arc(p[0], p[1], r + 2, 0, Math.PI*2);
       ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fill();
 
-      // Village circle
-      ctx.beginPath(); ctx.arc(p[0], p[1], r, 0, Math.PI*2);
-      ctx.fillStyle = v.color; ctx.fill();
+      // Village marker: torre = quadrado; sem cobertura = cor esmaecida
+      ctx.beginPath();
+      if (v.is_tower) ctx.rect(p[0] - r, p[1] - r, 2 * r, 2 * r);
+      else ctx.arc(p[0], p[1], r, 0, Math.PI*2);
+      ctx.fillStyle = (towerMode && !v.covered) ? v.color + '66' : v.color;
+      ctx.fill();
 
       // Profile icon inside circle
       ctx.fillStyle = '#fff';
@@ -275,6 +327,8 @@ var currentRadius = {{ radius }};
         '<br/>ID: ' + hit.id +
         '<br/>Coord: ' + hit.x + '|' + hit.y +
         '<br/>Zona: ' + hit.zone +
+        (towerMode ? '<br/>Torre a ' + hit.distance + ' campos — ' +
+          (hit.covered ? 'coberta' : '<span style="color:#fc6">sem cobertura</span>') : '') +
         '<br/>Perfil: ' + (hit.profile || '—') + atk;
     } else {
       tooltip.style.display = 'none';

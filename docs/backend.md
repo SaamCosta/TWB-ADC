@@ -72,7 +72,7 @@ do ciclo. Esse arquivo é o contrato de leitura do webmanager.
 | `game/resources.py` | mercado, troca premium |
 | `game/resource_sharing.py` | transferência direta entre aldeias próprias |
 | `game/hunter.py` | agendamento de ataques coordenados (Feature 10) |
-| `game/zone_manager.py` | clustering geográfico (Feature 11) |
+| `game/zone_manager.py` | zonas geográficas centradas nas torres de vigia (Feature 11, §8.45) |
 | `game/pvp_conquest.py` | conquista PvP semi-manual (Feature 13) |
 | `game/simulator.py` | simulador de batalha |
 | `game/map.py` | varredura de setores do mapa, cache de aldeias |
@@ -347,7 +347,9 @@ persistem. Requisitos: Edifício principal 5 + Fazenda 5. Catapultas destroem.
 compartilhados já vêm marcados, então não sobra nada para a torre marcar. É a
 causa nº 1 de "testei e não funciona".
 
-**Custo.** Raio ≈ `1,1 × 1,1475^(nível−1)`; custo cresce ~17% por nível. O custo
+**Custo.** Raio ≈ `1,1 × 1,1475^(nível−1)` (a tabela exata, arredondada a 0,1, está em
+`screen=watchtower` e foi copiada para `game/zone_manager.py` em 2026-10-03; a
+fórmula erra na borda — 9,94 contra 10 no nível 17, §8.45); custo cresce ~17% por nível. O custo
 que decide é **população**:
 
 | Nível | Raio (campos) | Pop acumulada | Recurso acumulado |
@@ -610,7 +612,7 @@ reaparecer, é aqui que se puxa o fio.**
 
 | Item | Como validar |
 |---|---|
-| Feature 12 (evacuação regional) | primeiro ataque real que dispare a regra |
+| Feature 12 (evacuação regional) | **já disparou**: 17 `TWB_ZONE_EVACUATE` em 30/08 (`twb_1788131605.log`, "1/17 vizinho(s) de zona sob ataque"). Falta conferir o efeito (a tropa frágil saiu mesmo?). Desde §8.45 a zona é a da torre mais próxima |
 | Feature 18 (moral/night no simulador) | isoladamente, nunca foi |
 | Feature 27 (reserva cruzada na conquista bárbara) | próxima conquista bárbara com PvP ativo |
 | Trem PvP falhado → `status: "failed"` | só no próximo train que realmente falhar |
@@ -5454,6 +5456,71 @@ derrubam 12, 3, 15 e 9 checagens. Suíte: 83/83.
 pronta` uma ou duas vezes por ciclo. O sinal que importa é o próximo resgate:
 ele tem que sair com o motivo `contador_positivo`, numa aldeia cuja tela
 dizia N > 0, e nunca pelo WARNING de gate desligado.
+
+## 8.45 ✅ `P-ZONA-TORRE` — zonas centradas nas torres de vigia (2026-10-03)
+
+**Como era.** `ZoneManager.build()` não calculava centro. Pegava a aldeia de
+**menor id** ainda sem zona, abria uma zona com ela e puxava toda aldeia livre a
+até `zones.radius` campos **dela**. A fronteira dependia de qual aldeia era mais
+antiga, não do mapa. Com `radius: 16` saíam 6 zonas, e duas eram artefato: a
+BBM 018 (588|309) fica a 2 campos da BBM 013, que estava na zone_1, mas a 16,1
+da semente (BBM 020), e abria a zone_3. A zone_5 era o mesmo caso dentro da
+zone_4.
+
+**Como ficou** (decisão do usuário: torre mais próxima + `covered`).
+- Centro = toda aldeia com `"profile": "watchtower"` no config, a mesma fonte do
+  `Village.get_watchtower_sites()` da Feature 30. Cada aldeia gerenciada entra na
+  zona da torre mais próxima. Empate fica com o menor id de torre. O nome da zona
+  é `zone_<id da torre>`.
+- Uma torre designada com edifício no nível 0 (hoje a BBM 030) **é** centro de
+  zona, porque foi escolhida pela posição, mas não cobre nada.
+- `covered` = alguma torre alcança a aldeia com o nível de **hoje**, e não
+  necessariamente a da própria zona: uma aldeia perto de uma torre de nível 0
+  pode ser vista por uma torre alta mais distante. `covered_by` diz qual.
+- O nível sai de `cache/managed/<id>.json` → `buidling_levels.watchtower` (o
+  erro de grafia é a chave que o cache grava).
+- **Alcance por nível:** tabela copiada da própria tela `screen=watchtower`
+  (sondada com o wrapper do bot nas aldeias de nível 16 e 10; as duas publicam os
+  20 níveis, `cache/_probe_watchtower.py`). Não usa a fórmula da §4.4, que no
+  nível 17 dá 9,94 contra os 10 do jogo, e a borda é exatamente onde `covered`
+  muda.
+- Sem nenhuma torre designada, o agrupamento antigo por `zones.radius` continua
+  como fallback, com `covered: false` em tudo. `zones.radius` passou a valer só
+  nesse caso (helpfile e painel dizem isso).
+- `cache/zones.json` ganhou `mode`, `towers` (id, x, y, nível, alcance por zona) e
+  `villages` (torre, distância, `covered`, `covered_by` por aldeia). `zones` e
+  `village_zone` mantêm o formato, então a evacuação regional (Feature 12) e o
+  filtro de doador de herança não mudaram de código.
+- `/zones`: halo do alcance real em volta de cada torre, tracejado do nível 20,
+  torre desenhada como quadrado, aldeia sem cobertura esmaecida e com selo, e
+  contagem "N/40 cobertas" no topo.
+
+**Resultado com o cache de 03/10:** 3 zonas — BBM 002 com 24 aldeias, BBM 023
+com 3 e BBM 030 com 13. **14 das 40 cobertas** (13 pela 002 com nível 16 e
+alcance de 8,7, mais a própria 023). Toda aldeia fica a até 13,5 campos da sua
+torre, então com as três no nível 20 a cobertura seria total.
+
+⚠️ **Efeito colateral na evacuação regional.** `evacuate_on_zone_attack` está
+`true` nas 40 aldeias, com `zone_attack_threshold: 1` e janela de 4 h. A maior
+zona passou de 19 para 24 aldeias, e BBM 011/012/014/018 entraram nela. Um
+ataque dentro da janela em qualquer uma das 24 evacua a tropa frágil das outras
+23. Antes já era 1 contra 18; ficou um pouco mais sensível, não mudou de
+natureza. Fronteiras apertadas: a BBM 027 fica a 10,4 da torre 030 e a 10,8 da
+002, e a BBM 025 a 9,2 da 002 e a 10,0 da 030. Uma torre nova pode mudar as duas
+de zona.
+
+**Testes.** `tests/test_zone_watchtower.py` (29 checagens): tabela de alcance
+contra o recorte verbatim de `screen=watchtower` (com guarda provada: trocar o
+nível 17 pelo valor da fórmula derruba o teste com `{17: (9.9, 10.0)}`), torre
+mais próxima, desempate, cobertura por torre que não é a mais próxima, torre de
+nível 0, torre sem cache, fallback por raio, `tower_levels()` e as 40 aldeias
+reais (24/3/13, 14 cobertas). Suíte inteira verde.
+
+**⏳ Falta campo.** O processo do bot carregou o `zone_manager` antigo. Até
+reiniciar, cada ciclo regrava `cache/zones.json` no formato velho (6 zonas por
+raio), e o painel volta ao desenho antigo sozinho, porque lê `mode` com default
+`radius`. Depois de reiniciar, o log mostra
+`ZoneManager (watchtower): 40 village(s) → 3 zone(s), 14 covered`.
 
 ---
 
