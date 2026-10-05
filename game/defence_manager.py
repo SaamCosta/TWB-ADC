@@ -149,6 +149,11 @@ class DefenceManager:
         # Checkpoint cooperativo do Hunter (Village._service_hunter), chamado
         # antes de cada upgrade de bandeira. None fora do bot (testes).
         self.service_callback = None
+        # Cunhagem (§8.55): motivo pelo qual a bandeira desta aldeia não pode
+        # mudar agora (Bônus de bandeira ativo no hub), ou None. Bloqueia a
+        # troca de paz E a de defesa -- trocar cancela o bônus.
+        self.flag_lock_reason = None
+        self._flag_lock_logged = None
         # Todos por instância, não por classe: existe um DefenceManager por
         # aldeia. `supported` era o Bug 3 de docs/backend.md -- suporte
         # enviado por uma aldeia marcava o alvo como "já suportado" para
@@ -616,6 +621,16 @@ class DefenceManager:
         """
         if not self.manage_flags_enabled:
             return
+
+        if self.flag_lock_reason:
+            if self._flag_lock_logged != self.flag_lock_reason:
+                self.logger.info(
+                    "Village %s: bandeira travada (%s), não mexendo -- pedida: %s",
+                    self.village_id, self.flag_lock_reason, set_flag,
+                )
+                self._flag_lock_logged = self.flag_lock_reason
+            return
+        self._flag_lock_logged = None
 
         # Sem confirmação do estado real via manage_flags() ainda (primeiro
         # ciclo, ou ciclo intermediário pulado pela randomização), não age.

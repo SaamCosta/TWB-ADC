@@ -6163,6 +6163,91 @@ laço não volta.
 
 ---
 
+## 8.55 `P-CUNHAGEM` — aba Cunhagem: hub, roteamento, campanha de itens e cunhagem diária (2026-10-05)
+
+**Pedido.** Usar juntos o Bônus de bandeira (dobra a bandeira atual, 48 h, uma
+aldeia) e o Decreto Real (−10 % no custo da moeda, 24 h, todas as aldeias) na
+melhor aldeia, cunhar o máximo, e ter isso num botão do painel. Junto: iniciar a
+cunhagem automática em todas as academias num horário fixo antes do horário
+inativo, e poder rotear o recurso para a aldeia de moeda mais barata mesmo sem
+itens.
+
+**Números do mundo, lidos antes de escrever.**
+
+- Custo base da moeda no br143: 28.000 / 30.000 / 25.000 (tela `snob&mode=coin`,
+  captura de 04/10).
+- A bandeira tipo 7 no nível n dá −(8 + 2n) %. Medido pela coluna de custo de seis
+  aldeias: níveis 1, 2, 3, 4, 5 e 7 dão 25.200, 24.640, 24.080, 23.520, 22.960 e
+  21.840 de madeira. Os níveis 6, 8 e 9 são extrapolação.
+- `train.storage_item` da academia é o custo com **todos** os bônus aplicados
+  (`{"wood":23520,…,"id":"coin"}` na BBM 003). É a única fonte que enxerga
+  Bônus de bandeira e Decreto. O bot mede o custo antes e depois de cada item e
+  grava em `cache/mint/state.json`. O planejador usa a medição por até 6 h e,
+  depois disso, volta à bandeira.
+- `coin_mint_fill_max` é o "(N)" ao lado do campo de cunhar. O usuário lembrou que
+  um clique ali preenche o máximo, e o bot passa a cunhar esse N de uma vez
+  (`action=coin`, `count=N`).
+
+**Endpoints, conferidos sem gastar item.**
+
+- Item: `POST screen=inventory&ajaxaction=consume` com `item_key` e `amount`. Lido
+  em `Inventory.dff6db.js_` na CDN, sem tocar na conta.
+- O diálogo `ajax=item_dialog&dialog=activate_reward` do Bônus de bandeira (GET,
+  só leitura) diz *"serão aplicados em sua aldeia atual"* e não tem seletor: a
+  aldeia é a da URL. O do Decreto diz *"em todas as suas aldeias"*.
+- Cunhagem automática: `POST screen=snob&action=start_auto_minting_session`, sem
+  corpo (formulário "Ativar"). Dura 8 h, cunha sozinha cada moeda que o recurso
+  permitir e é grátis com ≥ 5 aldeias (KB).
+- O usuário confirmou dois fatos de jogo: a cunhagem automática aplica o desconto
+  da bandeira, e o 2º Decreto ativado com o 1º ativo **estende** a duração. O que
+  ainda não se sabe — se Decreto e bandeira somam ou multiplicam — fica medido no
+  diário da própria campanha.
+
+**O que foi feito.**
+
+- `game/mint_planner.py` (puro): custo por aldeia, ranking do hub e
+  `plan_route`. O ranking ordena por custo, depois armazém, depois aldeia que não
+  recruta nobre, depois proximidade do estoque das outras. O `plan_route` manda
+  por blocos de comerciante o recurso que o hub tem menos em relação ao custo da
+  moeda, respeitando o piso da doadora e o espaço do hub. Com os dados de 05/10 o
+  hub é a **BBM 002**: bandeira nível 7, empatada com a BBM 010 e desempatada pelo
+  armazém (500 mil contra 400 mil).
+- `core/mint_store.py`: campanha `approved → activating → active → done`, com
+  `failed`/`cancelled`, em `cache/mint/campaign.json`. Tem dois escritores (painel
+  e bot), então passa por `file_lock` e relê antes de gravar.
+- `game/mint_manager.py`, uma instância por processo:
+  - Ativa a campanha só depois da aprovação no painel.
+  - Antes de gastar qualquer item, confere na tela de bandeiras que o hub ainda
+    está com a tipo 7.
+  - Cada item conta como gasto só quando a quantidade **cai na releitura** do
+    inventário, o mesmo desenho da §8.54. Uma releitura sem `inventory` não vale
+    como queda.
+  - `activating` grava o inventário de antes. Se o processo cair no meio, a
+    retomada gasta só a diferença e nunca reenvia às cegas.
+  - Mantém a sessão de 8 h do hub, cunha o máximo a cada renovação e roda a
+    cunhagem diária (POSTs espaçados por `daily_auto_mint_spacing_sec` para não
+    disparar captcha).
+  - Relê o inventário a cada `inventory_refresh_hours`.
+  - Roda no início do ciclo, no checkpoint do Hunter e antes do sono, e encurta o
+    sono para os seus horários (28º padrão).
+- Na aldeia (`Village`): o hub não doa; as outras rodam `run_mint_route` no lugar
+  das regras normais. Durante a campanha, o hub tem a bandeira travada
+  (`DefenceManager.flag_lock_reason`, que vale também para a troca de defesa, já
+  que trocar a bandeira cancela o bônus) e para de construir, pesquisar, formar
+  nobre, recrutar e usar o mercado (`campaign_pause_hub_spending`).
+- Painel `/minting`: ranking, projeção de moedas em cada cenário, campanha
+  (aprovar/cancelar/encerrar, diário e medições), roteamento (liga/desliga, hub,
+  piso) e cunhagem diária (horário e aldeias).
+- Config `minting` em `config.example.json` (`build.version` 4.9 → 5.0 só no
+  exemplo). O merge foi conferido com `cache/_check_merge_loss.py`: nada se perde.
+- Testes: `tests/test_mint.py`. A guarda da releitura foi provada desligando-a: sem
+  ela, o teste vê a campanha virar "ativa" sem os Decretos.
+
+**Ainda não capturado.** A tela da academia **com** a cunhagem automática em
+andamento. O bot só afirma o que viu: o botão "Ativar" sumiu. A primeira resposta
+de cada tipo vai para `cache/mint/samples/` (token `h` redigido) para virar
+fixture.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

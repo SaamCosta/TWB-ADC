@@ -47,6 +47,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     alcance real; sem torre designada, cai no agrupamento por `zones.radius` (§8.45)
   - `pvp_conquest.py` — conquista PvP semi-manual (Feature 13)
   - `simulator.py` — simulador de batalha (usado pelo PvP conquest)
+  - `mint_manager.py` / `mint_planner.py` — cunhagem (§8.55): hub de menor
+    custo, roteamento, campanha de itens aprovada no painel `/minting`,
+    cunhagem automática diária
 - **`core/`** — infraestrutura: `request.py` (HTTP/sessão), `extractors.py` (regex sobre
   HTML do jogo), `filemanager.py`, `templates.py`, `reporter.py`, `notification.py`.
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
@@ -213,6 +216,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   processos reais; §8.36), as regras do mercado
   (`tests/test_market_trade_rules.py`) e a vaga de apoio liberada
   (`tests/test_support_release.py`)
+  e a cunhagem (`tests/test_mint.py` — custo da bandeira contra os níveis
+  medidos, hub BBM 002 com os números de 05/10, rota que manda primeiro o
+  recurso escasso do hub, academia e bandeira com recorte verbatim, e a
+  campanha contra wrapper de mentira: item só conta com a queda na
+  releitura, retomada sem gastar duas vezes, bandeira travada mesmo sob
+  ataque; §8.55)
   e a aba da visão geral (`tests/test_overview_mode.py` — `mode=prod`
   explícito, porque o jogo grava a última aba e o InFlight deixa em
   Comandos; §8.37)

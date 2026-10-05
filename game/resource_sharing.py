@@ -32,6 +32,7 @@ import time
 
 from core.extractors import Extractor
 from core.filemanager import FileManager
+from game import mint_planner
 
 logger = logging.getLogger("ResourceSharing")
 
@@ -188,6 +189,71 @@ class ResourceSharingManager:
                 # plano (mercadores, estoque) não vale mais -- seguir para o
                 # próximo alvo com o mesmo plano só gastaria requisições.
                 break
+
+    # ------------------------------------------------------------------
+    # Cunhagem (§8.55): tudo acima do piso vai para o hub
+    # ------------------------------------------------------------------
+
+    def run_mint_route(self, current_resman, route):
+        """
+        Envia para o hub de cunhagem o que passa de `route["floor"]`, do recurso
+        que o hub tem menos em relação ao custo da moeda
+        (`mint_planner.plan_route`). Substitui as duas regras normais nesta
+        aldeia enquanto o roteamento estiver ligado: com tudo acima do piso
+        indo para o hub, "necessidade" e "transbordo" disputariam o mesmo
+        recurso.
+
+        O hub é lido do `cache/managed` NA HORA (não do início do ciclo) e o
+        que já está a caminho dele entra pelo `pending.json` -- mesma proteção
+        contra envio em duplicata das regras normais.
+        """
+        hub = str(route["hub"])
+        if hub == self.current_village_id:
+            return
+        hub_state = FileManager.load_json_file(f"cache/managed/{hub}.json") or {}
+        if not hub_state.get("storage") or not hub_state.get("x"):
+            logger.info("Cunhagem: hub %s sem estado no cache, nada enviado", hub)
+            return
+
+        carry_budget, merchants, per_merchant = self._get_carry_budget(self.sharing_cfg)
+        if merchants < 1:
+            logger.debug("Cunhagem: %s sem mercadores livres", self.current_village_id)
+            return
+
+        cost, _ = mint_planner.village_coin_cost(hub_state, int(time.time()))
+        in_flight = self._load_pending().get(hub, {})
+        plan = mint_planner.plan_route(
+            donor_res=current_resman.actual,
+            floor=route.get("floor", 0),
+            hub_res=hub_state.get("resources") or {},
+            hub_storage=hub_state.get("storage"),
+            hub_inflight=in_flight,
+            carry=carry_budget,
+            per_merchant=per_merchant,
+            cost=cost,
+            fill_max_pct=float(route.get("fill_max_pct", 0.95)),
+            min_send=int(self.sharing_cfg.get("min_send_amount", 1000) or 1000),
+        )
+        if not plan:
+            logger.debug(
+                "Cunhagem: %s não tem o que mandar ao hub %s (piso %s, hub cheio ou sem sobra)",
+                self.current_village_id, hub, route.get("floor"),
+            )
+            return
+
+        success = current_resman.send_resources(
+            target_village_id=hub, resources=plan,
+            target_coords=f"{hub_state.get('x')}|{hub_state.get('y')}",
+        )
+        if success:
+            logger.info("Cunhagem: enviado %s de %s → hub %s", plan, self.current_village_id, hub)
+            self._record_pending(hub, plan, getattr(current_resman, "last_send_travel_seconds", None))
+        else:
+            logger.warning("Cunhagem: falha ao enviar de %s → hub %s", self.current_village_id, hub)
+        self._log_event(
+            source=self.current_village_id, target=hub, resources=plan,
+            success=bool(success), reason=None if success else "send_failed", kind="mint",
+        )
 
     # ------------------------------------------------------------------
     # Regra 1 + Regra 2: quanto esta aldeia pode doar

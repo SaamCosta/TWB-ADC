@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "4.9",
+    "version": "5.0",
     "author": "stefan2200"
   },
   "server": {
@@ -271,6 +271,19 @@
   },
   "inventory": {
     "enabled": false
+  },
+  "minting": {
+    "hub_village": null,
+    "routing_enabled": false,
+    "donor_floor": 20000,
+    "routing_fill_max_pct": 95,
+    "hub_auto_mint": true,
+    "campaign_pause_hub_spending": true,
+    "daily_auto_mint_enabled": false,
+    "daily_auto_mint_time": "22:30",
+    "daily_auto_mint_exclude": [],
+    "daily_auto_mint_spacing_sec": 15,
+    "inventory_refresh_hours": 6
   },
   "villages": {}
 }

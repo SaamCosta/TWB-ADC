@@ -4312,3 +4312,232 @@ class TribeSupportReader:
             "planned_fmt": datetime.datetime.fromtimestamp(plan["planned_at"]).strftime("%d/%m %H:%M")
             if plan.get("planned_at") else None,
         }
+
+class MintReader:
+    """
+    Aba Cunhagem (§8.55). Lê o mesmo `cache/managed` que o bot e chama o
+    mesmo `game.mint_planner`, para o painel recomendar exatamente o hub que o
+    bot escolheria. Escreve só duas coisas: a seção `minting` do config.json
+    (ajustes) e `cache/mint/campaign.json` (aprovar/cancelar campanha, pelo
+    `core.mint_store`, com trava).
+
+    ⚠️ A campanha guarda os itens em `campaign["items"]`; no template isso
+    viraria `dict.items` (oitavo padrão do CLAUDE.md). A view expõe como
+    `campaign_items`.
+    """
+
+    FLAG_BONUS_ID = 3021
+    DECREE_ID = 3023
+    WAR_CHEST_ID = 3077
+
+    DEFAULTS = {
+        "hub_village": None,
+        "routing_enabled": False,
+        "donor_floor": 20000,
+        "routing_fill_max_pct": 95,
+        "hub_auto_mint": True,
+        "campaign_pause_hub_spending": True,
+        "daily_auto_mint_enabled": False,
+        "daily_auto_mint_time": "22:30",
+        "daily_auto_mint_exclude": [],
+        "daily_auto_mint_spacing_sec": 15,
+        "inventory_refresh_hours": 6,
+    }
+
+    STATUS_LABELS = {
+        "approved": "aprovada, aguardando o bot",
+        "activating": "ativando os itens",
+        "active": "ativa",
+        "done": "concluída",
+        "failed": "falhou",
+        "cancelled": "cancelada",
+    }
+
+    @staticmethod
+    def _fmt(ts):
+        if not ts:
+            return None
+        return datetime.datetime.fromtimestamp(int(ts)).strftime("%d/%m %H:%M")
+
+    @staticmethod
+    def settings(config):
+        cfg = dict(MintReader.DEFAULTS)
+        cfg.update((config or {}).get("minting") or {})
+        return cfg
+
+    @staticmethod
+    def save_settings(updates):
+        """Grava em `minting`, criando a seção se o merge ainda não a trouxe."""
+        with file_lock(FileManager.get_path("config.json")):
+            config = FileManager.load_json_file(
+                "config.json", object_pairs_hook=collections.OrderedDict
+            )
+            section = config.get("minting")
+            if not isinstance(section, dict):
+                section = collections.OrderedDict(MintReader.DEFAULTS)
+                config["minting"] = section
+            section.update(updates)
+            FileManager.save_json_file(config, "config.json")
+
+    @staticmethod
+    def _inventory():
+        """Quantidade dos três itens da cunhagem e quando o inventário foi lido."""
+        out = {"fetched_at": None, "flag_bonus": 0, "decree": 0, "war_chest": 0,
+               "war_chest_gain": None}
+        try:
+            with open(InventoryReader._path(), "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except Exception:
+            return out
+        out["fetched_at"] = raw.get("fetched_at")
+        for item in raw.get("items") or []:
+            item_id = item.get("item_id")
+            amount = int(item.get("amount") or 0)
+            if item_id == MintReader.FLAG_BONUS_ID:
+                out["flag_bonus"] += amount
+            elif item_id == MintReader.DECREE_ID:
+                out["decree"] += amount
+            elif item_id == MintReader.WAR_CHEST_ID:
+                out["war_chest"] += amount
+                for line in item.get("description_lines") or []:
+                    m = re.search(r"(\d+)\s+moedas", line.get("text") or "")
+                    if m:
+                        out["war_chest_gain"] = int(m.group(1))
+        return out
+
+    @staticmethod
+    def _discount(cost):
+        from game import mint_planner
+        try:
+            return round(100 * (1 - cost["wood"] / float(mint_planner.BASE_COIN_COST["wood"])), 1)
+        except (KeyError, TypeError, ZeroDivisionError):
+            return None
+
+    @staticmethod
+    def _projection(hub_entry, totals):
+        """Moedas que o estoque de hoje paga no hub, em cada cenário de desconto."""
+        from game import mint_planner
+        base = mint_planner.BASE_COIN_COST
+        level = hub_entry["flag_level"]
+        pct_flag = mint_planner.flag_discount_pct(level)
+        rows = []
+        for label, factor in (
+            ("Hoje (bandeira nível %d)" % level, 1 - pct_flag / 100.0),
+            ("Com o Bônus de bandeira", 1 - 2 * pct_flag / 100.0),
+            ("Bônus + Decreto, se somarem", 1 - (2 * pct_flag + 10) / 100.0),
+            ("Bônus + Decreto, se multiplicarem", (1 - 2 * pct_flag / 100.0) * 0.9),
+        ):
+            cost = {r: int(round(base[r] * factor)) for r in base}
+            rows.append({"label": label, "pct": round(100 * (1 - factor), 1), "cost": cost,
+                         "coins": mint_planner.coins_for(totals, cost)})
+        scarce = min(mint_planner.RESOURCES, key=lambda r: totals[r] / float(base[r]))
+        return {"scenarios": rows, "scarce": scarce}
+
+    @staticmethod
+    def _campaign_view(campaign, now):
+        if not campaign.get("status"):
+            return None
+        measurements = [{
+            "when": MintReader._fmt(m.get("t")), "label": m.get("label"),
+            "cost": m.get("cost") or {}, "pct": MintReader._discount(m.get("cost") or {}),
+        } for m in campaign.get("measurements") or []]
+        active = campaign.get("status") == "active"
+        return {
+            "status": campaign.get("status"),
+            "status_label": MintReader.STATUS_LABELS.get(campaign.get("status"), campaign.get("status")),
+            "hub": campaign.get("hub"),
+            "hub_name": campaign.get("hub_name"),
+            "campaign_items": dict(campaign.get("items") or {}),
+            "floor": campaign.get("floor"),
+            "approved_fmt": MintReader._fmt(campaign.get("approved_at")),
+            "started_fmt": MintReader._fmt(campaign.get("started_at")),
+            "ends_fmt": MintReader._fmt(campaign.get("ends_at")),
+            "remaining_h": round((float(campaign["ends_at"]) - now) / 3600.0, 1)
+            if active and campaign.get("ends_at") else None,
+            "failed_reason": campaign.get("failed_reason"),
+            "events": [{"when": MintReader._fmt(e.get("t")), "msg": e.get("msg")}
+                       for e in reversed(campaign.get("events") or [])],
+            "measurements": measurements,
+        }
+
+    @staticmethod
+    def view(managed, config):
+        from core import mint_store
+        from game import mint_planner
+
+        now = time.time()
+        cfg = MintReader.settings(config)
+        state = mint_store.load_state()
+        villages_cfg = (config or {}).get("villages") or {}
+        states = {vid: s for vid, s in (managed or {}).items()
+                  if isinstance(s, dict) and vid in villages_cfg}
+        states = mint_planner.with_measured(states, state.get("coin_costs") or {})
+        hub, ranking = mint_planner.choose_hub(
+            states, villages_cfg, now, override=cfg.get("hub_village"))
+        override = cfg.get("hub_village")
+        for c in ranking:
+            c["discount_now"] = MintReader._discount(c["cost"])
+            c["coins_here"] = mint_planner.coins_for(c["resources"], c["cost"])
+
+        totals = {r: 0 for r in mint_planner.RESOURCES}
+        for s in states.values():
+            for r in mint_planner.RESOURCES:
+                try:
+                    totals[r] += int(((s.get("resources") or {}).get(r)) or 0)
+                except (TypeError, ValueError):
+                    pass
+
+        hub_entry = next((c for c in ranking if c["vid"] == hub), None)
+        campaign_view = MintReader._campaign_view(mint_store.load_campaign(), now)
+        open_campaign = bool(campaign_view and campaign_view["status"] in mint_store.OPEN_STATUSES)
+        names = {vid: (s.get("name") or vid) for vid, s in states.items()}
+        daily = state.get("daily") or {}
+        hub_state = state.get("hub") or {}
+        inventory = MintReader._inventory()
+        return {
+            "cfg": cfg,
+            "active_hours": ((config or {}).get("bot") or {}).get("active_hours", ""),
+            "hub": hub,
+            "hub_entry": hub_entry,
+            "override_rejected": bool(override) and str(override) != hub,
+            "ranking": ranking,
+            "totals": totals,
+            "projection": MintReader._projection(hub_entry, totals) if hub_entry else None,
+            "inventory": inventory,
+            "inventory_fmt": MintReader._fmt(inventory["fetched_at"]),
+            "inventory_stale": not inventory["fetched_at"] or now - inventory["fetched_at"] > 12 * 3600,
+            "campaign": campaign_view,
+            "open_campaign": open_campaign,
+            "can_start": bool(hub_entry) and inventory["flag_bonus"] > 0 and not open_campaign,
+            "academies": sorted(ranking, key=lambda c: c["name"]),
+            "exclude": {str(v) for v in (cfg.get("daily_auto_mint_exclude") or [])},
+            "daily": {
+                "date": daily.get("date"),
+                "done": len(daily.get("done") or []),
+                "failed": [{"vid": v, "name": names.get(v, v), "why": why}
+                           for v, why in (daily.get("failed") or {}).items()],
+                "finished_fmt": MintReader._fmt(daily.get("finished_at")),
+            },
+            "hub_state": {
+                "name": names.get(str(hub_state.get("vid")), hub_state.get("vid")),
+                "started_fmt": MintReader._fmt(hub_state.get("started_at")),
+                "next_fmt": MintReader._fmt(hub_state.get("next_at")),
+            },
+        }
+
+    @staticmethod
+    def parse_int(value, name, lo=0, hi=None):
+        try:
+            n = int(str(value).strip())
+        except (TypeError, ValueError):
+            raise ValueError("%s precisa ser um número inteiro" % name)
+        if n < lo or (hi is not None and n > hi):
+            raise ValueError("%s fora do intervalo permitido" % name)
+        return n
+
+    @staticmethod
+    def parse_time(value):
+        m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", str(value or ""))
+        if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+            raise ValueError("horário precisa estar no formato HH:MM")
+        return "%02d:%02d" % (int(m.group(1)), int(m.group(2)))

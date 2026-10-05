@@ -37,19 +37,29 @@ class InventoryManager:
         if not found_villages:
             return
 
-        village_id = found_villages[0]
+        InventoryManager.fetch_and_save(wrapper, found_villages[0])
+
+    @staticmethod
+    def fetch_and_save(wrapper, village_id):
+        """
+        Lê o inventário (duas requisições, ver pages/inventory.py) e grava em
+        CACHE_PATH. Devolve a InventoryPage, ou None se a leitura falhou --
+        não-fatal, igual ao StatueManager: loga e tenta de novo depois.
+
+        Separado de run() porque a cunhagem (§8.55) precisa do inventário
+        fresco mesmo com `inventory.enabled` desligado: é ele que diz quantos
+        Bônus de bandeira e Decretos existem antes do painel oferecer o botão.
+        """
         try:
             page = InventoryPage(wrapper, village_id)
         except RuntimeError as e:
-            # Timeout/sessão expirada/markup novo — não-fatal, igual ao
-            # StatueManager: loga e tenta de novo no próximo ciclo.
             logger.warning("InventoryManager: %s", e)
-            return
+            return None
         except Exception as e:
             logger.error(
                 "InventoryManager: erro inesperado lendo screen=inventory: %s", e
             )
-            return
+            return None
 
         items = page.items
         data = {
@@ -73,3 +83,4 @@ class InventoryManager:
                 "(Inventory.item_types/item_categories) — tipos e categorias "
                 "vão aparecer como número em /inventory"
             )
+        return page

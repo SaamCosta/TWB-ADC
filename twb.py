@@ -149,6 +149,7 @@ from game.hunter import Hunter
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
+from game.mint_manager import MintManager
 from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
 from game.reservation_sniper import ReservationSniper
@@ -193,6 +194,7 @@ class TWB:
     should_run = True
     runs = 0
     hunter = None
+    mint_manager = None
     # Feature 35: sobrevive entre ciclos de proposito, para o TTL do quadro de
     # reservas valer de verdade. Imutavel como default de classe (o objeto e
     # criado sob demanda), mesma forma do `hunter` acima.
@@ -999,6 +1001,9 @@ class TWB:
         # cada nova tentativa da espera), isso deixou de ser detalhe.
         self.wrapper.headers["user-agent"] = config["bot"]["user_agent"]
         self.wrapper.start()
+        # Cunhagem (§8.55): uma instância por processo, como o Hunter. Guarda
+        # em memória só o que é barato perder; o estado vive em cache/mint.
+        self.mint_manager = MintManager(self.wrapper)
         for vid in config["villages"]:
             # Village(...) already creates a fresh instance.  Deep-copying it
             # cloned the whole shared WebWrapper graph as well (requests
@@ -1263,10 +1268,23 @@ class TWB:
                             with meter_phase(self.wrapper, "reserva_timer", village=False):
                                 _sniper.tick()
 
+                # Cunhagem (§8.55): pega carona no mesmo checkpoint. O tick so
+                # faz requisicao quando algo venceu (horario diario, sessao do
+                # hub, campanha aprovada) e recebe o callback do Hunter para
+                # chamar entre requisicoes longas.
+                _base_cb = service_callback
+                _mint = self.mint_manager
+
+                def service_callback():
+                    if _base_cb:
+                        _base_cb()
+                    _mint.tick(service=_base_cb)
+
                 for _v in self.villages:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
                     _v.hunter_service_callback = service_callback
+                    _v.mint_manager = self.mint_manager
                     _v.reservation_board = reservation_board
 
                 # Feature 13 (2026-09-21): a conquista PvP decide UMA vez no
@@ -1351,6 +1369,14 @@ class TWB:
                         )
                 for _v in self.villages:
                     _v.noble_recruit_plan = noble_recruit_plan
+
+                # Cunhagem (§8.55): campanha aprovada ativa aqui, antes de
+                # qualquer aldeia gastar recurso, e o hub do ciclo e decidido
+                # para o roteamento. Erro aqui nao derruba o ciclo.
+                with meter_phase(self.wrapper, "cunhagem"):
+                    self.mint_manager.begin_cycle(
+                        config, self.found_villages, service=_base_cb
+                    )
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
@@ -1592,6 +1618,20 @@ class TWB:
                                 "Reserva-timer: sono encurtado para %.0fs para "
                                 "pegar o vencimento de uma reserva", sleep
                             )
+                # Cunhagem (§8.55): o horario diario e a renovacao da sessao do
+                # hub tem hora marcada; o sono acorda para eles como para o
+                # Hunter (vigesimo oitavo padrao).
+                with meter_phase(self.wrapper, "cunhagem"):
+                    self.mint_manager.tick(service=hunter_callback)
+                nearest = self.mint_manager.next_due()
+                if nearest:
+                    time_to_due = nearest - time.time()
+                    if time_to_due < sleep:
+                        sleep = max(60, time_to_due)
+                        logging.info(
+                            "Cunhagem: sono encurtado para %.0fs para o proximo "
+                            "horario de cunhagem", sleep
+                        )
                 dtn = datetime.datetime.now()
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1

@@ -88,6 +88,11 @@ class Village:
     # checkpoints instead of sharing the HTTP session from a second thread.
     hunter_service_callback = None
 
+    # Cunhagem (§8.55): o MintManager da conta, instalado por twb.py, e a rota
+    # desta aldeia neste ciclo (None, ou dict com role "hub"/"donor").
+    mint_manager = None
+    mint_route = None
+
     # Feature 35: quadro de reservas da tribo para este ciclo, instalado por
     # twb.py junto dos dois acima. Mesma nota de seguranca: sempre reatribuido,
     # nunca mutado in-place. None significa "sem quadro", e a conquista se
@@ -648,9 +653,11 @@ class Village:
             )
         self.builder.max_queue_len = max_queue_len
         self.builder.start_update(
+            # O builder roda mesmo pausado: os níveis de construção que ele lê
+            # alimentam o recrutamento e a academia. Só não constrói.
             build=self.get_config(
                 section="building", parameter="manage_buildings", default=True
-            ),
+            ) and not self._mint_spending_paused(),
             set_village_name=self.village_set_name,
         )
 
@@ -839,11 +846,18 @@ class Village:
     def run_resource_sharing(self):
         """
         Feature 9: Transferência automática de recursos entre aldeias do jogador.
-        Só executa se resource_sharing.enabled = true no config.
+        Só executa se resource_sharing.enabled = true no config, ou com o
+        roteamento de cunhagem ativo (§8.55), que manda tudo para o hub.
         Deve rodar após manage_local_resources() para que resman.requested
         reflita as necessidades reais do ciclo atual.
         """
-        if not self.config.get("resource_sharing", {}).get("enabled", False):
+        route = self.mint_route
+        if route and route.get("role") == "hub":
+            # O hub recebe; doar dele (transbordo, necessidade) devolveria ao
+            # império o recurso que as outras aldeias acabaram de mandar.
+            self.logger.debug("Cunhagem: %s é o hub, não doa", self.village_id)
+            return
+        if not route and not self.config.get("resource_sharing", {}).get("enabled", False):
             return
 
         if not self.builder or not self.builder.get_level("market"):
@@ -855,7 +869,17 @@ class Village:
             current_village_id=self.village_id,
             config=self.config,
         )
+        if route:
+            # Roteamento de cunhagem ligado: tudo acima do piso vai para o
+            # hub, no lugar das duas regras normais (§8.55).
+            sharing.run_mint_route(current_resman=self.resman, route=route)
+            return
         sharing.run(current_resman=self.resman)
+
+    def _mint_spending_paused(self):
+        """True no hub de uma campanha ativa com `campaign_pause_hub_spending`."""
+        route = self.mint_route
+        return bool(route and route.get("role") == "hub" and route.get("pause_spending"))
 
     # Dono da reserva que a coleta e o farm respeitam (TroopManager.
     # conquest_reserve) enquanto um apoio aprovado espera a tropa voltar.
@@ -1484,26 +1508,45 @@ class Village:
         with self._phase("init"):
             self.update_pre_run()
 
+        self.mint_route = (
+            self.mint_manager.route_for(self.village_id) if self.mint_manager else None
+        )
+
         with self._phase("defesa"):
             self.setup_defence_manager(data=data)
+        if self.def_man:
+            # Trocar a bandeira cancela o Bônus de bandeira, e o caminho de
+            # defesa trocaria por conta própria num ataque (§8.55).
+            self.def_man.flag_lock_reason = (
+                self.mint_route.get("flag_lock")
+                if self.mint_route and self.mint_route.get("role") == "hub" else None
+            )
         with self._phase("missoes"):
             self.run_quest_actions(config=config)
 
         with self._phase("construcao"):
             self.run_builder()
         self._service_hunter()
+        paused = self._mint_spending_paused()
+        if paused:
+            self.logger.info(
+                "Cunhagem: hub da campanha -- construção, pesquisa, nobre, "
+                "recrutamento e mercado pausados; o recurso fica para a moeda"
+            )
         with self._phase("recrutamento"):
             self.units_get_template()
             self.set_unit_wanted_levels()
 
             self.units.update_totals()
-            self.run_unit_upgrades()
-        with self._phase("nobre"):
-            self.run_snob_recruit()
-        with self._phase("recrutamento"):
-            self.do_recruit()
-        with self._phase("mercado"):
-            self.manage_local_resources()
+            if not paused:
+                self.run_unit_upgrades()
+        if not paused:
+            with self._phase("nobre"):
+                self.run_snob_recruit()
+            with self._phase("recrutamento"):
+                self.do_recruit()
+            with self._phase("mercado"):
+                self.manage_local_resources()
         with self._phase("compartilhamento"):
             self.run_resource_sharing()
         self._service_hunter()
@@ -1543,8 +1586,9 @@ class Village:
         with self._phase("coleta"):
             self.do_gather()
         self._service_hunter()
-        with self._phase("mercado"):
-            self.go_manage_market()
+        if not paused:
+            with self._phase("mercado"):
+                self.go_manage_market()
 
         self.set_cache_vars()
         self.logger.info("Village cycle done, returning to overview")

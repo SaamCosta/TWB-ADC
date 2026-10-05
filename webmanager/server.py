@@ -10,10 +10,10 @@ from core import account_pulse
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader
+    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -577,6 +577,70 @@ def get_statue():
         data=data,
         village_count=village_count,
     )
+
+
+@app.route('/minting', methods=['GET', 'POST'])
+def get_minting():
+    # Cunhagem (docs/backend.md §8.55). O painel grava ajustes na seção
+    # `minting` do config.json e aprova/cancela a campanha de itens em
+    # cache/mint/campaign.json; quem age no jogo é o bot (MintManager).
+    from core import mint_store
+    error = None
+    message = request.args.get('msg')
+    if request.method == 'POST':
+        action = request.form.get('action')
+        f = request.form
+        try:
+            if action == 'routing':
+                hub = (f.get('hub_village') or '').strip() or None
+                MintReader.save_settings({
+                    "routing_enabled": f.get('routing_enabled') == '1',
+                    "hub_village": hub,
+                    "donor_floor": MintReader.parse_int(f.get('donor_floor'), "Piso por aldeia", 0, 500000),
+                })
+                msg = "Roteamento salvo; o bot aplica no próximo ciclo."
+            elif action == 'daily':
+                included = set(f.getlist('include'))
+                academies = [a for a in f.getlist('academy')]
+                MintReader.save_settings({
+                    "daily_auto_mint_enabled": f.get('daily_enabled') == '1',
+                    "daily_auto_mint_time": MintReader.parse_time(f.get('daily_time')),
+                    "daily_auto_mint_exclude": [a for a in academies if a not in included],
+                })
+                msg = "Cunhagem diária salva."
+            elif action == 'start_campaign':
+                hub = (f.get('hub') or '').strip()
+                view = MintReader.view(sync()["bot"], DataReader.config_grab())
+                entry = next((c for c in view["ranking"] if c["vid"] == hub), None)
+                if not entry:
+                    raise ValueError("escolha uma aldeia com academia")
+                if not view["inventory"]["flag_bonus"]:
+                    raise ValueError("o último inventário lido não tem Bônus de bandeira")
+                floor = MintReader.parse_int(f.get('floor'), "Piso por aldeia", 0, 500000)
+                decrees = MintReader.parse_int(f.get('decrees', 0), "Decretos", 0, 10)
+                mint_store.approve(
+                    hub=hub, hub_name=entry["name"], decrees=decrees,
+                    war_chest=f.get('war_chest') == '1', floor=floor,
+                )
+                MintReader.save_settings({"donor_floor": floor})
+                msg = ("Campanha aprovada para %s. O bot confere a bandeira e ativa os itens "
+                       "no próximo ciclo ou checkpoint." % entry["name"])
+            elif action == 'cancel_campaign':
+                if not mint_store.cancel():
+                    raise ValueError("só dá para cancelar antes de o bot começar a ativar")
+                msg = "Campanha cancelada; nenhum item foi gasto."
+            elif action == 'finish_campaign':
+                if not mint_store.finish_early():
+                    raise ValueError("não há campanha ativa")
+                msg = "Campanha encerrada: travas e roteamento da campanha soltos."
+            else:
+                raise ValueError("ação desconhecida")
+            return redirect(url_for('get_minting', msg=msg))
+        except ValueError as e:
+            error = str(e)
+    return render_template('minting.html',
+                           v=MintReader.view(sync()["bot"], DataReader.config_grab()),
+                           error=error, message=message)
 
 
 @app.route('/inventory', methods=['GET'])

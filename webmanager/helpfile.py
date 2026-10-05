@@ -252,6 +252,18 @@ help_file = {
     'statue.enabled': 'Ativar a leitura periódica do estado do Paladino (nível, XP, skills, slots) e persistência em cache/statue/status.json para exibição em /statue',
     'inventory': 'Leitura periódica do inventário (Perfil > Inventário) via screen=inventory (Feature 25, fase 1 — só leitura, nenhum item é ativado)',
     'inventory.enabled': 'Ativar a leitura periódica do inventário (itens, quantidades, descrições, validade) e persistência em cache/inventory/status.json para exibição em /inventory. Custa duas requisições por ciclo: o HTML da tela (rótulos de tipo/categoria) e o AJAX get_inventory (os itens)',
+    'minting': 'Cunhagem (§8.55, aba /minting): aldeia central de cunhagem (hub), roteamento de recursos para ela, campanha de itens (Bônus de bandeira + Decreto Real) e cunhagem automática diária',
+    'minting.hub_village': 'Id da aldeia central de cunhagem. null = automática: a de menor custo de moeda (bandeira de cunhagem mais alta), depois maior armazém, aldeia que não recruta nobre e mais perto do recurso das outras',
+    'minting.routing_enabled': 'Liga o roteamento: toda aldeia (menos o hub) manda ao hub o que passa de donor_floor, no lugar das regras normais do compartilhamento, e o hub mantém a cunhagem automática de 8 h. Durante uma campanha de itens o roteamento fica ligado mesmo com isto desligado',
+    'minting.donor_floor': 'Piso por aldeia, por recurso, que fica em casa no roteamento (0 = manda tudo). Abaixo dele a aldeia continua construindo e recrutando',
+    'minting.routing_fill_max_pct': 'O roteamento para de mandar quando o armazém do hub, contando o que já está a caminho, chega a este percentual (padrão: 95)',
+    'minting.hub_auto_mint': 'Com roteamento ou campanha ativos, o hub cunha o máximo da academia e inicia a sessão de cunhagem automática de 8 h, renovada a cada vencimento',
+    'minting.campaign_pause_hub_spending': 'Durante a campanha de itens, o hub não constrói, não pesquisa, não forma nobre, não recruta e não usa o mercado: todo recurso vai para a moeda com o desconto dobrado',
+    'minting.daily_auto_mint_enabled': 'Inicia todo dia, em daily_auto_mint_time, a sessão de cunhagem automática de 8 h em todas as aldeias com academia (menos as excluídas e o hub, que tem sessão própria)',
+    'minting.daily_auto_mint_time': 'Horário (HH:MM) da cunhagem automática diária. Antes do bot entrar no horário inativo (bot.active_hours), para a sessão de 8 h rodar a noite com o bot parado. Se o bot estava fora do ar, recupera em até 3 h de atraso',
+    'minting.daily_auto_mint_exclude': 'Ids de aldeia que NÃO entram na cunhagem automática diária (a sessão gasta todo recurso da aldeia, inclusive o guardado para nobre)',
+    'minting.daily_auto_mint_spacing_sec': 'Pausa entre uma aldeia e outra na cunhagem diária, além do atraso normal das requisições. Rajada de POSTs provoca captcha na conta (padrão: 15)',
+    'minting.inventory_refresh_hours': 'De quantas em quantas horas o bot relê o inventário para a aba Cunhagem mostrar os itens disponíveis (duas requisições; 0 desliga). Independe de inventory.enabled',
 }
 
 buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "place", "statue", "market", "wood",

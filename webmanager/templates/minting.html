@@ -1,0 +1,158 @@
+{% extends "main.html" %}
+{% block title %}Cunhagem{% endblock %}
+
+{% macro num(n) %}{{ '{:,}'.format(n or 0).replace(',', '.') }}{% endmacro %}
+{% macro cost3(c) %}<span class="twb-number">{{ num(c.wood) }} / {{ num(c.stone) }} / {{ num(c.iron) }}</span>{% endmacro %}
+
+{% block content %}
+{% set cfg = v.cfg %}
+{% set inv = v.inventory %}
+{% set c = v.campaign %}
+<header class="twb-page-header">
+  <div><p class="twb-eyebrow">Economia · moedas de ouro</p><h1 class="twb-page-title">Cunhagem</h1><p class="twb-page-summary">O bot escolhe a aldeia de moeda mais barata (o hub), manda para ela o recurso das outras e cunha lá. A campanha gasta o Bônus de bandeira e o Decreto Real juntos nessa aldeia; a cunhagem diária liga a cunhagem automática de 8 h em todas as academias antes do horário inativo.</p></div>
+</header>
+
+{% if error %}<div class="twb-inline-alert twb-inline-alert--danger mb-3" role="alert"><strong>Não foi possível.</strong> {{ error }}</div>{% endif %}
+{% if message %}<div class="twb-inline-alert mb-3" role="status">{{ message }}</div>{% endif %}
+
+<section class="twb-health-strip" aria-label="Resumo da cunhagem">
+  <div class="twb-health-item"><span class="twb-health-label">Hub</span><span class="twb-health-value">{% if v.hub_entry %}{{ v.hub_entry.name }}{% else %}<span class="twb-status twb-status--muted">Nenhuma academia</span>{% endif %}</span><span class="twb-health-meta">{% if v.hub_entry %}moeda a {{ cost3(v.hub_entry.cost) }} ({{ v.hub_entry.cost_source }}){% endif %}{% if v.override_rejected %} · a aldeia fixada não tem academia, vale a automática{% endif %}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Roteamento</span><span class="twb-health-value">{% if c and c.status == 'active' %}<span class="twb-status twb-status--success">Ligado pela campanha</span>{% elif cfg.routing_enabled %}<span class="twb-status twb-status--success">Ligado</span>{% else %}<span class="twb-status twb-status--muted">Desligado</span>{% endif %}</span><span class="twb-health-meta">piso por aldeia {{ num(cfg.donor_floor) }}{% if v.hub_state.started_fmt %} · sessão automática do hub ({{ v.hub_state.name }}) iniciada {{ v.hub_state.started_fmt }}{% endif %}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Inventário</span><span class="twb-health-value">{{ inv.flag_bonus }} Bônus de bandeira · {{ inv.decree }} Decreto Real · {{ inv.war_chest }} Cofre</span><span class="twb-health-meta">{% if v.inventory_fmt %}lido em {{ v.inventory_fmt }}{% if v.inventory_stale %} <span class="twb-status twb-status--warning">antigo</span>{% endif %}{% else %}ainda não lido: o bot lê no próximo ciclo{% endif %}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Cunhagem diária</span><span class="twb-health-value">{% if cfg.daily_auto_mint_enabled %}<span class="twb-status twb-status--success">Às {{ cfg.daily_auto_mint_time }}</span>{% else %}<span class="twb-status twb-status--muted">Desligada</span>{% endif %}</span><span class="twb-health-meta">{% if v.daily.date %}última: {{ v.daily.date }}, {{ v.daily.done }} iniciada(s){% if v.daily.failed %}, {{ v.daily.failed | length }} falha(s){% endif %}{% else %}ainda não rodou{% endif %}</span></div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-campanha">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-campanha">Campanha de itens</h2>{% if c %}<span class="twb-status {% if c.status == 'active' %}twb-status--success{% elif c.status == 'failed' %}twb-status--danger{% elif c.status in ['approved', 'activating'] %}twb-status--warning{% else %}twb-status--muted{% endif %}">{{ c.status_label }}</span>{% endif %}</div>
+  <div class="twb-panel-body">
+    {% if c and v.open_campaign %}
+      <dl class="twb-meta">
+        <div><dt>Aldeia</dt><dd>{{ c.hub_name }}</dd></div>
+        <div><dt>Itens</dt><dd>1 Bônus de bandeira · {{ c.campaign_items.get('decree', 0) }} Decreto Real{% if c.campaign_items.get('war_chest') %} · Cofre de Guerra{% endif %}</dd></div>
+        <div><dt>Piso por aldeia</dt><dd>{{ num(c.floor) }}</dd></div>
+        {% if c.started_fmt %}<div><dt>Início</dt><dd>{{ c.started_fmt }}</dd></div>{% endif %}
+        {% if c.ends_fmt %}<div><dt>Fim</dt><dd>{{ c.ends_fmt }}{% if c.remaining_h is not none %} (faltam {{ c.remaining_h }} h){% endif %}</dd></div>{% endif %}
+      </dl>
+      <p class="small text-muted">Enquanto ativa: todas as aldeias mandam ao hub o que passa do piso; o hub não troca de bandeira (nem sob ataque), não gasta recurso e mantém a cunhagem automática.</p>
+      {% if c.status == 'approved' %}
+      <form method="post" class="d-inline"><input type="hidden" name="action" value="cancel_campaign"><button class="btn btn-outline-secondary btn-sm" type="submit">Cancelar (nenhum item foi gasto)</button></form>
+      {% elif c.status == 'active' %}
+      <form method="post" class="d-inline" onsubmit="return confirm('Encerrar solta as travas e o roteamento. Os itens já gastos não voltam. Encerrar?')"><input type="hidden" name="action" value="finish_campaign"><button class="btn btn-outline-danger btn-sm" type="submit">Encerrar agora</button></form>
+      {% endif %}
+    {% else %}
+      {% if c and c.status == 'failed' %}<div class="twb-inline-alert twb-inline-alert--danger mb-3" role="alert"><strong>A última campanha falhou.</strong> {{ c.failed_reason }}</div>{% endif %}
+      <form method="post" onsubmit="return confirm('Os itens são gastos no jogo e não voltam. Aprovar a campanha?')">
+        <input type="hidden" name="action" value="start_campaign">
+        <div class="twb-form-grid">
+          <div class="form-group twb-form-field"><label for="camp-hub">Aldeia</label>
+            <select class="form-control" id="camp-hub" name="hub">
+              {% for a in v.ranking %}<option value="{{ a.vid }}" {% if a.vid == v.hub %}selected{% endif %}>{{ a.name }} — {% if a.flag_level %}bandeira de cunhagem nível {{ a.flag_level }} (−{{ a.discount_pct }}%){% else %}sem bandeira de cunhagem{% endif %}</option>{% endfor %}
+            </select>
+            <small class="form-text text-muted">Recomendada: a primeira, pelo ranking abaixo. O bot confere na tela de bandeiras que ela ainda tem a bandeira de cunhagem antes de gastar qualquer item.</small></div>
+          <div class="form-group twb-form-field"><label for="camp-decrees">Decretos Reais</label><input class="form-control twb-number" type="number" id="camp-decrees" name="decrees" min="0" max="{{ inv.decree }}" value="{{ [inv.decree, 2] | min }}"><small class="form-text text-muted">Cada um vale 24 h e o segundo estende o primeiro: 2 cobrem as 48 h do Bônus de bandeira.</small></div>
+          <div class="form-group twb-form-field"><label for="camp-floor">Piso por aldeia</label><input class="form-control twb-number" type="number" id="camp-floor" name="floor" min="0" step="1000" value="{{ cfg.donor_floor }}"><small class="form-text text-muted">Por recurso, o que fica em cada aldeia; o resto vai para o hub. 0 = manda tudo.</small></div>
+        </div>
+        {% if inv.war_chest %}<div class="custom-control custom-checkbox mb-2"><input class="custom-control-input" type="checkbox" id="camp-chest" name="war_chest" value="1"><label class="custom-control-label" for="camp-chest">Usar também o Cofre de Guerra Pequeno{% if inv.war_chest_gain %} (+{{ inv.war_chest_gain }} moedas){% endif %}</label></div>{% endif %}
+        <div class="twb-form-actions"><button class="btn btn-primary" type="submit" {% if not v.can_start %}disabled{% endif %}>Iniciar campanha</button>{% if not inv.flag_bonus %} <span class="small text-muted">Sem Bônus de bandeira no último inventário lido.</span>{% endif %}</div>
+      </form>
+    {% endif %}
+
+    {% if c and c.measurements %}
+    <h3 class="h6 mt-4">Custo da moeda medido no hub</h3>
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Medições de custo">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th scope="col">Quando</th><th scope="col">Momento</th><th scope="col">Madeira / Argila / Ferro</th><th scope="col">Desconto</th></tr></thead>
+        <tbody>{% for m in c.measurements %}<tr><td>{{ m.when }}</td><td>{{ m.label }}</td><td>{{ cost3(m.cost) }}</td><td class="twb-number">{% if m.pct is not none %}−{{ m.pct }}%{% endif %}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <p class="small text-muted">Se o desconto depois do Decreto for o do Bônus + 10 pontos, os descontos somam; se for 1 − (1 − bônus) × 0,9, multiplicam.</p>
+    {% endif %}
+
+    {% if c and c.events %}
+    <details class="mt-3"><summary>Diário da campanha ({{ c.events | length }})</summary>
+      <ul class="small mt-2">{% for e in c.events %}<li><span class="text-muted">{{ e.when }}</span> {{ e.msg }}</li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+  </div>
+</section>
+
+{% if v.projection %}
+<section class="twb-panel" aria-labelledby="titulo-projecao">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-projecao">Quanto o estoque de hoje rende no hub</h2><span class="small text-muted">recurso mais escasso: {{ {'wood': 'madeira', 'stone': 'argila', 'iron': 'ferro'}[v.projection.scarce] }}</span></div>
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Projeção de moedas">
+    <table class="table table-sm twb-operational-table">
+      <thead><tr><th scope="col">Cenário</th><th scope="col">Desconto</th><th scope="col">Moeda (M / A / F)</th><th scope="col">Moedas com o estoque somado</th></tr></thead>
+      <tbody>{% for s in v.projection.scenarios %}<tr><td>{{ s.label }}</td><td class="twb-number">−{{ s.pct }}%</td><td>{{ cost3(s.cost) }}</td><td class="twb-number"><strong>{{ s.coins }}</strong></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  <div class="twb-panel-body"><p class="small text-muted mb-0">Estoque somado de todas as aldeias: {{ cost3(v.totals) }}. É teto: supõe que todo o recurso chegue ao hub sem ser gasto em construção ou tropa.</p></div>
+</section>
+{% endif %}
+
+<section class="twb-panel" aria-labelledby="titulo-roteamento">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-roteamento">Roteamento para o hub</h2><span class="small text-muted">sem itens, todo dia</span></div>
+  <div class="twb-panel-body">
+    <form method="post">
+      <input type="hidden" name="action" value="routing">
+      <div class="custom-control custom-switch mb-3"><input class="custom-control-input" type="checkbox" id="rt-on" name="routing_enabled" value="1" {% if cfg.routing_enabled %}checked{% endif %}><label class="custom-control-label" for="rt-on">Mandar o recurso das aldeias para o hub e manter a cunhagem automática lá</label></div>
+      <div class="twb-form-grid">
+        <div class="form-group twb-form-field"><label for="rt-hub">Hub</label>
+          <select class="form-control" id="rt-hub" name="hub_village">
+            <option value="" {% if not cfg.hub_village %}selected{% endif %}>Automático (melhor do ranking)</option>
+            {% for a in v.ranking %}<option value="{{ a.vid }}" {% if cfg.hub_village and a.vid == cfg.hub_village|string %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+          </select></div>
+        <div class="form-group twb-form-field"><label for="rt-floor">Piso por aldeia</label><input class="form-control twb-number" type="number" id="rt-floor" name="donor_floor" min="0" step="1000" value="{{ cfg.donor_floor }}"><small class="form-text text-muted">Por recurso; abaixo disso a aldeia segue construindo e recrutando. 0 = manda tudo.</small></div>
+      </div>
+      <p class="small text-muted">Ligado, substitui as regras normais de compartilhamento nas aldeias que doam. O envio prioriza o recurso que o hub tem menos, porque a moeda sai pelo mais escasso.</p>
+      <div class="twb-form-actions"><button class="btn btn-primary" type="submit">Salvar roteamento</button></div>
+    </form>
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-ranking">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-ranking">Aldeias com academia</h2><span class="small text-muted">melhor hub primeiro</span></div>
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Ranking de hub">
+    <table class="table table-sm twb-operational-table">
+      <thead><tr><th scope="col">#</th><th scope="col">Aldeia</th><th scope="col">Bandeira</th><th scope="col">Moeda (M / A / F)</th><th scope="col">Armazém</th><th scope="col">Cunha agora</th><th scope="col">Por quê</th></tr></thead>
+      <tbody>
+      {% for a in v.ranking %}
+        <tr class="{% if a.vid == v.hub %}table-active{% endif %}">
+          <td class="twb-number">{{ a.rank }}</td>
+          <td><strong>{{ a.name }}</strong> <span class="text-muted">({{ a.x }}|{{ a.y }})</span>{% if a.vid == v.hub %} <span class="twb-status twb-status--success">hub</span>{% endif %}</td>
+          <td>{% if a.flag_level %}nível {{ a.flag_level }}{% else %}<span class="text-muted">outra</span>{% endif %}</td>
+          <td>{{ cost3(a.cost) }}{% if a.cost_source == 'medido' %} <span class="twb-status twb-status--info" title="lido na academia nas últimas 6 h">medido</span>{% endif %}</td>
+          <td class="twb-number">{{ num(a.storage) }}</td>
+          <td class="twb-number">{{ a.coins_here }}</td>
+          <td class="small">{{ a.reasons | join(' · ') }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-diaria">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-diaria">Cunhagem automática diária</h2><span class="small text-muted">sessão de 8 h em cada academia</span></div>
+  <div class="twb-panel-body">
+    <form method="post">
+      <input type="hidden" name="action" value="daily">
+      <div class="custom-control custom-switch mb-3"><input class="custom-control-input" type="checkbox" id="dl-on" name="daily_enabled" value="1" {% if cfg.daily_auto_mint_enabled %}checked{% endif %}><label class="custom-control-label" for="dl-on">Todo dia, iniciar a cunhagem automática nas aldeias marcadas</label></div>
+      <div class="twb-form-grid">
+        <div class="form-group twb-form-field"><label for="dl-time">Horário</label><input class="form-control twb-number" type="time" id="dl-time" name="daily_time" value="{{ cfg.daily_auto_mint_time }}"><small class="form-text text-muted">Antes do horário inativo do bot (ativo das {{ v.active_hours }} h). A sessão gasta todo o recurso da aldeia a noite toda, inclusive o guardado para nobre.</small></div>
+      </div>
+      <fieldset class="twb-form-section"><legend>Aldeias</legend>
+        {% for a in v.academies %}
+        <input type="hidden" name="academy" value="{{ a.vid }}">
+        <div class="custom-control custom-checkbox custom-control-inline"><input class="custom-control-input" type="checkbox" id="dl-{{ a.vid }}" name="include" value="{{ a.vid }}" {% if a.vid not in v.exclude %}checked{% endif %}><label class="custom-control-label" for="dl-{{ a.vid }}">{{ a.name }}</label></div>
+        {% endfor %}
+        <small class="form-text text-muted">O hub fica de fora enquanto o roteamento ou a campanha mantêm a sessão dele.</small>
+      </fieldset>
+      <div class="twb-form-actions"><button class="btn btn-primary" type="submit">Salvar cunhagem diária</button></div>
+    </form>
+    {% if v.daily.failed %}
+    <h3 class="h6 mt-3">Falhas na última execução ({{ v.daily.date }})</h3>
+    <ul class="small">{% for f in v.daily.failed %}<li>{{ f.name }}: {{ f.why }}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

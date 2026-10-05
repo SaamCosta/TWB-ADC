@@ -44,6 +44,53 @@ BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 TAG_RE = re.compile(r"<[^>]+>")
 
 
+def fetch_inventory_payload(wrapper: WebWrapper, village_id) -> Optional[dict]:
+    """
+    `get_api_data` devolve o dict do JSON, mas também devolve o próprio
+    Response quando `.json()` falha e None quando a requisição falha ou
+    não veio 200 — daí o isinstance em vez de confiar no retorno.
+
+    ⚠️ O jogo responde em **duas formas** para a mesma URL, conforme o
+    cabeçalho `TribalWars-Ajax`:
+
+      * com ele (é o que `get_api_data` sempre manda), o payload vem
+        embrulhado em `{"response": {...}, "game_data": {...}}`;
+      * sem ele, vem cru: `{"inventory": ..., "data": ..., "expire": ...}`.
+
+    Custou um smoke test contra o servidor: a exploração inicial usou só
+    `X-Requested-With` e viu a forma crua, então um parser escrito contra
+    ela teria falhado em produção com o wrapper de verdade — passando nos
+    testes o tempo todo. `{"response": false}` é o que o jogo devolve para
+    uma ação desconhecida, e cai no mesmo `isinstance` sem virar exceção.
+    """
+    raw = wrapper.get_api_data(
+        village_id, "get_inventory", {"screen": "inventory"}
+    )
+    if not isinstance(raw, dict):
+        return None
+    payload = raw.get("response") if isinstance(raw.get("response"), dict) else raw
+    if not isinstance(payload.get("data"), dict):
+        # Inventário vazio ainda traz "data": {}; a chave sumir significa
+        # que a resposta não é a que esperamos.
+        return None
+    return payload
+
+
+def amounts_from_payload(payload: dict) -> Dict[str, int]:
+    """
+    {item_key: quantidade} do que a conta TEM. Item gasto até o fim some de
+    `inventory` (a chave continua no catálogo `data`), então ausência = 0.
+    """
+    out = {}
+    for key, own in ((payload or {}).get("inventory") or {}).items():
+        if isinstance(own, dict):
+            try:
+                out[str(key)] = int(own.get("amount") or 0)
+            except (TypeError, ValueError):
+                out[str(key)] = 0
+    return out
+
+
 class InventoryPage:
     """
     Estado do inventário da conta. Como o inventário é do jogador e não da
@@ -86,35 +133,7 @@ class InventoryPage:
         return res.text
 
     def _get_inventory_payload(self) -> Optional[dict]:
-        """
-        `get_api_data` devolve o dict do JSON, mas também devolve o próprio
-        Response quando `.json()` falha e None quando a requisição falha ou
-        não veio 200 — daí o isinstance em vez de confiar no retorno.
-
-        ⚠️ O jogo responde em **duas formas** para a mesma URL, conforme o
-        cabeçalho `TribalWars-Ajax`:
-
-          * com ele (é o que `get_api_data` sempre manda), o payload vem
-            embrulhado em `{"response": {...}, "game_data": {...}}`;
-          * sem ele, vem cru: `{"inventory": ..., "data": ..., "expire": ...}`.
-
-        Custou um smoke test contra o servidor: a exploração inicial usou só
-        `X-Requested-With` e viu a forma crua, então um parser escrito contra
-        ela teria falhado em produção com o wrapper de verdade — passando nos
-        testes o tempo todo. `{"response": false}` é o que o jogo devolve para
-        uma ação desconhecida, e cai no mesmo `isinstance` sem virar exceção.
-        """
-        raw = self.wrapper.get_api_data(
-            self.village_id, "get_inventory", {"screen": "inventory"}
-        )
-        if not isinstance(raw, dict):
-            return None
-        payload = raw.get("response") if isinstance(raw.get("response"), dict) else raw
-        if not isinstance(payload.get("data"), dict):
-            # Inventário vazio ainda traz "data": {}; a chave sumir significa
-            # que a resposta não é a que esperamos.
-            return None
-        return payload
+        return fetch_inventory_payload(self.wrapper, self.village_id)
 
     # ----------------------------------------------------------------- enums
 
