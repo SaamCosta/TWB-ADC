@@ -283,6 +283,10 @@ class Village:
         # otherwise def_man.map stays None forever if evacuate()/support()
         # runs before the map is ever loaded.
         self.def_man.map = self.area
+        # Checkpoint do Hunter dentro do upgrade de bandeira: cada upgrade
+        # custa um POST e um GET (~30 s), e o laco de 05/10 segurou o ciclo
+        # 24 min e fez um ataque agendado perder a saida (§8.54).
+        self.def_man.service_callback = self._service_hunter
 
         if not self.def_man.units and self.units:
             self.def_man.units = self.units

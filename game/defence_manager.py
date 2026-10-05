@@ -37,6 +37,11 @@ class DefenceManager:
     allow_support_send = True
     allow_support_recv = True
 
+    # Teto do upgrade de bandeira: `max_level:9` no Flags.js do br143. A
+    # quantidade por upgrade (3) a tela publica e `_read_flags_page()` lê.
+    FLAG_MAX_LEVEL = 9
+    FLAG_UPGRADE_MAX_ATTEMPTS = 2
+
     defensive_units = ["spear", "sword", "archer", "marcher", "spy"]
 
     hide_units = ["snob", "axe"]
@@ -139,6 +144,11 @@ class DefenceManager:
         # {(flag_type, level): attempt_count} - limita tentativas de upgrade
         # por sessão para evitar loop infinito (ver docs/backend.md, Bug 2)
         self._upgrade_attempts = {}
+        # `FlagsScreen.required_for_upgrade`, relido a cada leitura da tela.
+        self._flag_upgrade_required = 3
+        # Checkpoint cooperativo do Hunter (Village._service_hunter), chamado
+        # antes de cada upgrade de bandeira. None fora do bot (testes).
+        self.service_callback = None
         # Todos por instância, não por classe: existe um DefenceManager por
         # aldeia. `supported` era o Bug 3 de docs/backend.md -- suporte
         # enviado por uma aldeia marcava o alvo como "já suportado" para
@@ -779,12 +789,66 @@ class DefenceManager:
         return sum(int(n) for n in (self.flag_supply.get(int(flag_type)) or {}).values())
 
     def flag_upgrade(self, flag, level):
+        """
+        ⚠️ O upgrade do jogo tem DUAS etapas, e sem `confirm` só a primeira
+        acontece. Lido no `Flags.2dbd8d.js` do br143 em 2026-10-05:
+        `showUpgradeFlagDialog` posta `confirm:!1` e recebe só a prévia do
+        popup (`current_flag`/`upgraded_flag`); quem sobe de fato é
+        `upgradeFlag`, com `confirm:!0`, que recebe as contagens novas.
+        Sem o campo, a resposta era a prévia: JSON sem erro, logado como
+        "Upgraded", e o inventário intacto -- o laço de 05/10 (§8.54).
+        """
         return self.wrapper.get_api_action(
             self.village_id,
             action="upgrade_flag",
             params={"screen": "flags", "h": self.wrapper.last_h},
-            data={"flag_type": flag, "from_level": level},
+            data={"flag_type": flag, "from_level": level, "confirm": "true"},
         )
+
+    @staticmethod
+    def _flag_upgrade_error(result):
+        """
+        Motivo da recusa na resposta do `upgrade_flag`, ou None.
+
+        None NÃO quer dizer que subiu: quem decide é a releitura do
+        inventário em `manage_flags()`. Aceitar "veio JSON" como sucesso foi
+        exatamente o bug de 05/10.
+        """
+        if result is None:
+            return "sem resposta do servidor"
+        if not isinstance(result, dict):
+            return None
+        error = result.get("error")
+        inner = result.get("response")
+        if not error and isinstance(inner, dict):
+            error = inner.get("error")
+        if not error:
+            return None
+        if isinstance(error, list):
+            error = "; ".join(str(e) for e in error)
+        return str(error)
+
+    @staticmethod
+    def _flag_amount(raw):
+        """
+        Quantidade de UMA célula de `setFlagCounts`. O br143 publica string
+        (`"2"`), e o laço antigo fazia `for amount in "12"` -- dígito a
+        dígito, então 12 bandeiras viravam "1" e "2" e nunca subiam. Aceita
+        lista também, que era o que o comentário antigo dizia vir.
+        """
+        if isinstance(raw, list):
+            return sum(int(a) for a in raw)
+        return int(raw)
+
+    def _next_flag_upgrade(self, counts):
+        """(tipo, nível) a subir, do nível mais baixo para cima, ou None."""
+        for (flag_type, level), amount in sorted(counts.items(), key=lambda kv: (kv[0][1], kv[0][0])):
+            if level >= self.FLAG_MAX_LEVEL or amount < self._flag_upgrade_required:
+                continue
+            if self._upgrade_attempts.get((flag_type, level), 0) >= self.FLAG_UPGRADE_MAX_ATTEMPTS:
+                continue
+            return flag_type, level
+        return None
 
     def flag_set(self, flag, level):
         return self.wrapper.get_api_action(
@@ -807,12 +871,10 @@ class DefenceManager:
         """
         Lê o inventário de bandeiras da conta a partir da tela `screen=flags`.
 
-        `force=True` pula a randomização. Dois chamadores precisam disso: o
-        caminho de ataque em `update()` (decidir a bandeira de defesa com
-        inventário velho não pode esperar 3 a 8 runs) e a releitura logo após
-        um upgrade bem-sucedido -- que antes re-sorteava a randomização e
-        podia pular, deixando `self.flags` com a contagem anterior ao upgrade
-        que a releitura existia para refletir.
+        `force=True` pula a randomização -- o caminho de ataque em `update()`
+        precisa disso: decidir a bandeira de defesa com inventário velho não
+        pode esperar 3 a 8 runs. A releitura depois de um upgrade é um laço
+        aqui dentro, não uma nova chamada, então não passa pela randomização.
         """
         if not self.manage_flags_enabled:
             return
@@ -821,18 +883,84 @@ class DefenceManager:
             return
         self.logger.info("Managing flags")
 
+        counts = self._read_flags_page()
+        if counts is None:
+            return
+
+        # Upgrade conferido pela RELEITURA: só conta como feito se a contagem
+        # daquele (tipo, nível) cair. Até 05/10 qualquer JSON era "Upgraded",
+        # o contador de tentativas zerava a cada "sucesso" e a releitura era
+        # recursiva -- 43 POSTs seguidos na BBM 037 sem subir nada (§8.54).
+        # Cada sucesso de verdade tira bandeiras do inventário e cada falha
+        # gasta uma das FLAG_UPGRADE_MAX_ATTEMPTS, então o laço termina.
+        while True:
+            candidate = self._next_flag_upgrade(counts)
+            if candidate is None:
+                break
+            flag_type, level = candidate
+            before = counts[candidate]
+            attempts = self._upgrade_attempts.get(candidate, 0) + 1
+            self._upgrade_attempts[candidate] = attempts
+
+            # Uma cascata legitima custa ~30 s por upgrade e a janela do
+            # Hunter e de 120 s: ataque agendado tem prioridade sobre isto.
+            if callable(self.service_callback):
+                self.service_callback()
+            result = self.flag_upgrade(flag=flag_type, level=level)
+            error = self._flag_upgrade_error(result)
+            if error is None:
+                # Da tempo do inventario do servidor refletir o upgrade antes
+                # de reler o HTML.
+                time.sleep(2)
+                counts = self._read_flags_page()
+                if counts is None:
+                    return
+                # Sem default: célula ausente na releitura não é "caiu para 0".
+                after = counts.get(candidate)
+                if after is not None and after < before:
+                    self.logger.info(
+                        "Upgraded flag %s nível %s -> %s (%d -> %d no nível %s)",
+                        flag_type, level, level + 1, before, after, level,
+                    )
+                    self._upgrade_attempts.pop(candidate, None)
+                    continue
+                error = "o jogo respondeu sem erro, mas a contagem ficou em %s (resposta: %.300s)" % (
+                    after, result if isinstance(result, dict) else getattr(result, "text", result),
+                )
+            if attempts >= self.FLAG_UPGRADE_MAX_ATTEMPTS:
+                self.logger.warning(
+                    "Upgrade de bandeira %s/%s falhou %d vezes, desistindo nesta sessão: %s",
+                    flag_type, level, attempts, error,
+                )
+            else:
+                self.logger.warning(
+                    "Upgrade de bandeira %s/%s falhou (tentativa %d/%d): %s",
+                    flag_type, level, attempts, self.FLAG_UPGRADE_MAX_ATTEMPTS, error,
+                )
+
+        # A leitura foi ate o fim: este e o unico ponto que autoriza
+        # flag_logic() a mover bandeira neste ciclo. Fica no fim de proposito
+        # -- cada `return` acima e uma leitura que nao aconteceu.
+        self._flags_fresh = True
+
+    def _read_flags_page(self):
+        """
+        Um GET de `screen=flags`: atualiza cooldown, bandeira atual,
+        `flags` e `flag_supply`, e devolve {(tipo, nível): quantidade} --
+        ou None se a leitura falhou.
+        """
         url = f"game.php?village={self.village_id}&screen=flags"
         result = self.wrapper.get_url(url=url)
         if result is None:
             self.logger.warning("Flags: request timed out, skipping this cycle")
-            return
+            return None
 
         self._can_change_flag = '<span class="timer cooldown">' not in result.text
 
         get_flag_data = re.search(r"FlagsScreen\.setFlagCounts\((.+?)\);", result.text)
         if not get_flag_data:
             self.logger.warning("Error reading flag data")
-            return
+            return None
         # Bugfix (2026-08-07): _flag_state_confirmed used to be set True only
         # inside `if get_current_flag:` below, i.e. only when the regex for a
         # *currently equipped* flag matched. A village that has never had any
@@ -875,56 +1003,26 @@ class DefenceManager:
                     self.logger.info(
                         "Current village flag: %s", get_current_flag.group(3).strip()
                     )
-        upgraded = 0
         raw_flags = json.loads(get_flag_data.group(1))
+        required = re.search(r"FlagsScreen\.required_for_upgrade\s*=\s*(\d+)", result.text)
+        if required:
+            self._flag_upgrade_required = int(required.group(1))
+        counts = {}
         self.flags = {}
         self.flag_supply = {}
         for flag_type in raw_flags:
             for level in raw_flags[flag_type]:
-                for amount in raw_flags[flag_type][level]:
-                    if int(amount) >= 3:
-                        attempt_key = (flag_type, level)
-                        attempts = self._upgrade_attempts.get(attempt_key, 0)
-                        if attempts >= 2:
-                            self.logger.warning(
-                                "Upgrade de bandeira %s/%s falhou apos %d tentativas, desistindo",
-                                flag_type, level, attempts
-                            )
-                        else:
-                            self._upgrade_attempts[attempt_key] = attempts + 1
-                            upgrade_result = self.flag_upgrade(flag=flag_type, level=level)
-                            if upgrade_result:
-                                self.logger.info("Upgraded flag %s", flag_type)
-                                self._upgrade_attempts.pop(attempt_key, None)
-                                upgraded += 1
-                            else:
-                                self.logger.warning(
-                                    "Upgrade de bandeira %s/%s falhou (tentativa %d/2)",
-                                    flag_type, level, attempts + 1
-                                )
-                    if int(amount) > 0:
-                        # A quantidade, que `self.flags` descarta. O jogo
-                        # publica uma LISTA de amounts por nível, então
-                        # acumula em vez de atribuir.
-                        by_level = self.flag_supply.setdefault(int(flag_type), {})
-                        by_level[int(level)] = by_level.get(int(level), 0) + int(amount)
-                        if int(flag_type) not in self.flags or self.flags[
-                            int(flag_type)
-                        ] < int(level):
-                            self.flags[int(flag_type)] = int(level)
-        if upgraded:
-            # Da tempo do inventario do servidor refletir o upgrade antes
-            # de reler o HTML, evitando reler a mesma contagem obsoleta.
-            time.sleep(2)
-            # force: sem ele a releitura re-sorteia a randomizacao do topo e
-            # pode simplesmente nao acontecer, deixando self.flags com a
-            # contagem PRE-upgrade -- exatamente o que este bloco evita.
-            return self.manage_flags(force=True)
-
-        # A leitura foi ate o fim: este e o unico ponto que autoriza
-        # flag_logic() a mover bandeira neste ciclo. Fica no fim de proposito
-        # -- cada `return` acima e uma leitura que nao aconteceu.
-        self._flags_fresh = True
+                amount = self._flag_amount(raw_flags[flag_type][level])
+                counts[(int(flag_type), int(level))] = amount
+                if amount > 0:
+                    # A quantidade, que `self.flags` descarta.
+                    by_level = self.flag_supply.setdefault(int(flag_type), {})
+                    by_level[int(level)] = by_level.get(int(level), 0) + amount
+                    if int(flag_type) not in self.flags or self.flags[
+                        int(flag_type)
+                    ] < int(level):
+                        self.flags[int(flag_type)] = int(level)
+        return counts
 
     def support(self, vid, troops=None, position=None):
         """

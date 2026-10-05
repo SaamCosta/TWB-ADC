@@ -623,7 +623,8 @@ reaparecer, é aqui que se puxa o fio.**
 ### 6.3 Bandeiras — validação 1 de 18
 
 O Bug 1 (troca constante de bandeira a cada ciclo) e o Bug 2 (loop de upgrade)
-estão **corrigidos no código e não validados**. Com a política nova o caminho de
+estão **corrigidos no código e não validados**. ⚠️ O Bug 2 **não estava
+corrigido**: o laço voltou em campo em 05/10 e a correção real é a §8.54. Com a política nova o caminho de
 `flag_set` voltou a ser exercitado, então a contagem virou teste de verdade:
 **esperado exatamente 3 trocas no primeiro ciclo** (BBM 003, 016, 017) e silêncio
 depois. Mais que isso é o Bug 1 de volta.
@@ -5416,6 +5417,9 @@ foram todos na primeira aldeia a rodar depois de a recompensa aparecer.
   de upgrade antigo. Não era: o inventário dela hoje não tem nenhum nível com
   3 ou mais bandeiras e `upgrade_attempts` está vazio. Foi uma cascata única
   (3 de nível N → 1 de N+1, tipos 3/4/5/6/8 até o 7), custo de uma vez.
+  ⚠️ **Revisto em 05/10 (§8.54):** provavelmente era o laço de upgrade sem
+  `confirm`, que nunca subia nada. O estado "nenhum nível com 3, tentativas
+  vazias" é o que o laço deixa.
 
 **O dado de custo zero, e o que ele significa.** Toda tela HTML do jogo traz
 `RewardSystem.setUnlockableRewardsCount(N)` (27 capturas em `cache/`, todas
@@ -6094,6 +6098,68 @@ versão do resumo.
 **⏳ Próximo:** captura 2 (piso de ruído) na noite de 06/10; captura 3 a
 partir da noite de 08/10, depois de confirmado que `features.*.active` virou
 `false`.
+
+---
+
+## 8.54 ✅ `P-BANDEIRA-UPGRADE` — o upgrade de bandeira nunca subia nada (2026-10-05)
+
+**Sintoma.** Em 05/10 o bot postou `upgrade_flag` em laço, um a cada ~30 s:
+9 vezes na BBM 030 (tipo 3, nível 3, 14:56–15:01) e 43 na BBM 037 (tipo 3,
+nível 2, 16:14–16:38), logando `Upgraded flag 3` em todas. Os laços só
+acabaram porque **o usuário subiu as bandeiras na mão**. Durante o segundo, o
+ciclo ficou preso em `manage_flags()` e o ataque do Hunter 74689 → 68082
+(saída ~16:28:52) foi recusado às 16:39 por atraso de 632 s. O usuário
+mandou na mão.
+
+**Prova de que nenhum upgrade subiu, sem depender do relato.** Em 43
+"sucessos" do nível 2, o bot nunca tentou o nível 3. Se um único upgrade
+tivesse funcionado, o nível 3 teria chegado a 3 bandeiras em no máximo três
+sucessos, e o mesmo passe teria tentado subi-lo.
+
+**Causa (três defeitos juntos).**
+1. **Faltava `confirm`.** Lido no `Flags.2dbd8d.js` do br143 (CDN público,
+   cópia em `cache/debug/`): o upgrade tem duas etapas.
+   `showUpgradeFlagDialog` posta `confirm:!1` e recebe só a prévia do popup
+   (`current_flag`, `upgraded_flag`). `upgradeFlag` posta `confirm:!0` e
+   recebe as contagens novas, que vão direto para `setFlagCounts`. O bot não
+   mandava o campo. Que a resposta **sem** o campo seja a prévia é inferência
+   (o JS nunca o omite), mas o laço de campo é consistente com ela.
+2. **Sucesso era "veio JSON".** A prévia é JSON sem erro.
+3. **A guarda do Bug 2 não podia disparar.** `_upgrade_attempts` zerava a
+   cada "sucesso", e a releitura era uma chamada recursiva de
+   `manage_flags(force=True)`, sem fundo.
+
+De brinde: `setFlagCounts` publica **string** por nível (`"2"`), e o laço
+fazia `for amount in raw[t][l]`, dígito a dígito. 12 bandeiras liam como "1"
+e "2": nunca subiam, e a oferta saía 3. O comentário dizia "o jogo publica
+uma LISTA"; a captura de 20/09 já mostrava string.
+
+**Correção.** `flag_upgrade` manda `confirm=true`. O sucesso agora é
+**a contagem daquele (tipo, nível) cair na releitura**, não o formato da
+resposta. A releitura virou um laço dentro de `manage_flags`, e cada
+(tipo, nível) tem 2 tentativas por sessão que não zeram em falso sucesso. O
+laço termina porque cada sucesso tira bandeiras do inventário e cada falha
+gasta uma tentativa. Nível 9 (`max_level` do JS) não sobe, e a quantidade
+por upgrade é lida de `FlagsScreen.required_for_upgrade` (3). Antes de cada
+POST de upgrade roda o checkpoint do Hunter (`Village._service_hunter`): uma
+cascata legítima custa ~30 s por upgrade e a janela do Hunter é de 120 s.
+Testes em `tests/test_flag_upgrade.py`. Rodados contra o código antigo, os
+mesmos testes estouram com `RecursionError` e leem 12 como 3.
+
+**Revisão da §8.44.** Lá os 53 `upgrade_flag` da 52876 em 01/10 foram
+registrados como "cascata única" real. Com o que se sabe agora, o mais
+provável é que fosse **este mesmo laço**, encerrado do mesmo jeito (alguém
+mexendo no inventário). O argumento usado na época, "hoje nenhum nível tem 3
+ou mais e `upgrade_attempts` está vazio", é exatamente o estado que o laço
+deixa: o contador zerava em todo falso sucesso. Não há log de 01/10 para
+fechar a questão.
+
+**⏳ Validar em campo:** na próxima vez que um nível chegar a 3 bandeiras,
+`grep -a "Upgraded flag\|Upgrade de bandeira"` no `session_latest.log`. O
+esperado é `Upgraded flag T nível N -> N+1 (a -> b ...)` com `b < a`. Se vier
+`Upgrade de bandeira ... contagem ficou em`, o `confirm=true` não é o que o
+servidor quer, e a linha traz a resposta para diagnóstico. Nos dois casos o
+laço não volta.
 
 ---
 

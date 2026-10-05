@@ -169,6 +169,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `RewardSystem.setUnlockableRewardsCount` com recorte verbatim, ausência ≠
   zero, conferência a cada 3 h que desliga o gate se o contador mentir;
   §8.44)
+  e o upgrade de bandeira (`tests/test_flag_upgrade.py` — `confirm=true` no
+  POST, sucesso só quando a contagem cai na releitura, laço finito quando o
+  jogo responde sem subir, contagem `"12"` lida como número, checkpoint do
+  Hunter antes de cada upgrade; §8.54)
   e o gate do ferreiro (`tests/test_smith_gate.py` — `BuildingSmith.techs`
   verbatim, `error_level: true` como "nível máximo" para o `light: 3` dos
   templates num mundo de nível único, GET só com pesquisa pendente ou a cada
