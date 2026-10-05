@@ -366,6 +366,44 @@ def test_segunda_campanha_e_recusada_enquanto_a_primeira_esta_aberta():
     raise AssertionError("aprovou duas campanhas abertas")
 
 
+def _routing_village(snobs, academy, plan=None):
+    """Village mínima para run_resource_sharing, com o envio ao hub gravado."""
+    from types import SimpleNamespace
+    from game import village as village_mod
+    v = object.__new__(village_mod.Village)
+    v.village_id = "41123"
+    v.config = {"villages": {"41123": {"snobs": snobs}}, "resource_sharing": {"enabled": False}}
+    v.logger = SimpleNamespace(debug=lambda *a, **k: None, info=lambda *a, **k: None,
+                               warning=lambda *a, **k: None)
+    levels = {"market": 20, "snob": academy}
+    v.builder = SimpleNamespace(get_level=lambda b: levels.get(b, 0))
+    v.noble_recruit_plan = plan
+    v._noble_mode_logged = None
+    v.mint_route = {"hub": "38409", "role": "donor", "floor": 20000}
+    v.resman = SimpleNamespace(actual={})
+    v.wrapper = None
+    sent = []
+    orig = village_mod.ResourceSharingManager.run_mint_route
+    village_mod.ResourceSharingManager.run_mint_route = lambda self, current_resman, route: sent.append(route["hub"])
+    try:
+        v.run_resource_sharing()
+    finally:
+        village_mod.ResourceSharingManager.run_mint_route = orig
+    return sent
+
+
+def test_quem_recruta_nobre_nao_envia_ao_hub():
+    assert _routing_village(snobs=4, academy=1) == []
+    # Sem nobre configurado, ou sem academia, envia.
+    assert _routing_village(snobs=0, academy=1) == ["38409"]
+    assert _routing_village(snobs=4, academy=0) == ["38409"]
+    # `snobs: 4` mas passada para "só cunha" pelo filtro de distância (§8.48): envia.
+    far = {"41123": {"recruit": False, "distance": 30.0, "rank": 9, "of": 23}}
+    assert _routing_village(snobs=4, academy=1, plan=far) == ["38409"]
+    near = {"41123": {"recruit": True, "distance": 5.0, "rank": 1, "of": 23}}
+    assert _routing_village(snobs=4, academy=1, plan=near) == []
+
+
 def test_bandeira_travada_nao_troca_nem_sob_ataque():
     dm = DefenceManager(village_id="38409")
     dm.manage_flags_enabled = True

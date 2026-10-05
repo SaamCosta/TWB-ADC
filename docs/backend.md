@@ -6243,6 +6243,20 @@ itens.
 - Testes: `tests/test_mint.py`. A guarda da releitura foi provada desligando-a: sem
   ela, o teste vê a campanha virar "ativa" sem os Decretos.
 
+**Primeira campanha, 05/10 18:30 (BBM 002).** Ativou tudo e o custo medido
+respondeu a dúvida: 21.840 antes, **15.680 com o Bônus** (−44 %) e **12.880 com o
+Decreto** (−54 %), ou seja, **Decreto e bandeira somam**. O 2º Decreto não mudou o
+custo, o que bate com estender a duração. Foram 5 moedas cunhadas de uma vez no
+primeiro tick e a sessão automática de 8 h começou.
+
+**Ajuste no mesmo dia: quem recruta nobre não envia ao hub.** O roteamento
+ignorava a reserva da própria aldeia. Com piso de 20.000, ele levava tudo o que
+uma recrutadora juntava para o nobre (40.000/50.000/50.000), e ela nunca formava o
+nobre. Pedido do usuário: sincronizar as duas configurações. A aldeia que recruta
+(`snobs` > 0, academia construída e escolhida pelo NobleRecruitGate da §8.48, no
+máximo `max_noble_recruiters`) não envia. A que só cunha por estar longe dos alvos
+envia (`Village._recruits_nobles`, `test_quem_recruta_nobre_nao_envia_ao_hub`).
+
 **Ainda não capturado.** A tela da academia **com** a cunhagem automática em
 andamento. O bot só afirma o que viu: o botão "Ativar" sumiu. A primeira resposta
 de cada tipo vai para `cache/mint/samples/` (token `h` redigido) para virar

@@ -871,10 +871,31 @@ class Village:
         )
         if route:
             # Roteamento de cunhagem ligado: tudo acima do piso vai para o
-            # hub, no lugar das duas regras normais (§8.55).
+            # hub, no lugar das duas regras normais (§8.55). Quem recruta nobre
+            # fica de fora: o nobre custa 40.000/50.000/50.000 e o piso do
+            # roteamento levaria embora tudo que a aldeia junta para ele.
+            if self._recruits_nobles():
+                self.logger.debug(
+                    "Cunhagem: %s recruta nobre, não envia ao hub", self.village_id
+                )
+                return
             sharing.run_mint_route(current_resman=self.resman, route=route)
             return
         sharing.run(current_resman=self.resman)
+
+    def _recruits_nobles(self):
+        """
+        True se esta aldeia forma nobre neste ciclo, pela mesma regra de
+        `run_snob_recruit()`: `snobs` > 0, academia construída e não tirada dos
+        recrutadores pelo NobleRecruitGate (§8.48). A aldeia que só cunha por
+        estar longe dos alvos não recruta, então envia ao hub como as outras.
+        """
+        wanted = self.get_village_config(self.village_id, parameter="snobs", default=0) or 0
+        if not wanted:
+            return False
+        if not self.builder or self.builder.get_level("snob") <= 0:
+            return False
+        return not self._noble_too_far()
 
     def _mint_spending_paused(self):
         """True no hub de uma campanha ativa com `campaign_pause_hub_spending`."""
