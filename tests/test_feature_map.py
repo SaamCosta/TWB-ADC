@@ -107,6 +107,27 @@ class FingerprintTest(unittest.TestCase):
         self.assertIn("premium&mode=feature_log", diff["links"]["so_em_a"])
         self.assertIn("premium&mode=zzz", diff["links"]["so_em_b"])
 
+    def test_css_only_gate_is_seen(self):
+        # Recorte verbatim de place&mode=scavenge_mass (br143, 2026-10-04,
+        # conta com premium): o aviso vem no HTML mesmo com premium ativo, e
+        # quem o esconde e o CSS via `has-pa` no body. Uma tela que so muda
+        # por isso tem que sair diferente na comparacao.
+        hint = (
+            '<h3>Coleta em Massa</h3>\n<div class="premium_account_hint">\n'
+            '    <div class="content">\n        Evolua para um <a class="premium_direct_buy" '
+            'data-feature="Premium" href="#">Conta premium</a> para poder enviar comandos de '
+            'coleta de várias aldeias ao mesmo tempo.    </div>\n</div>\n\n'
+            '<div class="premium-required">\n')
+        paid = '<body id="ds_body" class="desktop    has-pa" dir="ltr"\n      >' + hint
+        free = '<body id="ds_body" class="desktop" dir="ltr">' + hint
+        fp_paid, fp_free = fm.fingerprint(paid), fm.fingerprint(free)
+        self.assertEqual(fp_paid["body_classes"], ["desktop", "has-pa"])
+        self.assertEqual(fp_paid["data_features"], ["Premium"])
+        self.assertEqual(len(fp_paid["premium_hints"]), 1)
+        self.assertIn("coleta de várias aldeias", fp_paid["premium_hints"][0])
+        diff = fm.compare_fingerprints(fp_paid, fp_free)
+        self.assertEqual(diff["body_classes"]["so_em_a"], ["has-pa"])
+
     def test_presence(self):
         self.assertEqual(fm.compare_fingerprints(None, {"x": 1}),
                          {"presence": ("ausente", "presente")})

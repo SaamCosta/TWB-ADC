@@ -5974,7 +5974,8 @@ some. O mapeamento compara a conta consigo mesma.
 
 **Instrumento: `tools/feature_map.py`.** Mesma lista fixa de telas, mesmo
 cliente (o `WebWrapper` do bot, 7º padrão), nas duas situações:
-- 72 telas fixas, nesta ordem: as que o bot consome (as que podem quebrar em
+- 75 telas fixas (72 na captura 1, mais as 3 de "Vantagens" acrescentadas
+  depois dela), nesta ordem: as que o bot consome (as que podem quebrar em
   08/10), as "a confirmar" da §8.25, gerente e assistente (`am_*`), premium
   (`premium`, `use`, `feature_log`) e o resto da interface. Aldeia de
   referência BBM 003 (44683, 16 de 17 edifícios); a torre é lida na BBM 002.
@@ -6023,8 +6024,76 @@ seguinte (11º padrão: saber se o conjunto é um conjunto).
   `am_warehouse` balanceando recurso: tudo isso **para** em 08/10. O
   `resource_sharing` do bot passa a ser o único transporte.
 
-**⏳ Resultados:** entram aqui depois da captura 1 (tabela por tela: bot usa?
-/ o que o jogo mostra com premium / o que muda sem).
+### Captura 1 (premium) — 04/10 23:05 → 05/10 00:57
+
+`cache/feature_map/premium_20261004_2305/`: 72 telas fixas + 40 da descoberta
++ 2 de "Vantagens" lidas às 00:56 e juntadas (a descoberta agrupa por
+tela/modo e só tinha pego a do gerente) = **114 telas, todas 200, nenhum
+`data-bot-protect`**, uma por minuto com o bot no ciclo noturno. Uma tela da
+descoberta (`extforum`) redirecionava para o fórum externo; saiu da descoberta
+para as próximas capturas.
+
+**O que o jogo diz que é pago — lista oficial, dentro do jogo**
+(`premium&mode=help&feature=…`, que a KB manda consultar):
+
+| Produto | Vantagens declaradas |
+|---|---|
+| Conta premium | **+3 ordens na fila de construção**; melhorias no mapa (para onde vão as tropas, pop-up estendido, mapa maior, cores); visão geral da aldeia melhorada (produção de todos os edifícios e ataques na tela da aldeia); tela de informação da aldeia melhorada (ataques, últimos relatórios, notas); **funções de múltiplas aldeias: visões gerais, alternar aldeias, recrutamento em massa** "e muito mais"; brasão, barra de acesso rápido, sem anúncios, pastas de relatório/mensagem, renomear comandos, catálogo de endereços |
+| Gerente de conta | gerente de construção, de tropa e de pesquisa; distribuidor de recursos (`am_warehouse`); gerente de entregas (`am_market`); e-mail quando sob ataque (`am_notify`); **inclui o assistente de saque** |
+| Assistente de saque | saque em aldeias bárbaras (`am_farm`) |
+
+"E muito mais" e "funções de múltiplas aldeias" não dizem quais telas: é a
+captura 3 que fecha isso.
+
+**O jogo esconde parte do premium no cliente.** O `<body>` da conta paga tem
+a classe `has-pa`, e o CSS do jogo usa isso para esconder o aviso
+`premium_account_hint` e liberar o bloco `premium-required`. O aviso vem no
+HTML **mesmo com premium ativo**, e na captura 1 só existe em um lugar,
+verbatim: *"Evolua para um Conta premium para poder enviar comandos de coleta
+de várias aldeias ao mesmo tempo."* (`place&mode=scavenge_mass`). Ou seja:
+**ver a coleta em massa não basta; enviar de várias aldeias num comando é
+premium.** Isso responde metade do §9 item 24, e pela leitura do jogo, não por
+teste. O resumo de tela passou a registrar `body_classes`, `premium_hints` e
+`data_features` (com teste, `tests/test_feature_map.py`, agora com 15), e o
+comando `refingerprint` recalcula uma captura antiga a partir do HTML salvo:
+a captura 1 já foi recalculada, então as próximas comparam com a mesma
+versão do resumo.
+
+**Estado do que para em 08/10** (lido das telas `am_*`):
+- Gerente de construção: **27 de 41 aldeias ativas** (19 `ADC - DEFENSIVA`,
+  5 `ADC - OFENSIVA BOT`, 3 `ADC - TORRE`); 14 sem gerência. É o mesmo duplo
+  comando da §8.25: depois de 08/10, o `BuildingManager` passa a ser o único a
+  construir nessas 27.
+- Gerente de pesquisa: 13 ativas (modelo `ALL`), 28 sem gerência.
+- Gerente de tropa: modelos `ADC - OFENSIVA`, `ADC - DEFENSIVA` e
+  `ADC - TORRE` (a atribuição por aldeia não foi reconferida aqui; ver §8.25).
+- `am_warehouse` **ativo** ("algumas vezes por dia" move recurso entre aldeias);
+  o `resource_sharing` do bot passa a ser o único transporte.
+- Assistente de saque: dois modelos (capacidade 4.000 e 8.000) e a lista de
+  saques da aldeia, incluindo `?` para os alvos sem relatório.
+
+**Achados sobre o próprio bot, sem precisar da captura 3:**
+- **A detecção de premium que já existe está errada.** `config.json` tem
+  `world.premium_account: false` com os três ativos. A Feature 22 deduz o
+  premium de uma coluna vazia a mais na visão geral e só detecta **uma vez**
+  (enquanto o valor é `null`), e ninguém lê `game_data.features`, que diz o
+  estado certo em toda tela, de graça (§8.25, achado 1). Hoje isso não faz
+  estrago só porque `building.auto_queue_len` está `false`. A camada 2 tem que
+  ler `features.*.active` a cada ciclo, nunca guardar uma detecção (6º padrão:
+  o premium vence e volta).
+- Fila de construção: `BuildingMain.order_count` vem na tela `main` (2 na
+  BBM 003 às 23:09), mas o teto não. A página de Vantagens dá "+3", o que é
+  coerente com `max_queued_items: 2` / `premium_max_queued_items: 5`. Fica
+  para confirmar na captura 3.
+- **Renovação automática:** as três linhas da tela de assinaturas têm
+  "Prolongar automaticamente", e a conta tem 200 pontos premium. As caixas
+  vêm no HTML sem `checked`, mas o estado pode ser aplicado por JS. Se alguma
+  estiver ligada, a assinatura não vence e a semana sem premium não acontece:
+  **conferir na tela antes de 08/10.**
+
+**⏳ Próximo:** captura 2 (piso de ruído) na noite de 06/10; captura 3 a
+partir da noite de 08/10, depois de confirmado que `features.*.active` virou
+`false`.
 
 ---
 

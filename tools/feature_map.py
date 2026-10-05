@@ -117,6 +117,12 @@ SCREENS = [
     ("premium", "screen=premium", "v"),
     ("premium/use", "screen=premium&mode=use", "v"),
     ("premium/feature_log", "screen=premium&mode=feature_log", "v"),
+    # "Vantagens" de cada produto: a lista oficial, dentro do jogo, do que
+    # cada um da (a KB manda ver aqui). A descoberta agrupa por tela/modo e
+    # so pegou uma das tres na captura 1 -- por isso estao na lista fixa.
+    ("premium/help/Premium", "screen=premium&mode=help&feature=Premium", "v"),
+    ("premium/help/AccountManager", "screen=premium&mode=help&feature=AccountManager", "v"),
+    ("premium/help/FarmAssistent", "screen=premium&mode=help&feature=FarmAssistent", "v"),
     # --- o resto da interface ---------------------------------------------
     ("place/templates", "screen=place&mode=templates", "v"),
     ("place/neighbor", "screen=place&mode=neighbor", "v"),
@@ -147,6 +153,8 @@ FORBIDDEN_PARAMS = ("action", "ajaxaction", "h")
 DISCOVERY_DENY_SCREENS = {
     "mail", "forum", "ranking", "buddies", "info_command", "info_village",
     "info_ally", "api", "logout", "help", "unit_info", "redir",
+    # redireciona para forum.tribalwars.com.br (outro host); lido na captura 1
+    "extforum",
 }
 DISCOVERY_DENY_PAIRS = {
     ("premium", "transfer"), ("premium", "premium"), ("premium", "cosmetics"),
@@ -170,6 +178,14 @@ HEADING_RE = re.compile(r'<h([1-4])\b[^>]*>(.*?)</h\1>', re.I | re.S)
 TAG_RE = re.compile(r'<[^>]+>')
 ERROR_BOX_RE = re.compile(r'<div class="(error_box|info_box)"[^>]*>(.*?)</div>', re.S)
 PREMIUM_CLASS_RE = re.compile(r'class="([^"]*(?:premium|locked|inactive|disabled)[^"]*)"', re.I)
+# O jogo decide parte do que e premium no CLIENTE: `<body class="... has-pa">`
+# na conta com premium, e o CSS esconde o aviso `premium_account_hint` e
+# libera o bloco `premium-required`. O aviso vem no HTML nas duas situacoes
+# (captura 1, coleta em massa), entao o texto dele e a classe do body sao os
+# sinais -- sem eles, uma tela que so muda por CSS sairia "igual".
+BODY_CLASS_RE = re.compile(r'<body\b[^>]*\bclass="([^"]*)"', re.I)
+HINT_RE = re.compile(r'class="premium_account_hint"[^>]*>(.*?)</div>\s*</div>', re.S)
+DATA_FEATURE_RE = re.compile(r'data-feature="([A-Za-z]+)"')
 DIGITS_RE = re.compile(r'\d+')
 
 
@@ -271,11 +287,15 @@ def fingerprint(html):
         "headings": headings,
         "boxes": boxes,
         "premium_classes": sorted({c.strip() for c in PREMIUM_CLASS_RE.findall(html)}),
+        "body_classes": sorted(set((BODY_CLASS_RE.search(html) or [None, ""])[1].split())),
+        "premium_hints": sorted({_redact_text(_text(h)) for h in HINT_RE.findall(html)}),
+        "data_features": sorted(set(DATA_FEATURE_RE.findall(html))),
     }
 
 
 SET_FIELDS = ("links", "endpoints", "premium_links", "forms", "inputs",
-              "js_modules", "tables", "headings", "boxes", "premium_classes")
+              "js_modules", "tables", "headings", "boxes", "premium_classes",
+              "body_classes", "premium_hints", "data_features")
 
 
 def compare_fingerprints(a, b):
@@ -470,6 +490,23 @@ def _load(run_dir):
         return json.load(f)
 
 
+def refingerprint(args):
+    """Recalcula o resumo de cada tela a partir do HTML salvo, mantendo os
+    metadados da captura (status, url final, hora). Assim uma captura antiga
+    e comparada com a mesma versao do resumo que uma nova -- o instrumento
+    pode ganhar um campo sem invalidar o que ja foi medido."""
+    records = _load(args.run)
+    for key, rec in records.items():
+        path = os.path.join(args.run, "pages", key.replace("/", "__") + ".html.gz")
+        if not os.path.exists(path):
+            continue
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            rec.update(fingerprint(f.read()))
+    with open(os.path.join(args.run, "fingerprints.json"), "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=1)
+    print("%d tela(s) recalculada(s) em %s" % (len(records), args.run))
+
+
 def compare(args):
     a, b = _load(args.a), _load(args.b)
     noise = {}
@@ -551,8 +588,10 @@ def main(argv=None):
                    help="duas capturas na mesma situacao: o que muda entre "
                         "elas e descontado")
     k.add_argument("--out")
+    r = sub.add_parser("refingerprint")
+    r.add_argument("run")
     args = p.parse_args(argv)
-    capture(args) if args.cmd == "capture" else compare(args)
+    {"capture": capture, "compare": compare, "refingerprint": refingerprint}[args.cmd](args)
 
 
 if __name__ == "__main__":
