@@ -5954,6 +5954,78 @@ cai para o número de nobres de fato formados. No log, `Nobre: sem recurso
 para formar` nas recrutadoras, e `required_resources.snob` no
 `cache/managed` delas.
 
+## 8.53 `P-MAPA-PREMIUM` — o que é pago, medido nas duas situações (2026-10-04)
+
+**Pedido do usuário:** mapear o jogo como está hoje (premium + gerente de
+conta + assistente de saque), usar o bot uma semana sem nada pago depois que
+vencerem, e repetir o mapeamento. A diferença diz, com certeza, o que é pago.
+É a base da camada 2 da §9 ("ativável por detecção") e fecha os "premium? (a
+confirmar)" da §8.25.
+
+**Prazo, lido do jogo** (`premium&mode=feature_log`, 2026-10-04 20:58): os
+três foram comprados em 08/09 01:16 por 30 dias e **vencem em 08/10 01:16**.
+Antes disso a conta já tinha usado pacotes de 3 e 7 dias em agosto.
+
+**Por que não basta a KB nem a §8.25.** A KB (artigo 1296) só lista as
+vantagens por alto ("fila de construção maior", "várias visões gerais",
+"mapa até 30x30"…) e manda ver a lista completa em *Premium > Vantagens*, no
+jogo. A §8.25 foi feita **só com premium**, então não tinha como ver o que
+some. O mapeamento compara a conta consigo mesma.
+
+**Instrumento: `tools/feature_map.py`.** Mesma lista fixa de telas, mesmo
+cliente (o `WebWrapper` do bot, 7º padrão), nas duas situações:
+- 72 telas fixas, nesta ordem: as que o bot consome (as que podem quebrar em
+  08/10), as "a confirmar" da §8.25, gerente e assistente (`am_*`), premium
+  (`premium`, `use`, `feature_log`) e o resto da interface. Aldeia de
+  referência BBM 003 (44683, 16 de 17 edifícios); a torre é lida na BBM 002.
+- Segunda passada (`--discover`, até 40): as telas que as páginas lidas
+  linkam e que não estão na lista. Nunca compra, transferência, conta ou
+  correio.
+- Para cada tela, um **resumo estrutural**: links e endpoints de ação
+  normalizados (sem id, página ou `h`), formulários, nomes de campo, módulos
+  JS iniciados, tabelas, títulos, caixas de aviso, links de compra e classes
+  `premium`/`locked`/`disabled`. Nada de número de jogo, para dois dias
+  diferentes darem o mesmo resumo. HTML bruto em
+  `cache/feature_map/<rótulo>_<data>/pages/` (fora do git: tem token de sessão
+  e nome de jogador).
+- Segurança imposta no código: só GET, URL com `action`, `ajaxaction` ou `h`
+  é recusada antes de pedir, nenhum `group=` (não mexe no grupo que o jogador
+  deixou), uma requisição por minuto, e **parada** no primeiro
+  `data-bot-protect` com valor (o `pending` vem antes do captcha). Recusa
+  rodar dentro de `active_hours` sem `--force`. Testes em
+  `tests/test_feature_map.py` (14), provados por mutação: sem o `h` na lista
+  proibida, sem negar a transferência na descoberta e parando só no
+  `forced`, cada um derruba um teste.
+
+**Calendário:**
+
+| # | Quando | Situação | Para quê |
+|---|---|---|---|
+| 1 | 04/10, 23:05 | premium | a foto de hoje |
+| 2 | 06/10 à noite (antes de 08/10 01:16) | premium | **piso de ruído**: o que muda entre dois dias sem mudar a conta (ordens do gerente, comandos no ar, relatórios novos) |
+| 3 | a partir da noite de 08/10 | sem nada pago | a foto sem premium |
+| 4 | fim da semana sem premium | sem nada pago | ruído do lado grátis, e o bot já adaptado |
+
+`compare <1> <3> --noise <1> <2>` desconta do resultado o que mudou entre 1 e
+2. Sem a captura 2, uma diferença premium × grátis poderia ser só o dia
+seguinte (11º padrão: saber se o conjunto é um conjunto).
+
+**O que o bot consome e precisa ser vigiado no primeiro ciclo de 08/10:**
+- `overview_villages&mode=prod` (lista de aldeias, pontos): o código diz
+  que "conta sem premium só tem Produção" e trata a coluna a mais do premium
+  (`pages/overview.py:256`, Feature 22). É afirmação, não medição.
+- `overview_villages&mode=commands` (`InFlightTracker`, card "Em voo"):
+  candidata forte a premium. Se for, o card some, mas a conquista não depende
+  dele (§8.41).
+- Fila de construção: a KB diz que o premium aumenta. O `BuildingManager`
+  precisa saber o teto novo, senão pede a terceira ordem e leva recusa.
+- Gerente de construção e de tropa ativos em 27 aldeias (§8.25, achado 2) e
+  `am_warehouse` balanceando recurso: tudo isso **para** em 08/10. O
+  `resource_sharing` do bot passa a ser o único transporte.
+
+**⏳ Resultados:** entram aqui depois da captura 1 (tabela por tela: bot usa?
+/ o que o jogo mostra com premium / o que muda sem).
+
 ---
 
 ## 9. Próximos passos

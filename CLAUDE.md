@@ -173,6 +173,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   verbatim, `error_level: true` como "nível máximo" para o `light: 3` dos
   templates num mundo de nível único, GET só com pesquisa pendente ou a cada
   24 h; §8.50)
+  e a captura do mapeamento premium × grátis
+  (`tests/test_feature_map.py` — só GET, URL com `action`/`ajaxaction`/`h`
+  recusada antes de pedir, parada no primeiro `data-bot-protect`, resumo de
+  tela estável entre ids; a ferramenta é `tools/feature_map.py`; §8.53)
   e o portão de recurso antes de formar nobre
   (`tests/test_snob_train_gate.py` — custo de `next_snob` e célula "Formar"
   inativa, recorte verbatim da academia; vaga da conta ≠ recurso da aldeia;
