@@ -1066,6 +1066,10 @@ poller somente leitura de incoming; passe account-wide de bandeiras; métricas
 resource sharing. Cada um precisa de teste e canário local — o número de módulos
 do fork não é evidência de qualidade.
 
+**Releitura em 2026-10-06 (`97ded44`, 55 commits a mais):** §8.56. Traz as
+medições de precisão de horário que o `ServerClock` acima vai precisar e a
+estratégia `P-SNIPE-TREM` para cortar trem de nobres inimigo.
+
 ### 7.10 Backlog tático do estudo dos forks (leitura independente, 2026-09-20)
 
 Segunda leitura dos mesmos cinco repositórios, feita em paralelo à §7.9. Ela
@@ -6262,6 +6266,180 @@ andamento. O bot só afirma o que viu: o botão "Ativar" sumiu. A primeira respo
 de cada tipo vai para `cache/mint/samples/` (token `h` redigido) para virar
 fixture.
 
+## 8.56 Releitura do `TWBOT_LazyTurtle` e `P-SNIPE-TREM` (2026-10-06)
+
+Segunda leitura do fork principal da §7.9, de `a2b13a8` (19/set, último commit
+auditado) até `97ded44` (06/out): 55 commits, ~5.100 linhas, quase tudo em
+`game/snipe.py`, `snipe_wave.py`, `dodge.py`, `csnipe.py`, `massgather.py` e
+`events.py`. **Auditoria estática (`T`)**, como a §7.9. Os números abaixo são do
+nl116 e foram medidos por eles, não aqui; vale o décimo sétimo padrão. A exceção
+são os dois parâmetros do br143 marcados como "lido em 06/out", que vieram de
+`interface.php?func=get_config`. **Nenhum código foi transplantado.**
+
+### O que serve
+
+1. **Evento da Bigorna (`83b9b32`).** Lê estoque e livro de receitas, segura os
+   metais raros para o melhor alvo que precisa deles e forja seguindo um perfil
+   (nobre, defesa, construção, ids livres). Usa o livro de receitas do próprio
+   jogador, então é compatível com "as receitas são por jogador". Não foi
+   portado porque o evento do br143 fecha em 13/out (forja até 14/out), e são
+   ~600 linhas com painel. Se o evento voltar, o ponto de partida é
+   `anvil_plan()` em `game/events.py` deles.
+2. **Precisão de horário.** São as medições que alimentam o `ServerClock` da
+   §7.9 e o `P-SNIPE-TREM` abaixo:
+   - Conexão já aberta mede ~70–115 ms de ida e volta; conexão nova, ~160–215 ms.
+     Sincronizar numa e disparar na outra errou +55..+81 ms (`d0ac37a`) e
+     −81 ms (`eb8b2a7`). A correção foi fechar as conexões ociosas antes da
+     sincronização **e** antes do disparo, para os dois pegarem o mesmo caminho
+     frio.
+   - Antecedência fixa não segura nem uma hora: o mesmo envio pousou −31 ms às
+     13:12 e +28 ms às 16:47, com a carga da noite (`adc82d9`). A saída foi
+     calibrar pelo pouso relido do envio anterior, guardado como "delta sem
+     antecedência". Com a mediana dos 5 últimos, a calibração correu atrás do
+     ruído (desvio 13,7 ms contra 11,9 ms cru). Com os 15 últimos, 12,7 ms
+     (`e2ccba9`). Leituras acima de 80 ms são descartadas como leitura quebrada.
+   - Uma "melhoria" (várias amostras de relógio em conexão quente) fez o
+     primeiro envio real pousar +90 ms atrasado, e foi revertida (`941e73b`).
+     É o décimo terceiro padrão do lado deles: a amostra extra media uma
+     latência que o disparo não ia ter.
+   - Erro residual de **±15–20 ms** por envio, que a sincronização não remove
+     (`snipe_wave.py`, cabeçalho).
+3. **Onda de espiões não é ataque cheio (`f54797c`).** Baixar o limiar de
+   unidades para pegar meio-full também pegou ondas de ~2.900 espiões mortos,
+   que seriam lidas como "full morto". Eles passaram a exigir ≥ 25% de unidades
+   ofensivas (bárbaro, leve, arqueiro a cavalo). Em 301 ataques acima de 2.000
+   unidades essa fração foi 0% ou ≥ 75,6%, então o corte cai num vazio.
+   **Conferido aqui:** `ReportManager.safe_to_engage()` julga só as perdas do
+   **nosso** ataque contra o alvo, e não infere o exército inimigo pelo tamanho.
+   O defeito deles não tem equivalente hoje. Fica a lição para quando o
+   `DEF-01` classificar ataques recebidos: separar por composição, não por peso.
+4. **Nome do comando × tempo de voo (`5c7fff9`).** Um ataque visto 134 min
+   antes do pouso, a 4 campos, não pode ser aríete (que levaria 120 min). Só
+   pode ser nobre. Eles avisam quando o nome contradiz o voo e usam a distância
+   exata, porque a arredondada fazia aríetes verdadeiros parecerem lentos demais
+   acima de 60 campos. A metade que vale para nós é a do **limite inferior de
+   viagem**, ver `P-SNIPE-TREM` abaixo.
+
+### O que não serve, e por quê
+
+- **Coleta em massa (`massgather.py`):** enviar de várias aldeias num comando é
+  premium. Quem diz é o próprio jogo, na §8.53 (*"Evolua para um Conta premium
+  para poder enviar comandos de coleta de várias aldeias…"*). O alvo do bot é
+  conta grátis. Mesmo assim ficam duas observações deles:
+  - **O jogo troca o token CSRF a cada ação aceita.** O segundo POST seguido com
+    o token velho é recusado (`1a4ae14`). Aqui o `post_process`
+    (`core/request.py:134`) relê o `h` de toda resposta, então o risco só
+    existe num lote de POSTs sem leitura no meio. Quem escrever um envio em
+    lote tem que reler entre os POSTs.
+  - Eles afirmam que o saque de uma coleta de duração fixa é igual em qualquer
+    opção (`d9c5a0a`). Nossa coleta avançada já distribui entre as opções
+    mirando durações iguais. A afirmação não foi medida no br143.
+- **Dodge (`dodge.py`):** a filosofia é tirar a aldeia inteira da frente. A
+  nossa evacuação esconde só `snob` e `axe` (`defence_manager.py:47`) e deixa a
+  defesa em casa. Por isso o risco que motivou o item 4 acima (nobre com nome de
+  aríete pegando a aldeia vazia) não nos atinge do mesmo jeito.
+- **Relatórios uma vez por ciclo (`d0f89b1`):** já feito aqui na §8.47, de
+  forma independente.
+
+### `P-SNIPE-TREM` — cortar um trem de nobres inimigo (registrado, não priorizado)
+
+**Pedido do usuário (2026-10-06):** ter uma estratégia para parar um trem de
+nobres inimigo matando um ou dois nobres do meio do ataque.
+
+**A mecânica.** Um trem são N nobres pousando com milissegundos de intervalo. O
+primeiro costuma vir colado num full que limpa a aldeia. Os seguintes vêm com
+escolta leve. Apoio que pousa **entre o nobre k e o nobre k+1** luta contra
+k+1…N. Se aguentar as escoltas, esses nobres morrem e a lealdade só cai pelos k
+primeiros. No br143 cada nobre tira **20 a 35** de lealdade (`<mood>`,
+`loss_min`/`loss_max` no `get_config`; lealdade é `mood` em inglês). Daí:
+
+- 3 nobres derrubam 100 com no máximo 105, no limite. Por isso o padrão é 4.
+- Cortar **atrás do 1º nobre** deixa a lealdade em 65–80, e é o melhor ponto: um
+  apoio ali cobre o trem inteiro (`snipe_wave.py`: *"a support standing behind
+  the train's first noble meets every noble after it"*).
+- Cortar **na frente do 1º** é perder a tropa, porque o full limpa tudo.
+- Cortar só o último de um trem de 4 deixa 3 nobres, que ainda podem somar
+  ≥ 100. Matar "um do meio" só resolve se for cedo no trem.
+- Pousar **no mesmo ms** de um nobre é cara ou coroa, e depois dele é inútil.
+  Eles tratam os dois casos como falha, não como acerto de +1 ms
+  (`keep_verdict`, `coin_flip_on_hit`).
+
+**O que o br143 permite (lido em 06/out, `get_config`):** `millis_arrival = 1`
+(o jogo mostra e processa chegada em ms) e `command_cancel_time = 600` (comando
+cancelável por 10 min). O ms da chegada **já está no markup** que o bot lê, só
+que é jogado fora: a linha de comando recebido traz
+`hoje às 13:13:09:<span class="grey small">598</span>`, e
+`Extractor.incoming_commands()` só guarda `data-endtime`, em segundos. Nossos
+próprios trens pousam 100 ms separados (§9, item 0). É essa a ordem de grandeza
+de janela que se espera contra um inimigo que manda do mesmo jeito. Com erro de
+±15–20 ms por envio, uma janela de 100 ms é alcançável, e uma de 20 ms é
+sorteio.
+
+**Dois jeitos de pousar no buraco:**
+
+- **Snipe de apoio:** outra aldeia manda defesa para pousar em
+  `hit_1 + offset`. Exige uma aldeia com tropa defensiva a uma distância cujo
+  tempo de viagem caiba antes do pouso. Atenção ao paladino: ele dita a
+  velocidade do comando inteiro, e um apoio com paladino saiu a 10 min/campo em
+  vez dos 18 da lança.
+- **C-snipe (cancelamento):** a própria aldeia atacada manda a defesa para fora
+  e cancela no meio do caminho, para ela voltar dentro do buraco. Tropa
+  cancelada volta em tempo igual ao que andou: enviada em S e cancelada em C,
+  volta em 2C − S. Não precisa de outra aldeia, mas é amarrado pela janela de
+  10 min. Eles mediram no nl que o servidor credita o tempo andado em
+  **segundos inteiros** (a volta é S + 2k s, mantendo o ms do envio), e que o
+  "2C − S" em ms que a página de cancelamento mostra é artefato de renderização.
+  Isso não foi medido no br143. É exatamente o tipo de regra que o décimo
+  nono padrão manda medir antes de usar.
+
+**Como reconhecer o nobre numa conta grátis.** Eles reconhecem pelo rótulo que o
+etiquetador escreve, e renomear comando é premium (lista do jogo na §8.53).
+Aqui só restam dois sinais:
+
+1. **Limite inferior de viagem:** se o ataque foi visto pela primeira vez em t₀,
+   pousa em A e vem de d campos, então a viagem é ≥ A − t₀. Se isso passa de
+   d × 30 min (o aríete), só pode ser nobre (35 min/campo). Só funciona se o bot
+   vir o ataque cedo, o que pede o leitor de `game_data.player.incomings` do §9
+   item 23 rodando no início do ciclo, e não por aldeia.
+2. **Forma de trem:** ≥ 2 comandos da mesma origem na mesma aldeia, pousando
+   dentro de ~1 s. Com o ms guardado, isso é um `groupby`.
+
+**Restrição que muda o desenho em relação ao fork: orçamento de requisição.** A
+"onda" deles arma *toda* opção alcançável e cancela as que erraram. No br143 o
+captcha vem por taxa da **conta**: já dispararam ~75 GETs em 15 min, e o teto
+seguro somando todos os clientes é ~2 req/min. Cada tentativa custa pelo menos
+o preparo e a confirmação da praça, mais a releitura do pouso e o cancelamento
+se errou. Por isso aqui é **1 a 3 tentativas por trem**, escolhidas pela margem,
+e nunca a onda inteira. O captcha no meio de um snipe perde o snipe **e** o
+ciclo.
+
+**Faseamento proposto.** Cada fase só começa com a anterior medida:
+
+| Fase | O que | Envia tropa? | Aceite |
+|---|---|---|---|
+| F0 | `incoming_commands()` passa a devolver `arrival_ms`, com teste contra o recorte verbatim que já existe em `tests/test_incoming_commands.py` | não | teste |
+| F1 | `ServerClock`: sincronização por rtt/2 em conexão nova, duração da tela de confirmação como fonte da viagem, disparo dormido até o ms | não | offset e rtt logados por 2–3 dias, com distribuição |
+| F2 | Medir o erro de pouso no br143 com **apoio entre aldeias próprias**, mirando um ms arbitrário e relendo a chegada na lista de comandos. Não precisa de inimigo nem arrisca tropa | sim, inofensivo | ~15 amostras em horários diferentes; desvio comparado aos ±15–20 ms do nl |
+| F3 | Detector de trem (os dois sinais acima), só avisando no painel e no Telegram, com o buraco calculado e as aldeias que alcançam | não | trens reais detectados, conferidos pelo usuário na tela do jogo |
+| F4 | Snipe **semi-manual:** o usuário escolhe o trem no painel e o bot calcula a opção, reserva a tropa e dispara | sim | primeiro corte real |
+| F5 | (Opcional) C-snipe, depois de medir no br143 a regra do segundo inteiro | sim | idem |
+
+**O que tem que conversar com o que já existe:**
+
+- A tropa do snipe é uma **reserva nova** no mesmo sistema da §8.20. Sem isso, o
+  apoio da §8.39, a escolta do trem bárbaro ou o farm podem gastar a tropa
+  entre o armar e o disparar. O fork resolve com uma política de falta na hora
+  do envio (`scale`/`all`/`strict`), o que é o sexto padrão: reconferir a
+  premissa no momento de agir.
+- O disparo precisa de prioridade sobre o laço de aldeias, como o Hunter. O
+  vigésimo oitavo padrão vale de novo: todo `time.sleep` do laço principal tem
+  que conhecer o prazo do snipe.
+- `DefenceManager.evacuate()` esconde `snob`/`axe` e não mexe na defesa, então
+  não briga com o snipe. Já um c-snipe **mexe** na defesa da própria aldeia e
+  precisa travar a evacuação e o apoio dela durante a janela.
+- Envio real de tropa, então vale a regra do `CLAUDE.md` para
+  `AttackManager`/`DefenceManager`: F2 em diante só com autorização explícita.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -6737,6 +6915,11 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     ✅ **feito em 2026-09-30** (§8.42). De brinde, a metade "ler
     `game_data.player.incomings`" do item 23 (só para o painel; a defesa
     continua por aldeia).
+29. **`P-SNIPE-TREM`** (§8.56, pedido do usuário em 2026-10-06): cortar trem
+    de nobres inimigo pousando defesa atrás do 1º nobre. **Grátis:** só usa
+    praça de reunião e cancelamento. F0 (guardar o ms da chegada, que o
+    `incoming_commands()` hoje joga fora) e F1 (`ServerClock`) não enviam
+    tropa e podem começar sem autorização. Registrado, sem prioridade definida.
 
 **Camada 2 — ativável por detecção** (`game_data.features.*.active`, custo
 zero; prazo em `premium&mode=feature_log`):
