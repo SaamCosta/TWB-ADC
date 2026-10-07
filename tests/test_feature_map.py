@@ -189,6 +189,31 @@ class CaptchaStopTest(unittest.TestCase):
         with self.assertRaises(fm.CaptchaHit):
             fm._fetch(self._wrapper(PAGE, hit=True), self.dir, "overview", "screen=overview", "1", 0, 0)
 
+    def test_session_lost_stops_without_saving(self):
+        # 07/10 05:51: sessao vencida, `market/exchange` voltou 200 de
+        # https://www.tribalwars.com.br/ (o portal), sem game_data.
+        class Res:
+            status_code = 200
+            url = "https://www.tribalwars.com.br/"
+            text = "<html><body class=\"portal\"><form id=\"login_form\"></form></body></html>"
+
+        class W:
+            captcha_hit = False
+            endpoint = "https://br143.tribalwars.com.br/"
+
+            def get_url(self, url):
+                return Res()
+        with self.assertRaises(fm.SessionLost):
+            fm._fetch(W(), self.dir, "market/exchange", "screen=market&mode=exchange", "1", 0, 0)
+        self.assertEqual(os.listdir(os.path.join(self.dir, "pages")), [])
+
+    def test_session_lost_rule(self):
+        gd = {"screen": "overview"}
+        host = "br143.tribalwars.com.br"
+        self.assertFalse(fm.session_lost("https://br143.tribalwars.com.br/game.php?screen=x", gd, host))
+        self.assertTrue(fm.session_lost("https://www.tribalwars.com.br/", gd, host))
+        self.assertTrue(fm.session_lost("https://br143.tribalwars.com.br/game.php", {}, host))
+
     def test_clean_page_is_saved(self):
         rec, _ = fm._fetch(self._wrapper(PAGE), self.dir, "overview", "screen=overview", "1", 0, 0)
         self.assertEqual(rec["status"], 200)

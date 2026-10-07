@@ -193,6 +193,20 @@ class CaptchaHit(Exception):
     pass
 
 
+class SessionLost(Exception):
+    """A resposta nao e uma tela do jogo: sessao vencida cai no portal
+    (`www.tribalwars.com.br/`) com status 200, sem `game_data`. Sem esta
+    guarda a captura de 07/10 05:51 pediria as 54 telas e gravaria 54
+    paginas de login como se fossem o jogo."""
+
+
+def session_lost(final_url, game_data, game_host):
+    """True se a resposta veio de fora do servidor do mundo ou sem
+    `game_data` -- o que so acontece fora de uma tela do jogo."""
+    host = urlsplit(final_url or "").netloc.lower()
+    return host != game_host.lower() or not game_data
+
+
 # ---------------------------------------------------------------------------
 # Logica pura (testada em tests/test_feature_map.py)
 # ---------------------------------------------------------------------------
@@ -420,6 +434,10 @@ def _fetch(w, run_dir, key, query, village_id, interval, last_start):
         record["status"] = None
         return record, started
     html = res.text or ""
+    game_host = urlsplit(getattr(w, "endpoint", None) or res.url).netloc
+    if session_lost(res.url, extract_game_data(html), game_host):
+        # Antes de gravar: pagina de login nao e tela do jogo.
+        raise SessionLost("%s -> %s" % (key, res.url))
     record["status"] = res.status_code
     final = normalize_link(res.url) or res.url.split("?")[0]
     record["final"] = final
@@ -485,6 +503,10 @@ def capture(args):
     except CaptchaHit as exc:
         manifest["aborted"] = "bot protection em %s" % exc
         print("PARADO: %s. Nada mais sera pedido." % manifest["aborted"], flush=True)
+    except SessionLost as exc:
+        manifest["aborted"] = "sessao perdida em %s" % exc
+        print("PARADO: %s. Renovar cache/session.json (subir o bot com "
+              "cache/cookies.txt) e rodar de novo." % manifest["aborted"], flush=True)
     except KeyboardInterrupt:
         manifest["aborted"] = "interrompido"
     manifest["finished"] = time.strftime("%Y-%m-%d %H:%M:%S")
