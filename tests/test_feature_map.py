@@ -128,6 +128,20 @@ class FingerprintTest(unittest.TestCase):
         diff = fm.compare_fingerprints(fp_paid, fp_free)
         self.assertEqual(diff["body_classes"]["so_em_a"], ["has-pa"])
 
+    def test_day_to_day_noise_is_normalized(self):
+        # Os dois defeitos que a captura 2 (06/10) mostrou: hash do CDN
+        # dentro de titulo escapado em JS, e campo de nome aleatorio na praca
+        # (valores verbatim das duas capturas).
+        def page(cdn, name):
+            return ('<h4>&lt;img src="https://dsbr.innogamescdn.com/asset/%s/graphic/'
+                    'buildings/main.webp"&gt; +10%% na velocidade de construção</h4>'
+                    '<input type="hidden" name="%s" value="x">' % (cdn, name))
+        a = fm.fingerprint(page("07afad24", "cbf3f5a1f2a3fb9"))
+        b = fm.fingerprint(page("1ce2b9a0", "8fa4f1f0e2fdb5d1a"))
+        self.assertEqual(fm.compare_fingerprints(a, b), {})
+        self.assertEqual(a["inputs"], ["(nome aleatorio)"])
+        self.assertEqual(a["headings"], ["+#% na velocidade de construção"])
+
     def test_presence(self):
         self.assertEqual(fm.compare_fingerprints(None, {"x": 1}),
                          {"presence": ("ausente", "presente")})

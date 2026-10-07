@@ -221,7 +221,21 @@ def normalize_link(href):
 
 
 def _text(html_fragment):
-    return re.sub(r"\s+", " ", unescape(TAG_RE.sub(" ", html_fragment))).strip()
+    # Tags tiradas antes E depois do unescape: titulo que vem escapado dentro
+    # de JS (`&lt;img src=".../asset/<hash>/..."&gt;`) so vira tag depois, e o
+    # hash de versao do CDN muda entre dias (captura 2, 06/10).
+    once = unescape(TAG_RE.sub(" ", html_fragment))
+    return re.sub(r"\s+", " ", TAG_RE.sub(" ", once)).strip()
+
+
+# Campo com nome aleatorio por carga (a praca de reuniao tem um, hex de ~16
+# caracteres, diferente a cada GET): vira um rotulo so.
+RANDOM_NAME_RE = re.compile(r"^[0-9a-f#]{12,}$")
+
+
+def _input_name(name):
+    name = DIGITS_RE.sub("#", name)
+    return "(nome aleatorio)" if RANDOM_NAME_RE.match(name) else name
 
 
 def _redact_text(text):
@@ -262,7 +276,7 @@ def fingerprint(html):
         m = re.search(r'action="([^"]*)"', tag)
         if m:
             forms.add(normalize_link(m.group(1)) or "(externo)")
-    inputs = sorted({DIGITS_RE.sub("#", n) for n in INPUT_RE.findall(html)})
+    inputs = sorted({_input_name(n) for n in INPUT_RE.findall(html)})
     boxes = sorted({"%s: %s" % (cls, _redact_text(_text(body)))
                     for cls, body in ERROR_BOX_RE.findall(html) if _text(body)})
     headings = sorted({_redact_text(_text(body)) for _, body in HEADING_RE.findall(html)

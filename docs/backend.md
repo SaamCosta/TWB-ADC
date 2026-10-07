@@ -6099,9 +6099,45 @@ versão do resumo.
   estiver ligada, a assinatura não vence e a semana sem premium não acontece:
   **conferir na tela antes de 08/10.**
 
-**⏳ Próximo:** captura 2 (piso de ruído) na noite de 06/10; captura 3 a
-partir da noite de 08/10, depois de confirmado que `features.*.active` virou
-`false`.
+### Captura 2 (premium, piso de ruído) — 06/10 23:05 → 23:26, **interrompida**
+
+`cache/feature_map/premium_20261006_2305/`: **21 telas**. A 22ª
+(`market/exchange`, 23:26) voltou com `<body … data-bot-protect="pending">`,
+e a captura parou sozinha, como foi desenhada. A mesma tela na captura 1 não
+tinha o atributo.
+
+**O ritmo que passou limpo na captura 1 não passou aqui.** O bot dormia das
+23:01:26 às 23:28 (`Dead for 27.02 minutes`), então as 21 requisições foram
+praticamente só da captura, a 1 por minuto. Não sei o que mais pesou na conta
+(o volume do dia inteiro, o navegador do usuário mais cedo, ou a cunhagem da
+§8.55, que entrou em 05/10). O fato é que **1 req/min não é um piso seguro
+por si só**. Para não deixar o bot transformar o `pending` em captcha no
+ciclo noturno, encerrei o processo do bot às 23:27:25, ainda dormindo, um
+minuto antes de ele acordar, a pedido do usuário ("fecha tudo e desliga o
+computador").
+
+**O que as 21 telas disseram sobre o ruído:** 13 idênticas à captura 1.
+As outras 8 diferem só por estado do jogo:
+- relíquias equipadas (títulos em `overview` e `overview_villages/prod`);
+- comandos no ar (`info_command`, `Command.init`, "Movimento de tropas" na
+  praça, tabela `units_transit`);
+- ofertas existentes no mercado (o formulário `accept_multi` aparece quando há
+  oferta para aceitar, e o `delete_offers` quando há oferta própria);
+- ordem cancelável na fila do quartel.
+
+Nenhuma dessas é premium, e o `--noise` desconta todas. Dois defeitos do
+**próprio resumo** apareceram e foram corrigidos (com teste; agora são 16):
+o hash de versão do CDN vazava para títulos que vêm escapados dentro de JS, e
+a praça tem um campo oculto com **nome aleatório a cada carga**. As duas
+capturas foram recalculadas com `refingerprint` depois da correção.
+
+**⏳ Próximo:**
+- Terminar o piso de ruído na noite de **07/10**, antes de o premium vencer
+  (08/10 01:16): só as 54 telas fixas que faltam (`--only`), com
+  `--interval 90`, ~81 min, das 23:05 às ~00:30. A descoberta fica de fora
+  desta vez.
+- Captura 3 a partir da noite de 08/10, também a 90 s, depois de confirmado
+  que `features.*.active` virou `false`.
 
 ---
 
