@@ -199,7 +199,7 @@ Ordem histórica de implementação:
 | 24 | Paladino — fase 1 (leitura, slots) | ✅ | sim |
 | 24b | Paladino — fase 2 (treino por XP, re-especialização) | ⬜ pendente | — |
 | 25 | Inventário — fase 1 (catálogo read-only) | ✅ 2026-08-16 | sim |
-| 25b | Inventário — fase 2 (ativar boosts) | ⬜ pendente | falta o POST de `consume` capturado |
+| 25b | Inventário — fase 2 (ativar boosts) | ⬜ pendente | o POST de `consume` já existe e rodou em campo na cunhagem (§8.55, 05/10); falta a política (§8.57) |
 | 26 | Envio de ataques em lote (`train[N][unit]`) | ✅ | **sim, 2026-09-04** — dois ataques em 115 ms |
 | 27 | Conquista bárbara respeita reserva cruzada | ✅ 2026-08-08 | ⚠️ não |
 | 28 | Farm automático de aldeias de jogador | ⬜ **descartado** — ver §7.5 | — |
@@ -6201,6 +6201,15 @@ esperado é `Upgraded flag T nível N -> N+1 (a -> b ...)` com `b < a`. Se vier
 servidor quer, e a linha traz a resposta para diagnóstico. Nos dois casos o
 laço não volta.
 
+**✅ Validado em campo em 07/10**, no primeiro ciclo depois de subir o bot às
+05:56. Na BBM 001 (41123): `Managing flags` às 06:04:52, POST com `confirm=true`
+às 06:05:22, e `Upgraded flag 5 nível 4 -> 5 (3 -> 0 no nível 4)` na releitura.
+Daí a cascata: o nível 5 tinha 2 bandeiras na leitura de 06/10 23:00, foi para 3 e
+subiu também (`5 nível 5 -> 6 (3 -> 0 no nível 5)`, 06:06:12). O nível 6 ficou
+com 2 e o laço parou ali, sem nenhum WARNING. Foram dois POSTs para dois upgrades,
+cerca de 30 s cada, como estimado. O `confirm=true` é o que o servidor quer, e a
+releitura distingue sucesso de prévia.
+
 ---
 
 ## 8.55 `P-CUNHAGEM` — aba Cunhagem: hub, roteamento, campanha de itens e cunhagem diária (2026-10-05)
@@ -6475,6 +6484,108 @@ ciclo.
   precisa travar a evacuação e o apoio dela durante a janela.
 - Envio real de tropa, então vale a regra do `CLAUDE.md` para
   `AttackManager`/`DefenceManager`: F2 em diante só com autorização explícita.
+
+## 8.57 Evento da Bigorna: o que foi capturado para o próximo (2026-10-07)
+
+O evento "Bigorna do Rei Mercenário" do br143 vai de 29/09 14:00 a 13/10 14:00 (a
+forja e o passe vão até 14/10 14:00, `end_crafting`/`end_event_pass`). Ele deve
+voltar em outros mundos. Esta seção junta o que só dá para medir **com o evento no
+ar**, para que o módulo possa ser escrito depois sem começar do zero. **Nenhum
+código de bot foi escrito.** O ponto de partida externo continua sendo o
+`anvil_plan()` do LazyTurtle (§8.56, item 1).
+
+**Capturas** (só GET, 90 s entre elas, com o bot rodando; script
+`cache/_probe_event_crafting_state.py`; token `h`/`csrf` redigido), em
+`cache/debug/event_crafting_20261007/`:
+
+| Arquivo | Pedido | O que traz |
+|---|---|---|
+| `main.html` | `screen=event_crafting` | `CraftingEvent.init(...)` (11 args, ver `cache/_probe_event_crafting.py`) e o formulário de forja |
+| `get_state.json` | `screen=event_crafting&ajax=get_state` (cliente `get_api_data`, embrulhado em `response`) | estoque, receitas conhecidas, rankings, prazos, widget do passe |
+| `event_pass_popup.json` | `screen=event_pass&ajax=popup` | `EventPass.init({...})`: progresso, checkpoints, os 15 prêmios grátis e os 15 do passe pago |
+
+O JS do jogo também ficou guardado em `cache/debug/event_crafting_js/`
+(`CraftingEvent.a14db7.js_`, `EventPass.29b649.js_`, baixados da CDN, sem tocar a
+conta). Ele dá o protocolo inteiro, **que não foi exercitado por nós**:
+
+- **Forjar um trio:** POST `screen=event_crafting&ajaxaction=craft&h=…` com três
+  `material[]` (ids 1–7). A resposta traz `item` (nome e descrições) e
+  `event_pass`.
+- **Forjar uma receita conhecida pelo livro:** POST `ajaxaction=craft_recipe` com
+  `recipe_id`.
+- **Coletar o passe:** POST `screen=event_pass&ajaxaction=collect_all` sem corpo,
+  ou `collect_grand_prize` com `checkpoint`.
+- **Pagos (fora do escopo, porque o alvo é conta grátis):** `buy_material`
+  (`material_id`, 30 PP o comum e 80 PP o raro, e o preço sobe a cada compra no
+  dia), `buy_recipe` (70 PP), `buy_event_pass` (600 PP) e `collect_noble_prize`.
+- `seen_recipes` só marca a receita como vista na interface.
+
+**A previsão das receitas foi confirmada em todos os grupos.** Em 29/09 só o grupo
+de 3 comuns tinha sido testado. Agora são **25 de 25** trios feitos batendo com a
+regra "ids contíguos a partir de 16129, ordem pelo número de raros e depois
+lexicográfica", inclusive com 2 raros (`3-5-7`=16193) e 3 raros (`5-5-5`,
+`5-6-7`, `6-6-7`). Os 84 resultados vêm do livro de receitas da própria conta. A KB
+diz que as receitas variam por jogador, e o módulo deve continuar lendo o livro em
+vez de chumbar a tabela.
+
+**Números da conta em 07/10 ~15:00:**
+
+- Passe: `progress` 32 itens forjados, `checkpoint_progress_max` 3, ou seja, **um
+  prêmio a cada 3 forjas**. São 15 prêmios grátis, logo 45 forjas completam a
+  trilha grátis. Os checkpoints 1–9 foram coletados e o 10 (Pacote de recurso
+  10%) está **desbloqueado e não coletado**. O último grátis é "Privilégio".
+- Ranking geral: score 32 = forjas, posição ~10.040, prêmio −2% em custo de
+  recrutamento. Ranking diário: 3 forjas hoje, 3º lugar.
+- Estoque: Chumbo 1, Estanho 5, Cobre 3, Ferro 1, Bronze 4, Prata 1, Ouro 0.
+- PP: 200 em 29/09 e 200 hoje.
+- **Inventário:** `cache/inventory/status.json` (lido pelo bot às 13:58) tem
+  **61 itens de nomes de receita do evento parados**, em 29 linhas, de 73 itens no
+  total. O nome não separa o que veio da forja do que veio do passe.
+
+**Origem dos materiais** (KB InnoGames 2921, em inglês): recrutar, construir,
+cunhar, aceitar oferta de comércio, atacar e defender têm cada um uma **chance**
+de dar 1 material aleatório, **até 8 por dia**. Não há leitura do lado do jogo
+(`player_material_grants` = 0 e `player_materials` = `{}` no `get_state`).
+
+**A conta dos materiais, e a segunda fonte.** 32 forjas × 3 + 15 em estoque são
+111 materiais, e nove ciclos diários × 8 dão no máximo 72. O usuário confirmou que
+**não comprou nada**: os 200 PP são os que sobraram da ativação do premium. A
+segunda fonte provável é o **ranking diário de forja**. A tabela "Classificação
+diária" de `main.html` tem a coluna "Recompensa" com o ícone
+`events/crafting/DailyIcon_01.webp`, que é um desenho de lingotes. Hoje pagava 4
+ao 1º, 3 ao 2º e 2 do 3º ao 7º. Ler isso como "N materiais" vem do ícone, não de
+um texto. Com só 7 jogadores na tabela e 6 forjas bastando para o 1º lugar, a
+conta estava em 3º hoje com 3 forjas. Os dias anteriores não foram vistos. Em 9 dias, 2 a 4 materiais
+diários dão +18 a +36, o que aproxima 72 de 111. **Não está provado:** falta
+capturar um crédito de material depois do fechamento do ciclo (14:00, `cycle_end`).
+Não se sabe se a tabela para em 7 por ser o total de quem forjou ou por ser o
+corte do prêmio.
+
+As conquistas do evento existem no perfil (`awards.html`, `info_player&mode=awards`):
+"Antiga Forja: Mestre Ferreiro" (32/40 itens) e "Colecionador de fórmulas" (24/30
+fórmulas, contra 25 trios em `known_recipes`; diferença não explicada). A página
+**não mostra recompensa** para nenhuma conquista. As missões também não explicam:
+o bot já resgata recompensas de missão sozinho (`Village.get_quest_rewards`), e a
+única linha `Got quest reward` do `session_latest.log` de hoje é de recurso por
+nível de edifício.
+
+**Consequência para a estratégia de forja:** forjar um pouco **todo dia**, antes
+das 14:00, rende mais que acumular, porque cada ciclo diário paga o ranking.
+Forja barata com 3 comuns serve, já que conta para o passe e para o ranking do
+mesmo jeito.
+
+**O que isto muda no desenho.** O gargalo da conta não é forjar: 61 itens parados
+mostram que é **usar**. O módulo que vale a pena tem duas metades:
+
+1. **Usar itens** (vale fora do evento, sobre qualquer item do inventário): a
+   Feature 25 fase 2, que nunca teve desenho. Bônus do Nobre antes do pouso do
+   trem (Hunter), Édito da Academia e Recrutador quando o NobleRecruitGate
+   recruta, Sinal da Aflição antes do `support()`, Boas ligações no hub de
+   cunhagem. Já existe precedente de ativação, nos itens de campanha da §8.55.
+2. **Forjar** (só com evento): coletar o passe (`collect_all`), forjar até a
+   próxima marca de 3, e guardar os raros para os trios-alvo. As duas primeiras
+   partes são baratas e sem ambiguidade. A terceira depende da política da
+   metade 1.
 
 ## 9. Próximos passos
 
