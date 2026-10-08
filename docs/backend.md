@@ -6131,13 +6131,35 @@ o hash de versão do CDN vazava para títulos que vêm escapados dentro de JS, e
 a praça tem um campo oculto com **nome aleatório a cada carga**. As duas
 capturas foram recalculadas com `refingerprint` depois da correção.
 
-**⏳ Próximo:**
-- Terminar o piso de ruído na noite de **07/10**, antes de o premium vencer
-  (08/10 01:16): só as 54 telas fixas que faltam (`--only`), com
-  `--interval 90`, ~81 min, das 23:05 às ~00:30. A descoberta fica de fora
-  desta vez.
-- Captura 3 a partir da noite de 08/10, também a 90 s, depois de confirmado
-  que `features.*.active` virou `false`.
+**✅ Completada em 07/10 23:05 → 08/10 00:26:** as 54 telas fixas que
+faltavam, a 90 s, todas 200 e sem `data-bot-protect`, com o bot rodando o
+ciclo noturno e o Hunter mandando um nobre às 23:55 (`36294 -> 61535 — OK`)
+no meio da captura. As duas partes foram juntadas em
+`premium_20261006_2305/`, que agora tem as **75 telas fixas**. Uma tentativa
+às 05:51 de 07/10 caiu no portal (sessão vencida depois do desligamento) e
+parou em 1 requisição; daí a guarda `SessionLost`.
+
+**Piso de ruído, captura 1 × captura 2 (75 telas): 19 idênticas.** Nada que
+mudou é premium; tudo é estado da conta, e `compare --noise` desconta:
+
+| Fonte do ruído | Onde aparece |
+|---|---|
+| Banner **"Oferta!"** com contagem regressiva no cabeçalho (`icon header premium`, `Premium.buy`), que surgiu nas últimas horas antes do vencimento | todas as telas da segunda parte (07/10 23:05 em diante) |
+| Relíquias equipadas | títulos da visão geral e das visões gerais por modo |
+| Comandos no ar | `info_command`, `Command.init`, "Movimento de tropas", `units_transit` |
+| Ofertas e transportes no mercado | `accept_multi`, `delete_offers`, "Transportes em chegada" |
+| Fila do quartel com ordem cancelável | `barracks&action=cancel` |
+| Aldeias listadas no assistente de saque | ícones `farm_village_<id>` em `am_farm` |
+| Bloco de notas no perfil (`notebook`, `BBCodes`) | `info_player` |
+
+⚠️ O banner "Oferta!" usa a **mesma classe** (`icon header premium`) que
+marca o cabeçalho das telas de premium. Na comparação com a captura 3, essa
+classe sozinha não indica nada; tem que vir junto com outra diferença.
+
+**⏳ Próximo:** captura 3, sem premium, a partir da noite de 08/10, a 90 s,
+conferindo antes os envios do Hunter da madrugada e se `features.*.active`
+virou `false`. E vigiar o primeiro ciclo do bot sem premium (lista de aldeias,
+`InFlight`, fila de construção).
 
 ---
 
