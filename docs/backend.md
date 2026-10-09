@@ -6156,10 +6156,109 @@ mudou é premium; tudo é estado da conta, e `compare --noise` desconta:
 marca o cabeçalho das telas de premium. Na comparação com a captura 3, essa
 classe sozinha não indica nada; tem que vir junto com outra diferença.
 
-**⏳ Próximo:** captura 3, sem premium, a partir da noite de 08/10, a 90 s,
-conferindo antes os envios do Hunter da madrugada e se `features.*.active`
-virou `false`. E vigiar o primeiro ciclo do bot sem premium (lista de aldeias,
-`InFlight`, fila de construção).
+### Captura 3 (sem nada pago) — 08/10 23:15 → 09/10 01:58
+
+`cache/feature_map/free_20261008_2315/`: **110 telas** (as 75 fixas + 35 da
+descoberta), todas 200 e sem `data-bot-protect`, a 90 s, com o bot no ciclo
+noturno e nenhum envio do Hunter na madrugada. `game_data.features`:
+`Premium.active false`, `AccountManager` **`possible: false`** (sem premium o
+jogo nem oferece o gerente), `FarmAssistent.active false`; o `<body>` perdeu o
+`has-pa`.
+
+**Parada na 36ª da descoberta, e foi defeito meu.** A descoberta lia links
+também de `action="…"` de formulário e pediu por GET
+`report&mode=process_reports`, que é o **POST** da lista de relatórios (apagar
+ou mover). O GET foi sem corpo e sem nenhum relatório selecionado, voltou sem
+`game_data`, e a guarda `SessionLost` parou a captura antes de gravar. A
+sessão estava boa (o bot fez GETs normais até 01:56). Corrigido: destino de
+formulário nunca entra na descoberta (teste com recorte verbatim do form,
+provado por mutação; 19 testes).
+
+**Método da leitura.** `compare 1 × 3 --noise 1 2`, mais uma separação feita
+à mão entre o que muda em **todas** as telas (cabeçalho e menu) e o que muda
+só em uma. O banner "Oferta!" (`icon header premium`) aparece como `+` em
+telas que a captura 2 não leu, e foi descartado como ruído.
+
+**O que muda em todas as telas (menu):** sem premium somem os links de
+`overview_villages` por modo (`combined`, `trader`, `units`, `buildings`,
+`tech`, `groups`, `commands`, `incomings` e os subtipos), `mail&mode=address`
+e `mail&mode=groups` (catálogo de endereços), `report&mode=groups` (pastas de
+relatório), e a classe `has-pa`.
+
+**Tela por tela — o que é premium com certeza** (some, ou o jogo mostra o
+aviso de compra no lugar):
+
+| Tela | Com premium | Sem nada pago |
+|---|---|---|
+| `overview_villages` em **qualquer** modo além de produção | tabela própria do modo (`commands_table`, `units_table`, `buildings_table`, `techs_table`, `combined_table`, `trades_table`, `group_assign_table`) | serve a `production_table` com o aviso *"Adquira uma Conta premium para usufruir de visões gerais aperfeiçoadas"* |
+| `overview` (tela da aldeia) | widgets de fila de construção (`overview_buildqueue`), bloco de notas, grupos, gerente | sem esses widgets |
+| `train&mode=mass` | recrutamento em massa (`mass_train_table`, `train_mass_all`) | cai no recrutamento de uma aldeia (`TrainOverview.initSingleVillageMode`) |
+| `place&mode=call` (apoio em massa) | lista de tropas de todas as aldeias, envio único | página vazia (303 KB → 41 KB) |
+| `place&mode=neighbor` | aldeias vizinhas | some do menu, página vazia |
+| `market&mode=call` (Pedido) e `mass_create_offers` | puxar recurso de várias aldeias, criar ofertas em massa | somem |
+| `place&mode=scavenge_mass` | envio de várias aldeias num comando | a tela abre, mas o envio múltiplo é premium (aviso da captura 1) |
+| `snob&mode=coin` | `coin_overview_table`: cunhagem de várias aldeias | uma aldeia: `snob&action=coin` e **`start_auto_minting_session`** |
+| `report&mode=all` | filtros (`set_filter_*`) e tamanho de página configurável | **12 relatórios por página**, sem filtro |
+| `report&mode=groups` | pastas de relatório | some |
+| `map` | marcar por cor (`ColorGroups`), comandos rápidos, notas, mapa maior | aviso *"…para usufruir de um mapa maior"* |
+| `memo` / notas | bloco de notas (`memo&action=toggle`) | some |
+| `ally&mode=reservations` | campo **`comment[]`** no formulário de reserva | o formulário existe, **sem** comentário |
+| `settings&mode=settings` | `map_size`, `minimap_size`, `show_toolbar`, `confirm_queue`, `disable_call_all_warning` | somem |
+| `barracks`/`stable`/`garage` | modo `decommission` (dispensar tropa) no menu | some |
+| `place&mode=templates` | salvar modelo de tropas (`templates_save`) | a tela abre sem salvar |
+| `market&mode=other_offer` | tamanho de página das ofertas | some |
+| todas as `am_*`, `accountmanager` | gerente e assistente de saque | **redirecionam** para `premium&mode=help&feature=…` |
+
+**Grátis, confirmado pela medição:** `place&mode=scavenge` (coleta por
+aldeia), a cunhagem por aldeia e a **cunhagem automática** (§9 item 22),
+`report&mode=filter` (o filtro que impede o jogo de gerar relatórios, §9 item
+21; sem premium perde só as opções ligadas ao gerente), o mercado (enviar,
+ofertas, bolsa), praça, simulador, bandeiras, inventário, estátua, torre,
+tribo, reservas (sem comentário) e a lista de aldeias em produção (as 44
+numa página só, `page_size` 50).
+
+**Efeito no bot, já visto no log da sessão das 19:30 de 08/10 (sem
+premium):**
+- **`InFlight` quebrou.** Cinco WARNING `a tela respondeu 200 mas sem tabela
+  de comandos -- login/bot-protection, ou o markup mudou`. O motivo real é o
+  terceiro, nenhum dos que a mensagem sugere: sem premium,
+  `overview_villages&mode=commands` serve a tabela de produção. O card
+  "Em voo" do painel ficou sem dado.
+- **A reserva da tribo perdeu o carimbo.** `reserva 100814 de 66317 criada SEM
+  comentario -- … o bot nao vai conseguir remove-la depois e ela vai expirar
+  sozinha em 3 dias`. A Fase 2 do `P-CONQ-RESERVA` (§8.7) usa o comentário
+  como prova de que a reserva é do bot. Sem premium, o campo não existe.
+- **Lista de relatórios:** 12 por página contra 50. A §8.46 já pagina pelo
+  tamanho real, então o bot segue funcionando, mas ler N relatórios custa
+  ~4× mais GETs.
+- **Lista de aldeias:** intacta (44 de 44, uma página). Com mais de 50 aldeias
+  ela pagina; isso já valia com premium.
+- **Fila de construção:** o teto não aparece na tela (só `order_count`); não
+  houve recusa nem WARNING de fila no log. Fica sem medição direta.
+- Dois captchas no fim da tarde (20:11, 309 s; 22:29, 854 s), com o bot
+  sozinho na conta. Registro, não conclusão: pode ou não ter relação com a
+  conta gratuita.
+
+**O que isto dá para a camada 2 (§9, "ativável por detecção"):**
+1. A detecção é `game_data.features.*.active`, lida a cada ciclo, que vem em
+   toda tela de graça. Nada de detectar uma vez e guardar (o
+   `world.premium_account` da Feature 22 está errado desde sempre).
+2. **Premium ligado** libera para o bot: visão geral de comandos (`InFlight`),
+   de tropas (`overview_villages&mode=units`, que substitui o `place/units`
+   por aldeia), de edifícios e de pesquisa (substituem `main` e `smith` por
+   aldeia), recrutamento em massa, apoio em massa, Pedido no mercado, coleta
+   multi-aldeia num comando, filtro e página de 50 na lista de relatórios,
+   comentário na reserva da tribo e +3 ordens de construção.
+3. **Sem premium**, o bot precisa: desligar o `InFlight` (ou trocá-lo por
+   outra fonte) em vez de acusar login; marcar a reserva da tribo por outro
+   meio que não o comentário; e contar com 12 relatórios por página.
+4. Gerente de conta exige premium (`possible: false` sem ele). O duplo
+   comando da §8.25 some sozinho quando o gerente vence; com ele ativo, o bot
+   pode ceder construção, recrutamento, pesquisa e transporte.
+
+**⏳ Próximo:** a captura 4, no fim da semana sem premium, para medir o ruído
+do lado grátis. Nada do bot foi alterado por esta seção: as correções da
+lista acima são trabalho à parte, a decidir.
 
 ---
 

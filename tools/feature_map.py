@@ -352,9 +352,16 @@ def discover(fingerprints, captured_keys):
     """Telas linkadas a partir das capturadas e que ainda nao foram lidas,
     filtradas pelas listas de negacao. Devolve querystrings ordenadas."""
     seen = set()
+    form_targets = set()
     for fp in fingerprints.values():
         for link in fp.get("links") or ():
             seen.add(link)
+        form_targets.update(fp.get("forms") or ())
+    # Destino de formulario nao e tela: `report&mode=process_reports` e o
+    # POST que apaga/move relatorios, e a captura 3 (09/10 01:58) o pediu por
+    # GET porque `links` tambem le `action="..."`. Nada foi processado (GET
+    # sem corpo), mas a regra e: so abrir o que e link de navegacao.
+    seen -= form_targets
     out = []
     for link in sorted(seen):
         parts = dict(p.split("=", 1) for p in link.split("&")[1:])

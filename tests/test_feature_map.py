@@ -158,6 +158,17 @@ class DiscoverTest(unittest.TestCase):
         for query in found.values():
             self.assertTrue(fm.is_safe_query(query))
 
+    def test_form_target_is_not_a_screen(self):
+        # Verbatim de screen=report&mode=all (br143, 2026-10-08): o form da
+        # lista de relatorios posta em `process_reports`, que a captura 3
+        # pediu por GET na descoberta.
+        page = ('<form action="/game.php?village=44683&amp;screen=report&amp;'
+                'mode=process_reports&amp;refmode=all" method="post">'
+                '<a href="/game.php?village=44683&amp;screen=report&amp;mode=attack">Ataques</a>')
+        found = dict(fm.discover({"report/all": fm.fingerprint(page)}, set()))
+        self.assertIn("report/attack", found)
+        self.assertNotIn("report/process_reports", found)
+
 
 class CaptchaStopTest(unittest.TestCase):
     def setUp(self):
