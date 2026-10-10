@@ -88,6 +88,9 @@ class Village:
     # Cooperative callback installed by TWB. Hunter runs at these safe
     # checkpoints instead of sharing the HTTP session from a second thread.
     hunter_service_callback = None
+    # Lista do mundo (Feature 36), instalada por TWB a cada ciclo; None com a
+    # conquista desligada. Repassada ao AttackManager em ensure_attack_manager().
+    world_villages = None
     # Portao do Hunter antes de cada fase, instalado por twb.py:
     # `hunter_gate(fase, village_id, adiavel) -> bool`. False = adiar a fase
     # nesta passada porque ela nao termina antes da proxima saida agendada.
@@ -1343,6 +1346,7 @@ class Village:
             self.forced_peace_today_start if self.forced_peace_today else None
         )
         self.attack.hunter_service_callback = self.hunter_service_callback
+        self.attack.world_villages = self.world_villages
         return self.attack
 
     def run_farming(self):

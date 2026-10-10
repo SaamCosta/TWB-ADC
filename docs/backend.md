@@ -6760,6 +6760,42 @@ sondagem do E: nobre que pousa **depois** da conquista autoconquista a aldeia,
 queima moeda e mata a guarnição. Logo, mandar atrasado só é seguro se os
 nobres anteriores não puderem fechar a conquista sozinhos.
 
+## 8.59 ✅ Alvo de conquista sem coordenada: o `village.txt` não chegava ao envio (2026-10-10)
+
+**Sintoma** (`session_latest.log`, 12:08:10), uma vez por ciclo:
+
+```
+[Attack] BBM 022 (40618) -> 40808: sem coordenada no scan desta aldeia nem em cache/villages/40808.json
+Hunter: sem coordenada para o alvo 40808 a partir da aldeia BBM 022 (40618)
+Conquest: nao consegui a duracao de BBM 022 (40618) -> 40808 pelo servidor -- ... adiando
+```
+
+**Causa.** Seleção e envio liam a coordenada de fontes diferentes (décimo
+segundo padrão: o irmão não foi relido). Desde a §8.6, `_candidate_pool()`
+descobre alvo no mundo inteiro pelo `map/village.txt` (Feature 36, camada 1).
+Já `AttackManager._resolve_position()` — usado pela sonda de duração do
+Hunter/planejador **e** pelo envio — só conhecia o scan de mapa da própria
+aldeia e `cache/villages`. A 40808 (bárbara, 1012 pts, 531|289 no
+`village.txt`) nunca tinha sido escaneada por aldeia nossa nem tinha arquivo
+em `cache/villages`. Então o planejador a elegia, a sonda recusava, e a
+conquista ficava adiada ciclo após ciclo sem sair do lugar.
+
+**Correção.** `_resolve_position()` ganhou uma terceira fonte, o
+`village.txt`, consultada só na falta das outras duas (scan > `cache/villages`
+> mundo). Coordenada não apodrece como posse (§8.6), então a idade do arquivo
+não importa aqui. Se o arquivo não puder ser lido, a função recusa o alvo sem
+derrubar o bot. Fiação: o `ConquestManager` repassa a lista ao `AttackManager`
+interno, e `twb.py` instala `world_villages` em cada `Village` (e no
+`village.attack`) a cada ciclo, junto com o `hunter_service_callback`. Assim
+a sonda e o disparo posterior usam a mesma fonte. Com a conquista desligada a
+lista não é criada e nada muda.
+
+Medido com o dado real: sem a lista, `None` para a 40808; com ela,
+`(531, 289)`. Testes em `tests/test_conquest_manual_target.py` (alvo só do
+mundo, precedência do cache sobre o mundo, `village.txt` ilegível). **Em
+campo:** depois do restart, procurar `veio do village.txt` (DEBUG) no lugar
+do aviso de "sem coordenada".
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

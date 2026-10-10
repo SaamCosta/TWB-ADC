@@ -1310,6 +1310,9 @@ class TWB:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
                     _v.hunter_service_callback = service_callback
+                    _v.world_villages = world_villages
+                    if _v.attack:
+                        _v.attack.world_villages = world_villages
                     _v.hunter_gate = (
                         lambda phase, vid, skippable, _config=config:
                         self._hunter_gate(_config, phase, skippable, vid)

@@ -264,6 +264,9 @@ class AttackManager:
     template = {}
     extra_farm = []
     repman = None
+    # game.world_villages.WorldVillages, instalado por Village a cada ciclo
+    # quando a conquista esta ligada. Terceira fonte de `_resolve_position`.
+    world_villages = None
     target_high_points = False
     farm_radius = 50
     farm_minpoints = 0
@@ -1132,10 +1135,31 @@ class AttackManager:
             )
             return int(location[0]), int(location[1])
 
+        # 3. `map/village.txt` (Feature 36). A selecao de conquista desde a
+        #    8.6 descobre alvo no mundo inteiro (`_candidate_pool()` camada 1),
+        #    entao um alvo pode vir SO dali -- nenhuma aldeia nossa o escaneou,
+        #    e nao ha cache/villages dele. Sem esta fonte o planejador elegia o
+        #    alvo e a sonda de duracao recusava por falta de coordenada, ciclo
+        #    apos ciclo (2026-10-10, 40808 a partir da BBM 022). Coordenada
+        #    nao apodrece como posse, entao a idade do arquivo nao importa aqui.
+        if self.world_villages:
+            try:
+                row = self.world_villages.rows().get(str(vid))
+            except Exception as exc:  # noqa: BLE001 -- fonte extra, nao essencial
+                self.logger.debug("[Attack] village.txt ilegivel (%s)", exc)
+                row = None
+            if row:
+                self.logger.debug(
+                    "[Attack] %s -> %s: coordenada %s|%s veio do village.txt "
+                    "(alvo fora do scan e de cache/villages)",
+                    village_label(self.village_id), village_label(vid), row[0], row[1]
+                )
+                return int(row[0]), int(row[1])
+
         self.logger.warning(
-            "[Attack] %s -> %s: sem coordenada no scan desta aldeia nem em "
-            "cache/villages/%s.json -- nao da para montar o ataque",
-            village_label(self.village_id), village_label(vid), village_label(vid)
+            "[Attack] %s -> %s: sem coordenada no scan desta aldeia, em "
+            "cache/villages/%s.json nem no village.txt -- nao da para montar o ataque",
+            village_label(self.village_id), village_label(vid), vid
         )
         return None
 
@@ -1577,6 +1601,7 @@ class ConquestManager:
             troopmanager=troopmanager,
             map=map_obj,
         )
+        self._attack_manager.world_villages = world_villages
         self._drop_min, self._drop_max = self.world_drop_range(config)
         # A26-03: `_get_real_loyalty()` atualiza o `repman` uma vez por
         # instancia antes de procurar o relatorio do nobre (ver la).

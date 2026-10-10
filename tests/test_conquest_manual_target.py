@@ -122,6 +122,44 @@ def test_cache_sem_a_chave_location_recusa():
     assert man._resolve_position("49709") is None
 
 
+class _World:
+    """WorldVillages em memoria: {vid: (x, y, owner, points, nome_cru)}."""
+    def __init__(self, rows):
+        self._rows = rows
+
+    def rows(self):
+        return self._rows
+
+
+def test_village_txt_salva_alvo_so_do_mundo():
+    """
+    2026-10-10: a selecao elegeu 40808 pela camada do mundo inteiro, sem scan
+    nem cache/villages dele, e a sonda de duracao recusava todo ciclo.
+    """
+    man = _attacker(map_pos={}, villages_cache={})
+    man.world_villages = _World({"40808": (531, 289, "0", 1012, "x")})
+    assert man._resolve_position("40808") == (531, 289)
+
+
+def test_cache_compartilhado_ganha_do_village_txt():
+    """O cache e o mais recente dos dois; o mundo so entra na falta dele."""
+    man = _attacker(
+        map_pos={},
+        villages_cache={"cache/villages/49709.json": {"location": [572, 295]}},
+    )
+    man.world_villages = _World({"49709": (1, 1, "0", 1, "x")})
+    assert man._resolve_position("49709") == (572, 295)
+
+
+def test_village_txt_quebrado_recusa_sem_derrubar():
+    class _Broken:
+        def rows(self):
+            raise OSError("disco")
+    man = _attacker(map_pos={}, villages_cache={})
+    man.world_villages = _Broken()
+    assert man._resolve_position("40808") is None
+
+
 # --------------------------------------------------------------------------
 # _note_failed_claim
 # --------------------------------------------------------------------------
