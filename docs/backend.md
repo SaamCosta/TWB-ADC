@@ -6792,9 +6792,24 @@ lista não é criada e nada muda.
 
 Medido com o dado real: sem a lista, `None` para a 40808; com ela,
 `(531, 289)`. Testes em `tests/test_conquest_manual_target.py` (alvo só do
-mundo, precedência do cache sobre o mundo, `village.txt` ilegível). **Em
-campo:** depois do restart, procurar `veio do village.txt` (DEBUG) no lugar
-do aviso de "sem coordenada".
+mundo, precedência do cache sobre o mundo, `village.txt` ilegível).
+
+**Em campo (restart das 12:23).** A coordenada passou
+(`coordenada 531|289 veio do village.txt`, das duas origens) e o trem foi
+agendado: 4 nobres, BBM 022 ×2 + BBM 003 ×2, pouso comum 11/10 17:57:26. Mas
+o mesmo furo aparecia numa segunda porta. `ConquestManager._get_village_meta()`
+também só lia scan + `cache/villages`, então o registro nasceu com
+`target_location: null` / `target_points: null`, e a reserva no quadro da tribo
+foi pulada: `Reservations: alvo 40808 sem coordenada conhecida`. O formulário
+de reserva endereça por x/y. Nenhuma outra parte do sistema tenta essa reserva
+de novo depois do agendamento. Conferido que o resto não foi afetado: a
+exclusão por reserva alheia casa primeiro pelo **id** (`claimed_by_other`), e
+as duas origens estão a 40,9 e 50,3 campos do alvo, contra o limite de 70 do
+mundo. Por isso a guarda de alcance pulada (`_source_reaches` deixa passar
+sem coordenada) não mudou nada aqui. Corrigido com `WorldVillages.entry(vid)`
+como terceira fonte de `_get_village_meta()`, mais 3 testes no mesmo arquivo.
+**O trem da 40808 já agendado continua sem reserva no quadro**: o bot não
+volta a tentar.
 
 ## 9. Próximos passos
 

@@ -2367,7 +2367,15 @@ class ConquestManager:
         village = self.map.villages.get(target_id)
         if village:
             return village
-        return FileManager.load_json_file(f"cache/villages/{target_id}.json") or {}
+        cached = FileManager.load_json_file(f"cache/villages/{target_id}.json")
+        if cached:
+            return cached
+        # 8.59: alvo descoberto so pelo village.txt. Sem isto o trem era
+        # agendado com target_location None -- e a reserva no quadro da tribo,
+        # que enderecca por x/y, era pulada ("sem coordenada conhecida").
+        if self.world_villages:
+            return self.world_villages.entry(target_id) or {}
+        return {}
 
     # ------------------------------------------------------------------
     # Train dispatch

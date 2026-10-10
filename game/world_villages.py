@@ -366,6 +366,20 @@ class WorldVillages:
     # Consulta
     # ------------------------------------------------------------------
 
+    def entry(self, vid):
+        """
+        Uma aldeia so, na forma de `cache/villages`, ou None.
+
+        Para quem precisa dos metadados de um alvo que a selecao achou aqui e
+        nenhuma aldeia nossa escaneou (docs/backend.md 8.59). Falha de leitura
+        vira None -- e fonte extra, quem chama ja tem as outras.
+        """
+        try:
+            row = self.rows().get(str(vid))
+        except Exception:  # noqa: BLE001
+            return None
+        return _entry(str(vid), row) if row else None
+
     def in_box(self, x_min, x_max, y_min, y_max):
         """
         So as aldeias dentro da caixa de coordenadas.

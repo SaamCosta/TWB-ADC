@@ -160,6 +160,51 @@ def test_village_txt_quebrado_recusa_sem_derrubar():
     assert man._resolve_position("40808") is None
 
 
+def _meta_manager(villages_cache, world):
+    man = ConquestManager.__new__(ConquestManager)
+    man.map = type("M", (), {"villages": {}})()
+    man.world_villages = world
+
+    class _FM:
+        @staticmethod
+        def load_json_file(path, **kwargs):
+            return villages_cache.get(path)
+
+    attack_mod.FileManager = _FM
+    return man
+
+
+class _WorldEntry:
+    def __init__(self, entries):
+        self._entries = entries
+
+    def entry(self, vid):
+        return self._entries.get(str(vid))
+
+
+def test_meta_de_alvo_so_do_mundo_traz_a_coordenada():
+    """
+    8.59, segunda porta: o trem contra a 40808 foi agendado com
+    target_location None e a reserva no quadro foi pulada.
+    """
+    man = _meta_manager({}, _WorldEntry({"40808": {"location": [531, 289], "points": 1012}}))
+    meta = man._get_village_meta("40808")
+    assert meta["location"] == [531, 289]
+    assert meta["points"] == 1012
+
+
+def test_meta_prefere_o_cache_ao_mundo():
+    man = _meta_manager(
+        {"cache/villages/49709.json": {"location": [572, 295], "points": 856}},
+        _WorldEntry({"49709": {"location": [1, 1], "points": 1}}),
+    )
+    assert man._get_village_meta("49709")["location"] == [572, 295]
+
+
+def test_meta_sem_fonte_nenhuma_e_dict_vazio():
+    assert _meta_manager({}, None)._get_village_meta("40808") == {}
+
+
 # --------------------------------------------------------------------------
 # _note_failed_claim
 # --------------------------------------------------------------------------
