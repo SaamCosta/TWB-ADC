@@ -6808,8 +6808,20 @@ as duas origens estão a 40,9 e 50,3 campos do alvo, contra o limite de 70 do
 mundo. Por isso a guarda de alcance pulada (`_source_reaches` deixa passar
 sem coordenada) não mudou nada aqui. Corrigido com `WorldVillages.entry(vid)`
 como terceira fonte de `_get_village_meta()`, mais 3 testes no mesmo arquivo.
-**O trem da 40808 já agendado continua sem reserva no quadro**: o bot não
-volta a tentar.
+O trem da 40808 já agendado ficou sem reserva no quadro (o bot não tenta de
+novo). O usuário reservou à mão.
+
+**Terceira porta: ordem de inicialização (12:37).** Depois de um restart às
+12:36:24, o Hunter disparou os 2 nobres da BBM 003 e os dois falharam com
+`sem coordenada ... nem no village.txt`. Às 12:27, na sonda, a coordenada tinha
+vindo do `village.txt`. A causa estava na ordem do ciclo em `twb.py`: o Hunter
+roda **cedo**, logo depois da visão geral, mas a `WorldVillages` só era criada
+depois das reservas e só era instalada nas aldeias depois do Hunter. Num
+processo recém-iniciado, `village.attack.world_villages` ainda era `None` no
+primeiro disparo. Nos ciclos seguintes isso não acontece, porque a instalação
+do ciclo anterior persiste. Corrigido: a lista é criada e instalada em todas as
+aldeias **antes** do bloco do Hunter. Nenhum nobre saiu, e os 2 da BBM 022
+partiriam depois. O usuário apagou o agendamento pelo painel.
 
 ## 9. Próximos passos
 

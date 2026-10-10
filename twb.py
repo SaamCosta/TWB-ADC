@@ -1131,6 +1131,28 @@ class TWB:
                     if v.village_id in self.found_villages
                 }
 
+                # Feature 36: UMA lista de aldeias do mundo por ciclo -- o
+                # conteudo e global e mede 6,3 MB. Construir aqui nao vai a
+                # rede: o download e preguicoso, com TTL de 6h e cache em disco.
+                #
+                # ANTES do Hunter, e instalada nas aldeias ja aqui (8.59): o
+                # disparo resolve a coordenada do alvo por
+                # `village.attack._resolve_position()`, que usa esta lista para
+                # alvo visto so pelo mundo. Instalada depois do Hunter, o
+                # primeiro ciclo de um processo recem-reiniciado disparava sem
+                # ela -- em 2026-10-10 12:37 os 2 nobres da BBM 003 contra a
+                # 40808 falharam assim, 55 s depois de um restart.
+                world_villages = None
+                if config.get("conquest", {}).get("enabled", False):
+                    if not self.world_villages:
+                        self.world_villages = WorldVillages(config=config)
+                    self.world_villages.config = config
+                    world_villages = self.world_villages
+                for _v in self.villages:
+                    _v.world_villages = world_villages
+                    if _v.attack:
+                        _v.attack.world_villages = world_villages
+
                 # Hunter o mais cedo possivel no ciclo: logo depois da visao
                 # geral, antes de reservas, estatisticas, comandos no ar e do
                 # prime da conquista. Em 2026-09-27 esse preambulo custou ~100 s
@@ -1192,17 +1214,6 @@ class TWB:
                     self.reservation_writer.config = config
                     self.reservation_writer.board = self.reservation_board
                     reservation_writer = self.reservation_writer
-
-                # Feature 36: UMA lista de aldeias do mundo por ciclo, pelo
-                # mesmo motivo do quadro acima -- o conteudo e global e mede
-                # 6,3 MB. Construir aqui nao vai a rede: o download e
-                # preguicoso, com TTL de 6h e cache em disco.
-                world_villages = None
-                if config.get("conquest", {}).get("enabled", False):
-                    if not self.world_villages:
-                        self.world_villages = WorldVillages(config=config)
-                    self.world_villages.config = config
-                    world_villages = self.world_villages
 
                 # docs/backend.md 8.28: timer que reserva alvo da fila manual
                 # no minuto em que a reserva de um aliado vence. Armar nao vai
@@ -1310,9 +1321,6 @@ class TWB:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
                     _v.hunter_service_callback = service_callback
-                    _v.world_villages = world_villages
-                    if _v.attack:
-                        _v.attack.world_villages = world_villages
                     _v.hunter_gate = (
                         lambda phase, vid, skippable, _config=config:
                         self._hunter_gate(_config, phase, skippable, vid)
