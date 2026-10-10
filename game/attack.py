@@ -4,6 +4,7 @@ Sounds dangerous but it just sends farms
 """
 
 from core.extractors import Extractor
+from core.village_label import village_label
 import logging
 import math
 import time
@@ -659,7 +660,7 @@ class AttackManager:
                 # com numeros errados.
                 if attack_result:
                     self.logger.info(
-                        "Attacking %s -> %s (%s)", self.village_id, target["id"], str(template)
+                        "Attacking %s -> %s (%s)", village_label(self.village_id), target["id"], str(template)
                     )
                     self.wrapper.reporter.report(
                         self.village_id,
@@ -698,7 +699,7 @@ class AttackManager:
                     # tratamento da falta de tropa detectada localmente.
                     self.logger.info(
                         "Pacote %s recusado por %s (%s), nao sera tentado de novo neste ciclo",
-                        str(template), self.village_id, self.last_refusal
+                        str(template), village_label(self.village_id), self.last_refusal
                     )
                     self._record_attack_failure(
                         target["id"],
@@ -789,7 +790,7 @@ class AttackManager:
             conquest = self.conquest_targets.get(str(vid))
             if conquest:
                 self.logger.info(
-                    "Farm: %s fora do farm -- alvo de conquista (%s)", vid, conquest
+                    "Farm: %s fora do farm -- alvo de conquista (%s)", village_label(vid), conquest
                 )
                 if vid not in self.ignored:
                     self.ignored.append(vid)
@@ -798,7 +799,7 @@ class AttackManager:
             if village["owner"] != "0" and vid not in self.extra_farm:
                 if vid not in self.ignored:
                     self.logger.debug(
-                        "Ignoring village %s because player owned, add to additional_farms to auto attack", vid
+                        "Ignoring village %s because player owned, add to additional_farms to auto attack", village_label(vid)
                     )
                     self.ignored.append(vid)
                 self.exclusions.record(
@@ -810,7 +811,7 @@ class AttackManager:
                     if vid not in self.ignored:
                         self.logger.debug(
                             "Ignoring village %s because points %d exceeds limit %d",
-                            vid, village["points"], self.farm_maxpoints
+                            village_label(vid), village["points"], self.farm_maxpoints
                         )
                         self.ignored.append(vid)
                     self.exclusions.record(
@@ -822,7 +823,7 @@ class AttackManager:
                     if vid not in self.ignored:
                         self.logger.debug(
                             "Ignoring village %s because points %d below limit %d",
-                            vid, village["points"], self.farm_minpoints
+                            village_label(vid), village["points"], self.farm_minpoints
                         )
                         self.ignored.append(vid)
                     self.exclusions.record(
@@ -837,7 +838,7 @@ class AttackManager:
                     if vid not in self.ignored:
                         self.logger.debug(
                             "Ignoring village %s because of higher points %d -> %d",
-                            vid, my_village["points"], village["points"]
+                            village_label(vid), my_village["points"], village["points"]
                         )
                         self.ignored.append(vid)
                     self.exclusions.record(
@@ -855,7 +856,7 @@ class AttackManager:
                 get_h = time.localtime().tm_hour
                 if get_h in range(0, 8) or get_h == 23:
                     self.logger.debug(
-                        "Village %s will be ignored because it is player owned and attack between 23h-8h", vid
+                        "Village %s will be ignored because it is player owned and attack between 23h-8h", village_label(vid)
                     )
                     self.exclusions.record(
                         vid, "janela_noturna_jogador", "hora local %d" % get_h
@@ -866,7 +867,7 @@ class AttackManager:
                 if vid not in self.ignored:
                     self.logger.debug(
                         "Village %s will be ignored because it is too far away: distance is %f, max is %d",
-                        vid, distance, self.farm_radius
+                        village_label(vid), distance, self.farm_radius
                     )
                     self.ignored.append(vid)
                 self.exclusions.record(
@@ -875,7 +876,7 @@ class AttackManager:
                 )
                 continue
             if vid in self.ignored:
-                self.logger.debug("Removed %s from farm ignore list", vid)
+                self.logger.debug("Removed %s from farm ignore list", village_label(vid))
                 self.ignored.remove(vid)
 
             # `or default_score` trataria um score 0 (farm que nao rende nada)
@@ -917,7 +918,7 @@ class AttackManager:
         """
         if "spy" not in self.troopmanager.troops or int(self.troopmanager.troops["spy"]) < self.scout_farm_amount:
             self.logger.debug(
-                "Cannot scout %s at the moment because insufficient unit: spy", vid
+                "Cannot scout %s at the moment because insufficient unit: spy", village_label(vid)
             )
             return False
         troops = {"spy": self.scout_farm_amount}
@@ -993,7 +994,7 @@ class AttackManager:
                 )
                 return False
             self.logger.warning(
-                "%s will be attacked but scouting is not possible (yet), going in blind!", vid
+                "%s will be attacked but scouting is not possible (yet), going in blind!", village_label(vid)
             )
             return True
 
@@ -1002,7 +1003,7 @@ class AttackManager:
                 status = self.repman.safe_to_engage(vid)
                 if status == -1:
                     self.logger.info(
-                        "Checking %s: scout report not yet available", vid
+                        "Checking %s: scout report not yet available", village_label(vid)
                     )
                     self.exclusions.record(
                         vid, "aguardando_relatorio_espiao",
@@ -1015,7 +1016,7 @@ class AttackManager:
                     # recém-espiado e descartava para sempre o que precisava
                     # ser reavaliado (P1-10).
                     if int(time.time()) - cache_entry["last_attack"] > self.farm_low_prio_wait * 2:
-                        self.logger.info(f"{vid}: Old scout report found ({cache_entry['last_attack']}), re-scouting")
+                        self.logger.info(f"{village_label(vid)}: Old scout report found ({cache_entry['last_attack']}), re-scouting")
                         self._record_scout_attempt(
                             vid, self.scout(vid),
                             "relatorio velho (mais de %d s), re-explorando"
@@ -1024,7 +1025,7 @@ class AttackManager:
                         return False
                     else:
                         self.logger.info(
-                            "%s: scout report noted enemy units, ignoring", vid
+                            "%s: scout report noted enemy units, ignoring", village_label(vid)
                         )
                         self.exclusions.record(
                             vid, "relatorio_viu_tropa",
@@ -1032,12 +1033,12 @@ class AttackManager:
                         )
                         return False
                 self.logger.info(
-                    "%s: scout report noted no enemy units, attacking", vid
+                    "%s: scout report noted no enemy units, attacking", village_label(vid)
                 )
                 return True
 
             self.logger.debug(
-                "%s will be ignored for attack because unsafe, set safe:true to override", vid
+                "%s will be ignored for attack because unsafe, set safe:true to override", village_label(vid)
             )
             self.exclusions.record(
                 vid, "inseguro_sem_relatorio",
@@ -1069,7 +1070,7 @@ class AttackManager:
         if cache_entry["last_attack"] + min_time > int(time.time()):
             self.logger.debug(
                 "%s will be ignored because of previous attack (%d sec delay between attacks)",
-                vid, min_time
+                village_label(vid), min_time
             )
             self.exclusions.record(
                 vid, "intervalo_entre_ataques",
@@ -1127,14 +1128,14 @@ class AttackManager:
             self.logger.debug(
                 "[Attack] %s -> %s: coordenada %s|%s veio do cache compartilhado "
                 "(alvo fora do scan de mapa desta aldeia)",
-                self.village_id, vid, location[0], location[1]
+                village_label(self.village_id), village_label(vid), location[0], location[1]
             )
             return int(location[0]), int(location[1])
 
         self.logger.warning(
             "[Attack] %s -> %s: sem coordenada no scan desta aldeia nem em "
             "cache/villages/%s.json -- nao da para montar o ataque",
-            self.village_id, vid, vid
+            village_label(self.village_id), village_label(vid), village_label(vid)
         )
         return None
 
@@ -1166,7 +1167,7 @@ class AttackManager:
         additional_attacks = [dict(atk) for atk in (additional_attacks or [])]
 
         if self.in_forced_peace:
-            self.logger.info("[Attack] %s -> %s: forced peace active, not sending", self.village_id, vid)
+            self.logger.info("[Attack] %s -> %s: forced peace active, not sending", village_label(self.village_id), village_label(vid))
             return "forced_peace"
 
         # P2-38: validar a posicao antes do GET da praca -- a requisicao
@@ -1180,7 +1181,7 @@ class AttackManager:
         url = f"game.php?village={self.village_id}&screen=place&target={vid}"
         pre_attack = self.wrapper.get_url(url)
         if pre_attack is None:
-            self.logger.warning("[Attack] %s -> %s: request timed out, aborting", self.village_id, vid)
+            self.logger.warning("[Attack] %s -> %s: request timed out, aborting", village_label(self.village_id), village_label(vid))
             self.last_attack_failure = "falha_de_rede"
             return False
         pre_data = {}
@@ -1199,7 +1200,7 @@ class AttackManager:
         confirm_url = f"game.php?village={self.village_id}&screen=place&try=confirm"
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
         if conf is None:
-            self.logger.warning("[Attack] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
+            self.logger.warning("[Attack] %s -> %s: confirm request timed out, aborting", village_label(self.village_id), village_label(vid))
             self.last_attack_failure = "falha_de_rede"
             return False
         if '<div class="error_box">' in conf.text:
@@ -1211,7 +1212,7 @@ class AttackManager:
             self.last_attack_failure = "recusado_pelo_jogo"
             self.logger.warning(
                 "[Attack] %s -> %s recusado pelo jogo: %s",
-                self.village_id, vid, self.last_refusal
+                village_label(self.village_id), village_label(vid), self.last_refusal
             )
             return False
         duration = Extractor.attack_duration(conf)
@@ -1222,7 +1223,7 @@ class AttackManager:
                 return "forced_peace"
 
         self.logger.info(
-            "[Attack] %s -> %s duration %.1f h", self.village_id, vid, duration / 3600
+            "[Attack] %s -> %s duration %.1f h", village_label(self.village_id), village_label(vid), duration / 3600
         )
         self.last_attack_duration = duration
 
@@ -1251,7 +1252,7 @@ class AttackManager:
                 self.last_attack_failure = "sem_tropa_em_casa"
                 self.logger.warning(
                     "[Attack] %s -> %s: %s",
-                    self.village_id, vid, self.last_refusal
+                    village_label(self.village_id), village_label(vid), self.last_refusal
                 )
                 return False
 
@@ -1277,7 +1278,7 @@ class AttackManager:
             if result is None:
                 self.logger.warning(
                     "[Attack] %s -> %s: batch request timed out, aborting",
-                    self.village_id, vid
+                    village_label(self.village_id), village_label(vid)
                 )
                 self.last_attack_failure = "falha_de_rede"
                 return False
@@ -1288,7 +1289,7 @@ class AttackManager:
                 )
                 self.logger.warning(
                     "[Attack] batch %s -> %s failed: %s",
-                    self.village_id, vid, self.last_refusal
+                    village_label(self.village_id), village_label(vid), self.last_refusal
                 )
                 return False
             if '<div class="error_box">' in result.text:
@@ -1296,7 +1297,7 @@ class AttackManager:
                 self.last_attack_failure = "recusado_pelo_jogo"
                 self.logger.warning(
                     "[Attack] batch %s -> %s refused by game: %s",
-                    self.village_id, vid, self.last_refusal
+                    village_label(self.village_id), village_label(vid), self.last_refusal
                 )
                 return False
         else:
@@ -1733,7 +1734,7 @@ class ConquestManager:
                 self.logger.warning(
                     "Conquest: aldeia %s ainda sem coordenada propria (scan de "
                     "mapa nao veio) -- sem ela nao da para medir raio nenhum",
-                    self.village_id
+                    village_label(self.village_id)
                 )
                 return None
             origins = [tuple(self.map.my_location)]
@@ -1774,7 +1775,7 @@ class ConquestManager:
             if blocked:
                 self.logger.info(
                     "Conquest: alvo %s descartado da selecao automatica (%s: %s)",
-                    vid, blocked[0],
+                    village_label(vid), blocked[0],
                     blocked[1].get("reserved_by_name") or blocked[1].get("matched")
                 )
                 continue
@@ -2201,7 +2202,7 @@ class ConquestManager:
                 self.logger.info(
                     "Conquest: alvo manual %s reservado por %s (vence %s) -- "
                     "segue na fila esperando a reserva sair do quadro",
-                    target_id, waiting["reserved_by_name"],
+                    village_label(target_id), waiting["reserved_by_name"],
                     waiting["reservation_expires"]
                 )
                 previous = dict(data.get("waiting_reservation") or {})
@@ -2216,7 +2217,7 @@ class ConquestManager:
                 self.logger.info(
                     "Conquest: reserva de %s sobre o alvo manual %s saiu do "
                     "quadro -- alvo liberado",
-                    data["waiting_reservation"].get("reserved_by_name"), target_id
+                    data["waiting_reservation"].get("reserved_by_name"), village_label(target_id)
                 )
                 data = {k: v for k, v in data.items() if k != "waiting_reservation"}
                 ConquestCache.set(target_id, data)
@@ -2228,7 +2229,7 @@ class ConquestManager:
                 who = detail.get("reserved_by_name") or detail.get("matched")
                 self.logger.warning(
                     "Conquest: alvo manual %s esta reservado (%s: %s) -- "
-                    "tirando da fila sem enviar nada", target_id, reason, who
+                    "tirando da fila sem enviar nada", village_label(target_id), reason, who
                 )
                 ConquestCache.set(target_id, {
                     **data, **detail,
@@ -2250,7 +2251,7 @@ class ConquestManager:
                 self.logger.warning(
                     "Conquest: manual target %s is no longer a barbarian village "
                     "(owner=%s) -- cancelling manual queue entry",
-                    target_id, owner
+                    village_label(target_id), owner
                 )
                 ConquestCache.set(target_id, {
                     **data,
@@ -2319,12 +2320,12 @@ class ConquestManager:
             self.logger.warning(
                 "Conquest: alvo manual %s invalidado apos %d tentativas sem "
                 "envio -- a selecao automatica volta a rodar",
-                target_id, attempts
+                village_label(target_id), attempts
             )
         else:
             self.logger.warning(
                 "Conquest: alvo manual %s continua na fila, mas o envio falhou "
-                "%d/%d vezes", target_id, attempts, self.MANUAL_CLAIM_ATTEMPTS
+                "%d/%d vezes", village_label(target_id), attempts, self.MANUAL_CLAIM_ATTEMPTS
             )
         ConquestCache.set(target_id, data)
 
@@ -2398,13 +2399,13 @@ class ConquestManager:
                 "Conquest: %d nobre(s) a caminho de %s com chegada desconhecida "
                 "-- nao envio mais nenhum ate confirmar a posse da aldeia "
                 "(limpe pelo dashboard se souber que nao ha nada voando)",
-                len(pending), target_id
+                len(pending), village_label(target_id)
             )
         else:
             self.logger.info(
                 "Conquest: %d nobre(s) ja a caminho de %s, proximo pouso em "
                 "%.1f min -- nao envio mais nenhum antes disso",
-                len(pending), target_id, (first - time.time()) / 60
+                len(pending), village_label(target_id), (first - time.time()) / 60
             )
         return True
 
@@ -2743,7 +2744,7 @@ class ConquestManager:
                 self.logger.warning(
                     "Conquest: nao consegui atualizar os relatorios antes de "
                     "ler a lealdade de %s (%s) -- usando o que ja estava lido",
-                    target_id, e
+                    village_label(target_id), e
                 )
         # Empate no `when` e o caso NORMAL de um trem: os nobres pousam no
         # mesmo segundo. Em 2026-09-30 os quatro relatorios da Barbara #61947
@@ -2805,7 +2806,7 @@ class ConquestManager:
         if self._target_is_mine(target_id):
             self.logger.info(
                 "Conquest: target %s confirmed as ours via village cache — marking conquered",
-                target_id
+                village_label(target_id)
             )
             ConquestCache.set(target_id, {
                 **conquest_data,
@@ -2847,7 +2848,7 @@ class ConquestManager:
             self.logger.warning(
                 "Conquest: alvo %s deixou de ser barbaro (conquistado pelo "
                 "jogador %s) -- encerrando. Nobres ja em rota nao voltam.",
-                target_id, taken_by
+                village_label(target_id), taken_by
             )
             ConquestCache.set(target_id, {
                 **conquest_data,
@@ -2887,7 +2888,7 @@ class ConquestManager:
             self.logger.warning(
                 "Conquest: alvo %s em andamento foi reservado por %s (%s) -- "
                 "encerrando. Nobres ja em rota nao voltam, mas nenhum novo sai.",
-                target_id, who, reason
+                village_label(target_id), who, reason
             )
             ConquestCache.set(target_id, {
                 **conquest_data, **detail,
@@ -2939,7 +2940,7 @@ class ConquestManager:
             self.logger.info(
                 "Conquest: target %s — nosso relatorio marca lealdade %.0f (<= 0): "
                 "conquistada pelo nosso nobre, encerrando o alvo",
-                target_id, real_loyalty
+                village_label(target_id), real_loyalty
             )
             ConquestCache.set(target_id, {
                 **conquest_data,
@@ -2965,7 +2966,7 @@ class ConquestManager:
             self.logger.info(
                 "Conquest: target %s — real loyalty from report: %.1f, "
                 "estimated now: %.1f (%.1fh regen)",
-                target_id, real_loyalty, current_loyalty, hours_since_report
+                village_label(target_id), real_loyalty, current_loyalty, hours_since_report
             )
         else:
             # --- Priority 5: mathematical estimate ---
@@ -2978,7 +2979,7 @@ class ConquestManager:
             self.logger.info(
                 "Conquest: target %s — no report data, using estimate: %.1f "
                 "(%.1fh elapsed)",
-                target_id, current_loyalty, hours_elapsed
+                village_label(target_id), current_loyalty, hours_elapsed
             )
 
         if current_loyalty <= 0:
@@ -2999,7 +3000,7 @@ class ConquestManager:
                 "Encerrando SEM confirmacao de posse: verifique no jogo se a "
                 "aldeia e sua. Nenhum relatorio de nobre com lealdade real foi "
                 "encontrado para este alvo.",
-                target_id, current_loyalty
+                village_label(target_id), current_loyalty
             )
             ConquestCache.set(target_id, {
                 **conquest_data,
@@ -3016,7 +3017,7 @@ class ConquestManager:
 
         self.logger.info(
             "Conquest: target %s loyalty = %.1f — procurando origem para o "
-            "nobre extra", target_id, current_loyalty
+            "nobre extra", village_label(target_id), current_loyalty
         )
         return self._send_extra_noble(
             target_id, conquest_data, cfg,
@@ -3097,8 +3098,7 @@ class ConquestManager:
 
     @staticmethod
     def _village_name(vid):
-        cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
-        return cached.get("name") or str(vid)
+        return village_label(vid)
 
     @staticmethod
     def _fmt_ts(ts):
@@ -3165,7 +3165,7 @@ class ConquestManager:
             loyalty, loyalty_at, regen, drop_min, drop_max,
         )
         for vid, reason in dropped:
-            self.logger.debug("Conquest: aldeia %s fora do nobre extra (%s)", vid, reason)
+            self.logger.debug("Conquest: aldeia %s fora do nobre extra (%s)", village_label(vid), reason)
 
         deadline = single_noble_deadline(loyalty, loyalty_at, regen, drop_min)
         sent = None
@@ -3180,7 +3180,7 @@ class ConquestManager:
             if escort is None:
                 self.logger.info(
                     "Conquest: aldeia %s tem nobre mas nao fecha a escolta minima "
-                    "para o extra", vid
+                    "para o extra", village_label(vid)
                 )
                 continue
             viable += 1
@@ -3219,14 +3219,14 @@ class ConquestManager:
                 self.logger.warning(
                     "Conquest: nobre extra da aldeia %s contra %s sem resposta "
                     "no envio final -- pode ter saido; nenhuma outra origem "
-                    "tenta neste ciclo", vid, target_id
+                    "tenta neste ciclo", village_label(vid), village_label(target_id)
                 )
                 return False
             refused.append((vid, failure or result))
             self.logger.info(
                 "Conquest: nobre extra da aldeia %s contra %s nao saiu (%s) -- "
                 "o comando nao foi criado, tento a proxima origem",
-                vid, target_id, failure or result
+                village_label(vid), village_label(target_id), failure or result
             )
 
         if sent is None:
@@ -3235,7 +3235,7 @@ class ConquestManager:
                 self.logger.warning(
                     "Conquest: nenhuma origem conseguiu mandar o nobre extra "
                     "contra %s (%s) -- tento no proximo ciclo",
-                    target_id, ", ".join("%s: %s" % r for r in refused)
+                    village_label(target_id), ", ".join("%s: %s" % r for r in refused)
                 )
                 return False
             if deadline is None:
@@ -3321,7 +3321,7 @@ class ConquestManager:
         self.logger.info(
             "Conquest: nobre extra enviado de %s contra %s, lealdade prevista na "
             "chegada %s, um nobre %s (pouso em %s)",
-            origin, target_id, at_text, verdict_text, landing
+            village_label(origin), village_label(target_id), at_text, verdict_text, landing
         )
         Notification.send(
             "Conquista: nobre extra enviado contra %s da %s (lealdade prevista "

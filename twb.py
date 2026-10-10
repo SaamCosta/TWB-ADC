@@ -136,11 +136,13 @@ import coloredlogs
 import requests
 
 from core.notification import Notification
+from core.village_label import village_label
 from core import account_pulse
 from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
 from core.cycle_meter import close_and_report, meter_phase
+from core.phase_forecast import PhaseForecast
 from game.village import Village
 from game.reports import ReportManager
 from game.attack import ConquestCache
@@ -194,6 +196,9 @@ class TWB:
     should_run = True
     runs = 0
     hunter = None
+    # Previsao de duracao por fase (core/phase_forecast.py), relida do
+    # historico do medidor a cada ciclo; o Hunter.gate() decide com ela.
+    phase_forecast = None
     mint_manager = None
     # Feature 35: sobrevive entre ciclos de proposito, para o TTL do quadro de
     # reservas valer de verdade. Imutavel como default de classe (o objeto e
@@ -551,7 +556,7 @@ class TWB:
             for vid, why in sorted(kept.items()):
                 logging.warning(
                     "get_overview: aldeia %s nao veio na visao geral, mas NAO "
-                    "sera removida: %s", vid, why
+                    "sera removida: %s", village_label(vid), why
                 )
         if os.path.exists(managed_cache_dir):
             for cached_vid in cached_ids:
@@ -560,7 +565,7 @@ class TWB:
                     stale_path = os.path.join(managed_cache_dir, fname)
                     try:
                         os.remove(stale_path)
-                        logging.info("Removed stale managed cache for lost village %s", cached_vid)
+                        logging.info("Removed stale managed cache for lost village %s", village_label(cached_vid))
                     except OSError as e:
                         logging.warning("Could not remove stale cache %s: %s", stale_path, e)
 
@@ -570,7 +575,7 @@ class TWB:
             cfg = self.config()
             for vid in stale_config_ids:
                 cfg["villages"].pop(vid, None)
-                logging.info("Removed lost village %s from config", vid)
+                logging.info("Removed lost village %s from config", village_label(vid))
             with open("config.json", "w") as cf:
                 json.dump(cfg, cf, indent=2)
             config = self.config()
@@ -687,7 +692,7 @@ class TWB:
         except (ValueError, AttributeError):
             logging.warning(
                 "Village %s has invalid active_hours format '%s', falling back to global",
-                village_id, village_hours
+                village_label(village_id), village_hours
             )
             return TWB.is_active_hours(config)
 
@@ -709,6 +714,23 @@ class TWB:
     # ser enviado mesmo, entao aqui um piso nao cruza send_time nenhum -- so
     # impede o laco de reconferir a rede sem pausa.
     BLIND_SLEEP_FLOOR = 30
+
+    def _hunter_gate(self, config, phase, skippable=True, village=None):
+        """
+        `Hunter.gate()` com a previsao da fase: True roda, False adia. Fase
+        nao adiavel sempre volta True (o gate segurou ate a saida, se
+        precisou). A espera conta no balde `hunter` do medidor, nao no da
+        fase -- senao a previsao da fase cresceria a cada espera.
+        """
+        if not self.hunter or not config.get("hunter", {}).get("enabled", False):
+            return True
+        if self.phase_forecast is None:
+            self.phase_forecast = PhaseForecast()
+            self.phase_forecast.reload()
+        predicted = self.phase_forecast.predict(phase, village)
+        with meter_phase(self.wrapper, "hunter", village=False):
+            ok = self.hunter.gate(config, phase, predicted, skippable, village)
+        return ok or not skippable
 
     def _base_sleep(self, config):
         """O sono normal entre ciclos (active/inactive_delay + jitter)."""
@@ -1024,6 +1046,9 @@ class TWB:
                 # entre um ciclo e outro (o Hunter depois do sono).
                 between = self.wrapper.meter.begin_cycle()
                 config = self.config()
+                if self.phase_forecast is None:
+                    self.phase_forecast = PhaseForecast()
+                self.phase_forecast.reload()
                 # §9 item 20a: releituras 2 e 3 da visao geral reaproveitam o
                 # game_data da ultima tela HTML se ele tiver ate N segundos.
                 self.wrapper.reuse_game_data_max_age = config["bot"].get(
@@ -1075,7 +1100,7 @@ class TWB:
                     if vid not in existing_vids:
                         self.villages.append(self._new_village(vid))
                         logging.info(
-                            "Village %s added to config mid-run, now included in processing", vid
+                            "Village %s added to config mid-run, now included in processing", village_label(vid)
                         )
 
                 # Feature 23: numbering used only for auto_set_village_names templating
@@ -1146,7 +1171,8 @@ class TWB:
                         )
                     self.reservation_board.config = config
                     reservation_board = self.reservation_board
-                    if reservation_board.enabled and managed_villages_dict:
+                    if (reservation_board.enabled and managed_villages_dict
+                            and self._hunter_gate(config, "reservas_tribo")):
                         with meter_phase(self.wrapper, "reservas_tribo"):
                             reservation_board.refresh(sorted(managed_villages_dict)[0])
 
@@ -1210,7 +1236,7 @@ class TWB:
                         wrapper=self.wrapper, config=config
                     )
                 self.player_stats.config = config
-                if managed_villages_dict:
+                if managed_villages_dict and self._hunter_gate(config, "estatisticas"):
                     with meter_phase(self.wrapper, "estatisticas"):
                         self.player_stats.refresh(sorted(managed_villages_dict)[0])
 
@@ -1227,7 +1253,7 @@ class TWB:
                         wrapper=self.wrapper, config=config
                     )
                 self.in_flight.config = config
-                if managed_villages_dict:
+                if managed_villages_dict and self._hunter_gate(config, "em_voo"):
                     with meter_phase(self.wrapper, "em_voo"):
                         self.in_flight.refresh(sorted(managed_villages_dict)[0])
 
@@ -1284,6 +1310,10 @@ class TWB:
                     _v.pvp_conquest_villages = managed_villages_dict
                     _v.pvp_conquest_manager = pvp_manager
                     _v.hunter_service_callback = service_callback
+                    _v.hunter_gate = (
+                        lambda phase, vid, skippable, _config=config:
+                        self._hunter_gate(_config, phase, skippable, vid)
+                    )
                     _v.mint_manager = self.mint_manager
                     _v.reservation_board = reservation_board
 
@@ -1307,7 +1337,7 @@ class TWB:
                 # a segunda chamada ja decide com numero vivo de tropa e
                 # consegue sondar os tempos de viagem.
                 primed_this_cycle = set()
-                if pvp_manager:
+                if pvp_manager and self._hunter_gate(config, "pvp_inicio"):
                     with meter_phase(self.wrapper, "pvp_inicio"):
                         pvp_manager.run()
                         primed_this_cycle = self.prime_conquest_sources(
@@ -1334,7 +1364,8 @@ class TWB:
                 # Roda na mesma forma de dois tempos da PvP: escolher as
                 # origens pelo snapshot de `cache/managed` (sem rede), primar
                 # so elas, e so entao decidir com numero vivo de tropa.
-                if config.get("conquest", {}).get("enabled", False):
+                if (config.get("conquest", {}).get("enabled", False)
+                        and self._hunter_gate(config, "conquista_barbara")):
                     with meter_phase(self.wrapper, "conquista_barbara"):
                         primed_this_cycle |= self.prime_barbarian_sources(
                             managed_villages_dict, config,
@@ -1373,10 +1404,11 @@ class TWB:
                 # Cunhagem (§8.55): campanha aprovada ativa aqui, antes de
                 # qualquer aldeia gastar recurso, e o hub do ciclo e decidido
                 # para o roteamento. Erro aqui nao derruba o ciclo.
-                with meter_phase(self.wrapper, "cunhagem"):
-                    self.mint_manager.begin_cycle(
-                        config, self.found_villages, service=_base_cb
-                    )
+                if self._hunter_gate(config, "cunhagem"):
+                    with meter_phase(self.wrapper, "cunhagem"):
+                        self.mint_manager.begin_cycle(
+                            config, self.found_villages, service=_base_cb
+                        )
 
                 processing_order = list(self.villages)
                 if config["bot"].get("humanize_village_order", False):
@@ -1425,7 +1457,7 @@ class TWB:
                     if not TWB.is_village_active_hours(village.village_id, config):
                         logging.info(
                             "Village %s is outside its active hours, skipping this cycle",
-                            village.village_id
+                            village_label(village.village_id)
                         )
                         continue
 
@@ -1457,16 +1489,16 @@ class TWB:
                             # nao acrescenta nada.
                             logging.warning(
                                 "Village %s: init falhou (tela da aldeia nao veio), pulada neste ciclo",
-                                village.village_id,
+                                village_label(village.village_id),
                             )
                         else:
                             logging.exception(
                                 "Village %s: erro no ciclo, aldeia pulada: %s",
-                                village.village_id, e,
+                                village_label(village.village_id), e,
                             )
                             Notification.send(
                                 "Aldeia %s: erro no ciclo, pulada (o bot segue): %s"
-                                % (village.village_id, e)
+                                % (village_label(village.village_id), e)
                             )
                         try:
                             self.wrapper.reporter.report(
@@ -1537,14 +1569,16 @@ class TWB:
                 # Feature 24 (fase 1): leitura periódica do estado do(s)
                 # Paladino(s) — opt-in (config["statue"]["enabled"]), sem
                 # automação ativa. Roda uma vez por ciclo (não por aldeia).
-                with meter_phase(self.wrapper, "estatua"):
-                    StatueManager.run(self.wrapper, config, self.found_villages)
+                if self._hunter_gate(config, "estatua"):
+                    with meter_phase(self.wrapper, "estatua"):
+                        StatueManager.run(self.wrapper, config, self.found_villages)
 
                 # Feature 25 (fase 1): leitura periódica do inventário —
                 # opt-in (config["inventory"]["enabled"]), nenhum item é
                 # ativado. Roda uma vez por ciclo (não por aldeia).
-                with meter_phase(self.wrapper, "inventario"):
-                    InventoryManager.run(self.wrapper, config, self.found_villages)
+                if self._hunter_gate(config, "inventario"):
+                    with meter_phase(self.wrapper, "inventario"):
+                        InventoryManager.run(self.wrapper, config, self.found_villages)
 
                 # Feature 8: o trem de nobres bárbaro deixou de ser montado
                 # aqui no fim do ciclo em 2026-09-22 -- ele roda no início,
@@ -1636,13 +1670,14 @@ class TWB:
                 dt_next = dtn + datetime.timedelta(0, sleep)
                 self.runs += 1
 
-                with meter_phase(self.wrapper, "perfis_farm"):
-                    VillageManager.farm_manager(
-                        verbose=True,
-                        # P2-33: a poda de cache/reports existia mas nunca era
-                        # acionada -- este parametro nunca era passado.
-                        clean_reports=config["bot"].get("max_cached_reports", 1000),
-                    )
+                if self._hunter_gate(config, "perfis_farm"):
+                    with meter_phase(self.wrapper, "perfis_farm"):
+                        VillageManager.farm_manager(
+                            verbose=True,
+                            # P2-33: a poda de cache/reports existia mas nunca era
+                            # acionada -- este parametro nunca era passado.
+                            clean_reports=config["bot"].get("max_cached_reports", 1000),
+                        )
                 close_and_report(self.wrapper.meter, extra={
                     "cycle": self.runs,
                     "next_sleep_seconds": round(sleep, 1),

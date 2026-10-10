@@ -35,23 +35,15 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   só **acompanha**: o nobre extra sai de qualquer aldeia gerenciada, a que
   pousa primeiro (§8.41), sob o mesmo portão do trem
   (`conquest_origin_block_reason`).
-- **Managers de jogo (`game/`)**:
-  - `attack.py` — `AttackManager` (farm) e `ConquestManager` (noble trains contra bárbaros)
-  - `defence_manager.py` — `DefenceManager` (bandeiras, evacuação, suporte entre aldeias)
-  - `troopmanager.py` — recrutamento, pesquisa, gather
-  - `buildingmanager.py` — fila de construção
-  - `resources.py` / `resource_sharing.py` — mercado e transferência direta entre aldeias
-  - `hunter.py` — agendamento de ataques coordenados (Feature 10)
-  - `zone_manager.py` — zonas geográficas (Feature 11): cada aldeia na zona da
-    torre de vigia (`profile: watchtower`) mais próxima, com `covered` pelo
-    alcance real; sem torre designada, cai no agrupamento por `zones.radius` (§8.45)
-  - `pvp_conquest.py` — conquista PvP semi-manual (Feature 13)
-  - `simulator.py` — simulador de batalha (usado pelo PvP conquest)
-  - `mint_manager.py` / `mint_planner.py` — cunhagem (§8.55): hub de menor
-    custo, roteamento, campanha de itens aprovada no painel `/minting`,
-    cunhagem automática diária
-- **`core/`** — infraestrutura: `request.py` (HTTP/sessão), `extractors.py` (regex sobre
-  HTML do jogo), `filemanager.py`, `templates.py`, `reporter.py`, `notification.py`.
+- **Managers de jogo (`game/`) e infraestrutura (`core/`)**: um módulo por
+  sistema, cada um abrindo com docstring (`ls game/ core/`). O que o código
+  não conta:
+  - `hunter.py` — além de disparar, o `Hunter.gate()` roda **antes de cada
+    fase** e adia (ou segura) o que não termina antes da próxima saída, com a
+    duração prevista por `core/phase_forecast.py` a partir de `cache/cycles`.
+    Fase nova em `Village.run()`/`twb.py` precisa de `_gate(...)` antes dela,
+    senão vira o furo de 2026-10-08 (§8.58). `Hunter: FURO` no log = alguma
+    tarefa escapou do gate.
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
   `config.json`. Rotas em `server.py`, lógica de leitura em `utils.py`.
   `BotManager` (reescrito em 2026-09-14) sobe o bot num **console visível
@@ -82,170 +74,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   em stderr de executável nativo torna `$?` falso mesmo com código 0 — um laço
   com `if (-not $?)` reportou 15 falhas inexistentes numa suíte 100% verde em
   2026-09-20.
-  Cobertura atual: conquista bárbara (nobre em voo, lealdade do relatório,
-  alvo perdido, semântica de status, faixa de queda), encoding do
-  `FileManager`, alocação de torre de vigia, limiares de slot de Paladino
-  (`StatuePage`, recorte verbatim de `screen=statue`), escolha de pacote de
-  farm por saque esperado (`AttackManager._ordered_templates`), mecânicas do
-  mundo lidas de `get_config` (`WorldConfig._parse_features`, com recortes
-  verbatim de br143 sem arqueiro e br142 com), o motivo da recusa do jogo
-  (`Extractor.error_box_text`, fixture verbatim de um `error_box` real) e o
-  limite de ataque falso (`_legalize`, `min_attack_population`), a venda na
-  bolsa premium (`do_premium_stuff`, com os números da bolsa lidos do br143 em
-  2026-08-20), a integridade dos templates de builder
-  (`tests/test_builder_templates.py`) e a leitura dos comandos recebidos na
-  visão geral (`Extractor.incoming_commands`, recorte verbatim de um trem de
-  nobres real em 2026-08-22 — inclui um teste que roda o regex **antigo**
-  contra o markup real e exige zero casamentos, para o bug não voltar calado)
-  e o gate de urgência do apoio (`DefenceManager.support_timing`,
-  `WorldConfig.travel_seconds`, com as velocidades de quatro mundos que provam
-  que `get_unit_info` já publica min/campo **efetivo**) e o bônus do "Sinal da
-  Aflição" (`Extractor.incoming_support_speed_bonus`, com a fórmula
-  `duração / 1,3` medida contra um envio real em vez de deduzida do texto),
-  o alcance do mapa (`Map.sector_grid`/`merge_sectors`/`fetch_sectors`, com
-  recorte verbatim de `map.php?v=2`), a classificação de perfil de farm por
-  lotação e aproveitamento (`tests/test_farm_profiles.py`), a guarda de que
-  importar `twb.py` não trunca o log de sessão
-  (`tests/test_session_log_guard.py`) e a integridade da config
-  (`tests/test_config_integrity.py` — varre por AST toda chamada a
-  `get_config`/`get_village_config` e exige que a chave exista em
-  `config.example.json` / `village_template` e esteja documentada em
-  `webmanager/helpfile.py`; é a verificação automática das três regras de
-  config deste arquivo) e a política de bandeira por academia
-  (`tests/test_flag_policy.py`, que roda a política contra o snapshot real das
-  18 aldeias) e o `ReportReader` do webmanager
-  (`tests/test_report_reader.py` — veredito agregado por alvo espelhando
-  `ReportManager.safe_to_engage`, rótulo de aldeia com o `name=0` de bárbara,
-  filtro de tipo dinâmico e paginação; substitui as duas funções que tocam
-  disco por fixtures, então não depende do `cache/` real) e a elegibilidade de
-  alvo do trem multi-origem (`tests/test_conquest_target_reach.py` — pool de
-  candidatos e alcance por origem, com as coordenadas reais do bolsão oeste do
-  K25; ver o vigésimo quarto padrão) e o desbloqueio de coleta
-  (`tests/test_scavenge_unlock.py` — parse da config de mundo com recorte
-  verbatim do br143, decisão de gasto sob a política "desbloqueia quando der",
-  e a forma do POST contra um wrapper de mentira; inclui um teste que roda o
-  padrão **sem** o `\s*` e exige que ele falhe, e a guarda foi provada
-  quebrando o parser de propósito) e a trava de instância única
-  (`tests/test_instance_lock.py` — recusa cross-process com subprocessos de
-  verdade, porque trava de arquivo é **reentrante no mesmo processo** e um teste
-  in-process não distinguiria trava real de no-op; `docs/backend.md` §8.10)
-  e a confirmação de perda antes da limpeza de aldeias
-  (`tests/test_village_purge_partial.py` — visão geral filtrada por grupo não
-  apaga nada; só sai do config a aldeia que o `map/village.txt` dá com outro
-  dono; §8.19)
-  e a reserva cruzada entre alvos PvP
-  (`tests/test_pvp_cross_target_reserve.py` — clear, escolta e plano de
-  nobres descontam o que outro alvo ou o trem bárbaro reservou, a reserva é
-  reconstruída do Hunter depois de reinício e o piso da escolta não pede mais
-  que existe; §8.20)
-  e o leitor da página `/cycles` (`tests/test_cycle_reader.py` — ciclo
-  abortado fora da mediana, média por aldeia só nos ciclos em que ela
-  apareceu; §8.22)
-  e o medidor de ciclo (`tests/test_cycle_meter.py` — tempo exclusivo por
-  fase fechando o total, requisição atribuída ao topo da pilha, wrapper sem
-  medidor virando no-op, contagem por tela via `screen_key`; §8.21 e §9
-  item 20)
-  e os pontos da própria aldeia (`tests/test_village_points.py` — lidos do
-  `game_data`, leitura ruim não zera, e a cadeia pontos → piso de ataque
-  falso → `_legalize` com o caso de campo 48 → 56; §8.23)
-  e a exclusão de alvo de conquista do farm
-  (`tests/test_farm_conquest_exclusion.py` — bárbara ativa, nobre no ar com
-  status errado e PvP em preparação saem de `get_targets()`, inclusive de
-  `additional_farms`, e lista ilegível trava o farm; §8.24)
-  e o modo sombra da visão geral (`tests/test_overview_shadow.py` —
-  `game_data` de HTML e do envelope JSON do `TribalWars-Ajax`, comparação
-  igual/produção/diverge com teto de armazém, registro por aldeia no wrapper;
-  §9 item 20a)
-  e o total de tropas do recrutamento (`tests/test_units_owned_total.py` —
-  apoio enviado em `units_away` entra no total; recorte verbatim da BBM 006;
-  §8.26)
-  e a resiliência a queda (`tests/test_crash_resilience.py` — sono de rede
-  fora encurtado pelo Hunter, prime da origem num processo novo, quedas
-  seguidas de `main()`, os `None` do A26-02; §8.33)
-  e a lealdade real e o schedule vencido
-  (`tests/test_conquest_loyalty_and_expiry.py` — `repman` entregue e relido
-  antes da lealdade, pouso lido pelo relatório sem nobre extra, ataque
-  `pending` de schedule vencido virando `arrival_passed`; §8.35; e o empate
-  do trem que pousa no mesmo segundo, que agora fica com a MENOR lealdade;
-  §8.40)
-  e o gate do popup de missões (`tests/test_reward_gate.py` — N de
-  `RewardSystem.setUnlockableRewardsCount` com recorte verbatim, ausência ≠
-  zero, conferência a cada 3 h que desliga o gate se o contador mentir;
-  §8.44)
-  e o upgrade de bandeira (`tests/test_flag_upgrade.py` — `confirm=true` no
-  POST, sucesso só quando a contagem cai na releitura, laço finito quando o
-  jogo responde sem subir, contagem `"12"` lida como número, checkpoint do
-  Hunter antes de cada upgrade; §8.54)
-  e o gate do ferreiro (`tests/test_smith_gate.py` — `BuildingSmith.techs`
-  verbatim, `error_level: true` como "nível máximo" para o `light: 3` dos
-  templates num mundo de nível único, GET só com pesquisa pendente ou a cada
-  24 h; §8.50)
-  e a captura do mapeamento premium × grátis
-  (`tests/test_feature_map.py` — só GET, URL com `action`/`ajaxaction`/`h`
-  recusada antes de pedir, parada no primeiro `data-bot-protect`, resumo de
-  tela estável entre ids; a ferramenta é `tools/feature_map.py`; §8.53)
-  e o portão de recurso antes de formar nobre
-  (`tests/test_snob_train_gate.py` — custo de `next_snob` e célula "Formar"
-  inativa, recorte verbatim da academia; vaga da conta ≠ recurso da aldeia;
-  §8.52)
-  e a tropa em casa da coleta (`tests/test_gather_units_home.py` —
-  `unit_counts_home` da tela de coleta igual à linha "Desta aldeia" de
-  `place/units`, com recorte verbatim de uma aldeia com apoio recebido; sem
-  o campo, o GET antigo volta; §8.51)
-  e os trens bárbaros em paralelo (`tests/test_conquest_parallel.py` — teto
-  `conquest.max_parallel_trains`, reserva `barb_train:*` reconstruída do
-  Hunter depois de reinício para o mesmo nobre não entrar em dois trens;
-  §8.43)
-  e o nobre extra multi-origem (`tests/test_conquest_extra_origin.py` —
-  origem pela chegada entre todas as aldeias, prazo de um nobre só e
-  vereditos com os números reais da 61947, reservas de outros sistemas,
-  trava em voo, falha ambígua no POST final × recusa limpa, aviso único por
-  pouso; §8.41)
-  e quem recruta nobre (`tests/test_noble_recruit_gate.py` — as N aldeias
-  com academia mais perto do 3º alvo elegível recrutam, as outras só cunham,
-  com as coordenadas reais de 04/10; o pedido "snob" é solto ao passar a
-  cunhar; falha aberta sem dado; e, em `test_conquest_planner.py`, o trem
-  pegando as origens mais perto do alvo; §8.48)
-  e os achados graves da auditoria do painel
-  (`tests/test_panel_field_audit.py` — pulso da conta com `incomings`
-  desarmado fora do `twb.main()`, ranking de farm sem aldeia própria, regra de
-  atenção única no `/conquest`, agendamento vencido no `/hunter`; §8.42)
-  e a fila do Hunter e a gravação do `schedules.json`
-  (`tests/test_hunter_schedule_queue.py` — intercalação entre schedules,
-  merge com o que o painel criou ou apagou durante a espera, trava entre dois
-  processos reais; §8.36), as regras do mercado
-  (`tests/test_market_trade_rules.py`) e a vaga de apoio liberada
-  (`tests/test_support_release.py`)
-  e a cunhagem (`tests/test_mint.py` — custo da bandeira contra os níveis
-  medidos, hub BBM 002 com os números de 05/10, rota que manda primeiro o
-  recurso escasso do hub, academia e bandeira com recorte verbatim, e a
-  campanha contra wrapper de mentira: item só conta com a queda na
-  releitura, retomada sem gastar duas vezes, bandeira travada mesmo sob
-  ataque; §8.55)
-  e a aba da visão geral (`tests/test_overview_mode.py` — `mode=prod`
-  explícito, porque o jogo grava a última aba e o InFlight deixa em
-  Comandos; §8.37)
-  e os avisos de Telegram (`tests/test_telegram_notes.py` — Hunter,
-  promoção do trem, conquista, queda de rede; §8.34)
-  e a identificação e orientação do `/map` (`tests/test_map_relations.py` —
-  diplomacia e amigos lidos de `screen=map` com recorte verbatim, precedência
-  de `TWMap.getColorByPlayer` com amigo *depois* da relação da tribo, e
-  `grid[y][x]`; §8.38)
-  e a lista de relatórios (`tests/test_report_list.py` — comércio gravado
-  pela miniatura da linha sem abrir a página, recorte verbatim de
-  `screen=report&mode=all`, paginação pelo tamanho real da página; §8.46;
-  e o fim de cunhagem automática pela miniatura `report_gold`; §8.49;
-  e um `ReportManager` só por processo, injetado em `TWB._new_village()`,
-  com o prime da conquista sem reler a lista lida há < 300 s; §8.47)
-  e as zonas por torre de vigia (`tests/test_zone_watchtower.py` — tabela de
-  alcance contra o recorte verbatim de `screen=watchtower`, torre mais
-  próxima, `covered` por qualquer torre que alcance, fallback por raio sem
-  torre designada, e as 40 aldeias reais; §8.45)
-  e o apoio a membros da tribo (`tests/test_tribe_support.py` — tópico do
-  fórum com markup verbatim e jogadores anonimizados, falta = tabela menos
-  respostas depois da edição, planejador por segurança da origem, ciclo
-  `proposed → approved → dispatching → sent` sem reenvio às cegas, executor
-  que manda o aprovado ou nada; §8.39). ⚠️ **O repositório é público**: fixture
+  Cobertura: cada `tests/test_*.py` diz na docstring o que cobre e de qual
+  seção da `docs/backend.md` vem (`ls tests/` lista tudo).
+  ⚠️ **O repositório é público**: fixture
   de fórum de tribo, lista de amigos ou token de sessão (`h`, `ch`) entra
   anonimizada/redigida. ⚠️ `Notification.send`
   só age depois de `Notification.arm()`, que só `twb.main()` chama: a suíte lê
@@ -263,6 +94,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `config.json` → `bot`, e um `requests.session()` acessa
   `game.php?village=NNN&screen=report&mode=all&view=<id>` sem atrapalhar o bot
   rodando.
+- **Aldeia própria nunca aparece só pelo id** (pedido do usuário, 2026-10-08).
+  Em log e aviso de Telegram, `village_label(vid)` de `core/village_label.py`
+  → `BBM 022 (40618)`; no painel, o filtro Jinja `{{ vid | vlabel }}`. Pode
+  embrulhar qualquer id de aldeia, inclusive alvo: aldeia alheia não tem
+  arquivo em `cache/managed` e sai só com o id. Teste em
+  `tests/test_village_label.py`.
 - **Nunca commitar `config.json`** (contém credenciais/sessão) — só `config.example.json`.
 - **Ao adicionar bloco de configuração novo, bumpar `build.version` SÓ em
   `config.example.json`.** A redação anterior desta linha mandava bumpar "em
@@ -336,613 +173,89 @@ processo e o webmanager não estava rodando. A trava de nobre em voo
 robustez, não diagnóstico: **se um trem duplicado reaparecer, é aqui que se
 puxa o fio.**
 
-- ⚠️ **Padrão de bug recorrente neste projeto: atributo de classe mutável.**
-  Quase toda classe aqui declara seus campos no corpo da classe, não em
-  `__init__`. Para `int`/`str`/`bool`/`None` é inofensivo (a atribuição cria
-  um atributo de instância), mas para `list`/`dict` mutados in-place
-  (`.append()`, `[k] = v`) o objeto é **compartilhado por todas as instâncias**.
-  Como existe uma instância de quase todo manager por aldeia, isso vira
-  vazamento de estado entre aldeias. Corrigidos no Lote 1: `TWB.villages`,
-  `ResourceManager.actual`/`requested`, `Map.villages`/`map_pos`/`map_data`,
-  `DefenceManager.supported`/`attacks`/`flags`/`current_flag`. No Lote 5:
-  `BuildingManager.waits`/`queue`/… (P2-23), `AttackManager.ignored`/
-  `_unknown_ignored` (P3) e `ReportManager.last_reports`. **Nenhum aberto que
-  eu conheça** — mas ao criar classe nova ou campo novo, declarar mutáveis em
-  `__init__`.
-- ⚠️ **Segundo padrão recorrente: `None` não guardado vindo de rede/parse.**
-  `WebWrapper.get_url()` retorna `None` em **qualquer** exceção
-  (`core/request.py`), e por tabela `get_action`/`get_api_action` também.
-  Vários `Extractor.*` (`game_state`, `recruit_data`, …) têm `return None`
-  implícito quando o regex não casa — o que acontece numa resposta 200 que não
-  é a tela esperada: sessão expirada virando login, página de bot protection,
-  ou markup novo do jogo. O consumidor típico faz `res.text`, `x in res` ou
-  `res["chave"]` direto e derruba o processo. O Lote 4 corrigiu cinco desses
-  só no caminho de recrutamento, dos quais **quatro não estavam no diagnóstico
-  original** — ao mexer num caminho que faz requisição, assumir que há mais.
-  `buildingmanager` (P2-24), `reports` (P2-25), `manager.py` (P2-26),
-  `resources` (P2-30) e `overview` (P2-31) foram fechados no Lote 5.
-  Corolário achado no Lote 4: `ResourceManager.logger` era criado só no fim
-  de um `update()` bem-sucedido, então a própria guarda nova crashava. Ao logar
-  num caminho de erro, conferir se o logger já existe naquele ponto — o mesmo
-  vale para `BuildingManager.start_update()`, corrigido no Lote 5.
-- ⚠️ **Terceiro padrão, achado no Lote 5: função definida mas nunca chamada.**
-  `Village.check_forced_peace()` estava correto e órfão — `farms.forced_peace_times`
-  era config inerte e o bot atacaria durante a paz forçada. O Lote 3 já tinha
-  "corrigido" um bug *dentro* dele sem notar. **Ao corrigir o corpo de uma
-  função, conferir os chamadores no mesmo passo** (`grep` pelo nome; se a única
-  ocorrência for a `def`, é código morto). Corolário: ao ressuscitar um caminho
-  morto, reler os consumidores assumindo que nunca foram exercitados — foi assim
-  que apareceu o bug do `score or default` no P1-8, e a necessidade de tornar
-  explícito o bloqueio de paz forçada no P1-17. **Segundo corolário, do Lote 6
-  (P2-22):** vale também quando o corpo continua chamado, mas o *domínio de
-  retorno* muda. `_calculate_needed_escort()` só devolvia `{}` num caso que
-  quase nunca ocorria, então o `if needed:` do chamador não tinha `else` e isso
-  era inofensivo; ao tornar `{}` um retorno comum, o `else` ausente virou uma
-  reserva presa para sempre — exatamente o bug que a correção existia para
-  matar. Ao alargar o conjunto de valores que uma função pode devolver, reler
-  cada consumidor perguntando "e se vier este valor agora?".
-- ⚠️ **Quarto padrão, achado em 2026-08-12: remover config "morta" sem
-  perguntar o que ela nomeia.** Ao limpar as três chaves do P3 ("declarado mas
-  nunca lido"), verifiquei que nenhuma tinha leitura no código e removi. Para
-  `farms.find_player_owned` isso era verdade e mesmo assim insuficiente: a
-  chave dizia "atacar aldeias de jogador", e **essa capacidade existe** —
-  `AttackManager` farma aldeia de jogador desde que ela esteja em
-  `village.additional_farms` (`attack.py:201`, com trava adicional de 23h–8h em
-  `attack.py:238`). O que não existia era o modo *automático sem lista* que a
-  chave prometia. Nada quebrou porque a chave era de fato inerte, mas eu não
-  sabia disso quando removi — só tinha checado "alguém lê?", não "o que isso
-  significa e existe em outro lugar?". Grep por leitura responde se é seguro
-  remover; não responde o que o usuário perde de vista ao remover.
-  **Formato obrigatório ao relatar remoção de config** (formulação do usuário,
-  2026-08-12): *"`X` não existe e não funciona — mas `Y` funciona e serve para
-  isso"*. Se não der para preencher o `Y`, é sinal de que a funcionalidade não
-  foi mapeada e a remoção ainda não está pronta para ser relatada. Dizer só
-  "chave morta, removida" está certo no mérito e ainda assim leva quem lê a
-  concluir que a capacidade sumiu — foi o que aconteceu aqui, e só não virou
-  problema porque o usuário desconfiou.
-- ⚠️ **Quinto padrão, achado em 2026-08-12 (P2-29): valor real lido do campo
-  errado, e "bloqueado por falta de dado" que ninguém tentou destravar.** O
-  `estimate_moral()` derivava o piso de moral de `mood.loss_max`, e o docstring
-  se defendia dizendo que o número veio "confirmado ao vivo" do servidor — o que
-  era verdade sobre a *origem* e falso sobre o *significado*: `<mood>` não é a
-  config de moral do TW; quem manda é a tag de topo `<moral>` (0/1/2/3). Um
-  número real, lido do servidor, do campo errado — **é mais convincente que um
-  palpite e por isso passa mais fácil.** Ao escrever "confirmado ao vivo", dizer
-  *qual tag*, não só que veio do servidor.
-  Segunda metade da lição: o item ficou aberto por duas semanas com a nota
-  "precisa de uma amostra do servidor antes de mexer", e a amostra custava um
-  `Invoke-WebRequest` — `interface.php?func=get_config` é **público e sem
-  autenticação**, e o cache local já existia com outro nome
-  (`cache/world/config_br143.json`, não `cache/world_config*` como a nota dizia).
-  Antes de adiar por falta de dado, conferir se o dado é buscável agora e se o
-  arquivo procurado só tem outro nome.
-  **Terceira metade, cometida na própria correção acima, menos de uma hora
-  depois:** ao mapear os valores de `<moral>` (0/1/2/3) usei a wiki da
-  comunidade e escrevi "2 = só por tempo", fazendo esse modo devolver
-  `moral=100` — a mesma superestimativa que o P2-29 existia para matar, válida
-  em 6 dos 8 mundos br ativos. O certo é que **não existe modo "só por tempo"**:
-  2 é "pontos e tempo" e 3 é "pontos e tempo ilimitado". **Enum de jogo se mapeia
-  contra o servidor, não contra a wiki** — e o servidor publica os dois lados de
-  graça: o valor bruto em `interface.php?func=get_config` e a redação
-  correspondente em `/page/settings`, por mundo. A lista de mundos sai de
-  `backend/get_servers.php` por mercado. Cruzar ~30 mundos custa dois
-  `Invoke-WebRequest` cada e transforma palpite em tabela; foi assim que
-  `night.active` (0 = off, 1 = janela fixa do mundo, 2 = janela escolhida por
-  cada jogador) e o `<duration>` constante saíram do "desconhecido". Tabelas
-  completas na seção 4.3 de `docs/backend.md`.
-  **Quarta metade, cometida em 2026-08-13 — a nota acima já existia e mesmo
-  assim não me salvou.** Procurei a regeneração de lealdade
-  (`conquest.loyalty_regen_per_hour`, que valia 1.5), não achei campo
-  correspondente em `get_config`, e concluí em voz alta que "não tem fonte
-  verificável no servidor", propondo ao usuário medir na mão dentro do jogo. O
-  valor estava publicado em português, numa tabela, em `/page/settings`:
-  *"Aumento de lealdade por hora: 1"* — 50% abaixo do que o config assumia. O
-  usuário teve que mandar o print.
-  A lição anterior dizia "cruze os dois lados"; eu li isso como *"use
-  `/page/settings` para traduzir um enum que já achei em `get_config`"*, e não
-  como o que ela também diz: **`get_config` e `/page/settings` não expõem o
-  mesmo conjunto de campos.** Ausência em `get_config` não é ausência no
-  servidor. `/page/settings` é a página que fala a língua do jogador, então um
-  parâmetro de regra tende a aparecer lá com nome legível mesmo quando não há
-  tag XML para ele. Regra prática: **"não achei" só vale como conclusão depois
-  de dizer onde procurou** — e para número de mundo isso significa citar as
-  duas fontes, não uma.
-  **Quinta metade, 2026-08-16, e a mais desconfortável: o código já nomeava a
-  fonte certa e argumentou contra ela.** `StatuePage._parse_locked_slots()`
-  regexava um texto renderizado que nunca chega na resposta HTTP (só existe
-  depois que o JS monta o template no navegador), então devolvia `[]` em todo
-  ciclo. O docstring dessa função **citava** o 3º argumento de
-  `BuildingStatue.initImmutables(...)` como alternativa — e a descartava por
-  ser "uma constante fixa do JS que teoricamente poderia variar". Era ali que
-  o dado estava, server-side, na mesma resposta que o bot já baixava; um
-  `requests.get` com a sessão do bot mostrou `[1,3,5,10,20,35,50,65,80,100]`
-  em dez segundos. A nota de campo que diagnosticou o bug repetiu o erro por
-  outro caminho: procurou os limiares no 3º argumento de `receiveKnightsData`
-  (que é `0`), não achou, e concluiu "provavelmente hardcoded num bundle JS
-  estático" — quase levando a chumbar a lista no bot.
-  As metades anteriores diziam "procure nas duas fontes antes de dizer que não
-  existe". Esta acrescenta: **quando você mesmo escreveu qual é a fonte
-  plausível, olhar custa menos que o parágrafo justificando não olhar.** Um
-  descarte fundamentado ("poderia variar") soa como análise e não passa de
-  palpite enquanto ninguém abriu a resposta — e um parser que devolve lista
-  vazia falha em silêncio, então ninguém percebe por meses.
-- ⚠️ **Sexto padrão, achado em 2026-08-13: decidir sobre um estado do mundo
-  que mudou desde a última vez que se olhou.** Este bot age num mundo remoto
-  com latência de **horas** — um trem de nobres voa ~4h. Entre decidir e o
-  efeito acontecer, o mundo anda. Os três bugs que custaram 527 tropas e uma
-  moeda na Bárbara #40314 são o mesmo erro em três roupas:
-  1. O bot mandou nobre sem saber que **já havia nobre dele no ar** para o
-     mesmo alvo. Não existia o conceito de "em voo" no modelo.
-  2. Marcou a conquista como resolvida **no instante do envio**, 3h41 antes do
-     impacto — e `last_hit_timestamp` contava regeneração a partir da saída do
-     trem, não da chegada.
-  3. Nunca reconferia se a bárbara ainda era bárbara. `find_target()` e
-     `_get_manual_target()` revalidavam o dono; a conquista **já em andamento**
-     não — então o bot seguiria nobrando a aldeia de um jogador que se
-     adiantou.
-  Regra prática ao mexer em qualquer coisa com efeito diferido: **separar
-  "quando eu mandei" de "quando isso acontece", e reconferir a premissa no
-  momento de agir, não no momento de decidir.** Corolário de desenho, que é o
-  que faz a trava atual segurar: a guarda foi construída sobre **tempo de
-  chegada**, não sobre o campo `status` — porque era justamente o `status` que
-  estava errado (dizia `"complete"` com quatro nobres voando). Ao proteger
-  contra um estado inconsistente, não se apoie no campo que pode estar
-  inconsistente.
-  Corolário do corolário: `Extractor.attack_duration()` devolve **0**, não
-  `None`, quando o regex não casa. Somar 0 à hora de envio faz o nobre nascer
-  "já pousado" — o valor de falha se disfarça de resposta válida. É o segundo
-  padrão desta lista com outra máscara: ao consumir um parser, conferir *qual*
-  valor ele devolve quando falha, e se esse valor é distinguível de um
-  resultado legítimo.
-  **Terceiro corolário, 2026-09-22 (§8.24): o bloqueio tem que nascer junto
-  com a intenção, não com o efeito.** O farm só largava um alvo de conquista
-  quando o mapa mostrava dono — ou seja, depois do pouso. Mas um farm mandado
-  *durante* o voo do trem chega depois dele e bate na guarnição (70 leves
-  mortas e 437 da escolta perdidos na 51540). Toda decisão com efeito diferido
-  que pode colidir com outra operação precisa conhecer a *lista de operações
-  agendadas*, não só o estado atual do alvo.
-- ⚠️ **Sétimo padrão, achado em 2026-08-16: sondar a API com um cliente
-  diferente do que o bot usa.** Explorando o inventário com um
-  `requests.Session()` montado à mão, mandei só `X-Requested-With` e vi
-  `game.php?screen=inventory&ajax=get_inventory` devolver
-  `{"inventory":…,"data":…,"expire":…}` no topo. Escrevi o parser contra isso,
-  com fixture verbatim, e os testes passaram. Mas `WebWrapper.get_api_data`
-  manda **também** `TribalWars-Ajax: 1`, e com esse cabeçalho **o mesmo
-  endpoint embrulha tudo em `{"response": {...}, "game_data": {...}}`** — o
-  parser teria falhado no primeiro ciclo real. Só apareceu porque rodei um
-  smoke com os cabeçalhos do próprio wrapper antes de dar por pronto.
-  A quinta metade do padrão acima diz "vá olhar a resposta do servidor". Esta
-  acrescenta o que ela não diz: **a resposta depende de como você pergunta.**
-  Ao sondar uma tela nova, reproduzir os cabeçalhos que o bot manda de fato
-  (`core/request.py`: `get_url`, `get_api_data`, `get_api_action` — cada um
-  monta um conjunto diferente), ou melhor, sondar chamando o próprio método do
-  wrapper. Fixture capturada com o cliente errado é fixture de uma resposta
-  que o bot nunca vai receber. Corolário: um smoke contra o servidor **depois**
-  de os testes passarem não é redundância — foi o único passo que pegou isto.
-- ⚠️ **Oitavo padrão, achado em 2026-08-16: chave de dict que colide com
-  método de dict, em template Jinja2.** `{{ x.items }}`, `{{ x.pop }}`,
-  `{{ x.get }}`, `{{ x.keys }}`, `{{ x.values }}`, `{{ x.update }}`,
-  `{{ x.copy }}` — o Jinja2 tenta `getattr` **antes** de `x["chave"]`, então
-  num dict Python puro o método nativo vence: a página renderiza
-  `<built-in method …>` ou o `{% for %}` estoura com
-  `'builtin_function_or_method' object is not iterable`. Preferir **renomear a
-  chave** (foi o que `InventoryReader` fez: `entries`, não `items`) a
-  contornar com `x['items']` — o contorno funciona e a colisão volta na
-  próxima edição do template, porque nada no nome avisa que ela existe.
-  **A metade que importa desta entrada é onde ela está escrita.** O bug já
-  tinha acontecido na Feature 17 (coluna "Pop") e estava documentado — em
-  `docs/backlog.md` (hoje consolidado em `docs/backend.md`), que não entra em
-  contexto. Repeti o mesmo erro em
-  2026-08-16 com a lição a um `grep` de distância e nunca lida. **Lição que
-  vale para uma classe de erro, e não só para o arquivo onde ela apareceu,
-  mora aqui**; o registro por feature guarda o caso, não a regra.
-- ⚠️ **Nono padrão, achado em 2026-08-17: reconstruir estado passado a partir de
-  logs que só registram o que o *bot* fez.** Para saber como a `BBM 002` estava
-  quando foi conquistada, cruzei todas as linhas `TWB_BUILD` dela com os níveis
-  atuais e li "nenhuma linha para armazém/mercado" como "esses edifícios não
-  mudaram desde a conquista". Reportei com "confiança alta". Estava errado: o
-  usuário tinha **demolido o mercado manualmente** de 21 para 14, e demolição
-  manual não gera log nenhum — o valor que apresentei como herdado era um ponto
-  intermediário do trabalho dele. A conclusão de fundo sobreviveu (mercado 21 é
-  ainda mais extremo que 14), mas por sorte.
-  A regra: **o log é registro das ações do bot, não do estado do mundo.** Ausência
-  de linha prova que o bot não fez, não que ninguém fez — o usuário joga na mesma
-  conta, e as ações dele são invisíveis aqui. Ao reconstruir passado por log,
-  dizer explicitamente "o bot não mexeu nisso" em vez de "isso não mudou", e
-  perguntar antes de calibrar confiança. Corolário que salvou a análise: o
-  argumento independente (o template `watchtower_support` tem teto de mercado 10,
-  logo 14 não pode ter vindo do bot **sob este template**) não dependia de log
-  nenhum. Quando existir um argumento estrutural, ele vale mais que o rastro.
-- ⚠️ **Décimo padrão, achado em 2026-08-18: relatar um limite observado como se
-  fosse uma decisão de projeto.** Ao dimensionar templates de tropa, li nos
-  builders que a fazenda parava no nível 25, e apresentei isso ao usuário como
-  restrição — duas vezes, montando um plano inteiro em cima dela ("ou os builders
-  sobem a fazenda, ou os templates cabem em 8.400"). O usuário perguntou: *"você
-  chegou a investigar por que a fazenda aparece em 25?"*. Não tinha. O motivo é
-  que **o arquivo simplesmente acaba ali** — as últimas linhas de
-  `purple_predator_into_off` são `wood:30 stone:30 iron:30 storage:30 barracks:25`
-  e o `farm:25` anterior nunca teve continuação. Não era teto pensado; era o fim
-  de uma lista herdada do bot base. O `watchtower_support`, escrito neste projeto,
-  já ia até 30 — a prova de que 30 era alcançável estava no diretório ao lado.
-  A regra: **um limite lido de dados é um fato sobre o arquivo, não uma decisão
-  de alguém.** Antes de desenhar em volta de um teto, perguntar o que o colocou
-  lá; se a resposta for "ninguém, é onde acabou", ele não é restrição, é dívida.
-  O sinal de alerta é escrever "X está limitado a N" sem conseguir completar
-  "porque". Corolário barato: quando outro artefato do mesmo tipo ultrapassa o
-  limite (aqui, outro template de builder chegando a 30), isso sozinho já refuta
-  a leitura de que o limite é intrínseco.
-- ⚠️ **Décimo primeiro padrão, mesma sessão: estatística agregada sobre amostras
-  heterogêneas, que inverteu o sinal da conclusão.** Medi 336 ataques de farm e
-  reportei "34% voltaram lotados, e nos demais o aproveitamento mediano foi 15%",
-  concluindo que os pacotes eram **grandes demais** e propondo encolhê-los. Os
-  envios, porém, vinham de duas configurações distintas — capacidade 8.000 (175
-  ataques) e 1.600 (209). Separando: o de 8.000 lotou **46%** das vezes com 62%
-  de aproveitamento, e o de 1.600 lotou 33% com 53%. **Nenhum dos dois era grande
-  demais; os dois estouravam o teto.** A conclusão correta era o oposto da minha
-  — e pior, como 46% dos envios voltaram exatamente com 8.000, o valor real
-  daqueles alvos era e continuava **desconhecido acima disso**: a própria medição
-  estava censurada pelo instrumento.
-  A regra: **antes de tirar média de um conjunto, perguntar se ele é um conjunto.**
-  Aqui o agrupamento óbvio (tamanho do pacote enviado) estava no próprio dado e
-  custava um `groupby`. E quando a métrica é limitada por uma escolha nossa
-  (capacidade do pacote, `max_farms`, teto de qualquer fila), tratar os valores
-  no teto como **censurados**, não como observações — "voltou com 8.000" não
-  significa "o alvo tinha 8.000", significa "o alvo tinha 8.000 ou mais". Foi
-  exatamente por isso que a correção final aumentou o pacote maior: para medir
-  onde fica o teto de verdade.
-- ⚠️ **Décimo segundo padrão, achado em 2026-08-19: escrever um artefato novo de
-  um tipo que já existe sem ler os irmãos dele.** Ao escrever `def_no_archer.txt`
-  pus cavalaria pesada no estágio gated em `stable:10`. Rodando, as aldeias
-  logaram `heavy failed because it is not researched` todo ciclo: pesada exige
-  **Ferreiro 15** (lido de "Requisitos em falta" na tela do ferreiro), e elas
-  estavam com ferreiro 6. O `watchtower_support.txt` — escrito neste projeto,
-  no mesmo diretório, e que **eu tinha aberto e impresso na primeira ferramenta
-  dessa mesma sessão** — já gateava o heavy em `smith:15`. A regra do jogo
-  estava codificada corretamente a um arquivo de distância e eu não olhei.
-  A regra: **ao adicionar mais um de algo (template, parser, manager, migração),
-  ler os existentes antes — eles carregam restrições do domínio que ninguém
-  escreveu em documento nenhum.** Um template não é só dados; é o lugar onde as
-  regras do jogo foram descobertas na marra por quem veio antes. O sinal de
-  alerta é escrever o primeiro arquivo de uma leva nova sem ter aberto nenhum
-  irmão no mesmo passo.
-  Corolário que salvou o resto: ao corrigir, **auditei os 8 templates contra a
-  tabela de requisitos em vez de consertar só o que falhou**, e apareceu o mesmo
-  erro pré-existente em `basic_into_off` (heavy e catapulta no estágio
-  `barracks:15`, com ferreiro em 10), herdado do bot base e nunca exercitado.
-  Bug achado em campo raramente é o único da sua classe — a correção barata é
-  varrer a classe inteira enquanto a regra está fresca.
-- ⚠️ **Décimo terceiro padrão, achado em 2026-08-19, e o mais traiçoeiro até
-  agora: provocar um erro para ler a mensagem dele, e tratar isso como
-  evidência sobre falhas que eu não tinha observado.** O bot vinha tendo
-  ataques recusados e o código descartava o motivo. Levantei a hipótese "falta
-  de tropa", e para confirmar **provoquei** uma recusa no servidor mandando
-  9999 lanceiros de uma aldeia que tem zero. Veio *"Não existem unidades
-  suficientes"*, e eu escrevi ao usuário: *"a hipótese estava certa, mas era
-  inferência; agora é leitura"*. Não era. Eu li a mensagem do erro que **eu
-  mesmo fabriquei** — um experimento que só podia produzir a resposta que eu já
-  esperava. A causa real das recusas do bot era outra: o **limite de ataque
-  falso** do mundo (todo ataque precisa carregar ≥ `fake_limit%` dos pontos da
-  aldeia atacante em população), que só apareceu quando o log passou a mostrar o
-  motivo verdadeiro, um ciclo depois.
-  A regra: **experimento que só pode confirmar a hipótese não é evidência.**
-  Antes de provocar um erro, perguntar "que resultado deste teste me faria mudar
-  de ideia?" — se não houver, o teste não informa nada. Para descobrir por que
-  algo falha, instrumentar a falha real e esperar; reproduzir uma falha de
-  desenho próprio e chamá-la de a mesma coisa é fabricar confirmação. O caminho
-  que funcionou custou uma linha de log e um ciclo de espera.
-  Corolário sobre linguagem: escrever "agora é leitura, não inferência" é uma
-  afirmação sobre a *procedência* do dado, e por isso soa mais forte que um
-  palpite. Só vale quando o dado veio do caso em questão — dizer *de qual
-  ocorrência* a mensagem foi lida é o que distingue as duas coisas.
-- ⚠️ **Décimo quarto padrão, mesma sessão: número em arquivo é foto de uma
-  relação, e expira sozinho quando o outro lado da relação se move.** O menor
-  pacote de farm dos templates era `{"light": 15}` = 60 de população. A regra do
-  jogo é "≥ 1% dos pontos da aldeia", então esse pacote era legal até a aldeia
-  chegar a 6.000 pontos e ilegal depois — **sem nenhuma mudança no bot**. O
-  sintoma foi 100% dos ataques de uma aldeia recusados, num código que não
-  tinha sido tocado.
-  A regra: ao escrever uma constante que existe em relação a um estado do jogo
-  (pontos, nível de edifício, número de aldeias), perguntar se esse estado
-  cresce. Se cresce, ou o valor vira função dele em runtime, ou o arquivo
-  precisa de degraus que acompanhem — e aí os degraus são a coisa importante,
-  não um detalhe de granularidade. Foi o usuário quem apontou que os templates
-  originais do bot base **já escalavam os pacotes por estágio**, e que era
-  justamente por isso; eu tinha achatado os quatro estágios finais num valor só
-  e lido isso como simplificação inofensiva. Quando um artefato herdado varia
-  onde eu simplificaria, a variação costuma estar codificando uma restrição que
-  eu ainda não entendi (ver também o décimo segundo padrão).
-- ⚠️ **Décimo quinto padrão, achado em 2026-08-20: detector que dispara sempre
-  não detecta nada, e o custo é mascarar o caso que ele existia para pegar.**
-  `_parse_incoming_resources()` tinha uma guarda boa no desenho — separava
-  "nada a caminho" (normal, DEBUG) de "o rótulo está lá mas a estrutura mudou"
-  (WARNING + dump da página). Só que ela procurava o rótulo **solto** no HTML,
-  e `Chegando` também é item do menu de navegação, presente em toda tela de
-  mercado. O WARNING disparava em todo ciclo, com um dump de 58 KB junto.
-  A regra: ao escrever uma guarda que distingue A de B, perguntar **em que
-  outro lugar da página aquele sinal aparece** — quase sempre há um C. O
-  sintoma é um alerta que nunca fica quieto; a partir daí ele é indistinguível
-  de um alerta quebrado, e ninguém vai investigar quando A finalmente
-  acontecer. Correção barata e geral: ancorar a guarda no **mesmo** padrão que
-  o parser real usa (aqui, exigir `:\s` como o `INCOMING_RE` já exigia), em vez
-  de numa versão frouxa dele.
-  Corolário sobre monitoramento, da mesma sessão: silêncio de um filtro não é
-  prova de que está tudo bem, porque o filtro só vê o que eu escolhi. Ao
-  responder "está tudo certo?", medir de novo em vez de inferir da ausência de
-  eventos — foi assim que este alerta apareceu, num `grep` de todos os WARNING
-  que o monitor não cobria.
-- ⚠️ **Décimo sexto padrão, achado em 2026-08-20: seguir uma instrução deste
-  arquivo sem conferir o código que ela descreve.** A regra de bumpar
-  `build.version` mandava bumpar nos **dois** arquivos; obedeci literalmente e
-  com isso deixei as versões iguais, o que **desliga** o merge — exatamente o
-  contrário do efeito pretendido, porque `twb.py` só faz merge quando elas
-  divergem. A seção de config nova nunca teria chegado ao `config.json`, e o
-  sintoma seria mudo: `get_config()` cai no default e o bot roda "normal".
-  A regra: **este arquivo é memória, não especificação.** Ele registra o que
-  alguém entendeu na época, e envelhece ou nasce errado como qualquer nota. Ao
-  agir sobre uma instrução daqui que descreve *comportamento de código*
-  (merge, ordem de chamada, formato de arquivo), abrir o código e confirmar —
-  são dois minutos, e o custo de não fazer é uma mudança que parece aplicada e
-  não está. Corolário: quando a instrução estiver errada, **corrigir a
-  instrução no mesmo passo**, senão o próximo a ler cai igual. O mesmo vale
-  para o oitavo padrão desta lista, que existe porque uma lição verdadeira
-  estava escrita num arquivo que ninguém lê.
-- ⚠️ **Décimo sétimo padrão, achado em 2026-08-22: valor lido do servidor que
-  já vem transformado — e o mundo onde você mediu não consegue te contar.** As
-  velocidades de `interface.php?func=get_unit_info` **já são** os min/campo
-  efetivos, com `speed` e `unit_speed` do mundo embutidos. Eu ia dividir por
-  eles de novo. No br143 o erro seria **invisível para sempre**, porque lá os
-  dois fatores valem 1 e as duas hipóteses dão o mesmo número; num mundo de
-  velocidade 4 o tempo de viagem sairia 4× menor. O que separou as hipóteses
-  foi comparar mundos: o br139 (`speed=1.4`, `unit_speed=0.75`) publica
-  `17,142857` para o lanceiro, que é exatamente `18/(1,4×0,75)`.
-  A quinta metade do padrão acima manda ir ler o servidor; esta acrescenta que
-  **ler o valor não é o mesmo que saber o que ele significa**. Ao consumir um
-  número de API, perguntar "isto já inclui o fator X?" — e reparar que a
-  pergunta é *inrespondível* se o seu ambiente tem X=1. Regra prática: quando
-  um valor deveria escalar com um parâmetro do mundo, buscar uma instância onde
-  esse parâmetro **não** seja neutro. São dois `Invoke-WebRequest` e a lista de
-  mundos sai de `backend/get_servers.php`, como já registrado acima.
-- ⚠️ **Décimo oitavo padrão, mesma sessão: reaproveitar um limiar existente
-  para uma reação que parece igual e tem física diferente.** O gate de urgência
-  da defesa tinha `evacuate_urgency_threshold_sec = 1800`, e o caminho óbvio era
-  aplicar os mesmos 30 min ao envio de apoio. Estaria errado, e na direção que
-  não aparece em teste: **esconder tropa é instantâneo e quanto mais tarde
-  melhor; apoio precisa *chegar* antes do impacto e ele mesmo leva horas
-  viajando.** Apoio despachado 30 min antes de um ataque a 3h40 de viagem pousa
-  3h depois da batalha — tropa gasta, zero defesa, e nenhum erro no log.
-  A regra: dois efeitos disparados pelo **mesmo gatilho** não compartilham
-  necessariamente o mesmo prazo. Antes de reusar um limiar, perguntar "o que
-  precisa acontecer até o prazo vencer?" — se a resposta envolve algo *chegar*,
-  o número tem que incluir o tempo de trânsito e vira função da distância, não
-  constante. Corolário achado ao escrever o gate: fechar só o lado "cedo
-  demais" teria deixado passar o lado "tarde demais", que já existia e ninguém
-  tinha notado, porque apoio que chega atrasado não gera erro nenhum — só some.
-  Segundo corolário, sobre o *default*: a janela de envio mede `lead` segundos
-  de largura, e se ela for menor que o intervalo entre dois ciclos da mesma
-  aldeia, o bot passa por cima e nunca envia. O default (2h) foi escolhido
-  contra o intervalo real medido nos logs (1h39 entre dois ciclos da mesma
-  aldeia em 2026-08-21), não por parecer razoável. **Limiar de tempo em sistema
-  que roda em ciclos precisa ser comparado com o período do ciclo** — senão a
-  condição é logicamente correta e nunca observada.
-- ⚠️ **Décimo nono padrão, achado em 2026-08-22: percentual escrito em
-  português não define uma conta.** O item "Sinal da Aflição" diz *"apoio irá
-  percorrer 30% mais rápido"*. Isso comporta duas leituras — `duração / 1,3` e
-  `duração × 0,7` — que diferem em **5 minutos numa viagem de uma hora**, e a
-  ingênua erra sempre para menos (o bot acharia que ainda dá tempo quando não
-  dá). Só a medição decide: o jogo mostrou `0:53:31` para um envio real, e
-  `4.174/1,3 = 3.211 s` bate em 1 segundo enquanto `×0,7` dá `0:48:41`.
-  A regra: **texto de item/bônus descreve o efeito, não a fórmula.** Ao
-  consumir qualquer "+N%" do jogo, montar as duas ou três leituras plausíveis,
-  ver de quanto elas divergem, e medir uma instância real antes de escolher —
-  a tela de confirmação da praça de reunião entrega o número de graça, sem
-  enviar nada. Se as leituras divergem pouco no seu caso de teste, procurar um
-  caso onde divirjam muito (mesmo raciocínio do décimo sétimo padrão).
-  Corolário sobre asserção inventada, cometido na mesma sessão: escrevi um
-  teste afirmando que um regex ingênuo "não casaria" o markup, por causa de um
-  `>` dentro do atributo. Rodei: ele casa. O `[^>]*` de fato trunca a tag de
-  abertura, mas a forma em bloco `(.*?)</td>` se recupera. **Armadilha
-  plausível também precisa ser medida antes de virar comentário no código** —
-  eu já tinha escrito a justificativa errada em `extractors.py`, e foi o teste
-  que me pegou.
-- ⚠️ **Vigésimo padrão, achado em 2026-08-31: efeito colateral destrutivo no
-  corpo do módulo, que dispara no `import`.** O topo do `twb.py` abria
-  `cache/logs/session_latest.log` com `open(..., "w")` fora de qualquer guard.
-  Como `tests/test_village_purge_guard.py` importa `purge_refusal_reason` de
-  lá, **rodar a suíte de testes truncava o log da última sessão real do bot** —
-  467 KB de histórico de produção. E a análise que eu ia fazer em seguida era
-  justamente ler esse log para validar os fixes de bandeira; encontrei nele a
-  saída de um teste.
-  A regra: **código no corpo do módulo roda em todo `import`, inclusive nos que
-  ninguém previu** — teste, ferramenta auxiliar, REPL, webmanager. Se ele
-  escreve, apaga, abre conexão ou muda estado global, precisa estar sob
-  `if __name__ == "__main__":` ou ser preguiçoso. O sintoma é cruel porque
-  truncar arquivo **não levanta nada**: some em silêncio e só aparece quando
-  alguém vai ler o que não existe mais. Neste repo isso é mais caro do que
-  parece, porque `cache/` é estado real e não regenerável 1:1 — antes de rodar
-  qualquer coisa que importe `twb.py`, perguntar o que aquele import faz *antes*
-  de definir a primeira função. Corolário de método: é o terceiro padrão virado
-  do avesso — lá o perigo era código que nunca roda, aqui é código que roda
-  onde não devia. Guarda em `tests/test_session_log_guard.py`.
-  **Corolário sobre o que sobrou:** os `cache/logs/twb_*.log` NÃO substituem o
-  `session_latest.log`. Eles são do *reporter* (eventos `TWB_*`: farm, build,
-  recruit, market) e não carregam uma linha sequer dos loggers — nada de
-  `DefenceManager`, `Attacks` ou `Village`. Ao planejar uma análise sobre log,
-  conferir qual das duas fontes tem o dado antes de contar com ela.
-- ⚠️ **Vigésimo primeiro padrão, achado em 2026-08-31: a guarda que protege um
-  recurso escrevia nesse recurso — e virou a coisa contra a qual ela existe.**
-  `tests/test_session_log_guard.py` (escrito no dia anterior para impedir que
-  um `import` truncasse `session_latest.log`) validava assim: salvava o log em
-  memória, **truncava o arquivo real** para gravar uma sentinela, importava
-  `twb`, conferia a sentinela e restaurava no `finally`. Com o bot **rodando**,
-  isso é destrutivo e racy: o processo do bot tem um handle aberto e continua
-  escrevendo no offset dele, então o truncate abre um buraco de bytes NUL no
-  meio do log (133 bytes, medidos) e tudo que o bot logou durante a janela do
-  teste morre no restore. De quebra o teste **falhou com diagnóstico errado** —
-  "o import alterou o arquivo" — quando quem tinha alterado era o bot,
-  escrevendo normalmente; a mensagem acusava a regressão que o teste vigia,
-  então quase me fez procurar um bug em `twb.py` que não existia.
-  A regra: **um teste que verifica uma propriedade sobre um artefato de
-  produção não pode obter essa verificação escrevendo no artefato.** Antes de
-  fazer setup destrutivo, perguntar "quem mais tem esse arquivo aberto agora?"
-  — neste repo a resposta é quase sempre "o bot". Quando existir uma
-  propriedade **observável** que separe as hipóteses, ela vence o setup: aqui,
-  truncar faz o arquivo *encolher* e o bot só faz *crescer*, então comparar
-  tamanho + cabeçalho detecta a regressão sem tocar em nada. Corolário que vale
-  o passo extra: depois de trocar a guarda por uma observação passiva, **provar
-  que ela ainda falha** — reproduzi o `twb.py` bugado num diretório temporário
-  e confirmei que os dois sinais disparam. Guarda que não pode falhar é o
-  décimo quinto padrão de cabeça para baixo, e passa despercebida para sempre.
-- ⚠️ **Vigésimo segundo padrão, achado em 2026-09-14: automatizar o lançamento
-  de um programa interativo, tirando dele justamente o canal pelo qual ele
-  fala.** O `/bot/start` do painel subia o `twb.py` com `CREATE_NO_WINDOW` e
-  stdout num arquivo. Só que o bot **pergunta coisas**: `core/request.py:115`
-  faz `input("Enter browser cookie string> ")` quando a sessão expira, e
-  `twb.py` pede URL e user-agent no primeiro run. Sem console não há onde
-  responder — o processo fica **vivo, com pid válido e parado para sempre**, e
-  o painel, que só checava o pid, dizia "rodando". O `bot_output.log` guardava
-  a prova desde 30/06/2026: duas tentativas seguidas, ambas terminando na linha
-  `Enter browser cookie string> `. Ninguém leu porque o sintoma visível era
-  "iniciar pelo painel não é confiável", e não um erro.
-  A regra: antes de embrulhar um programa num botão, **procurar todo `input()`,
-  `getpass` e prompt no caminho dele** — se existir algum, ou o supervisor sabe
-  responder, ou o programa precisa de um console de verdade (aqui,
-  `CREATE_NEW_CONSOLE`, que é o que o usuário já usava na mão). Corolário sobre
-  o sinal de vida: **pid vivo não é atividade.** Quando o programa mantém um
-  log, a idade da última linha é o sinal honesto — com o cuidado de separar
-  "parado de propósito" (o bot avisa `Dead for X minutes (next run at: …)`
-  antes de dormir `inactive_delay`) de "congelado", senão o indicador vira o
-  décimo quinto padrão.
-  Segundo corolário, sobre detecção: `is_running()` olhava só o pid escrito
-  pelo próprio painel, então um bot iniciado pelo `cmd` — o jeito normal de
-  rodar aqui — aparecia como "não detectado", e o botão Iniciar subiria um
-  **segundo** bot na mesma conta. É o risco de ban que o P2-32 existia para
-  matar, entrando por outra porta: ele cobriu "o webmanager reiniciou" e não
-  "o processo não nasceu daqui". Ao guardar unicidade de um recurso externo,
-  perguntar quem mais pode criá-lo — se a resposta inclui o usuário, a
-  detecção tem que ser por **varredura do estado real do SO** (aqui
-  `psutil.process_iter` + cwd do repo, 5 ms), não por registro próprio.
-  **Fechamento, 2026-09-20 (`docs/backend.md` §8.9):** os dois `input()` de
-  `core/request.py` não existem mais — sessão vencida vem de
-  `cache/cookies.txt` (o bot espera o arquivo aparecer e retoma sozinho) e o
-  captcha é reconferido em laço. Sobrou **um** prompt no repositório,
-  `twb.py::manual_config`, que só roda quando não existe `config.json`. Duas
-  coisas que a regra acima não dizia e que apareceram ao consertar: o console
-  **não era** o canal certo nem quando existia (o buffer de linha do `cmd.exe`
-  é menor que um cookie do jogo, então colar ali trunca em silêncio); e a
-  varredura por `input()` precisa ir **além do prompt**, porque a mesma tela
-  bloqueada chegava pelo `post_url` sem prompt nenhum e era tratada como ação
-  aceita.
-- ⚠️ **Vigésimo terceiro padrão, cometido em 2026-09-14, e com dano real: tratar
-  "está no repositório" como "está versionado".** Ao consolidar a documentação em
-  dois arquivos, apaguei doze documentos confiando em que o git guardaria o
-  original — cheguei a escrever `git show 85fbbcb:docs/<arquivo>` dentro dos
-  documentos novos como se fosse a rede de proteção. Sete estavam rastreados e de
-  fato sobreviveram. **Os outros nove nunca tinham sido commitados** (os quatro
-  relatórios de `docs/benchmarks/`, os cinco de `docs/interface/` e o
-  `roteiro_benchmark_bots.md`), e `rm` no Windows não passa pela lixeira: ~280 KB
-  de pesquisa que o usuário tinha acabado de destacar como importante sumiram de
-  vez. A informação que me teria salvado estava no `git status` que eu **li no
-  começo da sessão** — `M` e `??` estão lá lado a lado, e eu processei a lista
-  inteira como "arquivos do projeto".
-  A regra: **antes de apagar, `git ls-files --error-unmatch <arquivo>` ou
-  `git status --short` no alvo específico.** `??` significa que não existe cópia
-  em lugar nenhum — e aí o passo obrigatório é commitar (ou copiar para fora)
-  *antes* de remover, não depois. Corolário sobre linguagem, que é a parte que
-  mais incomoda: escrever "nada foi perdido, foi comprimido" é uma afirmação
-  sobre um fato que eu não tinha verificado, e ela soa mais forte justamente
-  porque cita um mecanismo concreto (o hash do commit). Promessa de
-  recuperabilidade só vale depois de tentar recuperar — um `git show` de teste
-  custava cinco segundos e teria falhado na hora.
-- ⚠️ **Vigésimo quarto padrão, achado em 2026-09-19: medir a hipótese sobre um
-  conjunto de dados que o código não consome.** O diagnóstico de `P-CONQ-RAIO`
-  (§8.6) dizia que `conquest.max_radius` escondia 11 das 46 bárbaras do K25, e
-  provava isso com uma tabela calculada sobre `cache/villages` — o snapshot
-  compartilhado, com 851 aldeias. Só que `find_target()` **não varre esse
-  snapshot**: ela itera sobre `self.map.villages`, o prefetch de mapa da própria
-  aldeia, que com `map_sector_radius: 0` tinha 23 das 39 bárbaras. Ou seja,
-  havia **dois funis em série** e o diagnóstico mediu só o de baixo. Subir o
-  raio não alcançaria 16 dos alvos, porque eles nunca chegavam a ser filtrados:
-  não estavam na lista. A medição não estava errada — estava descrevendo um
-  programa diferente do que roda.
-  A regra: ao medir o efeito de um filtro, **medir a partir da mesma fonte que o
-  código lê**, e perguntar quantas peneiras existem antes dela. O sinal de
-  alerta é usar um cache "equivalente" porque ele é mais fácil de abrir offline
-  — foi exatamente o atalho aqui. Custou um `Map.get_map()` com o `WebWrapper`
-  do bot para descobrir (sétimo padrão de novo: sondar com o cliente certo).
-  Corolário barato: quando duas partes do sistema respondem a mesma pergunta,
-  compará-las é diagnóstico de graça. O painel já contava pelo snapshot
-  (`ConquestReader.area_of_interest`) e o bot pelo scan local; os dois números
-  divergiam havia semanas e ninguém tinha posto um ao lado do outro.
-- ⚠️ **Vigésimo quinto padrão, achado em 2026-09-20: fazer `deepcopy` de um
-  objeto novo que aponta para um serviço vivo compartilhado.** O startup fazia
-  `copy.deepcopy(Village(wrapper=self.wrapper, ...))` para cada aldeia. A
-  `Village` já era nova; o que a cópia profunda acrescentava era clonar o grafo
-  do `WebWrapper`: `requests.Session`, cookies, pool e `last_response`. Isso
-  multiplicava memória por aldeia e, pior, criava snapshots de sessão que não
-  recebiam uma rotação de cookie/CSRF feita por outra aldeia. O fork
-  `TWBOT_LazyTurtle` encontrou o mesmo defeito e mediu aproximadamente 767 MB
-  contra 85 MB em 41 aldeias depois de removê-lo. Aqui `TWB._new_village()`
-  agora cria objetos de aldeia distintos apontando para **a mesma identidade**
-  de wrapper, com regressão em `tests/test_gather_controls.py`. A regra: só
-  copiar o estado que precisa ser independente; sessão HTTP, lock, conexão,
-  logger e outros recursos vivos devem ser injetados e compartilhados
-  explicitamente. Testar identidade (`is`), não apenas igualdade.
-- ⚠️ **Vigésimo sexto padrão, achado em 2026-09-20: ler uma lista do jogo sem
-  perguntar se ela está paginada.** A tela oficial de reservas da tribo
-  (`screen=ally&mode=reservations`) parecia responder tudo num GET. Respondia
-  **10 de 489** — havia 49 páginas, e o bloco de navegação estava a 40 KB de
-  distância do trecho que eu tinha aberto para escrever o regex da linha. Um
-  parser escrito ali teria concluído que 479 alvos estavam livres, e a feature
-  inteira (não conquistar aldeia reservada por companheiro de tribo) falharia
-  em **98% do quadro sem emitir um único erro** — lista curta é indistinguível
-  de lista completa. A saída foi `&page=all`, que traz tudo numa requisição.
-  A regra: ao capturar uma tela que é uma **lista**, a primeira pergunta não é
-  "qual o regex da linha", é **"quantas linhas existem no total, e este é o
-  total?"**. Contar as linhas casadas e procurar navegação (`page=`, `[2]`, um
-  `<select>` de páginas) custa um grep na captura que já está em disco.
-  Corolário específico deste jogo: o tamanho de página costuma ser
-  configurável, mas por POST e às vezes numa configuração **compartilhada com a
-  tribo** — mudá-la para conseguir uma leitura mexe na interface de outras
-  pessoas (21º padrão); preferir sempre o parâmetro de querystring. Corolário
-  geral, que é o 15º padrão de cabeça para baixo: lá o detector disparava
-  sempre, aqui ele **nunca** dispararia — e as duas falhas se parecem de fora,
-  porque em nenhum dos dois casos alguém vai investigar.
-- ⚠️ **Vigésimo sétimo padrão, achado em 2026-09-20: "fonte mais velha" é uma
-  propriedade do CAMPO, não da fonte.** O plano do `P-CONQ-MAPA` (§8.6) mandava
-  entrar com `map/village.txt` como "piso de descoberta, nunca autoridade sobre
-  dono/pontos", porque ele seria "o mais completo e o mais velho ao mesmo
-  tempo". Soa óbvio e estava errado na metade que importa. Medindo **antes** de
-  implementar: das 851 entradas de `cache/villages`, **38 diziam bárbara para
-  aldeias que o village.txt já dava como de jogador, e ZERO no sentido
-  inverso** — porque bárbara virar aldeia de jogador é o que conquista faz, e o
-  snapshot local (20,6 dias de idade) não fica sabendo. Ou seja, para *posse* o
-  arquivo "velho" é a fonte **nova**, e obedecer a precedência escrita teria
-  deixado 38 alvos-fantasma elegíveis — nobre de verdade contra aldeia de
-  gente, que é o incidente da §8.7 entrando por outra porta.
-  A regra: quando duas fontes se sobrepõem, "qual é mais fresca" se pergunta
-  **por campo**, e a resposta costuma estar no próprio dado — aqui a assimetria
-  38×0 era a impressão digital de qual lado apodrece. Cruzar as duas fontes
-  custa minutos e transforma a ordem de precedência de escolha estética em fato
-  medido. Sinal de alerta: escrever "X é mais velho que Y" sem dizer *sobre o
-  quê*. É o 16º padrão outra vez (a instrução vinha de um documento, e
-  documento é memória, não especificação), com o agravante de que aqui o
-  documento era o **plano da própria tarefa**.
-- ⚠️ **Vigésimo oitavo padrão, achado em 2026-09-27: espera cega num sistema
-  que tem compromisso com hora marcada.** O Hunter existe para sair num
-  segundo exato, e o sono entre ciclos já sabia disso: encurtava para acordar
-  na janela. Mas havia **quatro** caminhos que dormem, e só esse perguntava. A
-  espera por rede fora (duas cópias) e a de "Overview unavailable" dormiam o
-  `active_delay` inteiro. Uma queda de rede fez o bot acordar 4 s antes da
-  saída de um nobre, e o processo novo ainda levou ~100 s até o Hunter agir.
-  A regra: **quando existe um registro de prazos (schedules do Hunter, timer de
-  reserva), todo `time.sleep` do laço principal tem que consultá-lo — não só o
-  caminho feliz.** Grep por `time.sleep` em `twb.py` custa um segundo e mostra
-  todos os caminhos. Dois corolários. Primeiro, "acordar a tempo da janela" não
-  basta para quem acorda de um reinício, que ainda paga login, visão geral e
-  prime; a margem tem que incluir o custo de voltar (`Hunter.WAKE_MARGIN`,
-  medido). Segundo, um retorno que parece inofensivo (`return False` depois de
-  esperar) pode estar sendo contado por quem chama: `main()` tratava como mais
-  uma das 3 vidas do processo. §8.33.
+- ⚠️ **Os 28 padrões de erro deste projeto.** Abaixo, a regra curta de cada
+  um. A narrativa completa (incidente, números, por quê) está na skill
+  **`twb-padroes`** (`.claude/skills/twb-padroes/SKILL.md`): carregue-a ao
+  investigar bug, sondar o servidor, medir dados, mexer em efeito diferido ou
+  apagar algo — é ela que mostra como a regra se aplica ao caso que não está
+  escrito.
+  1. **Atributo de classe mutável:** `list`/`dict` no corpo da classe é
+     compartilhado por todas as instâncias (= entre aldeias). Mutável vai em
+     `__init__`.
+  2. **`None` de rede/parse:** `get_url`/`get_action`/`get_api_action`
+     devolvem `None` em qualquer exceção, e vários `Extractor.*` devolvem
+     `None` quando o regex não casa (login, captcha, markup novo). Guardar
+     antes de `.text`/`in`/`[]`; num caminho de erro, conferir que o logger já
+     existe.
+  3. **Função órfã:** ao corrigir o corpo de uma função, `grep` os chamadores.
+     Ao alargar o que ela pode devolver, reler cada consumidor ("e se vier
+     este valor agora?").
+  4. **Remover config "morta":** `grep` diz se é seguro, não o que o usuário
+     perde. Relatar sempre como *"`X` não existe e não funciona — mas `Y`
+     funciona e serve para isso"*.
+  5. **Número do servidor:** dizer de qual tag/campo veio, não só que veio do
+     servidor. `get_config` e `/page/settings` não expõem os mesmos campos;
+     enum de jogo se mapeia contra o servidor, nunca contra a wiki. "Não
+     achei" só vale dizendo onde procurou — e se você mesmo nomeou a fonte
+     plausível, abra-a.
+  6. **Efeito diferido** (nobre voa horas): separar "quando mandei" de
+     "quando acontece" e reconferir a premissa na hora de agir. Travar por
+     tempo de chegada, não por `status`. `attack_duration()` devolve **0** na
+     falha. O bloqueio nasce com a intenção (lista de operações agendadas),
+     não com o efeito.
+  7. **Sondar com o cliente do bot:** a resposta depende dos cabeçalhos
+     (`TribalWars-Ajax: 1` embrulha em `response`/`game_data`). Sondar pelo
+     próprio método do `WebWrapper`, e fazer smoke contra o servidor depois
+     dos testes.
+  8. **Jinja2:** chave de dict com nome de método (`items`, `keys`, `get`,
+     `pop`, `values`, `update`, `copy`) perde para o método — renomear a
+     chave. Lição de classe de erro mora neste arquivo, não em doc de feature.
+  9. **Log é ação do bot, não estado do mundo:** o usuário joga na mesma
+     conta. Dizer "o bot não mexeu", nunca "não mudou".
+  10. **Limite lido de dado é fato sobre o arquivo:** antes de desenhar em
+      volta de um teto, perguntar o que o pôs lá. Sem "porque", é dívida.
+  11. **Média de conjunto heterogêneo:** perguntar se o conjunto é um
+      conjunto (`groupby`). Valor no teto de um instrumento nosso é
+      censurado, não observação.
+  12. **Mais um de algo** (template, parser, manager): ler os irmãos antes.
+      Ao corrigir, varrer a classe inteira.
+  13. **Experimento que só pode confirmar não é evidência:** instrumentar a
+      falha real e esperar. Dizer de qual ocorrência a mensagem foi lida.
+  14. **Constante relativa a estado que cresce** (pontos, níveis) expira
+      sozinha: vira função em runtime ou degraus.
+  15. **Detector que dispara sempre não detecta:** ancorar a guarda no mesmo
+      padrão do parser. Silêncio de um filtro não prova que está tudo bem.
+  16. **Este arquivo é memória, não especificação:** instrução que descreve
+      comportamento de código se confirma no código; se estiver errada,
+      corrigir a instrução no mesmo passo.
+  17. **Valor de API pode vir transformado** (velocidades de `get_unit_info`
+      já são efetivas): conferir num mundo onde o fator não é neutro.
+  18. **Mesmo gatilho, prazo diferente:** esconder é instantâneo, apoio
+      precisa *chegar*. Limiar de tempo se compara ao período do ciclo.
+  19. **"+N%" do jogo não define a conta:** montar as leituras possíveis e
+      medir uma instância real. Armadilha plausível também se mede.
+  20. **Corpo de módulo roda em todo `import`:** efeito destrutivo só sob
+      `__main__` ou preguiçoso. `twb_*.log` não substitui `session_latest.log`.
+  21. **Teste não escreve no artefato de produção que verifica** (o bot o tem
+      aberto): preferir observação passiva e provar que a guarda ainda falha.
+  22. **Programa interativo num botão:** procurar `input()`/prompts antes.
+      Pid vivo não é atividade; unicidade de recurso externo se detecta
+      varrendo o SO, não por registro próprio.
+  23. **`??` no `git status` = sem cópia em lugar nenhum:**
+      `git ls-files --error-unmatch` antes de apagar. Recuperabilidade só se
+      promete depois de tentar recuperar.
+  24. **Medir na mesma fonte que o código lê**, e contar quantas peneiras há
+      antes do filtro medido.
+  25. **Nada de `deepcopy` em objeto que aponta para serviço vivo** (sessão,
+      lock, logger): injetar e compartilhar; testar identidade (`is`).
+  26. **Lista do jogo:** a primeira pergunta é "quantas linhas existem no
+      total, e este é o total?" (`page=all`/`page=-1`). Não mudar config
+      compartilhada da tribo só para conseguir ler.
+  27. **"Fonte mais velha" é propriedade do campo:** decidir a precedência
+      por campo, medindo a assimetria entre as fontes.
+  28. **Todo `time.sleep` do laço principal consulta os prazos do Hunter**, com
+      margem para o custo de voltar; um retorno "inofensivo" pode estar sendo
+      contado por quem chama.
 - ~~`core/twstats.py::buildings_to_farm_pop()`~~ — ✅ **removida em 2026-08-31.**
   Era pior que "quebrada": zero chamadores, indexava um `int` como dict, **e o
   nome/docstring prometiam algo que a fonte de dados não pode dar.** A tabela do

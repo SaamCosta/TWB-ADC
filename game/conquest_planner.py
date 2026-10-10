@@ -52,6 +52,7 @@ import logging
 import time
 
 from core.filemanager import FileManager
+from core.village_label import village_label
 from core.notification import Notification
 from core.world_config import WorldConfig
 from game.attack import (
@@ -197,7 +198,7 @@ class BarbarianTrainPlanner:
             self.logger.info(
                 "Conquest: %d/%d nobres livres no imperio inteiro (%s)%s -- aguardando",
                 total, ConquestManager.TRAIN_SIZE,
-                ", ".join("%s:%d" % (vid, qty) for vid, qty in sources) or "nenhum",
+                ", ".join("%s:%d" % (village_label(vid), qty) for vid, qty in sources) or "nenhum",
                 (" com %d de %d trem(ns) em andamento (%s)"
                  % (len(active), limit, ", ".join(sorted(active))))
                 if active else ""
@@ -344,7 +345,7 @@ class BarbarianTrainPlanner:
             else:
                 self.logger.warning(
                     "Conquest: aldeia %s tem nobre mas nao tem coordenada "
-                    "conhecida -- ela nao conta para o alcance deste ciclo", vid
+                    "conhecida -- ela nao conta para o alcance deste ciclo", village_label(vid)
                 )
         return locations
 
@@ -428,7 +429,7 @@ class BarbarianTrainPlanner:
             if escort is None:
                 self.logger.info(
                     "Conquest: aldeia %s tem %d nobre(s) mas nao fecha a escolta "
-                    "minima -- fica de fora deste trem", vid, available
+                    "minima -- fica de fora deste trem", village_label(vid), available
                 )
                 self._reserve_toward_escort(vid, cfg)
                 continue
@@ -537,7 +538,7 @@ class BarbarianTrainPlanner:
         self.logger.info(
             "Conquest: aldeia %s esta a %.1f campos do alvo, acima do alcance "
             "do nobre neste mundo (%s) -- fica de fora deste trem",
-            vid, distance, noble_range
+            village_label(vid), distance, noble_range
         )
         return False
 
@@ -558,12 +559,12 @@ class BarbarianTrainPlanner:
         if needed:
             units.conquest_reserve["barbarian_conquest"] = needed
             self.logger.info(
-                "Conquest: aldeia %s reservando %s para fechar a escolta", vid, needed
+                "Conquest: aldeia %s reservando %s para fechar a escolta", village_label(vid), needed
             )
         elif units.conquest_reserve.pop("barbarian_conquest", None):
             self.logger.info(
                 "Conquest: aldeia %s liberou a reserva de escolta -- farm e "
-                "gather voltam a usar essa tropa", vid
+                "gather voltam a usar essa tropa", village_label(vid)
             )
 
     def _escort_for(self, vid, cfg, noble_count):
@@ -606,7 +607,7 @@ class BarbarianTrainPlanner:
                 self.logger.warning(
                     "Conquest: nao consegui a duracao de %s -> %s pelo servidor "
                     "-- sem isso nao da para sincronizar a chegada, adiando",
-                    source_id, target_id
+                    village_label(source_id), village_label(target_id)
                 )
                 return None
             atk["duration_seconds"] = float(durations[key])
@@ -659,8 +660,8 @@ class BarbarianTrainPlanner:
         self.logger.info(
             "Conquest: trem de %d nobres agendado contra %s, chegada comum %s "
             "(origens: %s)",
-            len(plan), target_id, arrival_str,
-            ", ".join("%s x%d" % (v, n) for v, n in sorted(per_source.items()))
+            len(plan), village_label(target_id), arrival_str,
+            ", ".join("%s x%d" % (village_label(v), n) for v, n in sorted(per_source.items()))
         )
         self.wrapper.reporter.report(
             max(per_source, key=lambda v: (per_source[v], v)),
@@ -673,7 +674,7 @@ class BarbarianTrainPlanner:
             "(origens: %s)."
             % (len(plan), conquest_label(target_id, ConquestCache.get(target_id)),
                arrival_str,
-               ", ".join("%s x%d" % (v, n) for v, n in sorted(per_source.items())))
+               ", ".join("%s x%d" % (village_label(v), n) for v, n in sorted(per_source.items())))
         )
         return target_id
 
@@ -845,13 +846,13 @@ class BarbarianTrainPlanner:
                     if sched:
                         self.logger.warning(
                             "Conquest: schedule %s do trem contra %s cancelado "
-                            "-- alvo reservado por %s", key, target_id, who
+                            "-- alvo reservado por %s", key, village_label(target_id), who
                         )
                 self._release(target_id)
 
             self.logger.warning(
                 "Conquest: alvo %s (%s) bloqueado -- reservado por %s (%s)",
-                target_id, data.get("status"), who, reason
+                village_label(target_id), data.get("status"), who, reason
             )
             ConquestCache.set(target_id, {
                 **data, **detail,
@@ -953,7 +954,7 @@ class BarbarianTrainPlanner:
                     units.conquest_reserve.pop(key, None)
                     self.logger.info(
                         "Conquest: soltando reserva orfa %s da aldeia %s -- o "
-                        "trem correspondente nao existe mais", key, vid
+                        "trem correspondente nao existe mais", key, village_label(vid)
                     )
 
     def _sync_scheduled_reserves(self):
@@ -1020,13 +1021,13 @@ class BarbarianTrainPlanner:
                     if reserve.get(key) != troops:
                         self.logger.info(
                             "Conquest: reserva do trem contra %s na aldeia %s "
-                            "alinhada ao Hunter: %s", target_id, vid, troops
+                            "alinhada ao Hunter: %s", village_label(target_id), village_label(vid), troops
                         )
                         reserve[key] = dict(troops)
                 elif reserve.pop(key, None):
                     self.logger.info(
                         "Conquest: reserva do trem contra %s solta na aldeia %s "
-                        "(nenhum comando dela pendente no Hunter)", target_id, vid
+                        "(nenhum comando dela pendente no Hunter)", village_label(target_id), village_label(vid)
                     )
 
     # ------------------------------------------------------------------
@@ -1072,7 +1073,7 @@ class BarbarianTrainPlanner:
                 self.logger.warning(
                     "Conquest: nenhum comando do trem contra %s chegou a sair "
                     "(falha no Hunter ou chegada vencida) -- alvo liberado",
-                    target_id
+                    village_label(target_id)
                 )
                 ConquestCache.set(target_id, {
                     **data,
@@ -1110,7 +1111,7 @@ class BarbarianTrainPlanner:
             self.logger.info(
                 "Conquest: %d/%d nobres do trem contra %s sairam pelo Hunter, "
                 "pouso comum em %s",
-                len(sent), len(attacks), target_id, landing
+                len(sent), len(attacks), village_label(target_id), landing
             )
             if len(sent) == len(attacks):
                 Notification.send(

@@ -186,6 +186,13 @@ class CycleMeter:
             self.buckets[key] = _new_bucket()
         return self.buckets[key]
 
+    def current_phase(self):
+        """'aldeia/fase' do topo da pilha, ou None fora de fase. So leitura."""
+        if not self._stack:
+            return None
+        village, phase = self._stack[-1]
+        return "%s/%s" % (village, phase) if village else phase
+
     def _charge_top(self, now):
         """Credita ao topo da pilha o tempo desde a ultima retomada."""
         if not self._stack:

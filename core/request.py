@@ -82,6 +82,15 @@ class WebWrapper:
         # 8.44: recompensas de missao prontas, por aldeia, lidas de toda tela
         # HTML -- decide se o GET do popup de missoes vale a requisicao.
         self.reward_gate = RewardGate()
+        # Detector de furo do Hunter: `hunter_next_send` e publicado pelo
+        # `Hunter.gate()` e `hunter_active` fica True enquanto o Hunter roda.
+        # Requisicao comum dentro da janela de silencio de uma saida e sinal
+        # de que alguma tarefa escapou do gate -- vira WARNING, uma vez por
+        # saida. So observa: nao segura nem desvia nada.
+        self.hunter_next_send = None
+        self.hunter_active = False
+        self.hunter_silence_seconds = 300
+        self._silence_warned_for = None
 
     def _remember_game_data(self, response):
         """Guarda o recorte do game_data desta resposta, se houver. Nunca
@@ -97,6 +106,29 @@ class WebWrapper:
                 if getattr(self, "reward_gate", None) is not None:
                     self.reward_gate.observe(snap["village_id"], response.text)
                 game_data_shadow.remember_full(self, snap["village_id"], gd, response.text)
+        except Exception:
+            pass
+
+    def _check_hunter_silence(self, method, url):
+        """WARNING se esta requisicao comum cai na janela de silencio do Hunter.
+        Nunca levanta."""
+        try:
+            nxt = getattr(self, "hunter_next_send", None)
+            if not nxt or getattr(self, "hunter_active", False):
+                return
+            left = nxt - time.time()
+            if 0 < left <= getattr(self, "hunter_silence_seconds", 300)                     and self._silence_warned_for != nxt:
+                self._silence_warned_for = nxt
+                phase = None
+                try:
+                    phase = self.meter.current_phase()
+                except Exception:
+                    pass
+                self.logger.warning(
+                    "Hunter: FURO -- %s %s saiu a %.0f s de uma saida agendada, "
+                    "fora do Hunter (fase: %s). Alguma tarefa escapou do gate.",
+                    method, url, left, phase or "?"
+                )
         except Exception:
             pass
 
@@ -137,6 +169,7 @@ class WebWrapper:
         self._remember_game_data(response)
 
     def get_url(self, url, headers=None):
+        self._check_hunter_silence("GET", url)
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')
         slept = self._pause()
         started = time.time()
@@ -163,6 +196,7 @@ class WebWrapper:
             return None
 
     def post_url(self, url, data, headers=None):
+        self._check_hunter_silence("POST", url)
         slept = self._pause()
         started = time.time()
         self.headers['Origin'] = (self.endpoint if self.endpoint else self.auth_endpoint).rstrip('/')

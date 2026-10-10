@@ -39,6 +39,7 @@ import logging
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 
 
 class ReservationBoard:
@@ -115,7 +116,7 @@ class ReservationBoard:
                 "Reservations: nao consegui ler screen=ally&mode=reservations "
                 "pela aldeia %s (sessao expirada ou markup novo). Conquista "
                 "NOVA fica bloqueada ate a proxima leitura boa; o que ja esta "
-                "em andamento segue.", village_id
+                "em andamento segue.", village_label(village_id)
             )
             return self._read_ok and (time.time() - self._fetched_at) < self._stale_grace()
 
@@ -454,7 +455,7 @@ class ReservationWriter:
             self.logger.warning(
                 "Reservations: nao consegui ler o comentario da reserva %s "
                 "(alvo %s) -- tratando como NAO sendo do bot, que e o lado "
-                "seguro do erro", reservation_id, claim.get("village_id")
+                "seguro do erro", reservation_id, village_label(claim.get("village_id"))
             )
             return None
         return (payload.get("comment") or "").strip() == self._comment()

@@ -202,7 +202,7 @@ calls = []
 h = Hunter(wrapper=SimpleNamespace(priority_mode=False))
 
 
-def reentrant_run(config):
+def reentrant_run(config, horizon=None):
     calls.append(1)
     h.wrapper.priority_mode = True
     h.run(config)  # um checkpoint chamando o Hunter de volta

@@ -74,7 +74,7 @@
             {% endif %}
             {% for vid in data.missing_snapshot | default([]) %}
             <li class="twb-exception-item">
-              <div class="twb-exception-copy"><strong>Aldeia {{ vid }}</strong><span>Gerenciada no config e ainda sem snapshot: nada desta aldeia (ataque, recursos, tropas) aparece no painel até ela rodar no laço.</span></div>
+              <div class="twb-exception-copy"><strong>Aldeia {{ vid | vlabel }}</strong><span>Gerenciada no config e ainda sem snapshot: nada desta aldeia (ataque, recursos, tropas) aparece no painel até ela rodar no laço.</span></div>
               <a class="btn btn-outline-secondary btn-sm" href="/village?id={{ vid }}">Ver aldeia</a>
             </li>
             {% endfor %}

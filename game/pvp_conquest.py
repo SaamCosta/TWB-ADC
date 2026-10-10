@@ -19,6 +19,7 @@ import logging
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 from core.filemanager import FileManager
 from core.templates import UNIT_POP
 from core.world_config import WorldConfig
@@ -575,7 +576,7 @@ class PvpConquestManager:
             "PvpConquest: %d origem(ns) elegivel(is) para espiar %s; melhor: %s",
             len(candidates), target_id,
             ", ".join(
-                "%s (%d espioes, %.1f campos)" % (vid, spies, distance)
+                "%s (%d espioes, %.1f campos)" % (village_label(vid), spies, distance)
                 for vid, _village, spies, distance in candidates[:3]
             ),
         )
@@ -596,7 +597,7 @@ class PvpConquestManager:
                 logger.info(
                     "PvpConquest: %s caiu para %d espioes na leitura viva "
                     "(piso %d), tentando a proxima origem",
-                    vid, spies, floor
+                    village_label(vid), spies, floor
                 )
                 continue
 
@@ -604,7 +605,7 @@ class PvpConquestManager:
             if result and result != "forced_peace":
                 logger.info(
                     "PvpConquest: scout sent from %s → %s (%d spies, %.1f campos)",
-                    vid, target_id, spies, distance
+                    village_label(vid), target_id, spies, distance
                 )
                 data["status"] = "pending_troops"
                 data["scout_village_id"] = vid
@@ -707,7 +708,7 @@ class PvpConquestManager:
                 "home (need %.0f%%), measured in %d/%d source village(s): %s",
                 target_id, ratio * 100, required * 100,
                 len(sources), expected,
-                ", ".join(sorted(s["village_id"] for s in sources)) or "-",
+                ", ".join(sorted(village_label(s["village_id"]) for s in sources)) or "-",
             )
             return
 
@@ -843,7 +844,7 @@ class PvpConquestManager:
 
         clear_village = self.villages[clear_vid]
         if not clear_village.units:
-            logger.warning("PvpConquest: clear village %s has no troop data", clear_vid)
+            logger.warning("PvpConquest: clear village %s has no troop data", village_label(clear_vid))
             return
 
         # Build attacker dict using clear_ratio of available troops.
@@ -878,7 +879,7 @@ class PvpConquestManager:
             if arrival_ts and time.time() >= float(arrival_ts):
                 logger.warning(
                     "PvpConquest: target %s failed -- arrival passed with no "
-                    "free clear troops in %s", target_id, clear_vid,
+                    "free clear troops in %s", target_id, village_label(clear_vid),
                 )
                 data["status"] = "failed"
                 data["fail_reason"] = "no_free_clear_troops"
@@ -888,7 +889,7 @@ class PvpConquestManager:
             logger.info(
                 "PvpConquest: target %s waiting -- no free clear troops in %s "
                 "(reserved elsewhere: %s)",
-                target_id, clear_vid,
+                target_id, village_label(clear_vid),
                 self._reserved_elsewhere(clear_village, target_id) or "-",
             )
             return
@@ -1445,14 +1446,14 @@ class PvpConquestManager:
                     if reserve.get(key) != wanted:
                         logger.info(
                             "PvpConquest: reserva de %s na aldeia %s alinhada ao Hunter: %s",
-                            tid, vid, wanted,
+                            tid, village_label(vid), wanted,
                         )
                         reserve[key] = dict(wanted)
                 elif reserve.pop(key, None):
                     logger.info(
                         "PvpConquest: reserva de %s solta na aldeia %s "
                         "(nenhum comando pendente dela no Hunter)",
-                        tid, vid,
+                        tid, village_label(vid),
                     )
 
     def _build_clear_units(self, clear_village, target_id=None):
@@ -1711,7 +1712,7 @@ class PvpConquestManager:
             if village and village.units and village.units.conquest_reserve.pop(key, None):
                 logger.info(
                     "PvpConquest: released troop reservation for target %s from village %s",
-                    target_id, vid
+                    target_id, village_label(vid)
                 )
 
     def _hunter_schedules_resolved(self, target_id):

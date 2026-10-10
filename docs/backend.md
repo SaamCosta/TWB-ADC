@@ -6708,6 +6708,58 @@ mostram que é **usar**. O módulo que vale a pena tem duas metades:
    partes são baratas e sem ambiguidade. A terceira depende da política da
    metade 1.
 
+## 8.58 `P-HUNTER-GATE` — o Hunter decide antes de cada tarefa, não depois (2026-10-08)
+
+**Incidente.** Trem de 4 nobres contra a Bárbara #57033 (chegada comum
+09/10 05:41:28). O nobre da BBM 027 (46676) devia sair às 14:22:46. O último
+checkpoint antes disso foi às 14:19:58, com **168 s** de folga; a janela do
+Hunter era 120 s, então ele seguiu. O trecho seguinte da BBM 029
+(recrutamento → nobre → mercado → compartilhamento, que mandou ferro para a
+42134) levou **174 s**, e o Hunter só voltou a olhar às 14:22:52: 6,2 s
+atrasado, recusado (`send_time_missed`). O usuário mandou o nobre na mão às
+~15:07 (chega 06:25:38); o registro da conquista foi acertado à mão com
+`manual_extra` e a chegada real em `noble_arrivals`, senão o caminho do nobre
+extra (§8.41) mandaria um segundo nobre com o dele no ar.
+
+**Causa.** Checkpoint que só pergunta "está na hora?" falha sempre que o
+trecho até o próximo checkpoint dura mais que a janela. As fases medidas em
+80 ciclos chegam a 1.300 s (farm), 1.831 s (defesa) e 7.570 s
+(compartilhamento — esse com 7.512 s de captcha).
+
+**O que mudou** (escolha do usuário: opção C + E como reserva):
+
+- `Hunter.window` 120 → **300 s**: a menos de 5 min de uma saída, todo
+  checkpoint entrega o controle ao Hunter, que espera o segundo exato.
+- `Hunter.gate()` **antes de cada fase**, com a duração prevista dela
+  (`core/phase_forecast.py`: maior valor das 10 últimas amostras da mesma
+  fase na mesma aldeia em `cache/cycles`, captcha descontado; sem histórico,
+  p90 da fase; nunca vista, 120 s). Se `previsão + PREP_SECONDS (90)` não
+  cabe até a saída: fase adiável é **adiada** nesta passada; não adiável
+  (`init`, `defesa`, `mapa`) **segura** o bot até a saída. Farm e defesa têm
+  checkpoint por iteração, então a previsão delas tem teto de 180 s
+  (`INTERRUPTIBLE_CAP`). Adiado o bloco de recrutamento (que relê as tropas),
+  PvP, apoio, farm e coleta também ficam para a próxima passada.
+- Fases da conta em `twb.py` passam pelo mesmo gate (conquista bárbara,
+  reservas, estatísticas, em voo, cunhagem, estátua, inventário,
+  perfis_farm). A espera do gate conta no balde `hunter` do medidor, não no
+  da fase, para a previsão não inflar sozinha.
+- **Detector de furo**: `WebWrapper` loga `Hunter: FURO` (uma vez por saída)
+  se uma requisição comum sai dentro dos 300 s de uma saída sem o Hunter estar
+  rodando. Só observa — é o que faz um furo novo aparecer em vez de sumir.
+
+Testes: `tests/test_hunter_gate.py` (o caso real 168 s × 174 s, silêncio,
+adiar × segurar, `PREP`, teto de fase interrompível, detector). Provado que o
+teste do caso real **falha** com o comportamento antigo (janela 120 s,
+checkpoint sem previsão).
+
+**Em aberto, na ordem combinada:** (1) sondar quanto tempo a tela de
+confirmação da praça continua válida, para preparar o envio antes e disparar
+só o POST final no segundo (precisão); (2) opção E — tolerância de atraso só
+para trem bárbaro. ⚠️ O incidente de 12/08 (§6.1) já responde metade da
+sondagem do E: nobre que pousa **depois** da conquista autoconquista a aldeia,
+queima moeda e mata a guarnição. Logo, mandar atrasado só é seguro se os
+nobres anteriores não puderem fechar a conquista sozinhos.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

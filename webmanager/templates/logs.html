@@ -42,7 +42,7 @@
         <label for="village-filter">Aldeia ou origem técnica</label>
         <select id="village-filter" class="form-control form-control-sm">
           <option value="">Todas as aldeias</option>
-          {% for vid in village_ids %}<option value="{{ vid }}">#{{ vid }}</option>{% endfor %}
+          {% for vid in village_ids %}<option value="{{ vid }}">{{ vid | vlabel }}</option>{% endfor %}
         </select>
       </div>
       <a class="btn btn-outline-secondary btn-sm" href="/logs{% if selected_file %}?f={{ selected_file | urlencode }}{% endif %}">Atualizar leitura</a>
@@ -78,7 +78,7 @@
         {% set derived = 'danger' if 'ERROR' in et or 'FAIL' in et else 'warning' if 'WARNING' in et or 'WARN' in et else 'info' if 'RESOURCE' in et or 'MARKET' in et or 'TRADE' in et or 'BUILD' in et or 'QUEUE' in et or 'RECRUIT' in et or 'UNIT' in et else 'muted' %}
         <tr class="log-row {% if derived == 'danger' %}twb-row--danger{% elif not entry.datetime or entry.datetime == '?' %}twb-row--unknown{% endif %}" data-event="{{ et }}" data-village="{{ entry.village_id or '' }}">
           <td>{% if entry.datetime and entry.datetime != '?' %}<time class="twb-time twb-time-cell">{{ entry.datetime }}</time>{% else %}<span class="twb-status twb-status--unknown">Horário indisponível</span>{% endif %}</td>
-          <td>{% if entry.village_id %}<span class="twb-technical-id">#{{ entry.village_id }}</span>{% else %}<span class="text-muted">Não informada</span>{% endif %}</td>
+          <td>{% if entry.village_id %}<span class="twb-technical-id">{{ entry.village_id | vlabel }}</span>{% else %}<span class="text-muted">Não informada</span>{% endif %}</td>
           <td><span class="twb-status twb-status--{{ derived }}">{{ et }}</span><span class="twb-derived-note">Classificação visual derivada</span></td>
           <td><details class="twb-technical-message"><summary>{{ entry.message | default('Mensagem vazia', true) }}</summary><pre>{{ entry.message | default('Mensagem vazia', true) }}</pre></details></td>
         </tr>

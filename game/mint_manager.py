@@ -38,6 +38,7 @@ import re
 import time
 
 from core import mint_store
+from core.village_label import village_label
 from core.filemanager import FileManager
 from core.notification import Notification
 from game import mint_planner
@@ -303,7 +304,7 @@ class MintManager:
                 return True
             if mint_store.update_campaign(mutate):
                 logger.info("Cunhagem: campanha encerrada, travas e roteamento soltos")
-                Notification.send("Cunhagem: campanha na %s encerrada" % campaign.get("hub_name"))
+                Notification.send("Cunhagem: campanha na %s encerrada" % village_label(campaign.get("hub")))
                 self.refresh_route()
 
     def _event(self, message, **fields):
@@ -351,7 +352,7 @@ class MintManager:
             if not flag or flag[0] != mint_planner.COIN_FLAG_TYPE:
                 self._fail(
                     "a %s está com a bandeira %s, não a de cunhagem -- o bônus dobraria outra coisa"
-                    % (campaign.get("hub_name"), "tipo %s nível %s" % flag if flag else "nenhuma")
+                    % (village_label(campaign.get("hub")), "tipo %s nível %s" % flag if flag else "nenhuma")
                 )
                 return
             items = campaign.get("items") or {}
@@ -387,7 +388,7 @@ class MintManager:
                 return True
             if not mint_store.update_campaign(mutate):
                 return
-            Notification.send("Cunhagem: ativando a campanha na %s" % campaign.get("hub_name"))
+            Notification.send("Cunhagem: ativando a campanha na %s" % village_label(campaign.get("hub")))
             self._measure(hub, "antes dos itens")
             campaign = mint_store.load_campaign()
 
@@ -454,7 +455,7 @@ class MintManager:
             return True
         if mint_store.update_campaign(activate):
             Notification.send("Cunhagem: campanha ativa na %s por %d h" % (
-                campaign.get("hub_name"), int(flag_seconds) // 3600))
+                village_label(campaign.get("hub")), int(flag_seconds) // 3600))
             # A sessão do hub começa já, com o desconto novo.
             self.state.setdefault("hub", {})["next_at"] = 0
             self.refresh_route()
@@ -498,7 +499,7 @@ class MintManager:
         hub_state.update(vid=hub, next_at=now + HUB_RETRY_SECONDS)
         cost = academy.coin_cost(html)
         if not cost:
-            logger.warning("Cunhagem: academia do hub %s não leu; tento em 15 min", hub)
+            logger.warning("Cunhagem: academia do hub %s não leu; tento em 15 min", village_label(hub))
             mint_store.save_state(self.state)
             return
         self._record_cost(hub, cost)
@@ -512,9 +513,9 @@ class MintManager:
             ok, note = self._start_auto_mint(hub)
             if ok:
                 hub_state.update(next_at=now + AUTO_MINT_SECONDS + 60, started_at=int(now))
-                logger.info("Cunhagem: sessão automática de 8 h iniciada no hub %s (%s)", hub, note)
+                logger.info("Cunhagem: sessão automática de 8 h iniciada no hub %s (%s)", village_label(hub), note)
             else:
-                logger.warning("Cunhagem: sessão automática do hub %s não iniciou: %s", hub, note)
+                logger.warning("Cunhagem: sessão automática do hub %s não iniciou: %s", village_label(hub), note)
         elif state == "no_start_button":
             # Provavelmente já em andamento (markup não capturado ainda):
             # reconfere em 30 min em vez de supor 8 h.
@@ -532,9 +533,9 @@ class MintManager:
             data={"count": str(n), "coin_mint_count": str(n), "h": self.wrapper.last_h},
         )
         if res is None:
-            logger.warning("Cunhagem: cunhagem de %d moeda(s) em %s sem resposta", n, vid)
+            logger.warning("Cunhagem: cunhagem de %d moeda(s) em %s sem resposta", n, village_label(vid))
             return 0
-        logger.info("Cunhagem: %d moeda(s) cunhada(s) de uma vez em %s", n, vid)
+        logger.info("Cunhagem: %d moeda(s) cunhada(s) de uma vez em %s", n, village_label(vid))
         return n
 
     def _start_auto_mint(self, vid):
@@ -618,7 +619,7 @@ class MintManager:
                 daily["failed"].pop(vid, None)
             else:
                 daily["failed"][vid] = note
-                logger.warning("Cunhagem diária: %s não iniciou: %s", vid, note)
+                logger.warning("Cunhagem diária: %s não iniciou: %s", village_label(vid), note)
             mint_store.save_state(self.state)
         daily["complete_date"] = today
         daily["finished_at"] = int(time.time())

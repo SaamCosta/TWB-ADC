@@ -6,6 +6,7 @@ import math
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 from core.filemanager import FileManager
 
 
@@ -72,7 +73,7 @@ class Map:
             logging.warning(
                 "Map: a tela de mapa nao respondeu para a aldeia %s, mantendo o "
                 "mapa anterior e tentando de novo no proximo ciclo",
-                self.village_id,
+                village_label(self.village_id),
             )
             return False
         game_state = Extractor.game_state(res)
@@ -204,7 +205,7 @@ class Map:
         if not self.map_data or not self.villages:
             logging.warning(
                 "Error reading map state for village %s, farming might not work properly",
-                self.village_id
+                village_label(self.village_id)
             )
             return False
         return True
@@ -276,7 +277,7 @@ class Map:
             # bot protection): degrada para o prefetch em vez de derrubar.
             logging.debug(
                 "Map: sem coordenada utilizavel no game_state da aldeia %s, "
-                "mantendo apenas o prefetch", self.village_id
+                "mantendo apenas o prefetch", village_label(self.village_id)
             )
             return []
 
@@ -299,7 +300,7 @@ class Map:
         if res is None:
             logging.warning(
                 "Map: map.php nao respondeu para a aldeia %s, "
-                "farm limitado ao prefetch neste ciclo", self.village_id
+                "farm limitado ao prefetch neste ciclo", village_label(self.village_id)
             )
             return []
         try:
@@ -309,20 +310,20 @@ class Map:
             logging.warning(
                 "Map: map.php devolveu resposta nao-JSON para a aldeia %s "
                 "(%d bytes), farm limitado ao prefetch neste ciclo",
-                self.village_id, len(res.text)
+                village_label(self.village_id), len(res.text)
             )
             return []
         if not isinstance(data, list):
             logging.warning(
                 "Map: map.php devolveu %s em vez de lista de setores para a "
-                "aldeia %s", type(data).__name__, self.village_id
+                "aldeia %s", type(data).__name__, village_label(self.village_id)
             )
             return []
 
         found = [s for s in data if isinstance(s, dict) and "data" in s]
         logging.debug(
             "Map: %d setores pedidos, %d recebidos para a aldeia %s",
-            len(sectors), len(found), self.village_id
+            len(sectors), len(found), village_label(self.village_id)
         )
         return found
 

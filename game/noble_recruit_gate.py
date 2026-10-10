@@ -44,6 +44,7 @@ sei" nunca desliga nobre de ninguem.
 import logging
 
 from core.filemanager import FileManager
+from core.village_label import village_label
 from core.world_config import WorldConfig
 from game.attack import field_distance, village_location
 from game.reservations import manual_exclusion
@@ -183,7 +184,7 @@ class NobleRecruitGate:
             "Conquest: recrutam nobre as %d aldeias mais perto do %do alvo (%s); "
             "as outras %d so cunham moeda",
             len(recruit), TARGET_RANK,
-            ", ".join("%s %.1f campos" % (vid, d) for vid, d in ranking[:limit]),
+            ", ".join("%s %.1f campos" % (village_label(vid), d) for vid, d in ranking[:limit]),
             len(ranking) - len(recruit)
         )
         return decisions

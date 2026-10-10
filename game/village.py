@@ -8,6 +8,7 @@ from datetime import datetime
 
 from core import game_data_shadow
 from core import support_store
+from core.village_label import register as register_village_name, village_label
 from core.cycle_meter import meter_phase
 from core.extractors import Extractor
 from core.filemanager import FileManager
@@ -87,6 +88,10 @@ class Village:
     # Cooperative callback installed by TWB. Hunter runs at these safe
     # checkpoints instead of sharing the HTTP session from a second thread.
     hunter_service_callback = None
+    # Portao do Hunter antes de cada fase, instalado por twb.py:
+    # `hunter_gate(fase, village_id, adiavel) -> bool`. False = adiar a fase
+    # nesta passada porque ela nao termina antes da proxima saida agendada.
+    hunter_gate = None
 
     # Cunhagem (§8.55): o MintManager da conta, instalado por twb.py, e a rota
     # desta aldeia neste ciclo (None, ou dict com role "hub"/"donor").
@@ -131,7 +136,7 @@ class Village:
         if parameter not in vdata:
             self.logger.warning(
                 "Village %s configuration parameter %s does not exist!",
-                village_id, parameter
+                village_label(village_id), parameter
             )
             return default
         return vdata[parameter]
@@ -176,6 +181,8 @@ class Village:
                 "Starting run for village: %s" % self.game_data["village"]["name"],
             )
         self.points = self.points_from_game_data(self.game_data, self.points)
+        if self.game_data:
+            register_village_name(self.village_id, self.game_data["village"].get("name"))
         if (
                 self.village_set_name
                 and self.game_data
@@ -474,7 +481,7 @@ class Village:
         neighbors = zm.get_neighbors(self.village_id)
         if not neighbors:
             self.logger.debug(
-                "Feature 12: aldeia %s não possui vizinhos de zona", self.village_id
+                "Feature 12: aldeia %s não possui vizinhos de zona", village_label(self.village_id)
             )
             return
 
@@ -521,7 +528,7 @@ class Village:
         self.logger.warning(
             "Feature 12: %d/%d vizinho(s) de zona sob ataque — "
             "acionando evacuação preventiva para aldeia %s",
-            neighbors_under_attack, len(neighbors), self.village_id
+            neighbors_under_attack, len(neighbors), village_label(self.village_id)
         )
         self.wrapper.reporter.report(
             self.village_id,
@@ -562,7 +569,7 @@ class Village:
         )
         if not unit_config:
             self.logger.warning(
-                "Village %s does not have 'units' config override!", self.village_id
+                "Village %s does not have 'units' config override!", village_label(self.village_id)
             )
             unit_config = self.get_config(
                 section="units", parameter="default", default="basic"
@@ -576,7 +583,7 @@ class Village:
         if resolved != unit_config:
             self.logger.info(
                 "Village %s: troop template '%s' -> '%s' (world %s archers)",
-                self.village_id, unit_config, resolved,
+                village_label(self.village_id), unit_config, resolved,
                 "has" if self.archers_enabled else "has no",
             )
             unit_config = resolved
@@ -610,11 +617,11 @@ class Village:
             self.village_id, parameter="building", default=None
         )
         if self.build_config is False:
-            self.logger.debug("Builder is disabled for village %s", self.village_id)
+            self.logger.debug("Builder is disabled for village %s", village_label(self.village_id))
             return
         if not self.build_config:
             self.logger.warning(
-                "Village %s does not have 'building' config override, using global default!", self.village_id
+                "Village %s does not have 'building' config override, using global default!", village_label(self.village_id)
             )
             self.build_config = self.get_config(
                 section="building", parameter="default", default="purple_predator"
@@ -855,13 +862,13 @@ class Village:
         if route and route.get("role") == "hub":
             # O hub recebe; doar dele (transbordo, necessidade) devolveria ao
             # império o recurso que as outras aldeias acabaram de mandar.
-            self.logger.debug("Cunhagem: %s é o hub, não doa", self.village_id)
+            self.logger.debug("Cunhagem: %s é o hub, não doa", village_label(self.village_id))
             return
         if not route and not self.config.get("resource_sharing", {}).get("enabled", False):
             return
 
         if not self.builder or not self.builder.get_level("market"):
-            self.logger.debug("ResourceSharing: mercado não construído em %s, pulando", self.village_id)
+            self.logger.debug("ResourceSharing: mercado não construído em %s, pulando", village_label(self.village_id))
             return
 
         sharing = ResourceSharingManager(
@@ -876,7 +883,7 @@ class Village:
             # roteamento levaria embora tudo que a aldeia junta para ele.
             if self._recruits_nobles():
                 self.logger.debug(
-                    "Cunhagem: %s recruta nobre, não envia ao hub", self.village_id
+                    "Cunhagem: %s recruta nobre, não envia ao hub", village_label(self.village_id)
                 )
                 return
             sharing.run_mint_route(current_resman=self.resman, route=route)
@@ -958,7 +965,7 @@ class Village:
             support_store.claim_lines(self.village_id, blocked_reason=blocked)
             reserve(mine)
             self.logger.info("TribeSupport: %d envio(s) adiado(s) em %s: %s",
-                             len(mine), self.village_id, blocked)
+                             len(mine), village_label(self.village_id), blocked)
             return
 
         home = {u: int(q) for u, q in ((self.units.troops if self.units else {}) or {}).items()
@@ -986,13 +993,13 @@ class Village:
         held = reserve([l for l in mine if l["id"] in waiting])
         if waiting:
             self.logger.info("TribeSupport: %d envio(s) de %s aguardando a coleta voltar; "
-                             "reservado para o apoio: %s", len(waiting), self.village_id, held)
+                             "reservado para o apoio: %s", len(waiting), village_label(self.village_id), held)
 
         for line in claimed:
             troops = troops_of(line)
             if line["id"] in failed:
                 self.logger.info("TribeSupport: %s -> %s nao enviado: %s",
-                                 self.village_id, line.get("target_name"), failed[line["id"]])
+                                 village_label(self.village_id), line.get("target_name"), failed[line["id"]])
                 support_store.finish_line(line["id"], False, error=failed[line["id"]])
                 continue
             try:
@@ -1006,7 +1013,7 @@ class Village:
                 # desconhecido, sem nova tentativa) e o ciclo segue.
                 self.logger.error("TribeSupport: %s -> %s excecao no envio (%s); "
                                   "resultado desconhecido, confira no jogo",
-                                  self.village_id, line.get("target_name"), exc)
+                                  village_label(self.village_id), line.get("target_name"), exc)
                 continue
             if result:
                 duration = self.def_man.last_support_duration
@@ -1019,12 +1026,12 @@ class Village:
                     if self.units and u in self.units.troops:
                         self.units.troops[u] = str(max(0, int(self.units.troops[u]) - q))
                 self.logger.info("TribeSupport: %s -> %s enviado: %s",
-                                 self.village_id, line.get("target_name"), troops)
+                                 village_label(self.village_id), line.get("target_name"), troops)
             else:
                 error = self.def_man.last_support_error or "envio não confirmado"
                 support_store.finish_line(line["id"], False, error=error)
                 self.logger.warning("TribeSupport: %s -> %s falhou: %s",
-                                    self.village_id, line.get("target_name"), error)
+                                    village_label(self.village_id), line.get("target_name"), error)
 
     def manage_local_resources(self):
         to_dell = []
@@ -1245,7 +1252,7 @@ class Village:
             # and village_init() is exactly what can raise here -- logging on
             # the error path must not itself be the error (Lote 4 corollary).
             (self.logger or logging.getLogger("Village")).warning(
-                "Could not prime village %s for conquest: %s", self.village_id, e
+                "Could not prime village %s for conquest: %s", village_label(self.village_id), e
             )
             return False
 
@@ -1269,6 +1276,16 @@ class Village:
     def _phase(self, name):
         """Fase do medidor de ciclo, com esta aldeia como dona (P-CICLO-MEDIDA)."""
         return meter_phase(self.wrapper, name, village=self.village_id)
+
+    def _gate(self, phase, skippable=True):
+        """
+        Pergunta ao Hunter se `phase` cabe antes da proxima saida (ver
+        `Hunter.gate`). Fase nao adiavel nunca devolve False: o Hunter segura
+        o bot ate a saida e so entao a fase roda.
+        """
+        if not callable(self.hunter_gate):
+            return True
+        return self.hunter_gate(phase, self.village_id, skippable) or not skippable
 
     def _service_hunter(self):
         """Give a due coordinated attack priority at this safe checkpoint."""
@@ -1336,7 +1353,7 @@ class Village:
             self.logger.info(
                 "PvpConquest: farm suspended in village %s while it is a "
                 "clear/noble source",
-                self.village_id,
+                village_label(self.village_id),
             )
             return
 
@@ -1383,7 +1400,7 @@ class Village:
             self.logger.info(
                 "PvpConquest: gathering suspended in village %s while it is "
                 "a clear/noble source",
-                self.village_id,
+                village_label(self.village_id),
             )
             return
 
@@ -1498,6 +1515,9 @@ class Village:
         # P-CICLO-MEDIDA: cada bloco `with self._phase(...)` abaixo e uma linha
         # do resumo de ciclo (core/cycle_meter.py). O agrupamento segue o que
         # se decidiria cortar junto, nao a lista de metodos.
+        # init nao e adiavel: sem ele a aldeia nao roda. O gate segura o bot
+        # ate a saida se o init previsto nao couber antes dela.
+        self._gate("init", skippable=False)
         with self._phase("init"):
             data = self.village_init()
 
@@ -1505,7 +1525,7 @@ class Village:
             # A26-02 b: na primeira execucao do objeto o logger ainda e o None
             # da classe, e este log era a propria queda.
             (self.logger or logging.getLogger("Village")).error(
-                "Error reading game data for village %s", self.village_id
+                "Error reading game data for village %s", village_label(self.village_id)
             )
             raise VillageInitException
 
@@ -1533,6 +1553,7 @@ class Village:
             self.mint_manager.route_for(self.village_id) if self.mint_manager else None
         )
 
+        self._gate("defesa", skippable=False)
         with self._phase("defesa"):
             self.setup_defence_manager(data=data)
         if self.def_man:
@@ -1542,11 +1563,13 @@ class Village:
                 self.mint_route.get("flag_lock")
                 if self.mint_route and self.mint_route.get("role") == "hub" else None
             )
-        with self._phase("missoes"):
-            self.run_quest_actions(config=config)
+        if self._gate("missoes"):
+            with self._phase("missoes"):
+                self.run_quest_actions(config=config)
 
-        with self._phase("construcao"):
-            self.run_builder()
+        if self._gate("construcao"):
+            with self._phase("construcao"):
+                self.run_builder()
         self._service_hunter()
         paused = self._mint_spending_paused()
         if paused:
@@ -1554,22 +1577,33 @@ class Village:
                 "Cunhagem: hub da campanha -- construção, pesquisa, nobre, "
                 "recrutamento e mercado pausados; o recurso fica para a moeda"
             )
-        with self._phase("recrutamento"):
-            self.units_get_template()
-            self.set_unit_wanted_levels()
-
-            self.units.update_totals()
-            if not paused:
-                self.run_unit_upgrades()
-        if not paused:
-            with self._phase("nobre"):
-                self.run_snob_recruit()
+        # A previsao de "recrutamento" ja soma os dois blocos (o balde do
+        # medidor e por fase), entao um gate so cobre os dois. E o bloco que
+        # rele as tropas (`update_totals`): adiado ele, PvP, apoio, farm e
+        # coleta tambem ficam para a proxima passada, em vez de decidir sobre
+        # contagem do ciclo anterior.
+        recruit_ok = self._gate("recrutamento")
+        if recruit_ok:
             with self._phase("recrutamento"):
-                self.do_recruit()
-            with self._phase("mercado"):
-                self.manage_local_resources()
-        with self._phase("compartilhamento"):
-            self.run_resource_sharing()
+                self.units_get_template()
+                self.set_unit_wanted_levels()
+
+                self.units.update_totals()
+                if not paused:
+                    self.run_unit_upgrades()
+        if not paused:
+            if self._gate("nobre"):
+                with self._phase("nobre"):
+                    self.run_snob_recruit()
+            if recruit_ok:
+                with self._phase("recrutamento"):
+                    self.do_recruit()
+            if self._gate("mercado"):
+                with self._phase("mercado"):
+                    self.manage_local_resources()
+        if self._gate("compartilhamento"):
+            with self._phase("compartilhamento"):
+                self.run_resource_sharing()
         self._service_hunter()
 
         # check_forced_peace() estava definido mas nunca era chamado de lugar
@@ -1579,18 +1613,22 @@ class Village:
         # atacaria durante a janela de paz. Precisa rodar antes de
         # ensure_attack_manager(), que le os tres campos.
         self.check_forced_peace()
+        # O mapa nao e adiavel: o AttackManager que o Hunter usa nasce aqui.
+        self._gate("mapa", skippable=False)
         with self._phase("mapa"):
             self.ensure_map_loaded()
             # P1-17: precisa vir antes de run_pvp_conquest()/Hunter, que
             # consomem self.attack independentemente da config de farm.
             self.ensure_attack_manager()
-        with self._phase("pvp"):
-            self.run_pvp_conquest()
+        if recruit_ok and self._gate("pvp"):
+            with self._phase("pvp"):
+                self.run_pvp_conquest()
         self._service_hunter()
         # Apoio a membro da tribo aprovado no painel (§8.39). Antes do farm e
         # da coleta, que tiram lança e espada de casa.
-        with self._phase("apoio"):
-            self.run_tribe_support()
+        if recruit_ok and self._gate("apoio"):
+            with self._phase("apoio"):
+                self.run_tribe_support()
         # A conquista barbara NAO e chamada daqui desde 2026-09-22: ela roda
         # uma vez por ciclo, no inicio, em TWB.run_barbarian_conquest().
         # Chamar de novo aqui seria, para 29 das 30 aldeias, um `return False`
@@ -1600,14 +1638,16 @@ class Village:
         # A reserva de escolta que a aldeia precisa respeitar ja esta em
         # `units.conquest_reserve` antes de run_farming() abaixo, porque o
         # planejador rodou antes de qualquer aldeia deste ciclo.
-        with self._phase("farm"):
-            self.run_farming()
+        if recruit_ok and self._gate("farm"):
+            with self._phase("farm"):
+                self.run_farming()
         self._service_hunter()
 
-        with self._phase("coleta"):
-            self.do_gather()
+        if recruit_ok and self._gate("coleta"):
+            with self._phase("coleta"):
+                self.do_gather()
         self._service_hunter()
-        if not paused:
+        if not paused and self._gate("mercado"):
             with self._phase("mercado"):
                 self.go_manage_market()
 
@@ -1867,7 +1907,7 @@ class Village:
         if not raw or not isinstance(raw.get("villages"), dict):
             self.logger.warning(
                 "Village %s: config.json ilegivel -- heranca de config nao "
-                "gravada neste ciclo", self.village_id
+                "gravada neste ciclo", village_label(self.village_id)
             )
             return False
         raw["villages"][self.village_id] = config["villages"][self.village_id]
@@ -1895,7 +1935,7 @@ class Village:
         if inheritance_mode == "global_template":
             self.logger.info(
                 "Village %s: inheritance mode is 'global_template', keeping global template",
-                self.village_id
+                village_label(self.village_id)
             )
             clear_flag()
             return
@@ -1906,7 +1946,7 @@ class Village:
         if not my_x or not my_y:
             self.logger.warning(
                 "Village %s: no coordinates available for inheritance, keeping global template",
-                self.village_id
+                village_label(self.village_id)
             )
             clear_flag()
             return
@@ -1935,7 +1975,7 @@ class Village:
             self.logger.info(
                 "Village %s: no donor village found — applying village_template fallback "
                 "(profile=%s, building=%s, units=%s)",
-                self.village_id, fallback_profile, fallback_building, fallback_units
+                village_label(self.village_id), fallback_profile, fallback_building, fallback_units
             )
 
             # Na copia em memoria E no disco, numa escrita so: antes isto
@@ -1960,13 +2000,13 @@ class Village:
             if zone_candidates:
                 self.logger.info(
                     "Village %s: restricting inheritance donors to zone '%s' (%d candidate(s))",
-                    self.village_id, my_zone, len(zone_candidates)
+                    village_label(self.village_id), my_zone, len(zone_candidates)
                 )
                 candidates = zone_candidates
             else:
                 self.logger.debug(
                     "Village %s: no donors in zone '%s', using all managed villages",
-                    self.village_id, my_zone
+                    village_label(self.village_id), my_zone
                 )
 
         # Feature 30: territorial override. Decided before the ratio because a
@@ -1982,7 +2022,7 @@ class Village:
                 # watchtower.enabled fica ligado sem efeito nenhum e em silencio.
                 self.logger.info(
                     "Village %s: watchtower check — %s (designate: %s)",
-                    self.village_id, wt_reason, wants_watchtower
+                    village_label(self.village_id), wt_reason, wants_watchtower
                 )
 
         # Feature 7: filter by needed profile when mode is empire_ratio
@@ -1994,13 +2034,13 @@ class Village:
                 self.logger.info(
                     "Village %s: designated as WATCHTOWER village (%s) — "
                     "excluded from the empire offensive/defensive ratio",
-                    self.village_id, wt_reason
+                    village_label(self.village_id), wt_reason
                 )
             else:
                 needed_profile = Village.get_needed_profile(config)
                 self.logger.info(
                     "Village %s: empire_ratio inheritance — needed profile = %s",
-                    self.village_id, needed_profile
+                    village_label(self.village_id), needed_profile
                 )
             filtered = [
                 (vid, data) for vid, data in candidates
@@ -2012,7 +2052,7 @@ class Village:
                 self.logger.warning(
                     "Village %s: no donor with profile '%s' found, "
                     "will apply profile_templates overrides after inheritance.",
-                    self.village_id, needed_profile
+                    village_label(self.village_id), needed_profile
                 )
                 used_profile_template = True
 
@@ -2044,21 +2084,21 @@ class Village:
                     donor_config[key] = value
                 self.logger.info(
                     "Village %s: applied profile_templates[%s] overrides (%s)",
-                    self.village_id, needed_profile,
+                    village_label(self.village_id), needed_profile,
                     ", ".join(f"{k}={v}" for k, v in profile_tpl.items())
                 )
             elif used_profile_template:
                 self.logger.warning(
                     "Village %s: profile_templates[%s] not found in config, "
                     "donor templates kept as-is.",
-                    self.village_id, needed_profile
+                    village_label(self.village_id), needed_profile
                 )
 
         config["villages"][self.village_id] = donor_config
         self._persist_village_config(config)
         self.logger.info(
             "Village %s inherited config from village %s (profile: %s, %.1f tiles away)",
-            self.village_id, best_vid, donor_config.get("profile", "n/a"), best_dist
+            village_label(self.village_id), village_label(best_vid), donor_config.get("profile", "n/a"), best_dist
         )
 
     def set_cache_vars(self):

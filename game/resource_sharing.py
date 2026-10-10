@@ -31,6 +31,7 @@ import os
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 from core.filemanager import FileManager
 from game import mint_planner
 
@@ -121,7 +122,7 @@ class ResourceSharingManager:
         if not giveable:
             logger.debug(
                 "ResourceSharing: aldeia %s não tem nada a doar por nenhuma das "
-                "duas regras", self.current_village_id
+                "duas regras", village_label(self.current_village_id)
             )
             return
 
@@ -131,7 +132,7 @@ class ResourceSharingManager:
         # de 4.000 de madeira consome 4 de uma vez.
         carry_budget, merchants, per_merchant = self._get_carry_budget(cfg)
         if merchants < 1:
-            logger.info("ResourceSharing: sem mercadores disponíveis em %s", self.current_village_id)
+            logger.info("ResourceSharing: sem mercadores disponíveis em %s", village_label(self.current_village_id))
             self._log_event(
                 source=self.current_village_id, target=None, resources=None,
                 success=False, reason="no_merchants",
@@ -145,7 +146,7 @@ class ResourceSharingManager:
         if not plan:
             logger.debug(
                 "ResourceSharing: aldeia %s tem excedente (%s) mas nenhuma "
-                "receptora elegível neste ciclo", self.current_village_id, giveable
+                "receptora elegível neste ciclo", village_label(self.current_village_id), giveable
             )
             return
 
@@ -163,7 +164,7 @@ class ResourceSharingManager:
             if success:
                 logger.info(
                     "ResourceSharing: enviado %s de %s → %s (regra: %s)",
-                    to_send, self.current_village_id, target_id, kind
+                    to_send, village_label(self.current_village_id), village_label(target_id), kind
                 )
                 # Registrar antes de qualquer outra coisa: é isto que impede a
                 # próxima aldeia do mesmo ciclo de reatender a demanda que este
@@ -179,7 +180,7 @@ class ResourceSharingManager:
             else:
                 logger.warning(
                     "ResourceSharing: falha ao enviar de %s → %s (regra: %s)",
-                    self.current_village_id, target_id, kind
+                    village_label(self.current_village_id), village_label(target_id), kind
                 )
                 self._log_event(
                     source=self.current_village_id, target=target_id, resources=to_send,
@@ -212,12 +213,12 @@ class ResourceSharingManager:
             return
         hub_state = FileManager.load_json_file(f"cache/managed/{hub}.json") or {}
         if not hub_state.get("storage") or not hub_state.get("x"):
-            logger.info("Cunhagem: hub %s sem estado no cache, nada enviado", hub)
+            logger.info("Cunhagem: hub %s sem estado no cache, nada enviado", village_label(hub))
             return
 
         carry_budget, merchants, per_merchant = self._get_carry_budget(self.sharing_cfg)
         if merchants < 1:
-            logger.debug("Cunhagem: %s sem mercadores livres", self.current_village_id)
+            logger.debug("Cunhagem: %s sem mercadores livres", village_label(self.current_village_id))
             return
 
         cost, _ = mint_planner.village_coin_cost(hub_state, int(time.time()))
@@ -237,7 +238,7 @@ class ResourceSharingManager:
         if not plan:
             logger.debug(
                 "Cunhagem: %s não tem o que mandar ao hub %s (piso %s, hub cheio ou sem sobra)",
-                self.current_village_id, hub, route.get("floor"),
+                village_label(self.current_village_id), village_label(hub), route.get("floor"),
             )
             return
 
@@ -246,10 +247,10 @@ class ResourceSharingManager:
             target_coords=f"{hub_state.get('x')}|{hub_state.get('y')}",
         )
         if success:
-            logger.info("Cunhagem: enviado %s de %s → hub %s", plan, self.current_village_id, hub)
+            logger.info("Cunhagem: enviado %s de %s → hub %s", plan, village_label(self.current_village_id), village_label(hub))
             self._record_pending(hub, plan, getattr(current_resman, "last_send_travel_seconds", None))
         else:
-            logger.warning("Cunhagem: falha ao enviar de %s → hub %s", self.current_village_id, hub)
+            logger.warning("Cunhagem: falha ao enviar de %s → hub %s", village_label(self.current_village_id), village_label(hub))
         self._log_event(
             source=self.current_village_id, target=hub, resources=plan,
             success=bool(success), reason=None if success else "send_failed", kind="mint",
@@ -495,22 +496,22 @@ class ResourceSharingManager:
             if vid == self.current_village_id:
                 continue
             if not (state.get("buidling_levels") or {}).get("market"):
-                logger.debug("ResourceSharing: %s sem mercado, não pode receber", vid)
+                logger.debug("ResourceSharing: %s sem mercado, não pode receber", village_label(vid))
                 continue
             if not state.get("storage"):
                 logger.debug(
                     "ResourceSharing: %s ainda sem capacidade de armazém no cache, "
-                    "pulando até o próximo ciclo dela", vid
+                    "pulando até o próximo ciclo dela", village_label(vid)
                 )
                 continue
             if state.get("under_attack"):
-                logger.debug("ResourceSharing: %s sob ataque, não vou abastecer", vid)
+                logger.debug("ResourceSharing: %s sob ataque, não vou abastecer", village_label(vid))
                 continue
             if not state.get("x") or not state.get("y"):
                 # O formulário de envio endereça por coordenada; sem x/y não há
                 # como montar o destino. Planejar um envio que não tem endereço
                 # só gastaria requisições para acabar em recusa.
-                logger.debug("ResourceSharing: %s sem coordenada no cache, pulando", vid)
+                logger.debug("ResourceSharing: %s sem coordenada no cache, pulando", village_label(vid))
                 continue
             receivers.append((vid, state))
         return receivers
@@ -795,7 +796,7 @@ class ResourceSharingManager:
         self._save_pending(entries)
         logger.debug(
             "ResourceSharing: %s a caminho de %s, chega em %ss",
-            resources, target_id, travel
+            resources, village_label(target_id), travel
         )
 
     @staticmethod
@@ -873,7 +874,7 @@ class ResourceSharingManager:
                 # corrigir com o markup na mão em vez de por tentativa e erro.
                 logger.warning(
                     "ResourceSharing: não foi possível ler os mercadores disponíveis "
-                    "em %s (markup inesperado), assumindo 1", self.current_village_id
+                    "em %s (markup inesperado), assumindo 1", village_label(self.current_village_id)
                 )
                 self._dump_once("cache/resource_sharing/market_send.html", res.text)
                 return fallback_capacity, 1, fallback_capacity
@@ -885,7 +886,7 @@ class ResourceSharingManager:
 
             logger.debug(
                 "ResourceSharing: %s tem %s de %s mercadores livres, carga %s",
-                self.current_village_id, available, data["total"],
+                village_label(self.current_village_id), available, data["total"],
                 available * per_merchant
             )
             return available * per_merchant, available, per_merchant

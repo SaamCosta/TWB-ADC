@@ -28,6 +28,7 @@ import logging
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 
 logger = logging.getLogger("RewardGate")
 
@@ -92,17 +93,17 @@ class RewardGate:
                 logger.warning(
                     "Recompensas: o contador do jogo dizia 0 na aldeia %s e o "
                     "popup tinha %d pronta(s) -- gate desligado ate reiniciar, "
-                    "voltando ao GET em toda aldeia", village_id, found
+                    "voltando ao GET em toda aldeia", village_label(village_id), found
                 )
             else:
                 logger.info(
                     "Recompensas: conferencia na aldeia %s -- contador 0 e popup "
-                    "sem recompensa pronta, o gate segue", village_id
+                    "sem recompensa pronta, o gate segue", village_label(village_id)
                 )
         elif reason == "contador_positivo" and not found:
             # Nao custa nada a mais que o comportamento antigo (o GET ja
             # aconteceria); fica registrado porque contradiz a leitura do JS.
             logger.info(
                 "Recompensas: contador %s na aldeia %s e nenhuma pronta no popup",
-                count, village_id
+                count, village_label(village_id)
             )

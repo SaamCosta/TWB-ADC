@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import time
+from core.village_label import village_label
 
 logger = logging.getLogger("OverviewShadow")
 
@@ -212,7 +213,7 @@ def reuse(wrapper, village_id, point):
         gd = entry["game_data"]
         logger.debug(
             "Releitura %s aldeia %s: reaproveitado game_data de %s ha %.0fs "
-            "(sem GET)", point, village_id, gd.get("screen"), age)
+            "(sem GET)", point, village_label(village_id), gd.get("screen"), age)
         return json.loads(json.dumps(gd))
     except Exception:
         return None
@@ -236,7 +237,7 @@ def record_reread(wrapper, village_id, point, previous, path=SHADOW_FILE):
             return None
         result = compare(previous, fresh)
         if result is None:
-            logger.debug("Sombra %s aldeia %s: sem leitura anterior", point, village_id)
+            logger.debug("Sombra %s aldeia %s: sem leitura anterior", point, village_label(village_id))
             return None
         logger.info(format_line(point, result))
         entry = dict(result, point=point, logged_at=time.time())
@@ -247,5 +248,5 @@ def record_reread(wrapper, village_id, point, previous, path=SHADOW_FILE):
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return result
     except Exception as e:
-        logger.debug("Sombra %s aldeia %s falhou: %s", point, village_id, e)
+        logger.debug("Sombra %s aldeia %s falhou: %s", point, village_label(village_id), e)
         return None

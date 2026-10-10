@@ -32,6 +32,7 @@ import logging
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 from core.file_lock import file_lock
 from core.filemanager import FileManager
 from core.notification import Notification
@@ -41,8 +42,20 @@ class Hunter:
     SCHEDULE_CACHE = "cache/hunter/schedules.json"
     DATETIME_FMT = "%Y-%m-%d %H:%M:%S"
 
-    # Seconds before send_time to enter priority mode and start monitoring
-    window = 120
+    # Janela de silencio: a menos disto de uma saida, todo checkpoint entrega
+    # o controle ao Hunter, que espera o segundo exato e manda. Era 120 s; em
+    # 2026-10-08 um checkpoint passou com 168 s de folga, o trecho seguinte
+    # levou 174 s e o 4o nobre do trem contra a 57033 saiu 6 s atrasado. 300 s
+    # e o valor pedido pelo usuario. O que garante que nenhuma tarefa engula a
+    # janela nao e este numero, e o `gate()` abaixo.
+    window = 300
+    # Folga que o Hunter precisa ANTES da saida para agir: prime da origem num
+    # processo novo (~4 requisicoes, ~60 s medidos) mais o GET da praca. Uma
+    # tarefa so comeca se a previsao dela terminar antes de `saida - PREP`.
+    PREP_SECONDS = 90
+    # Teto de voltas do gate() por chamada: cada volta despacha uma saida, e
+    # nenhum checkpoint precisa servir mais que isso de uma vez.
+    GATE_MAX_ROUNDS = 8
     PROBE_RETRY_SECONDS = 60
     # Quanto antes da janela um processo que acabou de subir precisa acordar.
     # Medido em 2026-09-27: da volta da rede ate o Hunter conseguir agir foram
@@ -212,7 +225,7 @@ class Hunter:
             if arrival_ts < time.time():
                 self.logger.debug(
                     "Hunter: schedule for target %s at %s is in the past, skipping",
-                    target_id, arrival_str
+                    village_label(target_id), arrival_str
                 )
                 continue
 
@@ -240,19 +253,19 @@ class Hunter:
                     if send_time < time.time():
                         self.logger.warning(
                             "Hunter: send_time for %s -> %s already passed (%.0fs ago), skipping attack",
-                            source_id, target_id, time.time() - send_time
+                            village_label(source_id), village_label(target_id), time.time() - send_time
                         )
                         continue
                     self.logger.info(
                         "Hunter: %s -> %s  travel=%.0fs  send_at=%s  [%s]",
-                        source_id, target_id, duration,
+                        village_label(source_id), village_label(target_id), duration,
                         datetime.datetime.fromtimestamp(send_time).strftime(self.DATETIME_FMT),
                         "FAKE" if is_fake else "REAL",
                     )
                 else:
                     self.logger.warning(
                         "Hunter: could not probe duration %s -> %s, will retry next cycle",
-                        source_id, target_id
+                        village_label(source_id), village_label(target_id)
                     )
 
                 attacks.append({
@@ -279,7 +292,7 @@ class Hunter:
             changed = True
             self.logger.info(
                 "Hunter: registered schedule %s — %d attack(s) against %s arriving %s",
-                sched_key, len(attacks), target_id, arrival_str
+                sched_key, len(attacks), village_label(target_id), arrival_str
             )
 
         if changed:
@@ -289,9 +302,13 @@ class Hunter:
     # Main run — fires due attacks
     # ------------------------------------------------------------------
 
-    def run(self, config):
+    def run(self, config, horizon=None):
         """
         Called once per TWB cycle (after the normal village loop).
+
+        `horizon` (segundos) alarga a janela desta chamada: o `gate()` usa
+        para segurar o bot ate uma saida que esta alem de `window`, quando a
+        tarefa seguinte nao cabe antes dela e nao pode ser adiada.
 
         For each pending attack whose send_time is within `window` seconds:
           - Sleeps until exact send_time (blocks; priority_mode set on wrapper).
@@ -305,10 +322,14 @@ class Hunter:
         if self._running:
             return
         self._running = True
+        if self.wrapper is not None:
+            self.wrapper.hunter_active = True
         try:
-            self._run(config)
+            self._run(config, horizon=horizon)
         finally:
             self._running = False
+            if self.wrapper is not None:
+                self.wrapper.hunter_active = False
             # A26-18 por tabela: uma excecao no meio de um schedule nao pode
             # deixar o wrapper preso em priority_mode.
             if hasattr(self.wrapper, "priority_mode"):
@@ -317,15 +338,58 @@ class Hunter:
             for note in notes:
                 Notification.send(note)
 
+    def gate(self, config, phase, predicted, skippable=True, village_id=None):
+        """
+        Decide, ANTES de uma tarefa comecar, se ela cabe ate a proxima saida.
+
+        Devolve True para rodar a tarefa e False para adia-la nesta passada.
+        Quando a saida esta perto (dentro de `window`), ou a tarefa nao cabe
+        e nao pode ser adiada, o proprio gate entrega o controle ao Hunter,
+        que espera o segundo exato e manda -- e so depois volta a decidir.
+
+        `predicted` e a duracao prevista da tarefa em segundos, vinda do
+        historico do medidor de ciclo (`core/phase_forecast.py`).
+
+        2026-10-08, Barbara #57033: o checkpoint olhou a fila com 168 s de
+        folga, a janela era 120 s, e o trecho seguinte (recrutamento, nobre,
+        mercado e compartilhamento) levou 174 s. O 4o nobre saiu atrasado e
+        foi recusado. Checkpoint que so pergunta "esta na hora?" nao basta: a
+        pergunta certa e "a proxima tarefa termina antes da saida?".
+        """
+        if not config.get("hunter", {}).get("enabled", False) or self._running:
+            return True
+        predicted = max(0.0, float(predicted or 0))
+        for _ in range(self.GATE_MAX_ROUNDS):
+            now = time.time()
+            nearest = self.nearest_send_time(after=now)
+            if self.wrapper is not None:
+                self.wrapper.hunter_next_send = nearest
+            if not nearest:
+                return True
+            t_left = nearest - now
+            fits = predicted + self.PREP_SECONDS < t_left
+            if t_left > self.window and fits:
+                return True
+            if t_left > self.window and skippable:
+                self.logger.info(
+                    "Hunter: %s de %s adiada -- previsao %.0f s, saida agendada "
+                    "em %.0f s (%s)", phase, village_label(village_id) if village_id else "conta",
+                    predicted, t_left,
+                    datetime.datetime.fromtimestamp(nearest).strftime(self.DATETIME_FMT)
+                )
+                return False
+            self.logger.info(
+                "Hunter: segurando antes de %s de %s -- saida em %.0f s %s",
+                phase, village_label(village_id) if village_id else "conta", t_left,
+                "(janela de silencio)" if t_left <= self.window
+                else "(previsao %.0f s nao cabe e a tarefa nao pode ser adiada)" % predicted
+            )
+            self.run(config, horizon=t_left + 1)
+        return True
+
     def _village_label(self, village_id):
         """'BBM 011 (74690)' quando o nome e conhecido, senao so o id."""
-        village = self.villages.get(str(village_id))
-        name = None
-        try:
-            name = village.game_data["village"]["name"]
-        except (AttributeError, KeyError, TypeError):
-            pass
-        return "%s (%s)" % (name, village_id) if name else str(village_id)
+        return village_label(village_id)
 
     def _note_failure(self, atk, target_id, reason):
         label = "FAKE" if atk.get("is_fake") else "REAL"
@@ -334,7 +398,7 @@ class Hunter:
         self._notes.append(
             "Hunter [%s]: comando%s %s -> %s NAO saiu: %s"
             % (label, noble, self._village_label(atk.get("source_village_id")),
-               target_id, reason)
+               village_label(target_id), reason)
         )
 
     def _note_expired(self, sched_key):
@@ -381,7 +445,7 @@ class Hunter:
             return
         self.logger.info(
             "Hunter: aldeia %s ainda nao rodou neste processo -- lendo antes do envio",
-            source_id
+            village_label(source_id)
         )
         prime(config=config)
 
@@ -393,11 +457,12 @@ class Hunter:
         atk["missed_by_seconds"] = missed
         self.logger.error(
             "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
-            atk["source_village_id"], target_id, missed
+            village_label(atk["source_village_id"]), village_label(target_id), missed
         )
         self._note_failure(atk, target_id, "a hora de saida passou ha %.0f s" % missed)
 
-    def _run(self, config):
+    def _run(self, config, horizon=None):
+        window = self.window if horizon is None else max(self.window, float(horizon))
         schedules = self._load_schedules()
         if not schedules:
             return
@@ -470,7 +535,7 @@ class Hunter:
                 changed = True
                 continue
 
-            if time_to_send > self.window:
+            if time_to_send > window:
                 continue  # not our cycle yet
 
             # --- Within the send window ---
@@ -485,7 +550,7 @@ class Hunter:
             label = "FAKE" if atk.get("is_fake") else "REAL"
             self.logger.info(
                 "Hunter: [%s] %s -> %s — sleeping %.1fs to hit send_time",
-                label, atk["source_village_id"], target_id, time_to_send
+                label, village_label(atk["source_village_id"]), village_label(target_id), time_to_send
             )
             time.sleep(time_to_send)
 
@@ -495,7 +560,7 @@ class Hunter:
                 self.logger.warning(
                     "Hunter: schedule %s foi apagado durante a espera -- "
                     "comando %s -> %s NAO enviado",
-                    sched_key, atk["source_village_id"], target_id
+                    sched_key, village_label(atk["source_village_id"]), village_label(target_id)
                 )
                 continue
 
@@ -516,7 +581,7 @@ class Hunter:
             if len(batch) > 1:
                 self.logger.info(
                     "Hunter: batching %d attacks %s -> %s at one send time",
-                    len(batch), atk["source_village_id"], target_id
+                    len(batch), village_label(atk["source_village_id"]), village_label(target_id)
                 )
 
             result = self._send_attack_batch(batch, target_id)
@@ -532,7 +597,7 @@ class Hunter:
                 label = "FAKE" if batch_atk.get("is_fake") else "REAL"
                 self.logger.info(
                     "Hunter: [%s] %s -> %s — %s%s",
-                    label, batch_atk["source_village_id"], target_id,
+                    label, village_label(batch_atk["source_village_id"]), village_label(target_id),
                     "OK" if result else "FAILED",
                     " (batch)" if len(batch) > 1 else "",
                 )
@@ -604,7 +669,7 @@ class Hunter:
         village = self.villages.get(source_id)
         if not village or not village.area:
             self.logger.debug(
-                "Hunter: village %s not ready for duration probe (no area)", source_id
+                "Hunter: village %s not ready for duration probe (no area)", village_label(source_id)
             )
             return None
 
@@ -623,14 +688,14 @@ class Hunter:
         if not village.attack:
             self.logger.warning(
                 "Hunter: village %s has no attack manager for duration probe",
-                source_id
+                village_label(source_id)
             )
             return None
         position = village.attack._resolve_position(target_id)
         if position is None:
             self.logger.warning(
                 "Hunter: sem coordenada para o alvo %s a partir da aldeia %s",
-                target_id, source_id
+                village_label(target_id), village_label(source_id)
             )
             return None
 
@@ -641,7 +706,7 @@ class Hunter:
             self.logger.error("Hunter: probe GET failed: %s", e)
             return None
         if pre is None:
-            self.logger.warning("Hunter: probe GET timed out for %s -> %s", source_id, target_id)
+            self.logger.warning("Hunter: probe GET timed out for %s -> %s", village_label(source_id), village_label(target_id))
             return None
 
         pre_data = {}
@@ -659,7 +724,7 @@ class Hunter:
             self.logger.error("Hunter: probe POST failed: %s", e)
             return None
         if conf is None:
-            self.logger.warning("Hunter: probe POST timed out for %s -> %s", source_id, target_id)
+            self.logger.warning("Hunter: probe POST timed out for %s -> %s", village_label(source_id), village_label(target_id))
             return None
 
         if '<div class="error_box">' in conf.text:
@@ -668,7 +733,7 @@ class Hunter:
             # sairia. Ver Extractor.error_box_text.
             self.logger.warning(
                 "Hunter: probe %s -> %s recusada pelo jogo: %s",
-                source_id, target_id, Extractor.error_box_text(conf)
+                village_label(source_id), village_label(target_id), Extractor.error_box_text(conf)
             )
             return None
 
@@ -696,16 +761,16 @@ class Hunter:
         source_id = str(attacks[0]["source_village_id"])
         if any(str(atk["source_village_id"]) != source_id for atk in attacks):
             self.logger.error(
-                "Hunter: refusing mixed-source batch for target %s", target_id
+                "Hunter: refusing mixed-source batch for target %s", village_label(target_id)
             )
             return False
 
         village = self.villages.get(source_id)
         if not village:
-            self.logger.error("Hunter: village %s not in managed villages dict", source_id)
+            self.logger.error("Hunter: village %s not in managed villages dict", village_label(source_id))
             return False
         if not village.attack:
-            self.logger.error("Hunter: village %s has no attack manager initialised", source_id)
+            self.logger.error("Hunter: village %s has no attack manager initialised", village_label(source_id))
             return False
 
         primary_troops = attacks[0]["troops"]
@@ -734,6 +799,6 @@ class Hunter:
 
         if result == "forced_peace":
             self.logger.warning(
-                "Hunter: attack %s -> %s blocked by forced peace", source_id, target_id
+                "Hunter: attack %s -> %s blocked by forced peace", village_label(source_id), village_label(target_id)
             )
         return False

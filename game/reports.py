@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from core.extractors import Extractor
+from core.village_label import village_label
 from core.filemanager import FileManager
 
 # Bugfix (2026-08-07): o jogo passou a renderizar a data do relatorio
@@ -133,7 +134,7 @@ class ReportManager:
                 if losses != {} and self.logger:
                     self.logger.debug(
                         "safe_to_engage %s: units sent %s, units lost %s",
-                        vid, units_sent, losses
+                        village_label(vid), units_sent, losses
                     )
 
                 for sent_type in units_sent:
@@ -380,13 +381,13 @@ class ReportManager:
             ):
                 loot[loot_entry[0]] = loot_entry[1]
             extra["loot"] = loot
-            self.logger.info("attack report %s -> %s", from_village, to_village)
+            self.logger.info("attack report %s -> %s", village_label(from_village), village_label(to_village))
 
         scout_results = re.search(
             r'(?s)(<table id="attack_spy_resources".+?</table>)', report
         )
         if scout_results:
-            self.logger.info("scout report %s -> %s", from_village, to_village)
+            self.logger.info("scout report %s -> %s", village_label(from_village), village_label(to_village))
             scout_buildings = re.search(
                 r'(?s)<input id="attack_spy_building_data" type="hidden" value="(.+?)"',
                 report,
@@ -414,7 +415,7 @@ class ReportManager:
                 extra["loyalty_after"] = loyalty
                 self.logger.info(
                     "Noble report %s -> %s: loyalty after = %.1f",
-                    from_village, to_village, loyalty
+                    village_label(from_village), village_label(to_village), loyalty
                 )
 
         attack_type = "scout" if scout_results and not results else "attack"

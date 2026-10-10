@@ -7,6 +7,7 @@ from flask import Flask, jsonify, send_from_directory, request, render_template,
 
 from core.exceptions import InvalidJSONException
 from core import account_pulse
+from core.village_label import village_label
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
@@ -21,6 +22,8 @@ app = Flask(__name__)
 # console Python remoto em qualquer excecao -- execucao de codigo arbitrario
 # para quem alcancar a porta.
 app.config["DEBUG"] = False
+# `{{ vid | vlabel }}` -> "BBM 022 (40618)": aldeia propria nunca so pelo id.
+app.jinja_env.filters["vlabel"] = village_label
 
 
 @app.before_request

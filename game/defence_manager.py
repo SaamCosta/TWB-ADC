@@ -6,6 +6,7 @@ import re
 import time
 
 from core.extractors import INCOMING_ROW_RE, Extractor
+from core.village_label import village_label
 from core.filemanager import FileManager
 from core.world_config import WorldConfig
 
@@ -330,12 +331,12 @@ class DefenceManager:
         if not send_support:
             self.logger.info(
                 "Support %s -> %s nao enviado: nenhuma tropa defensiva disponivel",
-                self.village_id, requesting_village,
+                village_label(self.village_id), village_label(requesting_village),
             )
             return False
 
         self.logger.info(
-            "Sending requested support to village %s: %s", requesting_village, str(send_support)
+            "Sending requested support to village %s: %s", village_label(requesting_village), str(send_support)
         )
         return self.support(requesting_village, troops=send_support)
 
@@ -356,7 +357,7 @@ class DefenceManager:
             self.logger.info(
                 "Village %s: bonus de velocidade do apoio recebido agora e %d%% "
                 "(era %d%%)",
-                self.village_id, self.support_speed_bonus_pct, previous_bonus,
+                village_label(self.village_id), self.support_speed_bonus_pct, previous_bonus,
             )
         marker_present = 'no_ignored_command' in main
         supports_only = False
@@ -375,7 +376,7 @@ class DefenceManager:
                 self.logger.warning(
                     "Village %s: incoming attack from %s, eta %ds (%.1fh) "
                     "(command_id=%s) -- %s",
-                    self.village_id,
+                    village_label(self.village_id),
                     self.incoming_attacker or self.incoming_origin or "?",
                     self.incoming_eta,
                     self.incoming_eta / 3600,
@@ -389,7 +390,7 @@ class DefenceManager:
                     "Village %s: %d linha(s) de comando na visão geral, mas "
                     "nenhum ETA pôde ser lido -- markup provavelmente mudou, "
                     "tratando como urgente (ver Extractor.incoming_commands)",
-                    self.village_id,
+                    village_label(self.village_id),
                     self.incoming_rows_seen,
                 )
             else:
@@ -401,7 +402,7 @@ class DefenceManager:
                 self.logger.info(
                     "Village %s: marcador de comando presente sem nenhuma linha "
                     "(comandos ignorados pelo jogador?) -- tratando como urgente",
-                    self.village_id,
+                    village_label(self.village_id),
                 )
 
             self.under_attack = True
@@ -420,7 +421,7 @@ class DefenceManager:
             if supports_only:
                 self.logger.info(
                     "Village %s: %d incoming support command(s), no attack detected",
-                    self.village_id, self.incoming_support_rows_seen,
+                    village_label(self.village_id), self.incoming_support_rows_seen,
                 )
             else:
                 self.incoming_eta = None
@@ -438,7 +439,7 @@ class DefenceManager:
             if self._support_others():
                 ok = False
         if ok:
-            self.logger.info("Area OK for village %s, nice and quiet", self.village_id)
+            self.logger.info("Area OK for village %s, nice and quiet", village_label(self.village_id))
             # All is well
 
     def _release_finished_supports(self):
@@ -460,7 +461,7 @@ class DefenceManager:
             if vil not in still:
                 self.logger.info(
                     "Support %s -> %s: a aldeia nao esta mais sob ataque, "
-                    "vaga de apoio liberada", self.village_id, vil
+                    "vaga de apoio liberada", village_label(self.village_id), village_label(vil)
                 )
         self.supported = still
 
@@ -499,11 +500,11 @@ class DefenceManager:
                 if not send:
                     self.logger.info(
                         "Support %s -> %s adiado: %s",
-                        self.village_id, vil, reason
+                        village_label(self.village_id), village_label(vil), reason
                     )
                     continue
                 self.logger.info(
-                    "Support %s -> %s liberado: %s", self.village_id, vil, reason
+                    "Support %s -> %s liberado: %s", village_label(self.village_id), village_label(vil), reason
                 )
                 if self.support_other(vil):
                     self.supported.append(vil)
@@ -586,7 +587,7 @@ class DefenceManager:
         vid = candidates[0]
         self.logger.info(
             "Evacuating troops from village %s to safe haven %s: %s",
-            self.village_id, vid, str(to_hide)
+            village_label(self.village_id), village_label(vid), str(to_hide)
         )
         return bool(self.support(vid, troops=to_hide))
 
@@ -626,7 +627,7 @@ class DefenceManager:
             if self._flag_lock_logged != self.flag_lock_reason:
                 self.logger.info(
                     "Village %s: bandeira travada (%s), não mexendo -- pedida: %s",
-                    self.village_id, self.flag_lock_reason, set_flag,
+                    village_label(self.village_id), self.flag_lock_reason, set_flag,
                 )
                 self._flag_lock_logged = self.flag_lock_reason
             return
@@ -656,7 +657,7 @@ class DefenceManager:
         ):
             self.logger.debug(
                 "Village %s está com a bandeira manual tipo %s, não mexendo",
-                self.village_id, self.current_flag[0]
+                village_label(self.village_id), self.current_flag[0]
             )
             return
 
@@ -675,7 +676,7 @@ class DefenceManager:
             if not self.current_flag:
                 self.logger.info(
                     "Village %s está sem bandeira e nenhum tipo da preferência "
-                    "%s está disponível no inventário", self.village_id, wanted
+                    "%s está disponível no inventário", village_label(self.village_id), wanted
                 )
             return
 
@@ -712,7 +713,7 @@ class DefenceManager:
                 self.logger.debug(
                     "Village %s mantém a bandeira tipo %s: a disponível (tipo "
                     "%s) está mais abaixo na preferência",
-                    self.village_id, self.current_flag[0], chosen
+                    village_label(self.village_id), self.current_flag[0], chosen
                 )
                 return
 
@@ -741,14 +742,14 @@ class DefenceManager:
                 "Village %s adiaria trocar para tipo %s nível %s, mas o "
                 "inventário de bandeiras não foi lido neste ciclo -- "
                 "esperando a próxima leitura para não roubar bandeira de "
-                "outra aldeia", self.village_id, chosen, chosen_level
+                "outra aldeia", village_label(self.village_id), chosen, chosen_level
             )
             return
 
         if not self._can_change_flag:
             if not self._sf_logged:
                 self.logger.info(
-                    "Unable to set new flag on village %s because of cool down", self.village_id
+                    "Unable to set new flag on village %s because of cool down", village_label(self.village_id)
                 )
                 self._sf_logged = True
             return
@@ -759,7 +760,7 @@ class DefenceManager:
         self.current_flag = [chosen, chosen_level]
         self.logger.info(
             "Setting flag %d level %d for village %s",
-            chosen, chosen_level, self.village_id
+            chosen, chosen_level, village_label(self.village_id)
         )
 
     def _log_unmet_preference(self, wanted, chosen, chosen_level):
@@ -790,7 +791,7 @@ class DefenceManager:
         self.logger.info(
             "Village %s: preferência de bandeira %s sem oferta no inventário "
             "da conta (%s); melhor disponível: tipo %s nível %s (%s)",
-            self.village_id,
+            village_label(self.village_id),
             missing,
             ", ".join(
                 "tipo %s: %d disponível(is)" % (t, self.flag_type_supply(t))
@@ -1058,14 +1059,14 @@ class DefenceManager:
             self.last_support_error = "destino sem coordenadas"
             self.logger.warning(
                 "[Support] %s -> %s: destino sem coordenadas no mapa/cache, abortando",
-                self.village_id, vid,
+                village_label(self.village_id), village_label(vid),
             )
             return False
         if troops is not None and not troops:
             self.last_support_error = "contingente vazio"
             self.logger.info(
                 "[Support] %s -> %s: contingente vazio, nada a enviar",
-                self.village_id, vid,
+                village_label(self.village_id), village_label(vid),
             )
             return False
 
@@ -1075,7 +1076,7 @@ class DefenceManager:
         pre_support = self.wrapper.get_url(url)
         if pre_support is None:
             self.last_support_error = "sem resposta da praça"
-            self.logger.warning("[Support] %s -> %s: request timed out, aborting", self.village_id, vid)
+            self.logger.warning("[Support] %s -> %s: request timed out, aborting", village_label(self.village_id), village_label(vid))
             return False
         pre_data = {}
         for u in Extractor.attack_form(pre_support):
@@ -1105,7 +1106,7 @@ class DefenceManager:
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
         if conf is None:
             self.last_support_error = "sem resposta da confirmação"
-            self.logger.warning("[Support] %s -> %s: confirm request timed out, aborting", self.village_id, vid)
+            self.logger.warning("[Support] %s -> %s: confirm request timed out, aborting", village_label(self.village_id), village_label(vid))
             return False
         if '<div class="error_box">' in conf.text:
             # Era o unico dos quatro pontos de error_box do bot que nao logava
@@ -1114,7 +1115,7 @@ class DefenceManager:
             self.last_support_error = "recusado pelo jogo: %s" % Extractor.error_box_text(conf)
             self.logger.warning(
                 "[Support] %s -> %s recusado pelo jogo: %s",
-                self.village_id, vid, Extractor.error_box_text(conf)
+                village_label(self.village_id), village_label(vid), Extractor.error_box_text(conf)
             )
             return False
         kind = Extractor.command_confirm_kind(conf)
@@ -1126,7 +1127,7 @@ class DefenceManager:
             self.last_support_error = "confirmação não é de apoio (%s)" % (kind or "ilegível")
             self.logger.warning(
                 "[Support] %s -> %s: a confirmacao do jogo nao e de apoio (%s) -- abortando",
-                self.village_id, vid, kind or "ilegivel",
+                village_label(self.village_id), village_label(vid), kind or "ilegivel",
             )
             return False
         duration = Extractor.attack_duration(conf)
@@ -1134,7 +1135,7 @@ class DefenceManager:
         self.last_support_duration = duration or None
         self.logger.info(
             "[Support] %s -> %s duration %.1f h",
-            self.village_id, vid, duration / 3600
+            village_label(self.village_id), village_label(vid), duration / 3600
         )
 
         confirm_data = {}
@@ -1157,12 +1158,12 @@ class DefenceManager:
         if result:
             self.logger.info(
                 "[Support] %s -> %s enviado e confirmado pelo jogo",
-                self.village_id, vid,
+                village_label(self.village_id), village_label(vid),
             )
             return result
         self.last_support_error = "resposta final não confirmou o envio"
         self.logger.warning(
             "[Support] %s -> %s: resposta final nao confirmou o envio",
-            self.village_id, vid,
+            village_label(self.village_id), village_label(vid),
         )
         return False

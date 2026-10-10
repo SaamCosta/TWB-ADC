@@ -10,7 +10,7 @@
     <select id="village-filter" class="form-control form-control-sm mr-2" style="max-width:160px">
       <option value="">Todas as aldeias</option>
       {% for vid in village_ids %}
-      <option value="{{ vid }}">{{ vid }}</option>
+      <option value="{{ vid }}">{{ vid | vlabel }}</option>
       {% endfor %}
     </select>
     <select id="status-filter" class="form-control form-control-sm mr-2" style="max-width:160px">

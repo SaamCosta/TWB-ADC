@@ -8,6 +8,7 @@ import re
 import time
 
 from core.extractors import Extractor
+from core.village_label import village_label
 from core.filemanager import FileManager
 
 # Carga de um mercador, em recursos. NÃO é publicada em
@@ -173,7 +174,7 @@ class ResourceManager:
         if not game_state or "village" not in game_state:
             self.logger.warning(
                 "Village %s: no parseable game state in this response, "
-                "keeping the previous resource values", self.village_id
+                "keeping the previous resource values", village_label(self.village_id)
             )
             return False
         self.actual["wood"] = game_state["village"]["wood"]
@@ -893,7 +894,7 @@ class ResourceManager:
         if not target_coords:
             self.logger.warning(
                 "send_resources: sem coordenada conhecida para a aldeia %s, "
-                "envio cancelado", target_village_id
+                "envio cancelado", village_label(target_village_id)
             )
             return False
 
@@ -909,7 +910,7 @@ class ResourceManager:
         if '<div class="error_box">' in res.text:
             self.logger.warning(
                 "send_resources: o jogo recusou a tela de envio para a aldeia %s",
-                target_village_id
+                village_label(target_village_id)
             )
             self._dump_response("cache/resource_sharing/last_send_error.html", res.text, overwrite=True)
             return False
@@ -963,7 +964,7 @@ class ResourceManager:
         if response is None:
             self.logger.warning(
                 "send_resources: sem resposta ao enviar %s → aldeia %s",
-                resources, target_village_id
+                resources, village_label(target_village_id)
             )
             return False
         if '<div class="error_box">' in response.text:
@@ -976,7 +977,7 @@ class ResourceManager:
             # formulario real e do contador de mercadores.
             self.logger.warning(
                 "send_resources: o jogo recusou o envio de %s → aldeia %s: %s",
-                resources, target_village_id, self._error_box_text(response.text)
+                resources, village_label(target_village_id), self._error_box_text(response.text)
             )
             self._dump_response("cache/resource_sharing/last_send_error.html", response.text, overwrite=True)
             return False
@@ -997,7 +998,7 @@ class ResourceManager:
                 "send_resources: o jogo aceitou %s → aldeia %s mas não achei o "
                 "formulário de confirmação; a carga NÃO saiu (resposta salva em "
                 "cache/resource_sharing/market_confirm.html)",
-                resources, target_village_id
+                resources, village_label(target_village_id)
             )
             return False
 
@@ -1005,19 +1006,19 @@ class ResourceManager:
         if confirmed is None:
             self.logger.warning(
                 "send_resources: sem resposta ao confirmar %s → aldeia %s",
-                resources, target_village_id
+                resources, village_label(target_village_id)
             )
             return False
         if '<div class="error_box">' in confirmed.text:
             self.logger.warning(
                 "send_resources: o jogo recusou a confirmação de %s → aldeia %s: %s",
-                resources, target_village_id, self._error_box_text(confirmed.text)
+                resources, village_label(target_village_id), self._error_box_text(confirmed.text)
             )
             self._dump_response("cache/resource_sharing/last_confirm_error.html", confirmed.text, overwrite=True)
             return False
 
         self.logger.info(
-            "send_resources: enviado %s → aldeia %s", resources, target_village_id
+            "send_resources: enviado %s → aldeia %s", resources, village_label(target_village_id)
         )
         return True
 

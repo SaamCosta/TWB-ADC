@@ -19,12 +19,14 @@ Roda sem pytest:
 import logging
 import os
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 import core.notification as notification_module
+import core.village_label as village_label_module
 import game.attack as attack_module
 import game.conquest_planner as planner_module
 import game.hunter as hunter_module
@@ -87,6 +89,12 @@ Hunter._save_schedules = lambda self, s, *_: None
 h = Hunter(wrapper=SimpleNamespace(priority_mode=False))
 h.villages = {"74690": SimpleNamespace(
     attack=object(), game_data={"village": {"name": "BBM 011"}})}
+# O rotulo `nome (id)` vem de core/village_label.py, que le cache/managed.
+# Diretorio vazio: o teste nao depende do cache real (onde a 55647, ja
+# conquistada, teria nome).
+village_label_module.reset()
+village_label_module.MANAGED_DIR = tempfile.mkdtemp()
+village_label_module.register("74690", "BBM 011")
 rec = Recorder(probe=lambda: h._running)
 hunter_module.Notification = rec
 h.run({"hunter": {"enabled": True}})

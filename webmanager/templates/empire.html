@@ -364,7 +364,7 @@
                 {% endif %}
                 {% if t.reserved_by and t.reserved_by != '—' %}
                 <small class="d-block text-muted">Reservada por
-                  <a href="/village?id={{ t.reserved_by }}" class="text-decoration-none">{{ t.reserved_by }}</a>
+                  <a href="/village?id={{ t.reserved_by }}" class="text-decoration-none">{{ t.reserved_by | vlabel }}</a>
                 </small>
                 {% endif %}
               </li>

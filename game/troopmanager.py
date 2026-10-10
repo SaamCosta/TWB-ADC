@@ -7,6 +7,7 @@ import random
 import time
 
 from core import game_data_shadow
+from core.village_label import village_label
 from core.extractors import Extractor
 from core.templates import GATHER_UNITS, UNIT_BUILDING, UNIT_CARRY
 from game.resources import ResourceManager
@@ -700,7 +701,7 @@ class TroopManager:
         # ela que a guarda de "uma por vez" consulta -- não este log.
         self.logger.info(
             "Unlock: iniciada coleta %s (%s) na aldeia %s por %s, %s s",
-            option_id, entry.get("name"), self.village_id, cost,
+            option_id, entry.get("name"), village_label(self.village_id), cost,
             entry.get("unlock_duration_seconds"),
         )
         if self.resman:
@@ -996,7 +997,7 @@ class TroopManager:
         if data is None:
             self.logger.warning(
                 "Village %s: %s screen request failed, skipping recruitment this cycle",
-                self.village_id, building
+                village_label(self.village_id), building
             )
             return False
 
@@ -1004,7 +1005,7 @@ class TroopManager:
         if existing:
             self.logger.warning(
                 "Building Village %s %s recruitment queue out-of-sync"
-                % (self.village_id, building)
+                % (village_label(self.village_id), building)
             )
             if not self.can_fix_queue:
                 return True
@@ -1025,7 +1026,7 @@ class TroopManager:
             self.logger.warning(
                 "Village %s: could not read unit data from the %s screen "
                 "(session expired or markup changed?), skipping recruitment",
-                self.village_id, building
+                village_label(self.village_id), building
             )
             return False
         self.game_data = Extractor.game_state(data)
