@@ -48,6 +48,18 @@ EFFECT_PERCENT_RE = re.compile(r"<b>\s*\+?(\d+)\s*%\s*</b>")
 # icone nao.
 INCOMING_SUPPORT_SPEED_ICON = "benefit_incoming_support_speed"
 
+# Tipos de comando recebido que NÃO são ameaça: apoio e o paladino se
+# mudando (`relocate`). Quem decide "sob ataque" exclui exatamente estes;
+# qualquer outro, inclusive "unknown", continua suspeito.
+FRIENDLY_COMMAND_TYPES = ("support", "relocate")
+
+# Ícone de unidade que o jogo desenha ao lado do rótulo de um comando
+# recebido. ⚠️ Ele vem do TEXTO do rótulo, não de uma detecção do jogo:
+# medido no br143 em 2026-10-11, o ataque rotulado "Aldeia de bárbaros"
+# ganhou o ícone de bárbaro (machado) e o rotulado "412- Nobre ..." (o nome
+# da aldeia de origem) ganhou o de nobre. É pista, nunca prova.
+INCOMING_LABEL_UNIT_RE = re.compile(r'graphic/unit/tiny/(\w+)\.\w+')
+
 # `screen=info_player&mode=stats_own`: series "ricas" (recurso por dia) que o
 # jogo embute no HTML como `data.push({label: 'Saqueado', ..., details: [...]})`.
 # O label identifica a serie -- nao ha id no bloco, e a ORDEM nao e garantia
@@ -773,6 +785,20 @@ class Extractor:
         if not isinstance(block, str):
             return "unknown"
 
+        # Comando PRÓPRIO a caminho desta aldeia traz o tipo em atributo,
+        # independente de idioma (br143, 2026-10-11, tests/fixtures/
+        # own_defense_village_overview_br143.html):
+        #   data-icon-hint="Suporte" data-command-type="support"
+        #   data-icon-hint="Com paladino" data-command-type="relocate"
+        # O segundo é o paladino se mudando, e era lido como "unknown" --
+        # que o DefenceManager conta como ataque. Ataque alheio não traz o
+        # atributo (só title="Ataque"), e segue pelo caminho de baixo.
+        declared = re.search(r'data-command-type=["\'](\w+)["\']', block)
+        if declared:
+            kind = declared.group(1).lower()
+            if kind in FRIENDLY_COMMAND_TYPES or kind == "attack":
+                return kind
+
         candidates = []
         for tag in re.findall(r"<(?:span|img)\b[^>]*>", block, re.I):
             lowered = tag.lower()
@@ -859,9 +885,11 @@ class Extractor:
             return commands
         for block in rows:
             eta_seconds = None
+            arrival_at = None
             endtime_match = re.search(r'data-endtime="(\d+)"', block)
             if endtime_match:
-                eta_seconds = int(endtime_match.group(1)) - int(time.time())
+                arrival_at = int(endtime_match.group(1))
+                eta_seconds = arrival_at - int(time.time())
             else:
                 duration_match = re.search(r'data-duration="(\d+)"', block)
                 if duration_match:
@@ -884,14 +912,138 @@ class Extractor:
                 re.S,
             )
             attacker_match = re.search(r'screen=info_player[^"]*"[^>]*>([^<]+)</a>', block)
+            label_unit = INCOMING_LABEL_UNIT_RE.search(block)
             commands.append({
                 "command_id": id_match.group(1) if id_match else None,
                 "eta_seconds": max(0, eta_seconds),
-                "origin": origin_match.group(1).strip() if origin_match else None,
+                # Timestamp absoluto de chegada (data-endtime); None quando a
+                # linha só trouxe o contador relativo.
+                "arrival_at": arrival_at,
+                "origin": html.unescape(origin_match.group(1).strip()) if origin_match else None,
                 "attacker": attacker_match.group(1).strip() if attacker_match else None,
                 "command_type": Extractor.incoming_command_type(block),
+                # Pista tirada do rótulo -- ver INCOMING_LABEL_UNIT_RE.
+                "label_unit": label_unit.group(1) if label_unit else None,
             })
         return commands
+
+    @staticmethod
+    def village_loyalty(res):
+        """
+        Lealdade da aldeia, do widget `show_mood` da visão geral. Verbatim do
+        br143 em 2026-10-11 (tests/fixtures/own_defense_village_overview_br143.html):
+
+            <div id="show_mood" class="vis moveable widget ">
+              <h4 ...> Lealdade <span class="icon info-small tooltip" ...></h4>
+              <div class="widget_content" ...><div class="vis_item">
+                <span class="red"><b>25</b></span>
+
+        O widget só aparece com lealdade abaixo de 100 (o texto do jogo:
+        "Ataques de nobres reduziram a lealdade desta aldeia"). Por isso a
+        AUSÊNCIA do widget não é "lealdade desconhecida": é 100 -- mas só
+        quando a página é de fato a visão geral da aldeia, o que o chamador
+        confere. Devolve int, 100 sem widget, ou None se o widget existe e o
+        número não foi lido (markup novo).
+        """
+        res = _page_text(res)
+        start = res.find('id="show_mood"')
+        if start == -1:
+            return 100
+        match = re.search(r'<div class="vis_item">\s*<span[^>]*>\s*<b>\s*(-?\d+)\s*</b>',
+                          res[start:start + 2000])
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def own_villages_overview(res):
+        """
+        Todas as aldeias da conta, da visão geral (`overview_villages`). A
+        tela de produção é a única que a conta grátis tem, e é para ela que o
+        jogo redireciona qualquer outro modo. Verbatim do br143 em 2026-10-11
+        (tests/fixtures/own_defense_overview_villages_br143.html):
+
+            <span class="quickedit-vn" data-id="40808" ...>
+              <a href="/game.php?village=40808&amp;screen=overview">
+                <img src=".../graphic/command/attack.webp" title="Sob ataque (6)" .../>
+                <span class="quickedit-label" data-text="BBM 048">
+                  BBM 048 (531|289) K25 </span>
+
+        Inclui aldeia que ainda não está no config.json (a BBM 048 tinha 33
+        minutos de conquistada e já estava aqui, com os 6 ataques). O número
+        vem do `title` e a presença do ataque do ícone, que não depende de
+        idioma.
+
+        Devolve [{vid, name, x, y, incomings}] (incomings 0 sem ícone), ou None
+        se a página não tem nenhuma linha de aldeia -- login, captcha ou
+        markup novo. Lista vazia não existe para uma conta com aldeias.
+        """
+        res = _page_text(res)
+        out = []
+        for match in re.finditer(r'<span class="quickedit-vn" data-id="(\d+)"', res):
+            chunk = res[match.end():match.end() + 1500]
+            label = re.search(
+                r'class="quickedit-label" data-text="([^"]*)"\s*>\s*[^<]*?\((\d+)\|(\d+)\)', chunk)
+            if not label:
+                continue
+            content_end = chunk.find('class="quickedit-label"')
+            head = chunk[:content_end]
+            incomings = 0
+            if "graphic/command/attack" in head:
+                count = re.search(r'graphic/command/attack[^>]*title="[^"(]*\((\d+)\)', head)
+                incomings = int(count.group(1)) if count else 1
+            out.append({
+                "vid": match.group(1),
+                "name": html.unescape(label.group(1)).strip(),
+                "x": int(label.group(2)),
+                "y": int(label.group(3)),
+                "incomings": incomings,
+            })
+        return out or None
+
+    @staticmethod
+    def command_origin(res):
+        """
+        Origem de um comando, da tela `info_command`. Verbatim do br143 em
+        2026-10-11 (tests/fixtures/own_defense_info_command_br143.html):
+
+            <tr><td rowspan="2">Origem</td><td>Jogador:</td><td><a href="...
+                screen=info_player&amp;id=1111111" ...>Atacante</a></td></tr>
+            <tr><td>Aldeia:</td><td><span class="village_anchor"
+                data-player="1111111" data-id="52522"><a ...>412- Nobre Fulano!
+                (489|265) K24</a></span></td></tr>
+            <tr><td rowspan="2">Destino</td> ...
+
+        A primeira `village_anchor` é a origem e a segunda o destino; a ordem
+        das linhas é a da tabela, que não depende de idioma.
+
+        Devolve {village_id, player_id, name, x, y} ou None.
+        """
+        res = _page_text(res)
+        anchors = re.findall(
+            r'<span class="village_anchor" data-player="(\d*)" data-id="(\d+)">\s*<a[^>]*>'
+            r'([^<]*?)\s*\((\d+)\|(\d+)\)', res)
+        if len(anchors) < 2:
+            return None
+        player, vid, name, x, y = anchors[0]
+        return {"village_id": vid, "player_id": player or None,
+                "name": html.unescape(name).strip(), "x": int(x), "y": int(y)}
+
+    @staticmethod
+    def place_units_available(res):
+        """
+        Tropas em casa, lidas da praça (`screen=place`), pelo `data-all-count`
+        de cada campo de unidade. Verbatim do br143 em 2026-10-11
+        (tests/fixtures/own_defense_place_units_br143.html):
+
+            <input id="unit_input_heavy" name="heavy" type="text" tabindex="6"
+                   value="" class="unitsInput" data-all-count="561" />
+
+        É o número que o próprio formulário oferece no "(561)" ao lado -- o que
+        pode sair agora, e não o do cache/managed, que pode ter horas.
+        Devolve {unidade: qtd} ({} se a página não é a praça).
+        """
+        res = _page_text(res)
+        return {unit: int(count) for unit, count in re.findall(
+            r'<input id="unit_input_(\w+)"[^>]*data-all-count="(\d+)"', res)}
 
     @staticmethod
     def incoming_support_speed_bonus(res):

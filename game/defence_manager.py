@@ -5,7 +5,7 @@ import random
 import re
 import time
 
-from core.extractors import INCOMING_ROW_RE, Extractor
+from core.extractors import FRIENDLY_COMMAND_TYPES, INCOMING_ROW_RE, Extractor
 from core.village_label import village_label
 from core.filemanager import FileManager
 from core.world_config import WorldConfig
@@ -101,6 +101,10 @@ class DefenceManager:
     # confirmacao (None = nao leu). Lidos por Village.run_tribe_support.
     last_support_error = None
     last_support_duration = None
+    # Tropa que de fato foi no último support() (depois do clamp) e a hora
+    # de chegada lida na confirmação. Imutáveis (None/tuple-free): ok na classe.
+    last_support_troops = None
+    last_support_arrival = None
 
     _can_change_flag = False
     # True once manage_flags() has confirmed the real flag state from the
@@ -525,12 +529,16 @@ class DefenceManager:
         rows = INCOMING_ROW_RE.findall(main)
         self.incoming_rows_seen = len(rows)
         row_types = [Extractor.incoming_command_type(row) for row in rows]
-        self.incoming_support_rows_seen = row_types.count("support")
+        # "Apoio" aqui é todo comando amigo: apoio e paladino se mudando
+        # (FRIENDLY_COMMAND_TYPES). O paladino era lido como "unknown" e
+        # contava como ataque.
+        self.incoming_support_rows_seen = sum(1 for t in row_types if t in FRIENDLY_COMMAND_TYPES)
         # Desconhecido continua suspeito: so um apoio reconhecido explicitamente
         # pode ser retirado do conjunto defensivo.
         self.incoming_attack_rows_seen = self.incoming_rows_seen - self.incoming_support_rows_seen
         commands = Extractor.incoming_commands(main)
-        attack_commands = [c for c in commands if c.get("command_type") != "support"]
+        attack_commands = [c for c in commands
+                           if c.get("command_type") not in FRIENDLY_COMMAND_TYPES]
         if not attack_commands:
             self.incoming_eta = None
             self.incoming_attacker = None
@@ -1040,7 +1048,8 @@ class DefenceManager:
                         self.flags[int(flag_type)] = int(level)
         return counts
 
-    def support(self, vid, troops=None, position=None):
+    def support(self, vid, troops=None, position=None, arrive_by=None,
+                clamp_to_available=False):
         """
         Envia apoio desta aldeia para `vid` (ou só para a coordenada
         `position`, quando o destino está longe demais para constar do cache
@@ -1048,9 +1057,25 @@ class DefenceManager:
 
         Deixa em `last_support_error` o motivo de uma recusa e em
         `last_support_duration` a duração lida na confirmação.
+
+        Defesa própria (§8.60):
+        - `arrive_by` (timestamp): prazo de chegada. Conferido com a duração
+          que o JOGO mostra na confirmação -- que já inclui o Sinal da Aflição
+          e qualquer bônus que a nossa conta não conheça -- e o envio é
+          abortado ANTES do passo que cria o comando se ela passar do prazo,
+          ou se a duração não puder ser lida (0 é o valor de falha de
+          `attack_duration`, sexto padrão). Apoio que pousa depois do nobre
+          não defende nada e ainda vira apoio na aldeia do inimigo.
+        - `clamp_to_available`: limita `troops` ao que a praça oferece agora
+          (`Extractor.place_units_available`). O plano é feito sobre o
+          cache/managed, que pode ter horas; aqui mandar menos é melhor que
+          não mandar nada. Sem esta flag o comportamento é o de sempre: o
+          número pedido sai, ou o jogo recusa.
         """
         self.last_support_error = None
         self.last_support_duration = None
+        self.last_support_troops = None
+        self.last_support_arrival = None
         # P2-38: a validacao da posicao vinha depois do GET da praca, entao a
         # requisicao (com o sleep de delay_factor) era desperdicada quando o
         # destino nao estava no mapa.
@@ -1078,6 +1103,21 @@ class DefenceManager:
             self.last_support_error = "sem resposta da praça"
             self.logger.warning("[Support] %s -> %s: request timed out, aborting", village_label(self.village_id), village_label(vid))
             return False
+        if troops is not None and clamp_to_available:
+            available = Extractor.place_units_available(pre_support)
+            if not available:
+                self.last_support_error = "praça sem campos de unidade (sessão ou markup)"
+                self.logger.warning("[Support] %s -> %s: %s", village_label(self.village_id),
+                                    village_label(vid), self.last_support_error)
+                return False
+            clamped = {u: min(int(q), int(available.get(u, 0))) for u, q in troops.items()}
+            clamped = {u: q for u, q in clamped.items() if q > 0}
+            if not clamped:
+                self.last_support_error = "nada do plano em casa agora (%s)" % troops
+                self.logger.info("[Support] %s -> %s: %s", village_label(self.village_id),
+                                 village_label(vid), self.last_support_error)
+                return False
+            troops = clamped
         pre_data = {}
         for u in Extractor.attack_form(pre_support):
             k, v = u
@@ -1133,6 +1173,22 @@ class DefenceManager:
         duration = Extractor.attack_duration(conf)
         # 0 e o valor de falha do parser (sexto padrao), nao uma viagem nula.
         self.last_support_duration = duration or None
+        if arrive_by is not None:
+            if not duration:
+                self.last_support_error = "duração ilegível na confirmação; prazo não verificável"
+                self.logger.warning("[Support] %s -> %s: %s -- abortando",
+                                    village_label(self.village_id), village_label(vid),
+                                    self.last_support_error)
+                return False
+            arrival = time.time() + duration
+            if arrival > arrive_by:
+                self.last_support_error = "chegaria %s, depois do prazo %s" % (
+                    time.strftime("%d/%m %H:%M:%S", time.localtime(arrival)),
+                    time.strftime("%d/%m %H:%M:%S", time.localtime(arrive_by)))
+                self.logger.info("[Support] %s -> %s: %s -- abortando antes do envio",
+                                 village_label(self.village_id), village_label(vid),
+                                 self.last_support_error)
+                return False
         self.logger.info(
             "[Support] %s -> %s duration %.1f h",
             village_label(self.village_id), village_label(vid), duration / 3600
@@ -1156,6 +1212,8 @@ class DefenceManager:
             data=confirm_data,
         )
         if result:
+            self.last_support_troops = dict(troops) if troops is not None else None
+            self.last_support_arrival = int(time.time() + duration) if duration else None
             self.logger.info(
                 "[Support] %s -> %s enviado e confirmado pelo jogo",
                 village_label(self.village_id), village_label(vid),

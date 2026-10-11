@@ -152,6 +152,7 @@ from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
 from game.inventory_manager import InventoryManager
 from game.mint_manager import MintManager
+from game.own_defense import OwnDefenseManager
 from game.pvp_conquest import PvpConquestCache, PvpConquestManager
 from game.reservations import ReservationBoard, ReservationWriter
 from game.reservation_sniper import ReservationSniper
@@ -200,6 +201,8 @@ class TWB:
     # historico do medidor a cada ciclo; o Hunter.gate() decide com ela.
     phase_forecast = None
     mint_manager = None
+    # Defesa propria (§8.60): uma instancia por processo, como a cunhagem.
+    own_defense = None
     # Feature 35: sobrevive entre ciclos de proposito, para o TTL do quadro de
     # reservas valer de verdade. Imutavel como default de classe (o objeto e
     # criado sob demanda), mesma forma do `hunter` acima.
@@ -742,6 +745,34 @@ class TWB:
                 sleep = config["bot"]["inactive_delay"]
         return sleep + self._jitter(config)
 
+    def _defended_sleep(self, sleep, config):
+        """
+        Sono entre ciclos em fatias de `own_defense.rescan_minutes`, com uma
+        varredura da defesa propria (§8.60) entre elas.
+
+        Sem requisicao nao ha `game_data`, entao o pulso de ataques fica parado
+        durante o sono: um ataque lancado agora so seria visto no proximo
+        ciclo. A varredura custa 1 GET quando nada esta sob ataque. Nao
+        estende o sono -- quem chama ja o limitou pelos prazos do Hunter
+        (vigesimo oitavo padrao) --, e a fatia final de menos de 30 s fica
+        sem varredura, porque o ciclo ja vai recomecar com a sua.
+        """
+        from game.own_defense import settings as defense_settings
+        cfg = defense_settings(config)
+        if not self.own_defense or not cfg.get("enabled"):
+            time.sleep(sleep)
+            return
+        end = time.time() + sleep
+        chunk = max(60.0, float(cfg.get("rescan_minutes") or 10) * 60)
+        while True:
+            left = end - time.time()
+            if left <= 0:
+                return
+            time.sleep(min(chunk, left))
+            if end - time.time() <= 30:
+                return
+            self.own_defense.tick(config, force=True)
+
     def _hunter_capped_sleep(self, sleep, config, reason):
         """
         Encurta um sono que nao passa pelo Hunter (rede fora, visao geral
@@ -1026,6 +1057,7 @@ class TWB:
         # Cunhagem (§8.55): uma instância por processo, como o Hunter. Guarda
         # em memória só o que é barato perder; o estado vive em cache/mint.
         self.mint_manager = MintManager(self.wrapper)
+        self.own_defense = OwnDefenseManager(self.wrapper)
         for vid in config["villages"]:
             # Village(...) already creates a fresh instance.  Deep-copying it
             # cloned the whole shared WebWrapper graph as well (requests
@@ -1309,6 +1341,17 @@ class TWB:
                 # faz requisicao quando algo venceu (horario diario, sessao do
                 # hub, campanha aprovada) e recebe o callback do Hunter para
                 # chamar entre requisicoes longas.
+                # Defesa propria (§8.60): logo depois do Hunter, antes da
+                # cunhagem. O tick so le o pulso em memoria; vai ao jogo
+                # quando o numero de ataques chegando muda.
+                _hunter_base_cb = service_callback
+                _defense = self.own_defense
+
+                def service_callback():
+                    if _hunter_base_cb:
+                        _hunter_base_cb()
+                    _defense.tick(config)
+
                 _base_cb = service_callback
                 _mint = self.mint_manager
 
@@ -1327,6 +1370,12 @@ class TWB:
                     )
                     _v.mint_manager = self.mint_manager
                     _v.reservation_board = reservation_board
+
+                # Defesa propria (§8.60) antes de qualquer fase gastar tropa:
+                # ataque detectado no sono ou no ciclo anterior e decidido
+                # aqui, nao na vez de alguma aldeia.
+                if self.own_defense:
+                    self.own_defense.tick(config)
 
                 # Feature 13 (2026-09-21): a conquista PvP decide UMA vez no
                 # inicio do ciclo, antes de qualquer aldeia gastar tropa.
@@ -1699,7 +1748,7 @@ class TWB:
                     % (sleep / 60, dt_next.time())
                 )
                 sys.stdout.flush()
-                time.sleep(sleep)
+                self._defended_sleep(sleep, config)
 
                 # Feature 10: fire any attacks that became due during the sleep
                 if self.hunter:

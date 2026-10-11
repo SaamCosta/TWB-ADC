@@ -264,6 +264,17 @@ help_file = {
     'minting.daily_auto_mint_exclude': 'Ids de aldeia que NÃO entram na cunhagem automática diária (a sessão gasta todo recurso da aldeia, inclusive o guardado para nobre)',
     'minting.daily_auto_mint_spacing_sec': 'Pausa entre uma aldeia e outra na cunhagem diária, além do atraso normal das requisições. Rajada de POSTs provoca captcha na conta (padrão: 15)',
     'minting.inventory_refresh_hours': 'De quantas em quantas horas o bot relê o inventário para a aba Cunhagem mostrar os itens disponíveis (duas requisições; 0 desliga). Independe de inventory.enabled',
+    'own_defense': 'Defesa automática das aldeias próprias (§8.60, aba /defense): quando o número de ataques chegando muda, o bot para o que está fazendo, lê as aldeias atacadas (inclusive as recém-conquistadas que ainda não estão na config), estuda cada ataque (distância e tempo dizem se ele PODE ser nobre) e manda apoio das outras aldeias quando os ataques que podem ser nobre bastam para zerar a lealdade',
+    'own_defense.enabled': 'Liga a defesa automática (padrão: true)',
+    'own_defense.rescan_minutes': 'Com ataque chegando, relê as aldeias atacadas a cada N minutos mesmo sem o número mudar; no sono entre ciclos, é o intervalo da varredura (1 requisição quando nada está sob ataque). Padrão: 10',
+    'own_defense.retry_minutes': 'Uma aldeia de origem que acabou de ser tentada para um alvo só é tentada de novo depois disto (a praça já disse o que tinha em casa). Padrão: 30',
+    'own_defense.max_origin_lookups': 'Quantos ataques por varredura têm a origem lida (uma requisição cada, uma vez por ataque). Ataque sem origem conhecida conta como "pode ser nobre". Padrão: 20',
+    'own_defense.units': 'Unidades que a defesa manda. Cavalaria leve fica de fora por padrão: é tropa de farm. Padrão: spear, sword, archer, heavy, spy',
+    'own_defense.reserve_pct': 'Fração de cada unidade que fica na aldeia de origem (0.2 = 20%). Padrão: 0',
+    'own_defense.arrival_margin_sec': 'Folga, em segundos, entre a chegada do apoio e o ataque que ele precisa vencer. O envio confere a duração mostrada pelo jogo e desiste antes de criar o comando se ela passar do prazo. Padrão: 60',
+    'own_defense.min_package_pop': 'População mínima de um envio; menos que isso não vale um comando. Padrão: 30',
+    'own_defense.max_pop_per_target': 'Teto de população mandada para uma aldeia atacada, das origens mais próximas para as mais distantes (0 = sem teto). Padrão: 0',
+    'own_defense.exclude_attacked_sources': 'Aldeia que também tem ataque chegando não manda defesa embora. Padrão: true',
 }
 
 buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "place", "statue", "market", "wood",

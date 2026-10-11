@@ -98,6 +98,10 @@ class AccountPulse:
         self.clock = clock
         self._last_written = None
         self._last_write_at = 0.0
+        # Última leitura, armada ou não, em memória: é o gatilho da defesa
+        # própria (game/own_defense.py), que não pode depender do arquivo do
+        # painel nem da trava de escrita.
+        self.last = None
 
     def observe(self, game_data):
         """Registra o `game_data` de uma resposta. Devolve True se gravou."""
@@ -105,6 +109,7 @@ class AccountPulse:
             pulse = extract(game_data, received_at=self.clock())
             if pulse is None:
                 return False
+            self.last = pulse
             if not _armed:
                 return False
             now = self.clock()

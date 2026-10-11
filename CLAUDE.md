@@ -35,6 +35,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   só **acompanha**: o nobre extra sai de qualquer aldeia gerenciada, a que
   pousa primeiro (§8.41), sob o mesmo portão do trem
   (`conquest_origin_block_reason`).
+- **Defesa própria (`game/own_defense.py`, §8.60)** também não espera a vez
+  de aldeia nenhuma: roda no checkpoint do Hunter, no início do ciclo e no
+  sono entre ciclos, disparada pela mudança de `player.incomings`. Lê a lista
+  de aldeias da visão geral grátis, e não do `config.json`, porque aldeia
+  recém-conquistada atacada não está lá. O ícone de nobre num ataque recebido
+  vem do **nome** da aldeia de origem, não do jogo.
 - **Managers de jogo (`game/`) e infraestrutura (`core/`)**: um módulo por
   sistema, cada um abrindo com docstring (`ls game/ core/`). O que o código
   não conta:

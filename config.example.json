@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "5.0",
+    "version": "5.1",
     "author": "stefan2200"
   },
   "server": {
@@ -284,6 +284,18 @@
     "daily_auto_mint_exclude": [],
     "daily_auto_mint_spacing_sec": 15,
     "inventory_refresh_hours": 6
+  },
+  "own_defense": {
+    "enabled": true,
+    "rescan_minutes": 10,
+    "retry_minutes": 30,
+    "max_origin_lookups": 20,
+    "units": ["spear", "sword", "archer", "heavy", "spy"],
+    "reserve_pct": 0.0,
+    "arrival_margin_sec": 60,
+    "min_package_pop": 30,
+    "max_pop_per_target": 0,
+    "exclude_attacked_sources": true
   },
   "villages": {}
 }

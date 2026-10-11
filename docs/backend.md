@@ -6823,6 +6823,86 @@ do ciclo anterior persiste. Corrigido: a lista é criada e instalada em todas as
 aldeias **antes** do bloco do Hunter. Nenhum nobre saiu, e os 2 da BBM 022
 partiriam depois. O usuário apagou o agendamento pelo painel.
 
+## 8.60 `P-DEFESA-PROPRIA` — defesa automática das aldeias próprias (2026-10-11)
+
+**Incidente.** A BBM 048 (40808, 531|289) foi conquistada às 14:50:31 por um
+trem de 4 nobres. O primeiro nobre já deixou a lealdade em **47**, então ela
+estava entre 67 e 82: outro jogador já tinha começado a nobrear a aldeia. Às
+15:10 havia **6 ataques** chegando, com a lealdade em 25. Bastava um nobre.
+Nada no bot reagiu, por três motivos: a aldeia não estava no `config.json`;
+`DefenceManager.support_other()` só roda quando outra aldeia gerenciada chega
+na vez dela no ciclo (~4 h); e o painel `/support` (§8.39) só atende pedidos
+do fórum da tribo, com envio também na vez da aldeia de origem. O apoio saiu à
+mão, por script com o próprio `DefenceManager.support()`: 7 envios, 1.470
+pesadas, chegadas entre 19:40 e 22:08. O ataque das 15:25 e o das 15:41
+pousaram sem mudar a lealdade.
+
+**O que foi medido no servidor (br143, 2026-10-11):**
+- O ícone de unidade ao lado do rótulo de um comando recebido vem do
+  **texto** do rótulo, e o rótulo padrão é o nome da aldeia de origem. O
+  ataque de "Aldeia de bárbaros" ganhou ícone de bárbaro, e o de
+  "412- Nobre ..." ganhou ícone de nobre. O jogo **não** identifica o nobre
+  para o defensor na conta grátis.
+- `player.incomings` = **6** com exatamente 6 ataques na BBM 048. Os apoios
+  próprios a caminho não entram nesse número (`supports` à parte). Isso fecha
+  a lacuna "leitura do nome, não medição" do `core/account_pulse.py`.
+- A visão geral grátis (`overview_villages`, tela de produção) lista as 48
+  aldeias, inclusive a BBM 048, com `title="Sob ataque (6)"` no ícone de
+  ataque. É o único jeito grátis de saber **qual** aldeia está atacada.
+- Comando próprio chegando traz `data-command-type="support"` ou
+  `"relocate"` (paladino se mudando). O segundo era lido como `unknown`, e o
+  `DefenceManager` contava isso como ataque. Corrigido: `FRIENDLY_COMMAND_TYPES`.
+- Sinal da Aflição ativo na BBM 048: **+10%** (`duração / 1,1`). A BBM 026
+  levou 6,07 h ao jogo contra 6,67 h na conta sem o bônus. A BBM 025 e a BBM 028
+  só chegaram a tempo por causa disso.
+- `available_troops` no `cache/managed` é o que sobra em casa **depois** do
+  farm e da coleta (BBM 026: 0 lanças). `troops` é o total, inclusive o apoio
+  que já saiu. Só a praça diz o que pode sair agora (`data-all-count`).
+
+**O que foi feito.** `core/own_defense.py` (puro) e `game/own_defense.py`
+(rede), ligados no checkpoint cooperativo do Hunter, no início do ciclo e no
+sono entre ciclos (`TWB._defended_sleep`, em fatias de `rescan_minutes`):
+1. **Gatilho sem requisição:** `AccountPulse.last.incomings` muda, ou passou
+   `rescan_minutes` com ataque pendente.
+2. **Varredura:** `overview_villages` (1 GET) → visão geral de cada aldeia
+   atacada (lealdade, comandos, bônus) → `info_command` de cada ataque
+   (origem, guardada por id).
+3. **Estudo:** um ataque **não pode** ser nobre se a origem passa de
+   `snob.max_dist` (70) ou se falta mais tempo que a viagem inteira de um
+   nobre. Os nobres necessários são `ceil(L / queda máxima)`. A aldeia precisa
+   de apoio quando os ataques que podem ser nobre bastam.
+4. **Janela, não prazo único.** A primeira versão mirava só no N-ésimo ataque
+   que podia ser nobre. O smoke das 15:40 mostrou que, com ele pousando em
+   1 min, o plano saía vazio e os 4 seguintes (21 a 48 campos) ficavam sem
+   defesa. Agora serve todo apoio que chega antes do **último**, e cada linha
+   diz quantos ataques vence (`beats`).
+5. **Envio:** `support(arrive_by=..., clamp_to_available=True)`. A duração lida
+   na confirmação do jogo, que já inclui o Sinal, decide. Se passar do prazo,
+   o envio aborta **antes** do passo que cria o comando; foi essa guarda que
+   segurou as 561 pesadas da BBM 029, que pousariam 48 s antes do nobre. A
+   tropa é limitada ao que a praça mostra.
+6. Explorador sozinho não vira envio. No smoke, 14 de 18 envios eram só
+   explorador. Cavalaria leve fica fora de `units` por padrão.
+
+Painel: aba **Ameaças** (`/defense`), com o estado da última varredura, os
+ataques, o plano, o histórico e o pedido "defender mesmo sem ameaça de nobre"
+(`cache/defense/force.json`, vale 24 h). Testes em `tests/test_own_defense.py`,
+com 4 fixtures verbatim do dia (nomes de terceiros anonimizados). Smoke seco
+contra o servidor às 15:39 e às 15:41 (varredura real, envio desligado).
+
+**Aberto:**
+- **Não validado em campo:** nenhum envio automático aconteceu ainda. O
+  código entra no próximo restart do bot (o merge do `build.version` 5.1 traz a
+  seção `own_defense`).
+- **Não medido:** o que acontece com um apoio a caminho quando a aldeia muda
+  de dono antes de ele pousar.
+- Não há esquiva de limpeza: o apoio sai na hora e pode pousar antes de um
+  ataque grande que o mata. Agendar a saída para pousar entre a última limpeza
+  e o nobre (o que se fez à mão hoje, por acaso de distância) pede o Hunter.
+- `support_other()` (§6) continua existindo em paralelo. Os dois mecanismos
+  não se coordenam, mas o `clamp_to_available` impede que mandem a mesma tropa
+  duas vezes.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

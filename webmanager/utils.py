@@ -4313,6 +4313,98 @@ class TribeSupportReader:
             if plan.get("planned_at") else None,
         }
 
+class DefenseReader:
+    """
+    Aba /defense: defesa automática das aldeias próprias (docs/backend.md
+    §8.60). Lê `cache/defense/state.json`, que só o bot escreve
+    (game/own_defense.py), e escreve só `cache/defense/force.json` -- o pedido
+    "defender esta aldeia mesmo sem ameaça de nobre", que o bot lê na próxima
+    checagem.
+    """
+
+    @staticmethod
+    def _fmt(ts, with_day=True):
+        if not ts:
+            return None
+        return datetime.datetime.fromtimestamp(int(ts)).strftime(
+            "%d/%m %H:%M:%S" if with_day else "%H:%M:%S")
+
+    @staticmethod
+    def _load(path):
+        try:
+            data = FileManager.load_json_file(path)
+        except Exception:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def set_force(vid, on):
+        from game.own_defense import FORCE_PATH
+        vid = str(vid or "").strip()
+        match = re.search(r"village=(\d+)", vid)
+        if match:
+            vid = match.group(1)
+        if not vid.isdigit():
+            raise ValueError("informe o id da aldeia (ou cole o link dela no jogo)")
+        FileManager.create_directory(FileManager.get_path("cache/defense"))
+        with file_lock(FileManager.get_path(FORCE_PATH)):
+            data = DefenseReader._load(FORCE_PATH)
+            if on:
+                data[vid] = int(time.time())
+            else:
+                data.pop(vid, None)
+            FileManager.save_json_file(data, FORCE_PATH)
+        return vid
+
+    @staticmethod
+    def view():
+        from game.own_defense import FORCE_PATH, FORCE_TTL, STATE_PATH, settings as defense_settings
+        from core import account_pulse
+        state = DefenseReader._load(STATE_PATH)
+        now = int(time.time())
+        fmt = DefenseReader._fmt
+        attacked = []
+        for v in state.get("attacked") or []:
+            v = dict(v)
+            a = v.get("assessment") or {}
+            rows = []
+            for atk in a.get("attacks") or []:
+                atk = dict(atk)
+                atk["arrival_fmt"] = fmt(atk.get("arrival_at"))
+                atk["eta_min"] = (int(atk["arrival_at"]) - now) // 60 if atk.get("arrival_at") else None
+                atk["in_window"] = bool(atk.get("in_window"))
+                rows.append(atk)
+            v["attack_rows"] = rows
+            v["deadline_fmt"] = fmt(v.get("deadline_at") or a.get("deadline_at"))
+            for s in v.get("sent") or []:
+                s["arrival_fmt"] = fmt(s.get("arrival_at"))
+            attacked.append(v)
+        history = []
+        for h in reversed(state.get("history") or []):
+            h = dict(h)
+            h["at_fmt"] = fmt(h.get("at"))
+            h["arrival_fmt"] = fmt(h.get("arrival_at"))
+            h["deadline_fmt"] = fmt(h.get("deadline_at"))
+            history.append(h)
+            if len(history) >= 40:
+                break
+        force = DefenseReader._load(FORCE_PATH)
+        forces = [{"vid": k, "at_fmt": fmt(t),
+                   "expired": now - int(t or 0) > FORCE_TTL}
+                  for k, t in force.items()]
+        return {
+            "scanned_fmt": fmt(state.get("scanned_at")),
+            "scanned_age_min": (now - int(state["scanned_at"])) // 60 if state.get("scanned_at") else None,
+            "reason": state.get("reason"), "incomings": state.get("incomings"),
+            "villages_seen": state.get("villages_seen"), "attacked": attacked,
+            "history": history, "forces": forces, "labels": UNIT_LABELS_PT,
+            "pulse": account_pulse.read(),
+            # A mesma leitura do bot (seção ausente = padrões, ligada).
+            "enabled": bool(defense_settings(FileManager.load_json_file("config.json") or {})
+                            .get("enabled")),
+        }
+
+
 class MintReader:
     """
     Aba Cunhagem (§8.55). Lê o mesmo `cache/managed` que o bot e chama o
