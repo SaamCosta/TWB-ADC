@@ -476,6 +476,9 @@ def get_hunter():
         villages=villages,
         village_options_json=village_options_json,
         units=HUNTER_UNITS,
+        support_units=HunterReader.SUPPORT_UNITS,
+        message=request.args.get("msg"),
+        message_is_error=request.args.get("err") == "1",
     )
 
 @app.route('/hunter/add', methods=['POST'])
@@ -510,6 +513,25 @@ def hunter_add():
 
     HunterReader.add_schedule(target_id, arrival_str, attacks)
     return redirect(url_for("get_hunter"))
+
+@app.route('/hunter/support', methods=['POST'])
+def hunter_support():
+    # Apoio agendado para pousar N segundos depois de uma chegada (§8.61).
+    troops = {}
+    for unit in HunterReader.SUPPORT_UNITS:
+        try:
+            troops[unit] = int(request.form.get("troops[%s]" % unit, "0") or 0)
+        except ValueError:
+            troops[unit] = 0
+    base = request.form.get("base_arrival", "").strip().replace("T", " ")
+    if len(base) == 16:
+        base += ":00"
+    ok, msg = HunterReader.add_support_after(
+        request.form.get("source_village_id", "").strip(), troops,
+        request.form.get("offset_sec", "5"),
+        after_sched=request.form.get("after_sched") or None,
+        target_id=request.form.get("target_id"), base_arrival_str=base or None)
+    return redirect(url_for("get_hunter", msg=msg, err=0 if ok else 1))
 
 @app.route('/hunter/delete', methods=['POST'])
 def hunter_delete():

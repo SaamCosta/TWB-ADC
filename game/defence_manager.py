@@ -1049,7 +1049,7 @@ class DefenceManager:
         return counts
 
     def support(self, vid, troops=None, position=None, arrive_by=None,
-                clamp_to_available=False):
+                clamp_to_available=False, arrive_after=None):
         """
         Envia apoio desta aldeia para `vid` (ou só para a coordenada
         `position`, quando o destino está longe demais para constar do cache
@@ -1066,6 +1066,11 @@ class DefenceManager:
           ou se a duração não puder ser lida (0 é o valor de falha de
           `attack_duration`, sexto padrão). Apoio que pousa depois do nobre
           não defende nada e ainda vira apoio na aldeia do inimigo.
+        - `arrive_after` (timestamp): o apoio NÃO pode pousar antes disto.
+          É o apoio agendado para chegar logo depois de um nobre nosso
+          (Hunter, §8.61): pousando antes, ele defenderia a aldeia contra o
+          próprio trem. Mesma conferência pela duração do jogo, mesmo aborto
+          antes do passo que cria o comando.
         - `clamp_to_available`: limita `troops` ao que a praça oferece agora
           (`Extractor.place_units_available`). O plano é feito sobre o
           cache/managed, que pode ter horas; aqui mandar menos é melhor que
@@ -1173,6 +1178,22 @@ class DefenceManager:
         duration = Extractor.attack_duration(conf)
         # 0 e o valor de falha do parser (sexto padrao), nao uma viagem nula.
         self.last_support_duration = duration or None
+        if arrive_after is not None:
+            if not duration:
+                self.last_support_error = "duração ilegível na confirmação; ordem de chegada não verificável"
+                self.logger.warning("[Support] %s -> %s: %s -- abortando",
+                                    village_label(self.village_id), village_label(vid),
+                                    self.last_support_error)
+                return False
+            arrival = time.time() + duration
+            if arrival <= arrive_after:
+                self.last_support_error = "chegaria %s, antes de %s (antes do nobre)" % (
+                    time.strftime("%d/%m %H:%M:%S", time.localtime(arrival)),
+                    time.strftime("%d/%m %H:%M:%S", time.localtime(arrive_after)))
+                self.logger.warning("[Support] %s -> %s: %s -- abortando antes do envio",
+                                    village_label(self.village_id), village_label(vid),
+                                    self.last_support_error)
+                return False
         if arrive_by is not None:
             if not duration:
                 self.last_support_error = "duração ilegível na confirmação; prazo não verificável"

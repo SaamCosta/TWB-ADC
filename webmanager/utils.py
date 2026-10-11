@@ -1524,8 +1524,13 @@ class HunterReader:
                     "source_village_id": atk.get("source_village_id", "?"),
                     "troops": atk.get("troops", {}),
                     "is_fake": atk.get("is_fake", False),
+                    "is_support": atk.get("kind") == "support",
                     "status": atk.get("status", "pending"),
                     "send_time_fmt": send_time_fmt,
+                    "fail_reason": atk.get("fail_reason"),
+                    "arrival_real_fmt": (datetime.datetime.fromtimestamp(atk["arrival_real"])
+                                         .strftime("%d/%m %H:%M:%S")
+                                         if atk.get("arrival_real") else ""),
                 })
 
             schedules.append({
@@ -1546,6 +1551,9 @@ class HunterReader:
                 "status_label":       HunterReader.STATUS_LABELS.get(status, status),
                 "status_color":       HunterReader.STATUS_COLORS.get(status, "secondary"),
                 "attacks":            attacks_fmt,
+                "after_sched":        sched.get("after_sched"),
+                "has_noble":          any(int((a.get("troops") or {}).get("snob", 0) or 0) > 0
+                                          for a in sched.get("attacks", [])),
             })
 
         # Pendentes primeiro, depois por arrival_ts
@@ -1640,6 +1648,84 @@ class HunterReader:
             }
             HunterReader._save_raw(raw)
         return True
+
+    # Unidades que fazem sentido num apoio agendado.
+    SUPPORT_UNITS = ["spear", "sword", "archer", "spy", "heavy", "knight"]
+    SUPPORT_MAX_OFFSET = 3600
+
+    @staticmethod
+    def add_support_after(source_id, troops, offset_sec, after_sched=None,
+                          target_id=None, base_arrival_str=None):
+        """
+        Apoio agendado para pousar `offset_sec` segundos DEPOIS de uma
+        chegada (§8.61) -- a de um trem do Hunter (`after_sched`) ou a
+        digitada (`target_id` + `base_arrival_str`, com segundos).
+
+        Grava um schedule próprio (kind=support) com `arrive_after` = a
+        chegada base: o Hunter sonda a duração pelo botão de apoio, sai em
+        `base + offset - duração` e aborta antes de criar o comando se o
+        jogo mostrar o apoio pousando antes do trem. Devolve (ok, mensagem).
+        """
+        try:
+            offset = int(offset_sec)
+        except (TypeError, ValueError):
+            return False, "segundos depois: valor inválido"
+        if not 1 <= offset <= HunterReader.SUPPORT_MAX_OFFSET:
+            return False, "segundos depois: entre 1 e %d" % HunterReader.SUPPORT_MAX_OFFSET
+        troops = {u: int(q) for u, q in (troops or {}).items()
+                  if u in HunterReader.SUPPORT_UNITS and int(q) > 0}
+        if not troops:
+            return False, "informe ao menos uma unidade de apoio"
+        if not str(source_id or "").strip():
+            return False, "escolha a aldeia de origem"
+        with file_lock(HunterReader._cache_path()):
+            raw = HunterReader._load_raw(strict=True)
+            if raw is None:
+                return False, "cache/hunter/schedules.json ilegível; nada gravado"
+            if after_sched:
+                base = raw.get(after_sched)
+                if not base:
+                    return False, "o agendamento do trem não existe mais"
+                target_id = base.get("target_id")
+                base_ts = float(base.get("arrival_time") or 0)
+            else:
+                target_id = str(target_id or "").strip()
+                if not target_id.isdigit():
+                    return False, "informe o id da aldeia de destino"
+                try:
+                    base_ts = datetime.datetime.strptime(
+                        base_arrival_str, HunterReader.DATETIME_FMT).timestamp()
+                except (TypeError, ValueError):
+                    return False, "chegada base inválida (use data e hora com segundos)"
+            arrival_ts = base_ts + offset
+            if arrival_ts <= time.time():
+                return False, "a chegada do apoio já passou"
+            arrival_str = datetime.datetime.fromtimestamp(arrival_ts).strftime(
+                HunterReader.DATETIME_FMT)
+            sched_key = "%s_%s_apoio_%s" % (target_id, arrival_str.replace(" ", "T")
+                                            .replace(":", "-"), source_id)
+            if sched_key in raw:
+                return False, "já existe apoio desta origem para esta chegada"
+            raw[sched_key] = {
+                "target_id": str(target_id),
+                "label": "apoio",
+                "arrival_time": arrival_ts,
+                "arrival_str": arrival_str,
+                "arrive_after": base_ts,
+                "after_sched": after_sched,
+                "offset_sec": offset,
+                "status": "pending",
+                "attacks": [{
+                    "source_village_id": str(source_id),
+                    "troops": troops,
+                    "is_fake": False,
+                    "kind": "support",
+                    "send_time": None,
+                    "status": "pending",
+                }],
+            }
+            HunterReader._save_raw(raw)
+        return True, "Apoio agendado para %s (%d s depois da chegada base). O Hunter calcula a saída no próximo ciclo." % (arrival_str, offset)
 
     @staticmethod
     def delete_schedule(sched_key):

@@ -21,6 +21,13 @@ Schedule format in config.json under the "hunter" key:
     ]
   }
 
+Um comando pode ser APOIO (`"kind": "support"`, §8.61): sai pelo botao de
+apoio da praca (`DefenceManager.support`) e o schedule pode levar
+`arrive_after` -- o instante antes do qual ele NAO pode pousar. E o apoio
+agendado para chegar alguns segundos depois de um nobre nosso: pousando
+antes, ele defenderia a aldeia contra o proprio trem. `after_sched` liga o
+apoio ao schedule do trem; se um nobre de la falhou, o apoio nao sai.
+
 Runtime state is persisted in cache/hunter/schedules.json.
 Each attack's send_time is computed by probing the confirm page so the
 server's own travel-time calculation is used — no local formula needed.
@@ -239,6 +246,7 @@ class Hunter:
                 source_id = str(atk_cfg.get("source_village_id", ""))
                 troops = atk_cfg.get("troops", {})
                 is_fake = bool(atk_cfg.get("is_fake", False))
+                kind = "support" if atk_cfg.get("kind") == "support" else "attack"
 
                 if not source_id or not troops:
                     self.logger.warning(
@@ -247,7 +255,7 @@ class Hunter:
                     continue
 
                 send_time = None
-                duration = self._probe_duration(source_id, target_id, troops)
+                duration = self._probe_duration(source_id, target_id, troops, kind=kind)
                 if duration is not None:
                     send_time = arrival_ts - duration
                     if send_time < time.time():
@@ -260,7 +268,7 @@ class Hunter:
                         "Hunter: %s -> %s  travel=%.0fs  send_at=%s  [%s]",
                         village_label(source_id), village_label(target_id), duration,
                         datetime.datetime.fromtimestamp(send_time).strftime(self.DATETIME_FMT),
-                        "FAKE" if is_fake else "REAL",
+                        "APOIO" if kind == "support" else ("FAKE" if is_fake else "REAL"),
                     )
                 else:
                     self.logger.warning(
@@ -272,6 +280,7 @@ class Hunter:
                     "source_village_id": source_id,
                     "troops": troops,
                     "is_fake": is_fake,
+                    "kind": kind,
                     "send_time": send_time,   # None until probed
                     "status": "pending",
                 })
@@ -391,8 +400,18 @@ class Hunter:
         """'BBM 011 (74690)' quando o nome e conhecido, senao so o id."""
         return village_label(village_id)
 
+    @staticmethod
+    def _kind(atk):
+        return "support" if atk.get("kind") == "support" else "attack"
+
+    @staticmethod
+    def _label(atk):
+        if atk.get("kind") == "support":
+            return "APOIO"
+        return "FAKE" if atk.get("is_fake") else "REAL"
+
     def _note_failure(self, atk, target_id, reason):
-        label = "FAKE" if atk.get("is_fake") else "REAL"
+        label = self._label(atk)
         troops = atk.get("troops") or {}
         noble = " com nobre" if int(troops.get("snob", 0) or 0) > 0 else ""
         self._notes.append(
@@ -464,6 +483,7 @@ class Hunter:
     def _run(self, config, horizon=None):
         window = self.window if horizon is None else max(self.window, float(horizon))
         schedules = self._load_schedules()
+        self.sync_support_reserves(schedules)
         if not schedules:
             return
         # Copia do que foi lido: na gravacao, so o que mudou em relacao a ela
@@ -496,7 +516,8 @@ class Hunter:
                 atk["last_probe_attempt"] = time.time()
                 changed = True
                 duration = self._probe_duration(
-                    atk["source_village_id"], target_id, atk["troops"]
+                    atk["source_village_id"], target_id, atk["troops"],
+                    kind=self._kind(atk),
                 )
                 if duration is not None:
                     atk["send_time"] = sched["arrival_time"] - duration
@@ -547,7 +568,7 @@ class Hunter:
                 continue
             if hasattr(self.wrapper, "priority_mode"):
                 self.wrapper.priority_mode = True
-            label = "FAKE" if atk.get("is_fake") else "REAL"
+            label = self._label(atk)
             self.logger.info(
                 "Hunter: [%s] %s -> %s — sleeping %.1fs to hit send_time",
                 label, village_label(atk["source_village_id"]), village_label(target_id), time_to_send
@@ -576,7 +597,11 @@ class Hunter:
                 == str(atk.get("source_village_id"))
                 and candidate.get("send_time") is not None
                 and abs(float(candidate["send_time"]) - float(send_time)) < 0.5
+                and self._kind(candidate) == self._kind(atk)
             ]
+            # O formulario de trem da praca e de ataque; apoio sai um a um.
+            if self._kind(atk) == "support":
+                batch = [atk]
 
             if len(batch) > 1:
                 self.logger.info(
@@ -584,7 +609,10 @@ class Hunter:
                     len(batch), village_label(atk["source_village_id"]), village_label(target_id)
                 )
 
-            result = self._send_attack_batch(batch, target_id)
+            if self._kind(atk) == "support":
+                result = self._send_support(atk, sched, schedules)
+            else:
+                result = self._send_attack_batch(batch, target_id)
             sent_at = int(time.time())
             for batch_atk in batch:
                 batch_atk["status"] = "sent" if result else "failed"
@@ -594,7 +622,7 @@ class Hunter:
             changed = True
 
             for batch_atk in batch:
-                label = "FAKE" if batch_atk.get("is_fake") else "REAL"
+                label = self._label(batch_atk)
                 self.logger.info(
                     "Hunter: [%s] %s -> %s — %s%s",
                     label, village_label(batch_atk["source_village_id"]), village_label(target_id),
@@ -604,7 +632,7 @@ class Hunter:
                 if not result:
                     self._note_failure(
                         batch_atk, target_id,
-                        "o envio falhou (ver o log do Hunter)",
+                        batch_atk.get("fail_reason") or "o envio falhou (ver o log do Hunter)",
                     )
 
         if hasattr(self.wrapper, "priority_mode"):
@@ -660,10 +688,15 @@ class Hunter:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _probe_duration(self, source_id, target_id, troops):
+    def _probe_duration(self, source_id, target_id, troops, kind="attack"):
         """
         Posts to the confirm page to read the server-computed travel duration.
         Returns seconds (float) or None on failure.
+
+        `kind="support"` sonda pelo botao de APOIO, e nao pelo de ataque: a
+        duracao pode ser outra (o Sinal da Aflicao do destino so acelera
+        apoio), e o par attack+support no POST o jogo monta como ataque
+        (§8.39). A confirmacao precisa dizer "apoio" para a sonda valer.
         """
         source_id = str(source_id)
         village = self.villages.get(source_id)
@@ -715,7 +748,12 @@ class Hunter:
         pre_data.update(troops)
 
         x, y = position
-        pre_data.update({"x": x, "y": y, "target_type": "coord", "attack": "Aanvallen"})
+        pre_data.update({"x": x, "y": y, "target_type": "coord"})
+        if kind == "support":
+            pre_data.pop("attack", None)
+            pre_data["support"] = pre_data.get("support") or "Apoio"
+        else:
+            pre_data["attack"] = "Aanvallen"
 
         confirm_url = f"game.php?village={source_id}&screen=place&try=confirm"
         try:
@@ -737,7 +775,120 @@ class Hunter:
             )
             return None
 
+        if kind == "support":
+            if Extractor.command_confirm_kind(conf) != "support":
+                self.logger.warning(
+                    "Hunter: sonda de apoio %s -> %s nao voltou como apoio -- sem duracao",
+                    village_label(source_id), village_label(target_id))
+                return None
+            # 0 e o valor de falha do parser (sexto padrao), nao viagem nula.
+            return Extractor.attack_duration(conf) or None
+
         return Extractor.attack_duration(conf)
+
+    SUPPORT_RESERVE_PREFIX = "apoio_agendado"
+
+    def sync_support_reserves(self, schedules):
+        """
+        Tropa de apoio agendado (§8.61) fica reservada na origem enquanto o
+        comando esta pendente: a coleta e o farm respeitam `conquest_reserve`
+        (o mesmo mecanismo do trem barbaro), e sem isto a pesada estaria
+        coletando na hora da saida. Comando que saiu, falhou ou sumiu solta a
+        reserva.
+        """
+        wanted = {}
+        for sched_key, sched in (schedules or {}).items():
+            if sched.get("status") != "pending":
+                continue
+            for atk in sched.get("attacks", []):
+                if atk.get("kind") != "support" or atk.get("status") != "pending":
+                    continue
+                key = "%s:%s" % (self.SUPPORT_RESERVE_PREFIX, sched_key)
+                wanted.setdefault(str(atk.get("source_village_id")), {})[key] = {
+                    u: int(q) for u, q in (atk.get("troops") or {}).items() if int(q) > 0}
+        for vid, village in (self.villages or {}).items():
+            reserve = getattr(getattr(village, "units", None), "conquest_reserve", None)
+            if reserve is None:
+                continue
+            mine = wanted.get(str(vid), {})
+            for key in [k for k in reserve if str(k).startswith(self.SUPPORT_RESERVE_PREFIX + ":")]:
+                if key not in mine:
+                    reserve.pop(key, None)
+            for key, troops in mine.items():
+                reserve[key] = troops
+
+    @staticmethod
+    def linked_arrive_after(sched, schedules):
+        """
+        (instante antes do qual o apoio nao pode pousar, motivo de recusa).
+
+        Base: `arrive_after` do proprio schedule (a chegada planejada do
+        trem). Se ele aponta para o schedule do trem (`after_sched`), cada
+        nobre ja enviado empurra a base para a chegada REAL dele: o Hunter
+        manda alguns segundos depois do `send_time` (GET da praca, confirmacao,
+        envio), e a chegada do jogo conta do envio de verdade. Limite
+        superior dela: `sent_at` + (chegada planejada - `send_time`).
+
+        Recusa se um comando com nobre do trem falhou: a aldeia nao sera
+        nossa, e apoio pousando nela defende o dono -- ou fica parado numa
+        barbara.
+        """
+        base = sched.get("arrive_after")
+        linked = schedules.get(sched.get("after_sched") or "")
+        if not linked:
+            return base, None
+        planned = float(linked.get("arrival_time") or 0)
+        for atk in linked.get("attacks", []):
+            if int((atk.get("troops") or {}).get("snob", 0) or 0) <= 0:
+                continue
+            if atk.get("status") == "failed":
+                return base, "o nobre de %s no trem falhou (%s)" % (
+                    village_label(atk.get("source_village_id")),
+                    atk.get("fail_reason") or "sem motivo")
+            if atk.get("status") == "sent" and atk.get("sent_at") and atk.get("send_time"):
+                real = float(atk["sent_at"]) + (planned - float(atk["send_time"]))
+                base = max(float(base or 0), real)
+        return base, None
+
+    def _send_support(self, atk, sched, schedules):
+        """
+        Apoio agendado (§8.61). Mesmo caminho do apoio comum
+        (`DefenceManager.support`, so o botao de apoio no POST e a
+        confirmacao exigida como apoio), com `arrive_after`: o jogo mostra a
+        duracao na confirmacao e o envio para antes de criar o comando se o
+        apoio pousaria antes do nobre.
+        """
+        from game.defence_manager import DefenceManager
+
+        target_id = sched["target_id"]
+        source_id = str(atk["source_village_id"])
+        arrive_after, refusal = self.linked_arrive_after(sched, schedules)
+        if refusal:
+            atk["fail_reason"] = refusal
+            self.logger.warning("Hunter: [APOIO] %s -> %s nao sai: %s", village_label(source_id),
+                                village_label(target_id), refusal)
+            return False
+        village = self.villages.get(source_id)
+        position = None
+        if village and village.attack:
+            position = village.attack._resolve_position(target_id)
+        if position is None:
+            atk["fail_reason"] = "sem coordenada do alvo"
+            self.logger.error("Hunter: [APOIO] %s -> %s sem coordenada do alvo",
+                              village_label(source_id), village_label(target_id))
+            return False
+        dm = DefenceManager(village_id=source_id, wrapper=self.wrapper)
+        result = dm.support(target_id, troops=dict(atk["troops"]), position=position,
+                            arrive_after=arrive_after)
+        if not result:
+            atk["fail_reason"] = dm.last_support_error or "envio nao confirmado"
+            return False
+        atk["arrival_real"] = dm.last_support_arrival
+        if village and village.units:
+            for unit, qty in atk["troops"].items():
+                current = int(village.units.troops.get(unit, 0) or 0)
+                village.units.troops[unit] = str(max(0, current - int(qty)))
+        return True
 
     def _send_attack(self, atk, target_id):
         """

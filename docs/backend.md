@@ -6903,6 +6903,57 @@ contra o servidor às 15:39 e às 15:41 (varredura real, envio desligado).
   não se coordenam, mas o `clamp_to_available` impede que mandem a mesma tropa
   duas vezes.
 
+## 8.61 `P-APOIO-AGENDADO` — apoio que pousa logo depois do nobre (2026-10-11)
+
+**Pedido do usuário:** agendar um apoio para chegar alguns segundos depois de
+uma aldeia ser conquistada. A automação fica para depois.
+
+**Premissa medida antes de escrever (br143, 2026-10-11):** o apoio sai horas
+antes do pouso, enquanto a aldeia ainda é bárbara ou de outro jogador. A
+confirmação da praça (`try=confirm`) **aceita** apoio para aldeia bárbara:
+"Confirmar apoio para Aldeia de bárbaros", `command_confirm_kind` =
+`support`, 5.816 s para 10,8 campos com explorador (9 min/campo, bate). O
+passo final não foi testado, porque criaria um comando de verdade.
+
+**O que foi feito:**
+- Comando do Hunter com `"kind": "support"`. A sonda de duração vai pelo
+  botão de **apoio**, e não pelo de ataque, porque a duração pode ser outra (o
+  Sinal da Aflição só acelera apoio) e porque o par `attack`+`support` vira
+  ataque (§8.39). A confirmação tem que dizer "apoio". O envio passa por
+  `DefenceManager.support()`, nunca entra no lote de trem da praça e
+  desconta a tropa da origem.
+- Trava `arrive_after` em `support()`: se a duração lida na confirmação faz o
+  apoio pousar **antes** da chegada base, o envio aborta antes de criar o
+  comando. Apoio que pousa antes do nobre defende a aldeia contra o próprio
+  trem.
+- `Hunter.linked_arrive_after()`: com o apoio ligado a um trem do Hunter
+  (`after_sched`), a base passa a ser a chegada **real** de cada nobre já
+  enviado (`sent_at` + duração planejada). O Hunter manda 1 a 3 s depois do
+  `send_time`, e é dessa hora que o jogo conta a viagem. Se um nobre do trem
+  **falhou**, o apoio não sai: a aldeia não será nossa.
+- `Hunter.sync_support_reserves()`: a tropa do apoio pendente fica em
+  `conquest_reserve["apoio_agendado:<schedule>"]`, que o farm e a coleta
+  respeitam; antes, a pesada podia estar coletando na hora da saída. A reserva
+  solta quando o comando sai, falha ou some.
+- Painel `/hunter`, seção "Apoio depois do pouso": escolher um trem agendado
+  ou digitar alvo e chegada com segundos, mais origem, tropas e "segundos
+  depois" (padrão 5). Grava um schedule próprio (`label: "apoio"`), e por isso
+  o planejador bárbaro (pela chave do schedule) e o PvP (por `label` ∈
+  clear/nobles) não o confundem com o trem.
+
+Testes em `tests/test_hunter_support.py` (7), sem tocar no `schedules.json` de
+produção.
+
+**Aberto:**
+- **Não validado em campo:** nenhum apoio agendado saiu ainda, e o passo final
+  de apoio para aldeia bárbara nunca rodou.
+- **Precisão:** o apoio pousa `offset` segundos depois da base, mais a
+  latência do próprio envio (1 a 3 s). Ela atrasa, nunca adianta. Com o trem
+  do Hunter, a base já inclui o atraso real dos nobres.
+- **Não medido:** se o apoio que pousa numa aldeia ainda bárbara, porque o
+  nobre morreu, fica lá ou volta.
+- Exige `hunter.enabled` (ligado no `config.json` em 2026-10-11).
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
