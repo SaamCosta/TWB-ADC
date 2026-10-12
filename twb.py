@@ -1623,6 +1623,15 @@ class TWB:
                         village.def_man.my_other_villages_eta = defense_etas
                         village.def_man.my_other_villages_support_bonus = defense_bonus
 
+                # Feature 30: torre nasce de grupo de aldeias descobertas, no
+                # centro dele (core/watchtower_plan.py). So le cache/managed e
+                # grava config.json -- nenhuma requisicao, por isso sem gate.
+                # Antes das zonas, para elas ja verem a torre nova.
+                try:
+                    Village.apply_watchtower_plan(config)
+                except Exception as exc:
+                    logging.warning("Watchtower plan falhou: %r", exc)
+
                 # Feature 11: rebuild geographic zones from managed village cache
                 ZoneManager.build_from_cache(config)
 

@@ -74,7 +74,8 @@
   "watchtower": {
     "enabled": false,
     "min_spacing": 16,
-    "min_villages": 5
+    "min_villages": 5,
+    "min_cluster": 3
   },
   "profile_templates": {
     "offensive": {

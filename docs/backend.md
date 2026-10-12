@@ -385,7 +385,8 @@ império de 67 aldeias, aviso em modelo de pior caso:
 16 é o maior espaçamento que cobre tudo em impérios de 27, 47 e 67 aldeias. 17 é
 um precipício. ⚠️ **O precipício é propriedade desta vizinhança, não lei geral** —
 por isso é configurável e o default fica no lado seguro. Regra intuitiva:
-*"conquistou aldeia que nenhuma torre enxerga? ela vira torre"*.
+*"conquistou aldeia que nenhuma torre enxerga? ela vira torre"*. ⚠️ **Substituída em 2026-10-12 (§8.62):** a torre só nasce de um grupo de
+`min_cluster` (3) aldeias descobertas, na do centro.
 
 **Não verificado:** o tempo real de construção (a fórmula de redução por nível de
 EP na variante `buildtime_formula=2` não aparece em nenhuma das duas fontes) e o
@@ -6953,6 +6954,54 @@ produção.
 - **Não medido:** se o apoio que pousa numa aldeia ainda bárbara, porque o
   nobre morreu, fica lá ou volta.
 - Exige `hunter.enabled` (ligado no `config.json` em 2026-10-11).
+
+## 8.62 Torre de vigia nasce de grupo, não de aldeia isolada (2026-10-12)
+
+**Problema.** A regra da Feature 30 (§4.4) decidia na primeira rodada da
+aldeia conquistada: "nenhuma torre a enxerga? vira torre". Em 2026-10-11 a
+BBM 048 (531|289) caiu a 24,6 campos da aldeia própria mais próxima e virou
+torre de si mesma. Torre 20 custa 11.607 de população (quase meia fazenda 30),
+e aviso numa aldeia que ninguém apoia a tempo não paga isso. Os dados já
+mostravam o padrão: BBM 043 e BBM 045, torres criadas recém-conquistadas,
+seguiam com torre nível 0 e fazenda 21/16.
+
+**Regra nova (`core/watchtower_plan.py`).**
+- *Descoberta* = não é torre e fica a `min_spacing` (16) ou mais de toda torre.
+- Descobertas a menos de `min_spacing` umas das outras formam um grupo, por
+  ligação em cadeia.
+- Grupo com `watchtower.min_cluster` (padrão **3**) ou mais aldeias ganha
+  torre na aldeia do **centro**: a de menor distância até o membro mais longe.
+  Ofensiva só se o grupo não tiver outra; empate vai para fazenda mais alta,
+  depois mais pontos.
+- Iterativo: a torre nova cobre parte do grupo, e o que sobrar pode formar
+  outro grupo.
+- `min_cluster: 1` volta à regra antiga.
+
+O 3 é julgamento, não medição: com 3 cada aldeia paga ~3,9 mil de população
+pela torre, e há vizinho para agir quando o aviso chega.
+
+**Duas portas, a mesma função.** `Village.needs_watchtower` (herança) só
+designa a recém-conquistada se ela for o centro escolhido.
+`Village.apply_watchtower_plan`, chamado uma vez por ciclo em `twb.py` antes
+de `ZoneManager.build_from_cache`, promove o centro quando ele é uma aldeia já
+estabelecida. Isso aplica `profile_templates.watchtower` por cima da config
+dela e grava relendo o `config.json`. O passo só lê `cache/managed`, não faz
+requisição, e por isso não tem gate do Hunter.
+
+**Correção aplicada no `config.json`.** A BBM 048 voltou a `defensive` (o que
+a proporção 1:3 pedia: 11 ofensivas em 42), com config copiada da defensiva
+mais próxima (BBM 031) mais `profile_templates.defensive`. A chave
+`watchtower.min_cluster: 3` foi posta à mão. `build.version` **não** foi
+bumpado: a chave cabe num bloco existente, o código usa 3 como padrão, e um
+merge no `config.json` vivo arrisca descartar chave. Simulado contra as 48
+aldeias: nenhuma promoção. A BBM 048 e a 45215 (532|282, pousa 2026-10-12)
+formam um par, abaixo de 3.
+
+**Fica como está.** BBM 023 (torre 10) enxerga 2 aldeias, portanto 3 com ela,
+e já gastou ~2,2 mil de população. Torre não é rebaixada automaticamente.
+
+Testes: `tests/test_watchtower_cluster.py`. Os testes de espaçamento em
+`tests/test_watchtower_allocation.py` fixam `min_cluster: 1`.
 
 ## 9. Próximos passos
 

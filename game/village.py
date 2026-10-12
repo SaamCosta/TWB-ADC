@@ -14,6 +14,7 @@ from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.templates import GATHER_UNITS, TemplateManager, resolve_troop_template
 from core.twstats import TwStats
+from core import watchtower_plan
 from core.world_config import WorldConfig
 from game.attack import AttackManager, ConquestManager
 from game.pvp_conquest import PvpConquestManager
@@ -1818,12 +1819,15 @@ class Village:
         return sites
 
     @staticmethod
-    def needs_watchtower(config, my_x, my_y):
+    def needs_watchtower(config, my_x, my_y, my_vid=None):
         """
         Feature 30: decides whether a newly conquered village should become a
-        watchtower village. The criterion is purely territorial: the village is
-        farther than watchtower.min_spacing from EVERY existing tower, i.e. it
-        sits outside the area they already watch.
+        watchtower village. Two conditions since 2026-10-12: the village is
+        farther than watchtower.min_spacing from EVERY existing tower (outside
+        the area they already watch) AND it is the center of a group of at
+        least watchtower.min_cluster such uncovered villages
+        (core/watchtower_plan.py). min_cluster <= 1 restores the old
+        "uncovered = tower" rule.
 
         Returns (bool, reason) -- reason is a human string for the caller to log.
 
@@ -1877,15 +1881,134 @@ class Village:
             ((vid, math.hypot(my_x - x, my_y - y)) for vid, x, y in sites),
             key=lambda entry: entry[1],
         )
-        if nearest_dist >= min_spacing:
-            return True, (
-                "%.1f tiles from nearest tower (village %s), min_spacing is %s"
-                % (nearest_dist, nearest_vid, min_spacing)
+        if nearest_dist < min_spacing:
+            return False, (
+                "only %.1f tiles from tower village %s (min_spacing %s) -- already watched"
+                % (nearest_dist, village_label(nearest_vid), min_spacing)
+            )
+
+        # Fora do raio NAO basta (2026-10-12): torre que vigia so a si mesma
+        # custa meia fazenda 30 e avisa de ataque numa aldeia que ninguem apoia
+        # a tempo. A torre nasce de um grupo de `min_cluster` aldeias
+        # descobertas, na aldeia do meio dele -- core/watchtower_plan.py.
+        # Esta aldeia so vira torre aqui se ELA for o centro escolhido; se o
+        # centro for outra, o passo global do ciclo (apply_watchtower_plan)
+        # promove aquela.
+        min_cluster = wt.get("min_cluster", 3)
+        far = "%.1f tiles from nearest tower (%s), min_spacing %s" % (
+            nearest_dist, village_label(nearest_vid), min_spacing
+        )
+        if min_cluster <= 1:
+            return True, far
+        me = "__self__" if my_vid is None else str(my_vid)
+        villages = Village.get_watchtower_plan_input(config)
+        villages[me] = {"x": int(my_x), "y": int(my_y), "profile": None,
+                        "farm": 0, "points": 0}
+        promotions = watchtower_plan.plan(villages, min_spacing, min_cluster)
+        for vid, group in promotions:
+            if vid == me:
+                return True, "%s; center of an uncovered group of %d (min_cluster %d)" % (
+                    far, len(group), min_cluster
+                )
+        mine = [
+            g for g in watchtower_plan.clusters(
+                watchtower_plan.uncovered(villages, min_spacing), villages, min_spacing
+            ) if me in g
+        ]
+        size = len(mine[0]) if mine else 1
+        if size >= min_cluster:
+            return False, "%s; group of %d uncovered, but another village is its center" % (
+                far, size
             )
         return False, (
-            "only %.1f tiles from tower village %s (min_spacing %s) -- already watched"
-            % (nearest_dist, nearest_vid, min_spacing)
+            "%s, but its uncovered group has only %d village(s) -- min_cluster is %d, "
+            "a tower watching itself is not worth it" % (far, size, min_cluster)
         )
+
+    @staticmethod
+    def get_watchtower_plan_input(config):
+        """
+        {vid: {x, y, profile, farm, points}} das aldeias gerenciadas com
+        coordenada em cache/managed -- a entrada de core/watchtower_plan.
+        Aldeia ainda herdando (`inherit_on_first_run`) fica de fora: o perfil
+        dela no config ainda e o do village_template, nao o real.
+        """
+        out = {}
+        for vid, vcfg in config.get("villages", {}).items():
+            if not isinstance(vcfg, dict) or vcfg.get("inherit_on_first_run"):
+                continue
+            cached = FileManager.load_json_file(f"cache/managed/{vid}.json")
+            if not cached or not cached.get("x") or not cached.get("y"):
+                continue
+            levels = cached.get("buidling_levels") or {}
+            out[str(vid)] = {
+                "x": int(cached["x"]),
+                "y": int(cached["y"]),
+                "profile": vcfg.get("profile"),
+                "farm": int(levels.get("farm") or 0),
+                "points": int(cached.get("points") or 0),
+            }
+        return out
+
+    @staticmethod
+    def apply_watchtower_plan(config, logger=None):
+        """
+        Passo global, uma vez por ciclo: promove a torre o centro de todo grupo
+        de aldeias descobertas que chegou a `watchtower.min_cluster`. E a outra
+        porta de core/watchtower_plan -- a da heranca (needs_watchtower) so
+        enxerga a aldeia recem conquistada, e o centro do grupo quase sempre e
+        uma aldeia ja estabelecida.
+
+        A promocao aplica profile_templates.watchtower por cima da config da
+        propria aldeia (o resto dela fica). Grava relendo o config.json, como
+        _persist_village_config, e atualiza tambem a copia em memoria.
+        Devolve [(vid, membros)] promovidos.
+        """
+        logger = logger or logging.getLogger("Village")
+        wt = config.get("watchtower", {})
+        if not wt.get("enabled", False):
+            return []
+        managed = [v for v in config.get("villages", {}).values() if isinstance(v, dict)]
+        if len(managed) < wt.get("min_villages", 5):
+            return []
+        min_cluster = wt.get("min_cluster", 3)
+        if min_cluster <= 1:
+            # Regra antiga: so a heranca designa, aldeia por aldeia.
+            return []
+        promotions = watchtower_plan.plan(
+            Village.get_watchtower_plan_input(config),
+            wt.get("min_spacing", 16), min_cluster,
+        )
+        if not promotions:
+            return []
+
+        import collections
+        raw = FileManager.load_json_file(
+            "config.json", object_pairs_hook=collections.OrderedDict
+        )
+        if not raw or not isinstance(raw.get("villages"), dict):
+            logger.warning("Watchtower: config.json ilegivel -- promocao adiada")
+            return []
+        tpl = config.get("profile_templates", {}).get("watchtower", {})
+        done = []
+        for vid, group in promotions:
+            entry = raw["villages"].get(vid)
+            if not isinstance(entry, dict):
+                continue
+            entry["profile"] = "watchtower"
+            for key, value in tpl.items():
+                entry[key] = value
+            config["villages"][vid] = copy.deepcopy(entry)
+            done.append((vid, group))
+            logger.info(
+                "Watchtower: %s promovida a TORRE -- centro de %d aldeias que "
+                "nenhuma torre enxerga (%s)",
+                village_label(vid), len(group),
+                ", ".join(village_label(v) for v in group),
+            )
+        if done:
+            FileManager.save_json_file(raw, "config.json")
+        return done
 
     def _persist_village_config(self, config):
         """
@@ -2019,7 +2142,9 @@ class Village:
         # modes do not assign profiles at all.
         wants_watchtower = False
         if inheritance_mode == "empire_ratio":
-            wants_watchtower, wt_reason = Village.needs_watchtower(config, my_x, my_y)
+            wants_watchtower, wt_reason = Village.needs_watchtower(
+                config, my_x, my_y, my_vid=self.village_id
+            )
             if wt_reason:
                 # info, nao debug: isto roda uma vez por aldeia conquistada, e
                 # o caso "nenhuma torre designada" precisa ser visivel -- senao

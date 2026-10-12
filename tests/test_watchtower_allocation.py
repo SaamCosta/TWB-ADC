@@ -130,12 +130,17 @@ def test_imperio_vazio():
 # needs_watchtower -- decisao territorial
 # --------------------------------------------------------------------------
 
-def _cfg_torre(min_spacing=16, min_villages=5, n_villages=7, com_torre=False):
+def _cfg_torre(min_spacing=16, min_villages=5, n_villages=7, com_torre=False,
+               min_cluster=1):
+    # min_cluster=1 = a regra antiga ("descoberta vira torre"): estes testes
+    # medem o ESPACAMENTO. A regra do grupo (2026-10-12) esta em
+    # tests/test_watchtower_cluster.py.
     cfg = _cfg(["defensive"] * n_villages)
     cfg["watchtower"] = {
         "enabled": True,
         "min_spacing": min_spacing,
         "min_villages": min_villages,
+        "min_cluster": min_cluster,
     }
     if com_torre:
         cfg["villages"]["38409"] = {"profile": "watchtower"}
