@@ -157,7 +157,9 @@ preso, A26-14 sonda dobrada) foi fechado no mesmo dia (§8.35): **nenhum P1
 aberto**. O Lote C (A26-05 fila do Hunter, A26-06 `trade_max_per_hour`, A26-07
 proporção da oferta, A26-08 `supported`, A26-12 trava do `schedules.json`) também
 foi fechado no mesmo dia (§8.36). Sobram A26-09 e A26-11, que pedem sondagem
-do servidor antes, e os P3.
+do servidor antes, e os P3. A recusa AJAX do A26-09 foi capturada em
+2026-10-17 (`{"error": [...]}`, §8.63) e a coleta já a trata; farm, pesquisa e
+bandeira ainda não.
 ⚠️ **`cache/hunter/schedules.json` tem vários escritores** (Hunter, planejador,
 painel). Quem grava nele passa por `core.file_lock` e **relê antes de gravar**.
 Nunca gravar a cópia lida antes de uma espera: é esse o bug do A26-12, e é o

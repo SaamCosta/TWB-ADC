@@ -4037,7 +4037,8 @@ coleta; teto de 20% por atributo), `relic_trade`, `info_player&mode=daily_bonus`
 
 - `send_squads` com N esquadrões de aldeias diferentes, cada um com seu
   `unit_counts`, num POST (o JS do jogo manda N pendentes, mas com o mesmo
-  `candidate_squad`).
+  `candidate_squad`). ❌ *Respondida em 2026-10-17 (§8.63): premium, até com
+  os N esquadrões da mesma aldeia.*
 - Assistente de saque aceitar os mesmos alvos que o bot usa hoje e respeitar o
   piso de ataque falso (`fake_limit`).
 
@@ -4431,7 +4432,10 @@ doadora nunca mais apoia ninguém até o bot reiniciar, e também não volta a
 apoiar a mesma aldeia num ataque futuro. Hoje está latente, porque nenhum apoio
 real saiu até agora, mas é justamente o caminho que a §6.2 manda exercitar.
 
-**A26-09 — Resposta de erro de ação AJAX é contada como sucesso.** Ainda não
+**A26-09 — Resposta de erro de ação AJAX é contada como sucesso.** *(Metade da
+coleta corrigida em 2026-10-17, §8.63, com a recusa capturada:
+`{"error": [...]}` no topo, status 200. `popup_command`, `research` e
+`assign_flag` seguem abertos.)* Texto original: ainda não
 verificado contra o servidor. `get_api_action` devolve o JSON inteiro e nenhum
 chamador procura chave de erro (grep por `"error"` em `game/` e `core/`: zero).
 Afeta:
@@ -7003,6 +7007,97 @@ e já gastou ~2,2 mil de população. Torre não é rebaixada automaticamente.
 Testes: `tests/test_watchtower_cluster.py`. Os testes de espaçamento em
 `tests/test_watchtower_allocation.py` fixam `min_cluster: 1`.
 
+## 8.63 ✅ `P-REQ-CORTE` — quatro cortes de requisição medidos, e o lote de coleta que é premium (2026-10-17)
+
+Pedido do usuário: "faça otimizações pendentes", com o bot dormindo à noite e
+autorização para testar com tropa. O ponto de partida foi o `cache/cycles` dos
+4 ciclos diurnos de 15-16/10: **~868 requisições por ciclo**, e cada uma custa
+~14 s de pausa (`delay_factor: 3`, sono de 9 a 21 s) mais rede. Requisição a
+menos é ~15 s de ciclo a menos.
+
+### A hipótese do §9 item 24 morreu: N esquadrões num POST é premium
+
+O maior gasto isolado é `scavenge_api send_squads` (~115 por ciclo, um POST por
+opção de coleta). A §8.53 já sabia que mandar de **várias aldeias** num comando
+é premium. Faltava a mesma aldeia. Sondado às 00:0x de 17/10, conta sem nada
+pago, com o `WebWrapper` do bot: dois esquadrões de 10 lanças da BBM 012 (opções
+1 e 2) em `squad_requests[0]` e `[1]` de um POST só. Resposta, status 200:
+
+    {"error": ["É necessário que tenha conta premium para utilizar esta função."]}
+
+A tela relida 30 s depois mostrou as 4 opções livres: nada saiu. **Um esquadrão
+por POST é o limite da conta grátis**, e o item 24 fecha sem código.
+
+Achado no caminho: na conta grátis, `place&mode=scavenge_mass` abre, mas o
+`options` de cada aldeia vem **mascarado** — as 4 opções "livres e
+destrancadas" nas 50 aldeias, inclusive na 51540, que tem as 4 trancadas pela
+tela própria. A `unit_counts_home` dela bate com a da tela da aldeia. Quem for
+usar essa tela como atalho de leitura tem de saber que o estado das opções ali
+não vale.
+
+### O que foi cortado
+
+| Corte | Tela | Por ciclo | Prova |
+|---|---|---|---|
+| "Todas as suas ofertas" uma vez por ciclo | `market/all_own_offer` | ~48 de ~49 | oferta de 100 madeira criada na BBM 001, listada lendo a tela **da BBM 002** com `data-village="41123"`, apagada pelo POST do bot, lista vazia depois |
+| Mercadores só quando há envio | `market/send` (leitura) | ~18 | 71 de 161 leituras terminaram sem envio; os dois planejadores são monótonos na carga |
+| Checagem de término grátis sem 2º GET | `main` | ~22 | upgrade real (esconderijo 4→5, BBM 009): `302 → screen=main`, fila 1→2, e o `BuildInstantFree` com o **mesmo id e `data-available-from`** de um GET de `main` 20 s depois |
+
+Soma esperada: ~88 requisições, ~10% do ciclo, **~20 min por ciclo diurno**.
+
+- **Ofertas.** `ResourceManager.own_offers_this_cycle()` lê a lista na
+  primeira aldeia que chega ao mercado e a guarda em `wrapper.own_offers_cycle`,
+  com o ciclo do medidor (`wrapper.meter.started_at`) como chave. A semântica
+  não muda: a aldeia já só apagava a oferta que ela criou no ciclo anterior, e
+  oferta criada depois da leitura cai no ciclo seguinte, como antes. Página que
+  não é do jogo (login, captcha) não é guardada, senão uma sessão vencida na
+  primeira aldeia calaria a limpeza de todas. Oferta apagada sai da lista
+  compartilhada antes do POST (A26-16 roda a aldeia duas vezes).
+- **Mercadores.** `run()` e `run_mint_route()` montam o plano primeiro com
+  `UNBOUNDED_CARRY`. Carga maior só aumenta o plano (`plan_route` é guloso por
+  mercador; `_build_plan` só encolhe `to_send` e corta mais cedo com carga
+  menor), então vazio com carga ilimitada é vazio com qualquer carga. A
+  propriedade tem teste aleatório nos dois planejadores. Todos os 48 envios da
+  sessão de 16/10 saíram pela rota de cunhagem.
+- **Construção.** `BuildingManager.fresh_main` guarda a resposta do último
+  upgrade quando ela é tela de jogo, e `start_update()` a usa no lugar do GET.
+  Se o término grátis daquela mesma resposta já foi usado no laço
+  (`can_build_three_min`), ela não serve (o id da ordem já foi gasto) e o GET
+  volta.
+
+### A26-09, metade da coleta
+
+O mesmo `{"error": [...]}` é a resposta de erro que o A26-09 pedia para
+capturar antes de mexer. É um dict verdadeiro, e o `if sent:` da coleta
+descontava a tropa de `self.troops` (que vira `available_troops` no
+`cache/managed`) e logava "Using troops" para um esquadrão que não saiu.
+`Extractor.ajax_error()` reconhece só o formato capturado (dict com `error` não
+vazio). A coleta pula a opção recusada com WARNING, e o `start_unlock` deixa de
+descontar o custo. **Seguem sem a guarda:** `popup_command` (farm e apoio),
+`research` e `assign_flag`. O formato provavelmente é o mesmo, mas foi visto
+num endpoint só.
+
+### O que foi olhado e fica
+
+- **Prime noturno da conquista** (~25 a 46 req por ciclo noturno, ~10 ciclos
+  por noite). É trabalho de verdade: às 23:49 de 16/10 o planejador avaliou 10
+  nobres em 8 aldeias e recusou o trem por escolta.
+- **`place/units` do recrutamento.** Precisa do total com a tropa fora
+  (`units_owned_total`), que a tela de coleta não tem.
+- **`main` lido sem construir** (104 de 197 visitas). Ele alimenta níveis,
+  custos, `resman` e o término grátis. Fica.
+
+### Estado
+
+Os cortes só valem depois de reiniciar o bot. **⏳ Falta campo:** no `/cycles`,
+`market/all_own_offer` cair para 1 por ciclo, `market/send` sem envio ir a 0, e
+`main` ficar igual ao número de visitas mais as recursões de término grátis.
+
+Testes: `tests/test_own_offers_cycle.py` (linha verbatim da captura, `h`
+redigido), `tests/test_sharing_merchant_precheck.py`,
+`tests/test_builder_fresh_main.py` e `tests/test_ajax_refusal.py` (recusa
+verbatim). Todos provados por mutação.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -7470,10 +7565,12 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     acompanhamento da `reserved_by` roda no início de todo ciclo, também no
     noturno, em `TWB.run_barbarian_conquest()`, e não espera mais a vez da
     aldeia.)*
-24. **Hipótese a testar, possivelmente grátis:** o endpoint `scavenge_api`
-    `send_squads` que o bot **já usa** aceitar N esquadrões num POST. A tela
-    de coleta em massa talvez seja premium (KB não diz), mas o endpoint não
-    necessariamente. Um envio real resolve; exige autorização.
+24. ~~**Hipótese a testar, possivelmente grátis:** o endpoint `scavenge_api`
+    `send_squads` que o bot **já usa** aceitar N esquadrões num POST.~~ ❌
+    **Testado em 2026-10-17 (§8.63): é premium até na mesma aldeia.** O jogo
+    respondeu `{"error": ["É necessário que tenha conta premium..."]}` e nada
+    saiu. No mesmo passo, três outros cortes (~88 req/ciclo) e a metade da
+    coleta do A26-09.
 25. ~~**Painel**: os cinco itens de gravidade alta da `frontend.md` §2.8~~ —
     ✅ **feito em 2026-09-30** (§8.42). De brinde, a metade "ler
     `game_data.player.incomings`" do item 23 (só para o painel; a defesa

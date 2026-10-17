@@ -82,6 +82,9 @@ class WebWrapper:
         # 8.44: recompensas de missao prontas, por aldeia, lidas de toda tela
         # HTML -- decide se o GET do popup de missoes vale a requisicao.
         self.reward_gate = RewardGate()
+        # "Todas as suas ofertas" do mercado, que e da conta: uma leitura por
+        # ciclo (ResourceManager.own_offers_this_cycle).
+        self.own_offers_cycle = None
         # Detector de furo do Hunter: `hunter_next_send` e publicado pelo
         # `Hunter.gate()` e `hunter_active` fica True enquanto o Hunter roda.
         # Requisicao comum dentro da janela de silencio de uma saida e sinal

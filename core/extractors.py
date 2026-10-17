@@ -263,6 +263,31 @@ class Extractor:
             return None
 
     @staticmethod
+    def ajax_error(res):
+        """
+        Mensagem de recusa de uma acao AJAX (`get_api_action`), ou None.
+
+        Com `TribalWars-Ajax: 1` a resposta boa vem embrulhada em
+        `{"response": ..., "game_data": ...}` e a recusa vem SEM esse envelope,
+        como `{"error": [mensagem, ...]}` no topo. Capturado em 2026-10-17 no
+        `scavenge_api send_squads` com dois esquadroes num POST (§8.63):
+        `{"error": ["É necessário que tenha conta premium para utilizar esta
+        função."]}`, status 200, e nada saiu. Um dict assim e verdadeiro, e
+        era isso que fazia `if sent:` contar a recusa como envio (A26-09).
+
+        So o formato capturado conta: dict com `error` nao vazio. Lista vira
+        texto unido; qualquer outra coisa devolve None.
+        """
+        if not isinstance(res, dict):
+            return None
+        err = res.get("error")
+        if not err:
+            return None
+        if isinstance(err, (list, tuple)):
+            return "; ".join(str(e) for e in err if e) or None
+        return str(err)
+
+    @staticmethod
     def village_data(res):
         """
         Detects village data on a page

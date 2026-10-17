@@ -579,19 +579,58 @@ class ResourceManager:
         self.last_trade = int(time.time())
         return True
 
+    OWN_OFFER_ROW_RE = re.compile(r'data-id="(\d+)".+?data-village="(\d+)"')
+
+    def own_offers_this_cycle(self):
+        """
+        `[(oferta, aldeia), ...]` de "Todas as suas ofertas", lida uma vez por
+        ciclo e reaproveitada pelas outras aldeias.
+
+        A tela e da CONTA, nao da aldeia: medido em 2026-10-17 com uma oferta
+        criada na BBM 001 e lida da BBM 002, que a listou com
+        `data-village="41123"` (fixture em tests/test_own_offers_cycle.py). O
+        filtro por `data-village` abaixo ja dizia isso. Ler por aldeia custava
+        ~50 GETs por ciclo da mesma lista, quase sempre vazia.
+
+        O ciclo e o do medidor (`wrapper.meter.started_at`). Sem ele (wrapper
+        de teste, medidor desligado) a leitura volta a ser por chamada. Oferta
+        criada ou aceita depois da leitura so aparece no ciclo seguinte; antes
+        a aldeia ja so apagava a oferta do ciclo anterior, entao o efeito e o
+        mesmo. Devolve None se a leitura falhou.
+        """
+        cycle = getattr(getattr(self.wrapper, "meter", None), "started_at", None)
+        cached = getattr(self.wrapper, "own_offers_cycle", None)
+        if cycle is not None and cached and cached.get("cycle") == cycle:
+            return cached["rows"]
+        url = f"game.php?village={self.village_id}&screen=market&mode=all_own_offer"
+        data = self.wrapper.get_url(url)
+        if data is None:
+            return None
+        rows = []
+        for entry in self.OWN_OFFER_ROW_RE.findall(data.text):
+            if entry not in rows:
+                rows.append(entry)
+        # Login ou captcha tambem dao zero linhas: so uma tela de jogo vale
+        # pelo ciclo inteiro, senao uma pagina errada na primeira aldeia
+        # calaria a limpeza de todas.
+        if cycle is not None and Extractor.game_state(data):
+            self.wrapper.own_offers_cycle = {"cycle": cycle, "rows": rows}
+        return rows
+
     def drop_existing_trades(self):
         """
         Removes an existing trade if resources are needed elsewhere or it expired
         """
-        url = f"game.php?village={self.village_id}&screen=market&mode=all_own_offer"
-        data = self.wrapper.get_url(url)
-        if data is None:
+        existing = self.own_offers_this_cycle()
+        if existing is None:
             self.logger.warning("Drop trades: request timed out, skipping")
             return
-        existing = re.findall(r'data-id="(\d+)".+?data-village="(\d+)"', data.text)
-        for entry in existing:
+        for entry in list(existing):
             offer, village = entry
             if village == str(self.village_id):
+                # Sai da lista do ciclo antes do POST: a lista e compartilhada,
+                # e a mesma oferta nao deve ser apagada duas vezes.
+                existing.remove(entry)
                 post_url = f"game.php?village={self.village_id}&screen=market&mode=all_own_offer&action=delete_offers"
                 post = {
                     "id_%s" % offer: "on",

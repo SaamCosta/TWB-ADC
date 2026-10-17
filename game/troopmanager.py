@@ -695,6 +695,13 @@ class TroopManager:
                 option_id,
             )
             return False
+        refusal = Extractor.ajax_error(res)
+        if refusal:
+            # Mesmo envelope de recusa do send_squads (A26-09): sem isto o
+            # custo era descontado do recurso local de uma coleta que o jogo
+            # recusou.
+            self.logger.warning("Unlock: coleta %s recusada pelo jogo: %s", option_id, refusal)
+            return False
 
         # "Mandei" e "termina" são momentos diferentes (6º padrão): o jogo
         # publica a conclusão em `unlock_time` na PRÓXIMA leitura da tela, e é
@@ -881,10 +888,13 @@ class TroopManager:
                         data=payload,
                         village_id=self.village_id,
                     )
-                    if sent:
+                    refused = self._squad_refused(sent, available_selection)
+                    if sent and not refused:
                         self._deduct_gathered(payload)
                     sleep += random.randint(1, 5)
                     time.sleep(sleep)
+                    if refused:
+                        continue
                     self.last_gather = int(time.time())
                     self.logger.info(f"Using troops for gather operation: {available_selection}")
                 else:
@@ -932,6 +942,8 @@ class TroopManager:
                             data=payload,
                             village_id=self.village_id,
                         )
+                        if self._squad_refused(sent, selection):
+                            continue
                         if sent:
                             self._deduct_gathered(payload)
                         self.last_gather = int(time.time())
@@ -947,6 +959,23 @@ class TroopManager:
                     continue
         self.logger.info("All gather operations are underway.")
         return True
+
+    def _squad_refused(self, sent, option):
+        """
+        True quando o jogo recusou o `send_squads` (A26-09, §8.63).
+
+        A recusa volta com status 200 como `{"error": [...]}`, que e um dict
+        verdadeiro: antes o `if sent:` descontava a tropa e logava "Using
+        troops" para um esquadrao que nunca saiu.
+        """
+        refusal = Extractor.ajax_error(sent)
+        if refusal:
+            self.logger.warning(
+                "Gather: coleta %s recusada pelo jogo em %s: %s",
+                option, village_label(self.village_id), refusal,
+            )
+            return True
+        return False
 
     def _deduct_gathered(self, payload):
         """

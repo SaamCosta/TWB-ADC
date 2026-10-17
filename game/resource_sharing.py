@@ -67,6 +67,13 @@ DEFAULT_TRAVEL_SECONDS = 3600
 # no caminho premium (`PremiumExchange.optimize_n(..., size=1000)`).
 DEFAULT_MERCHANT_CAPACITY = 1000
 
+# Carga "sem limite" para a pre-checagem do plano (§8.63). Os dois
+# planejadores so encolhem quando a carga encolhe: se nem com isto sai envio,
+# com os mercadores reais tambem nao sai, e o GET de `market&mode=send` que le
+# os mercadores pode ser pulado. Medido em 4 ciclos de 15-16/10: 71 de 161
+# leituras terminavam sem envio nenhum.
+UNBOUNDED_CARRY = 10 ** 9
+
 
 class ResourceSharingManager:
     """
@@ -80,7 +87,8 @@ class ResourceSharingManager:
 
     Fluxo por ciclo:
       1. Calcula quanto esta aldeia pode doar por recurso (as duas regras)
-      2. Lê quantos mercadores existem -> orçamento de carga do ciclo
+      2. Lê quantos mercadores existem -> orçamento de carga do ciclo (só
+         se o plano com carga ilimitada não for vazio, ver UNBOUNDED_CARRY)
       3. Distribui primeiro para quem está travado, depois o transbordo restante
          para a aldeia com mais espaço livre
       4. Envia via resman.send_resources()
@@ -126,6 +134,18 @@ class ResourceSharingManager:
             )
             return
 
+        in_flight = self._load_pending()
+        if not self._build_plan(
+            village_states, giveable, overflow, cfg, UNBOUNDED_CARRY,
+            self._fallback_capacity(cfg), in_flight
+        ):
+            logger.debug(
+                "ResourceSharing: aldeia %s tem excedente (%s) mas nenhuma "
+                "receptora elegível neste ciclo (mercadores não lidos)",
+                village_label(self.current_village_id), giveable
+            )
+            return
+
         # Orçamento de carga do ciclo inteiro. O bug da versão anterior era
         # contar *transferências* (sent_count += 1) como se cada envio custasse
         # um mercador; custa um mercador a cada ~1000 recursos, então um envio
@@ -139,7 +159,6 @@ class ResourceSharingManager:
             )
             return
 
-        in_flight = self._load_pending()
         plan = self._build_plan(
             village_states, giveable, overflow, cfg, carry_budget, per_merchant, in_flight
         )
@@ -216,25 +235,32 @@ class ResourceSharingManager:
             logger.info("Cunhagem: hub %s sem estado no cache, nada enviado", village_label(hub))
             return
 
-        carry_budget, merchants, per_merchant = self._get_carry_budget(self.sharing_cfg)
-        if merchants < 1:
-            logger.debug("Cunhagem: %s sem mercadores livres", village_label(self.current_village_id))
-            return
-
         cost, _ = mint_planner.village_coin_cost(hub_state, int(time.time()))
         in_flight = self._load_pending().get(hub, {})
-        plan = mint_planner.plan_route(
-            donor_res=current_resman.actual,
-            floor=route.get("floor", 0),
-            hub_res=hub_state.get("resources") or {},
-            hub_storage=hub_state.get("storage"),
-            hub_inflight=in_flight,
-            carry=carry_budget,
-            per_merchant=per_merchant,
-            cost=cost,
-            fill_max_pct=float(route.get("fill_max_pct", 0.95)),
-            min_send=int(self.sharing_cfg.get("min_send_amount", 1000) or 1000),
-        )
+
+        def plan_with(carry, per_merchant):
+            return mint_planner.plan_route(
+                donor_res=current_resman.actual,
+                floor=route.get("floor", 0),
+                hub_res=hub_state.get("resources") or {},
+                hub_storage=hub_state.get("storage"),
+                hub_inflight=in_flight,
+                carry=carry,
+                per_merchant=per_merchant,
+                cost=cost,
+                fill_max_pct=float(route.get("fill_max_pct", 0.95)),
+                min_send=int(self.sharing_cfg.get("min_send_amount", 1000) or 1000),
+            )
+
+        # Sem sobra acima do piso, ou hub cheio: nem com mercador ilimitado sai
+        # envio, entao nao vale o GET dos mercadores (UNBOUNDED_CARRY).
+        plan = plan_with(UNBOUNDED_CARRY, self._fallback_capacity(self.sharing_cfg))
+        if plan:
+            carry_budget, merchants, per_merchant = self._get_carry_budget(self.sharing_cfg)
+            if merchants < 1:
+                logger.debug("Cunhagem: %s sem mercadores livres", village_label(self.current_village_id))
+                return
+            plan = plan_with(carry_budget, per_merchant)
         if not plan:
             logger.debug(
                 "Cunhagem: %s não tem o que mandar ao hub %s (piso %s, hub cheio ou sem sobra)",
@@ -827,6 +853,13 @@ class ResourceSharingManager:
         except Exception as e:
             logger.debug("ResourceSharing: falha ao salvar amostra: %s", e)
 
+    @staticmethod
+    def _fallback_capacity(cfg):
+        """Carga por mercador quando a tela não diz (`merchant_capacity`)."""
+        return int(
+            cfg.get("merchant_capacity", DEFAULT_MERCHANT_CAPACITY) or DEFAULT_MERCHANT_CAPACITY
+        )
+
     def _get_carry_budget(self, cfg):
         """
         Devolve (carga_disponível, mercadores, carga_por_mercador) para o ciclo
@@ -856,9 +889,7 @@ class ResourceSharingManager:
         inválido", e era essa a causa de o contador nunca ser encontrado -- o
         regex sempre esteve certo. Ver ResourceManager.send_resources.
         """
-        fallback_capacity = int(
-            cfg.get("merchant_capacity", DEFAULT_MERCHANT_CAPACITY) or DEFAULT_MERCHANT_CAPACITY
-        )
+        fallback_capacity = self._fallback_capacity(cfg)
         try:
             url = f"game.php?village={self.current_village_id}&screen=market&mode=send"
             res = self.wrapper.get_url(url=url)

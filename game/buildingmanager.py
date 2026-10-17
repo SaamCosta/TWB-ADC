@@ -57,6 +57,8 @@ class BuildingManager:
         self.levels = {}
         self.costs = {}
         self.game_state = {}
+        # Resposta do ultimo upgrade, que ja e a tela principal (§8.63).
+        self.fresh_main = None
 
     def create_update_links(self, extracted_buildings):
         """
@@ -148,6 +150,7 @@ class BuildingManager:
             r = self.max_queue_len - 1
         else:
             r = self.max_queue_len - len(self.waits)
+        self.fresh_main = None
         for x in range(r):
             result = self.get_next_building_action()
             if not result:
@@ -156,8 +159,14 @@ class BuildingManager:
                     len(self.waits), len(self.queue)
                 )
                 return False
-        # Check for instant build after putting something in the queue
-        main_data = self.wrapper.get_action(village_id=self.village_id, action="main")
+        # Check for instant build after putting something in the queue.
+        # A resposta do ultimo upgrade ja E a tela principal com a fila nova
+        # (o mesmo HTML de onde get_next_building_action() tira game_state e
+        # custos), entao o GET so volta quando ela nao serve (§8.63).
+        main_data = self.fresh_main
+        self.fresh_main = None
+        if main_data is None:
+            main_data = self.wrapper.get_action(village_id=self.village_id, action="main")
         if main_data is None:
             self.logger.warning("Builder: request timed out, skipping instant-build check")
             return True
@@ -353,9 +362,13 @@ class BuildingManager:
                 )
                 self.levels[entry] = current_level + 1
                 response = self.wrapper.get_url(check["build_link"].replace("amp;", ""))
+                # Ate prova em contrario, nao ha tela fresca para a checagem de
+                # termino gratis de start_update().
+                self.fresh_main = None
                 if response is None:
                     self.logger.warning("Builder: build request timed out for %s, skipping", entry)
                     return self.get_next_building_action(index + 1)
+                quick_done = False
                 if self.can_build_three_min:
                     # Wait some random time
                     time.sleep(random.randint(3, 7) / 10)
@@ -364,6 +377,7 @@ class BuildingManager:
                         # Remove first item from the queue
                         self.queue.pop(0)
                         index -= 1
+                        quick_done = True
                     # Building was completed, queueing another
                 # Mesma guarda de start_update(): se a resposta pos-build nao
                 # for reconhecida, manter o game_state anterior em vez de
@@ -374,6 +388,11 @@ class BuildingManager:
                     self.costs = Extractor.building_data(response)
                     # Trigger function again because game state is changed
                     self.costs = self.create_update_links(self.costs)
+                    # Serve para a checagem de termino gratis, a menos que o
+                    # termino desta mesma resposta ja tenha sido usado acima:
+                    # o id da ordem nela ja foi gasto.
+                    if not quick_done:
+                        self.fresh_main = response
                 if self.resman and "building" in self.resman.requested:
                     # Build something, remove request
                     self.resman.requested["building"] = {}
