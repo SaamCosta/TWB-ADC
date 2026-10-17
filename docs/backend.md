@@ -7098,6 +7098,55 @@ redigido), `tests/test_sharing_merchant_precheck.py`,
 `tests/test_builder_fresh_main.py` e `tests/test_ajax_refusal.py` (recusa
 verbatim). Todos provados por mutação.
 
+## 8.64 `P-COLETA-LOTE` — coleta em lote quando o premium está ativo (2026-10-17)
+
+Primeiro uso da camada 2 da §9 (recurso pago ligado por detecção), pedido do
+usuário logo depois da §8.63. A conta está sem premium desde 08/10, então o
+código foi escrito para **se defender sozinho** de qualquer premissa errada.
+
+**Detecção.** `Extractor.feature_active(game_state, "Premium")`, lida em
+`gather()` do `game_data` da **própria tela de coleta** que o método já baixa:
+zero requisição, e nada é guardado entre ciclos (o premium vence e volta, §8.53).
+Só `active is True` liga. Bloco ausente, tela que não é do jogo ou erro de
+leitura dão o caminho grátis.
+
+**Envio.** No modo avançado, o laço passou a montar todos os esquadrões antes
+de enviar. A divisão da tropa não muda, porque a fatia de cada opção já saía do
+`troops` local sem depender da resposta (o teste compara as fatias do lote com
+as do caminho grátis, campo a campo). Com premium e mais de um esquadrão,
+`_send_squads_batch()` reindexa para `squad_requests[0..n]` (o formato do JS da
+coleta em massa, §8.25) e manda um POST só.
+
+| Resposta do lote | O que o bot faz |
+|---|---|
+| sem `error` | desconta cada esquadrão e loga cada opção, como antes |
+| `{"error": [...]}` (§8.63) | WARNING e manda um por um, no mesmo ciclo |
+| nenhuma (`None`) | não reenvia: o lote pode ter saído, e a tela do próximo ciclo diz o que está em andamento |
+
+Uma detecção errada custa, no pior caso, um POST recusado por aldeia. O modo
+básico já manda um esquadrão só e não muda.
+
+**Ganho esperado com premium:** de ~2,3 POSTs de coleta por aldeia para 1,
+cerca de 65 requisições (~16 min) por ciclo diurno. Sem premium, nada muda.
+
+**⏳ Não medido, e só mede com premium ativo:** o formato da resposta boa. A
+primeira dela no processo vai inteira para o log
+(`Gather: primeira resposta de lote (formato ainda nao medido)`). É lá que se
+descobre se o jogo devolve aceite parcial por esquadrão, que o código hoje não
+olha: ele trata "sem `error` no topo" como lote inteiro aceito. Se vier
+parcial, o efeito é `available_troops` do `cache/managed` subestimado até a
+próxima leitura da tela, não tropa perdida.
+
+**Fica para depois (passo 2):** todas as aldeias num POST pela tela
+`scavenge_mass`, que tira também os ~50 GETs de coleta por ciclo. Exige virar
+a coleta uma fase da conta, e na conta grátis aquela tela mascara o estado das
+opções (§8.63). Só faz sentido com premium de volta.
+
+Teste: `tests/test_gather_premium_batch.py` (bloco `features` verbatim da conta
+grátis; lote = fatias do grátis; recusa → um por um; sem resposta → nada
+reenviado; uma opção → POST normal). Provado por mutação na detecção e no
+retorno ao um por um.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -7586,6 +7635,9 @@ zero; prazo em `premium&mode=feature_log`):
 
 26. **Premium:** visões gerais de conta (tropas, edifícios, pesquisa,
     produção), recrutamento em massa, apoio em massa, "Pedido" no mercado.
+    ✅ *Primeira peça em 2026-10-17 (§8.64): coleta da aldeia num POST só,
+    com volta ao um por um em recusa. ⏳ Falta campo com premium ativo. A
+    coleta de todas as aldeias num POST (`scavenge_mass`) fica como passo 2.*
 27. **Gerente de conta:** decidir quem manda por aldeia (achados 2 e 3 —
     construção, recrutamento e transporte hoje sob duplo comando); quando
     ativo, o bot pode ceder essas fases e economizar as requisições.

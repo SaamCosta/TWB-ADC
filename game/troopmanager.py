@@ -765,6 +765,14 @@ class TroopManager:
             return False
         village_data = Extractor.village_data(result)
         options = (village_data or {}).get("options") or {}
+        # Camada 2 (§8.64): da propria tela que acabou de chegar, nunca de uma
+        # deteccao guardada -- o premium vence e volta.
+        try:
+            premium = Extractor.feature_active(Extractor.game_state(result), "Premium")
+        except Exception:
+            # Leitura ruim nao pode custar a coleta: sem premium e o caminho
+            # que sempre funcionou.
+            premium = False
         # Antes do teto efetivo de propósito: quando NADA está destrancado,
         # `selection` é 0 e o método retorna -- e é exatamente aí que
         # desbloquear é a única coisa útil a fazer.
@@ -839,6 +847,7 @@ class TroopManager:
                     pass
             gather_batch = math.floor(total_carry / selection_map[selection - 1])
 
+            squads = []
             for option in self.gather_option_keys(options, selection):
                 option_state = options.get(option) or {}
                 self.logger.debug(
@@ -881,6 +890,21 @@ class TroopManager:
                         else:
                             payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = "0"
                     payload["squad_requests[0][candidate_squad][carry_max]"] = str(curr_haul)
+                    squads.append((available_selection, payload))
+                else:
+                    # A higher option being locked or already underway does
+                    # not make the lower unlocked options unusable.
+                    continue
+
+            # Montar tudo antes de enviar nao muda a divisao: a fatia de cada
+            # opcao ja saia de `troops` local, sem depender da resposta.
+            batched = False
+            if len(squads) > 1 and premium:
+                batched = self._send_squads_batch(squads)
+                if batched is None:
+                    return True
+            if not batched:
+                for available_selection, payload in squads:
                     payload["h"] = self.wrapper.last_h
                     sent = self.wrapper.get_api_action(
                         action="send_squads",
@@ -897,10 +921,6 @@ class TroopManager:
                         continue
                     self.last_gather = int(time.time())
                     self.logger.info(f"Using troops for gather operation: {available_selection}")
-                else:
-                    # A higher option being locked or already underway does
-                    # not make the lower unlocked options unusable.
-                    continue
 
         else:
             for option in self.gather_option_keys(options, selection):
@@ -958,6 +978,65 @@ class TroopManager:
                     # aborting the village's whole gather pass.
                     continue
         self.logger.info("All gather operations are underway.")
+        return True
+
+    # Uma vez por processo: a primeira resposta boa de um lote vai inteira
+    # para o log. O formato dela nunca foi visto (§8.64), so a recusa.
+    _batch_response_logged = False
+
+    def _send_squads_batch(self, squads):
+        """
+        Todos os esquadroes desta aldeia num POST so. So com premium ativo.
+
+        Sem premium o jogo recusa ate dois esquadroes da MESMA aldeia (medido
+        em 2026-10-17, §8.63). O formato `squad_requests[0..n]` e o do JS da
+        coleta em massa (§8.25). `squads` e a lista `(opcao, payload)` do laco
+        de `gather()`, cada payload no indice 0.
+
+        Devolve True (aceito: desconta e loga cada opcao), False (recusado:
+        quem chama manda um por um, no mesmo ciclo) ou None (sem resposta: o
+        lote pode ter saido, entao nada e reenviado -- a proxima tela de coleta
+        diz o que esta em andamento).
+        """
+        prefix = "squad_requests[0]"
+        data = {}
+        for i, (_option, payload) in enumerate(squads):
+            for key, value in payload.items():
+                if key.startswith(prefix):
+                    data["squad_requests[%d]%s" % (i, key[len(prefix):])] = value
+        data["h"] = self.wrapper.last_h
+        option_ids = [option for option, _payload in squads]
+        sent = self.wrapper.get_api_action(
+            action="send_squads",
+            params={"screen": "scavenge_api"},
+            data=data,
+            village_id=self.village_id,
+        )
+        if sent is None:
+            self.logger.warning(
+                "Gather: lote de coletas %s sem resposta em %s; nada reenviado neste ciclo",
+                option_ids, village_label(self.village_id),
+            )
+            return None
+        refusal = Extractor.ajax_error(sent)
+        if refusal:
+            self.logger.warning(
+                "Gather: lote de coletas %s recusado em %s (%s); enviando uma por uma",
+                option_ids, village_label(self.village_id), refusal,
+            )
+            return False
+        if not TroopManager._batch_response_logged:
+            TroopManager._batch_response_logged = True
+            self.logger.info("Gather: primeira resposta de lote (formato ainda nao medido): %s",
+                             str(sent)[:2000])
+        self.logger.info(
+            "Gather: coletas %s em %s numa requisicao so (premium)",
+            option_ids, village_label(self.village_id),
+        )
+        for option, payload in squads:
+            self._deduct_gathered(payload)
+            self.logger.info(f"Using troops for gather operation: {option}")
+        self.last_gather = int(time.time())
         return True
 
     def _squad_refused(self, sent, option):

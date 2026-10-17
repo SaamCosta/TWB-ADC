@@ -288,6 +288,25 @@ class Extractor:
         return str(err)
 
     @staticmethod
+    def feature_active(game_state, name):
+        """
+        Se o recurso pago `name` (`Premium`, `AccountManager`,
+        `FarmAssistent`) esta ativo, pelo `game_data.features` da resposta.
+
+        Vem em toda tela de jogo, de graca (§8.25, achado 1). Na conta sem nada
+        pago, lido em 2026-10-17 na tela de coleta da BBM 012:
+        `{"Premium": {"possible": true, "active": false}, "AccountManager":
+        {"possible": false, "active": false}, "FarmAssistent": {"possible":
+        true, "active": false}}`. So `active is True` liga; qualquer outra
+        coisa (bloco ausente, tela que nao e do jogo) e "nao ativo", que e o
+        caminho gratis.
+        """
+        try:
+            return game_state["features"][name]["active"] is True
+        except (KeyError, TypeError):
+            return False
+
+    @staticmethod
     def village_data(res):
         """
         Detects village data on a page
