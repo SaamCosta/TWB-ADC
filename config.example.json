@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "5.1",
+    "version": "5.2",
     "author": "stefan2200"
   },
   "server": {
@@ -209,6 +209,12 @@
     "keep_wood": 0,
     "keep_stone": 0,
     "keep_iron": 0
+  },
+  "account_manager": {
+    "cede_enabled": true,
+    "cede_construction": true,
+    "cede_research": true,
+    "cede_recruitment": true
   },
   "world": {
     "knight_enabled": null,

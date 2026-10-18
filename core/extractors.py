@@ -1008,6 +1008,67 @@ class Extractor:
                           res[start:start + 2000])
         return int(match.group(1)) if match else None
 
+    # Linha do widget do gerente -> nome do <select> dela (§8.68).
+    AM_WIDGET_SELECTS = {
+        "construction": "construction_template",
+        "research": "research_template",
+        "troops": "troops_template",
+    }
+
+    @staticmethod
+    def account_manager_widget(res):
+        """
+        Modelos do gerente de conta NESTA aldeia, do widget `show_am_settings`
+        da visão geral (§8.68). Recortes verbatim do br143 de 18/10/2026 em
+        tests/fixtures/am_widget_*_br143.html. Cada linha é um
+        `<span class="am-form-element">` seguido de um `<select>`:
+
+            ativo:      <span ...>ADC - DEFENSIVA</span> ... <option value="2109" selected>
+            tropas ativas (o select de tropas tem formato próprio):
+                        <span ...>ADC - OFENSIVA</span> ... <option value="0" selected>- Recrutamento ativo -
+            sem modelo: <span ...><em>Sem gerência</em></span>, nenhum `selected`
+
+        "Sem gerência" vale tanto para aldeia que já cumpriu o modelo (o jogo o
+        retira) quanto para a que nunca recebeu um. Para quem cede fase, as
+        duas são a mesma coisa: ninguém está cuidando dela.
+
+        Devolve None sem o widget (conta sem gerente, ou o jogador tirou o
+        widget da visão geral) e, por linha, {"active": bool, "template": str}
+        ou None quando os dois sinais discordam ou a linha não casa (markup
+        novo). O `selected` e o `<em>` precisam concordar: ancorar num só faria
+        a guarda passar justamente no markup que ela não entende (15º padrão).
+        """
+        res = _page_text(res)
+        start = res.find('id="show_am_settings"')
+        if start == -1:
+            return None
+        end = res.find("registerAMWidgetEvents", start)
+        block = res[start:end if end != -1 else start + 20000]
+        out = {}
+        for key, name in Extractor.AM_WIDGET_SELECTS.items():
+            # O rótulo não pode cruzar `</span>`: com um `.*?` simples a busca
+            # começa no span da PRIMEIRA linha e engole as anteriores até o
+            # select pedido, misturando o `<em>` de uma com o `selected` de
+            # outra (medido: tropas da BBM 001 saíam None).
+            row = re.search(
+                r'<span class="am-form-element">((?:(?!</span>).)*)</span>\s*'
+                r'<select[^>]*\bname="%s"[^>]*>(.*?)</select>' % name,
+                block, re.S,
+            )
+            if not row:
+                out[key] = None
+                continue
+            label, options = row.groups()
+            selected = re.search(r'<option value="-?\d+"\s+selected\s*>', options)
+            idle = "<em>" in label
+            if selected and not idle:
+                out[key] = {"active": True, "template": html.unescape(label).strip()}
+            elif idle and not selected:
+                out[key] = {"active": False, "template": ""}
+            else:
+                out[key] = None
+        return out
+
     @staticmethod
     def own_villages_overview(res):
         """

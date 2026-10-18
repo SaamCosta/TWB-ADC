@@ -6,6 +6,7 @@ import time
 from codecs import decode
 from datetime import datetime
 
+from core import am_cession
 from core import game_data_shadow
 from core import support_store
 from core.village_label import register as register_village_name, village_label
@@ -121,6 +122,12 @@ class Village:
     def __init__(self, village_id=None, wrapper=None):
         self.village_id = village_id
         self.wrapper = wrapper
+        # §8.68: widget do gerente lido na visão geral do init deste ciclo, e
+        # a última decisão de cessão por fase (só para logar a troca). Dict
+        # mutável: instância, não classe (1º padrão).
+        self.am_widget = None
+        self._am_cession = {}
+        self._am_cession_at = {}
 
     def get_config(self, section, parameter, default=None):
         if section not in self.config:
@@ -145,6 +152,30 @@ class Village:
     def premium_active(self):
         return self.paid_active("Premium")
 
+    def am_ceded(self, phase):
+        """
+        True se `phase` (construction/research/recruitment) está cedida ao
+        gerente de conta nesta aldeia AGORA (§8.68). Recalculada a cada
+        chamada: o gerente vem ao vivo do game_data, o modelo do widget lido no
+        init deste ciclo. Loga só a troca de estado.
+        """
+        detector = getattr(self.wrapper, "paid_features", None)
+        try:
+            manager = detector.active("AccountManager") if detector is not None else None
+        except Exception:
+            manager = None
+        decision = am_cession.decide(
+            phase, (self.config or {}).get("account_manager"), manager, self.am_widget
+        )
+        message = am_cession.transition_message(
+            phase, self._am_cession.get(phase), decision
+        )
+        if message:
+            (self.logger or logging.getLogger("Village")).info(message)
+        self._am_cession[phase] = decision
+        self._am_cession_at[phase] = int(time.time())
+        return decision[0]
+
     def get_village_config(self, village_id, parameter, default=None):
         if village_id not in self.config["villages"]:
             return default
@@ -161,6 +192,8 @@ class Village:
         """
         Init the village entry and send first request
         """
+        # Widget de um ciclo anterior não vale: sem leitura nova, o bot faz.
+        self.am_widget = None
         if not self.village_id:
             data = self.wrapper.get_url("game.php?screen=overview&intro")
             if data:
@@ -199,6 +232,8 @@ class Village:
         self.points = self.points_from_game_data(self.game_data, self.points)
         if self.game_data:
             register_village_name(self.village_id, self.game_data["village"].get("name"))
+            # §8.68: modelos do gerente nesta aldeia, da mesma resposta.
+            self.am_widget = Extractor.account_manager_widget(data)
         if (
                 self.village_set_name
                 and self.game_data
@@ -674,10 +709,14 @@ class Village:
         self.builder.max_queue_len = max_queue_len
         self.builder.start_update(
             # O builder roda mesmo pausado: os níveis de construção que ele lê
-            # alimentam o recrutamento e a academia. Só não constrói.
+            # alimentam o recrutamento e a academia. Só não constrói. Vale
+            # também para a construção cedida ao gerente (§8.68), que segue
+            # lendo a tela principal e terminando de graça o que estiver a
+            # menos de 3 min (complete_actions).
             build=self.get_config(
                 section="building", parameter="manage_buildings", default=True
-            ) and not self._mint_spending_paused(),
+            ) and not self._mint_spending_paused()
+            and not self.am_ceded("construction"),
             set_village_name=self.village_set_name,
         )
 
@@ -811,6 +850,11 @@ class Village:
         """
         Uses smith to research or upgrade units
         """
+        # §8.68: também barra a pesquisa que recruit() tenta sozinho quando a
+        # unidade não está pesquisada (attempt_research).
+        self.units.research_ceded = self.am_ceded("research")
+        if self.units.research_ceded:
+            return
         if (
                 self.get_config(section="units", parameter="upgrade", default=False)
                 and self.units.wanted_levels != {}
@@ -822,6 +866,17 @@ class Village:
         Recruits new units
         """
         if self.get_config(section="units", parameter="recruit", default=False):
+            self.units.research_ceded = self.am_ceded("research")
+            if self.am_ceded("recruitment"):
+                # §8.68: o modelo de tropas do gerente recruta nesta aldeia.
+                # Pedido de recurso para recrutamento que o bot não vai fazer
+                # sairia no `required_resources` e o compartilhamento seguiria
+                # mandando recurso para ele -- mesmo motivo dos dois ramos
+                # abaixo.
+                for x in list(self.resman.requested.keys()):
+                    if "recruitment_" in x:
+                        self.resman.requested.pop(f"{x}", None)
+                return
             self.units.can_fix_queue = self.get_config(
                 section="units", parameter="remove_manual_queued", default=False
             )
@@ -2319,6 +2374,14 @@ class Village:
             # enviar sem saber transborda a receptora na chegada.
             "storage": self.resman.storage,
             "required_resources": self.resman.requested,
+            # §8.68: fase -> última decisão de cessão ao gerente. `at` diz se é
+            # deste ciclo: a fase que o gate do Hunter ou a pausa da cunhagem
+            # pulou guarda a decisão de antes.
+            "account_manager_cession": {
+                phase: {"ceded": ceded, "reason": reason,
+                        "at": self._am_cession_at.get(phase)}
+                for phase, (ceded, reason) in self._am_cession.items()
+            },
             "available_troops": self.units.troops,
             "buidling_levels": self.builder.levels,
             "building_queue": self.builder.queue,

@@ -55,6 +55,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     Fase cedida ao recurso pago consulta `Village.paid_active(nome)` na hora
     de agir; "não lido" conta como gratuito. Nunca guardar a detecção em
     config (foi o defeito do antigo `world.premium_account`).
+  - `core/am_cession.py` — construção, pesquisa e recrutamento cedidos ao
+    gerente (§8.68) só na aldeia cujo widget do gerente, na visão geral,
+    mostra modelo ativo **e** com o gerente ativo agora. "Sem gerência" vale
+    para modelo cumprido e para aldeia sem modelo: nos dois, o bot faz.
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
   `config.json`. Rotas em `server.py`, lógica de leitura em `utils.py`.
   `BotManager` (reescrito em 2026-09-14) sobe o bot num **console visível

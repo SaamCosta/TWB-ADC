@@ -1,0 +1,148 @@
+<!-- Recorte verbatim de game.php?village=41123&screen=overview, br143. BBM 001 (41123), 18/10/2026 17:59: construcao e pesquisa 'Sem gerencia' (modelo cumprido e retirado pelo jogo), tropas ativas (ADC - OFENSIVA, via '- Recrutamento ativo -' selecionado). -->
+<div id="show_am_settings" class="vis moveable widget ">
+	<h4 class="head with-button">
+		<img class="widget-button" onclick="return VillageOverview.toggleWidget( 'show_am_settings', this );" src="graphic/plus.png" />		Gerente de conta
+	</h4>
+	<div class="widget_content" style="display: none;"><form id="amqueue-edit-form" method="post">
+
+    <table width="100%">
+
+        <tbody>
+
+        <tr>
+
+            <td style="white-space: nowrap; height: 20px;">
+
+                <!-- active construction template -->
+
+                <span class="icon am_build tooltip" title="Modelo de construções ativo"></span>
+
+                <span class="am-form-element">
+
+                <em>Sem gerência</em>                </span>
+
+                <select class="am-form-element hide_toggle" name="construction_template" style="width: 158px;">
+
+                    <option value="0">- Sem gerência -</option>
+
+                                        <option value="1" >Recursos</option>
+
+                                        <option value="2" >Defensiva</option>
+
+                                        <option value="3" >Ofensiva</option>
+
+                                        <option value="2108" >ADC - OFENSIVA BOT</option>
+
+                                        <option value="2109" >ADC - DEFENSIVA</option>
+
+                                        <option value="2110" >ADC - TORRE</option>
+
+                                    </select>
+
+            </td>
+
+        </tr>
+
+        <tr>
+
+            <td style="white-space: nowrap; height: 20px;">
+
+                <!-- active tech research template -->
+
+                <span class="icon am_research tooltip" title="Modelo de pesquisas ativo"></span>
+
+                <span class="am-form-element">
+
+                <em>Sem gerência</em>                </span>
+
+                                <select class="am-form-element hide_toggle" name="research_template" style="width: 158px;">
+
+                    <option value="0">- Sem gerência -</option>
+
+                                        <option value="707" >ADC - OFENSIVA</option>
+
+                                        <option value="708" >ADC - DEFENSIVA</option>
+
+                                        <option value="709" >ADC - TORRE</option>
+
+                                        <option value="730" >ALL</option>
+
+                                    </select>
+
+                            </td>
+
+        </tr>
+
+        <tr>
+
+            <td style="white-space: nowrap; height: 20px;">
+
+                <!-- active troop recruitment template -->
+
+                <span class="icon am_troops tooltip" title="Modelo de recrutamento de tropas ativo"></span>
+
+                <span class="am-form-element">
+
+                ADC - OFENSIVA                </span>
+
+                                <select class="am-form-element hide_toggle" name="troops_template" style="width: 158px;">
+
+                    <option value="-1">- Parar o gerenciamento -</option>
+
+                                        <option value="0" selected>- Recrutamento ativo -</option>
+
+                                                            <option value="3893462">ADC - OFENSIVA</option>
+
+                                        <option value="3893463">ADC - DEFENSIVA</option>
+
+                                        <option value="3893464">ADC - TORRE</option>
+
+                                    </select>
+
+                            </td>
+
+        </tr>
+
+        <tr>
+
+            <td class="routes">
+
+                <!-- count of supply routes where village is starting or target -->
+
+                <span class="routes_text icon am_delivery tooltip" title="Entregas agendadas"></span>
+
+                <span class="routes_text">Fora: 0</span>
+
+                <span class="routes_text" style="margin-left:20px;">Dentro: 0</span>
+
+                            </td>
+
+        </tr>
+
+        <tr>
+
+            <td>
+
+                <input class="btn btn-edit am-form-element" type="button" id="am-edit-queue" value="Editar">
+
+                <input class="btn hide_toggle am-form-element" type="button" id="am-save-queue" value="Salvar">
+
+                <input class="btn btn-cancel hide_toggle am-form-element" type="button" id="am-cancel" value="Cancelar">
+
+            </td>
+
+        </tr>
+
+        </tbody>
+
+    </table>
+
+</form>
+
+
+
+<script>
+
+    VillageOverview.registerAMWidgetEvents();
+
+</script></div>

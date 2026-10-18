@@ -35,6 +35,9 @@ class TroopManager:
     total_troops = {}
 
     _research_wait = 0
+    # §8.68. Bool (imutável) no corpo da classe de propósito: é o padrão de
+    # quem nasce por __new__ nos testes.
+    research_ceded = False
 
     wrapper = None
     village_id = None
@@ -102,6 +105,9 @@ class TroopManager:
         # Dict mutavel: instancia, nao classe (1o padrao do CLAUDE.md).
         self._smith_settled = {}
         self._smith_settled_at = 0
+        # Pesquisa cedida ao gerente de conta nesta aldeia (§8.68). A Village
+        # recalcula antes de cada uso; aqui só nasce falso.
+        self.research_ceded = False
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
@@ -437,6 +443,10 @@ class TroopManager:
         return False
 
     def attempt_research(self, unit_type, smith_data=None):
+        if self.research_ceded:
+            # §8.68: o modelo de pesquisa do gerente cuida desta aldeia.
+            self.logger.debug("Research of %s cedida ao gerente de conta", unit_type)
+            return False
         if not smith_data:
             result = self.wrapper.get_action(village_id=self.village_id, action="smith")
             smith_data = Extractor.smith_data(result)

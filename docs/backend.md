@@ -7297,6 +7297,149 @@ de agir, nunca uma decisão guardada. Teste: `tests/test_paid_features.py`
 (as três guardas provadas por mutação). Suíte: 104/104. **Efeito só depois de
 reiniciar o bot.**
 
+## 8.68 `P-GERENTE-CEDE` — o bot cede ao gerente as fases que ele já faz, aldeia por aldeia (2026-10-18)
+
+**Pedido do usuário:** passo 2 da camada paga (§9, item 27). Com o gerente de
+conta ativo, construção, pesquisa e recrutamento tinham dois donos (§8.25,
+achado 2). O bot cede a fase onde o gerente cuida dela e retoma sozinho quando
+ele vence. **Decisão tomada com o usuário antes:** ceder só na aldeia em que o
+gerente tem modelo ativo. "Gerente ativo na conta" não basta (§8.66, item 1).
+
+### O sinal: o widget do gerente na visão geral da aldeia
+
+Sondado em 18/10 com o `get_url` do wrapper, 6 GETs a 75 s, sem
+`data-bot-protect` (`cache/_probe_am_widget.py`). A visão geral
+(`screen=overview`), que o bot já baixa no `village_init()` de toda aldeia, traz
+`<div id="show_am_settings">` com uma linha por gerente: um
+`<span class="am-form-element">` com o nome do modelo e um `<select>`
+(`construction_template`, `research_template`, `troops_template`).
+
+| Estado | Rótulo | `<select>` | Visto em |
+|---|---|---|---|
+| modelo ativo | `ADC - DEFENSIVA` | `<option value="2109" selected>` | BBM 051, construção e pesquisa |
+| tropas ativas | `ADC - OFENSIVA` | `<option value="0" selected>- Recrutamento ativo -` (formato próprio) | BBM 001, BBM 051 |
+| sem modelo | `<em>Sem gerência</em>` | nenhum `selected` | BBM 001 (construção, pesquisa), BBM 054/81571 (as três) |
+| conta sem gerente | widget não existe | — | captura grátis de 08/10 |
+
+Responde as três perguntas da sondagem: **o widget diz o estado de
+construção, pesquisa e tropas**, então não foi preciso ler `am_troops`/
+`am_research` por ciclo. Custo do sinal: **zero requisição**.
+
+- `Extractor.account_manager_widget()` exige que `selected` e `<em>` concordem
+  em cada linha; discordância ou markup novo dá `None` (15º padrão). A primeira
+  versão do regex tinha `(.*?)</span>` no rótulo e casava a partir do span da
+  primeira linha: as tropas da BBM 001 saíam `None`. O rótulo agora não cruza
+  `</span>`, e o teste prova isso por mutação.
+- Fixtures verbatim em `tests/fixtures/am_widget_{all_active,troops_only,no_template}_br143.html`
+  (o widget não tem `h`/`ch`; conferido).
+- `am_village` ao vivo (página 1 de 2, 50 linhas): BBM 001–012 e 016 já estão em
+  "Sem gerência" na construção, contra três (001/005/010) logo depois da
+  reaplicação. É o 1º achado da §8.66 andando: o jogo retira o modelo cumprido.
+
+### Desenho por fase
+
+`core/am_cession.py::decide(fase, cfg, gerente, widget)` → `(cedida, motivo)`.
+Cede só com as duas metades afirmativas: `paid_features.active("AccountManager")`
+**`True`** (não `None`) e a linha da fase ativa no widget lido **neste ciclo**.
+Qualquer dúvida é "o bot faz". `Village.am_ceded()` recalcula na hora de agir,
+em cada fase; o que se guarda é só a última decisão, para logar a troca.
+
+| Fase | Sinal | Para de fazer | Continua rodando |
+|---|---|---|---|
+| Construção (`BuildingManager`) | linha `construction` | ordens `upgrade_building` (`build=False`) | GET `main` (níveis, que recrutamento, academia e templates de tropa leem) e o término grátis < 3 min (`complete_actions`) |
+| Pesquisa (ferreiro) | linha `research` | `attempt_upgrade()` **e** a pesquisa que `recruit()` tenta sozinho (`TroopManager.research_ceded`) | nada a mais |
+| Recrutamento (`TroopManager`) | linha `troops` | `do_recruit()` inteiro; o pedido `recruitment_*` sai do `ResourceManager` | `update_totals()` (`place/units`), de que farm, coleta, defesa, apoio e PvP dependem |
+| Transporte | Estoque (`am_warehouse`), da conta | **não implementado** (abaixo) | tudo |
+
+**Nunca se cede:** nobre, cunhagem (moeda e rota ao hub), farm, coleta,
+defesa, apoio, mercado e bandeiras. O gerente não faz nada disso.
+
+### Transporte: desenhado, não implementado
+
+O Estoque está `Ativo` com `prevent_overflow=1` (`<div id="power_button"
+data-init="1">`, `<i id="power_button_status_text">Ativo</i>`). A regra que ele
+duplica é o **transbordo** do `resource_sharing`; a de **necessidade** (pedidos
+de nobre e de construção) e a rota de cunhagem não têm equivalente no gerente.
+O desenho seria: transbordo desligado quando gerente ativo ao vivo **e** Estoque
+ativo com `prevent_overflow=1`, lido de `am_warehouse` com validade de horas.
+
+**Por que não agora:** os 300 envios de `cache/resource_sharing/history.json`
+(13/10 → 18/10) são **todos** `kind: mint`. Transbordo e necessidade: zero. As
+~94 req/ciclo da fase `compartilhamento` são rota de cunhagem, que nunca se
+cede. Ceder o transbordo hoje economizaria 0 requisição e custaria um GET novo.
+Volta quando a campanha de cunhagem acabar e o transbordo reaparecer no
+histórico. O estado "parado" do Estoque também não foi visto (exigiria parar no
+jogo).
+
+### Pergunta 3: o gerente de tropas gasta o que o bot poupa?
+
+**Sim, e independe da cessão.** Medido ao vivo em `am_troops`: os três modelos
+(3893462/3/4) e as 50 linhas da página 1 têm `buffer_wood/stone/iron/pop = 0`
+(55 aldeias; as 5 da página 2 não foram lidas, mas receberam os mesmos modelos
+na §8.66). O gerente recruta até a meta com todo recurso disponível.
+
+Três fatos fecham a resposta:
+1. O recrutamento do **próprio bot** também não respeita `keep_resources`: só a
+   coleta (`choose_scavenge_unlock`) e o compartilhamento o leem. O que segura o
+   bot é `prioritize_snob` (falso nas 55), `prioritize_building` (11 aldeias) e a
+   pausa do hub da cunhagem.
+2. O gerente recruta quer o bot ceda ou não. **Ceder nunca aumenta o gasto**,
+   só tira o do bot.
+3. A exposição real são as 9 aldeias com `keep_resources` 40k/50k/50k (BBM 001,
+   010, 022, 027, 032, 036, 040, 046, 050) e o hub de uma campanha com
+   `campaign_pause_hub_spending`: o gerente ignora as duas reservas. Isso existe
+   desde a reaplicação de 18/10. **A correção é no jogo** (buffer por aldeia na
+   tela Tropas do gerente, ou tirar o modelo de tropas dessas aldeias), e é
+   decisão do usuário.
+
+Por isso o recrutamento também é cedido, com padrão ligado.
+
+### Config, log, teste
+
+- Bloco `account_manager` (`cede_enabled`, `cede_construction`, `cede_research`,
+  `cede_recruitment`, todos `true`) em `config.example.json` e
+  `helpfile.py`. Sem a seção, os padrões valem (ligado). `build.version`
+  5.1 → 5.2 **só no exemplo**. O merge descarta do `config.json` vivo apenas
+  `world.premium_account`, que já não tem efeito desde a §8.67. O `config.json`
+  é relido a cada ciclo, então o kill switch vale no ciclo seguinte.
+- Log por aldeia e fase, só na troca: `Gerente: construção cedida ao gerente
+  (modelo ADC - DEFENSIVA)` / `Gerente: recrutamento retomada pelo bot --
+  gerente vencido` (ou `sem modelo`, `widget do gerente ausente na visão geral`).
+  A primeira decisão do processo só loga se cedeu.
+- `cache/managed/<vid>.json` ganhou `account_manager_cession`: fase →
+  `{ceded, reason, at}`.
+- `tests/test_am_cession.py`: os três estados ao vivo, sinais discordantes,
+  linha ausente, matriz de `decide`, mensagens, e a `Village` cedendo e
+  retomando quando o gerente vence. Cinco guardas provadas por mutação
+  (concordância do parser, rótulo sem cruzar `</span>`, `True` literal,
+  `return` do `do_recruit`, trava do `attempt_research`). Suíte: 105/105.
+- Smoke (`cache/_smoke_am_cession.py`, 1 GET, BBM 003): gerente `True`,
+  construção e pesquisa `sem modelo`, recrutamento cedido. Bate com `am_village`.
+
+### Economia esperada (linha de base de `cache/cycles`)
+
+Ciclos completos de 53 aldeias em 17/10: construção 86–119 req, das quais
+31–66 são `upgrade_building`; recrutamento 183–240, das quais ~120 são
+`barracks`/`stable`/`garage` e os POSTs de treino, e 1–53 são `smith`. O GET
+`main` (53) e o `place/units` (53) ficam. Com o widget de hoje (tropas com
+modelo em quase todas, construção já cumprida em 13 da página 1), o corte
+esperado fica perto de **120–150 req/ciclo**, quase todo no recrutamento.
+
+### Em aberto
+
+- **⏳ Campo:** efeito só depois de reiniciar o bot. Validar no
+  `session_latest.log` (`grep -a "Gerente:"`) e medir `construcao`/
+  `recrutamento` por tela no primeiro ciclo completo contra os números acima.
+- **Modelo pausado não foi visto.** `am_village` tem "( Pausar )" por aldeia; o
+  que o widget mostra de um modelo pausado é desconhecido (sondar exigiria
+  pausar no jogo). Se ele seguir `selected`, a fase fica sem dono naquela
+  aldeia até o usuário retomar o modelo ou desligar `cede_*`.
+- **Hipótese:** o Estoque pode tirar recurso do hub da cunhagem (excedente
+  > 69% de armazém cheio), na direção contrária à rota do bot. Os
+  `ReportAMStockpileDistribution` em cache não trazem origem/destino. Conferir
+  numa campanha ativa; se for o caso, o hub entra num grupo de "Reservas" do
+  Estoque.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -7791,6 +7934,10 @@ zero; prazo em `premium&mode=feature_log`):
 27. **Gerente de conta:** decidir quem manda por aldeia (achados 2 e 3 —
     construção, recrutamento e transporte hoje sob duplo comando); quando
     ativo, o bot pode ceder essas fases e economizar as requisições.
+    ✅ *Construção, pesquisa e recrutamento em 2026-10-18 (§8.68), pelo widget
+    do gerente na visão geral de cada aldeia, a custo zero. ⏳ Falta campo.
+    O transporte ficou desenhado e não implementado: hoje todo envio é rota
+    de cunhagem, que nunca se cede.*
 28. **Assistente de saque:** envio de farm em 1 requisição e dimensionamento
     pelo servidor (botão C). Canário com autorização.
 
