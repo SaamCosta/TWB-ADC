@@ -7249,6 +7249,54 @@ captcha.
    Ceder essas fases quando `features.AccountManager.active` for verdadeiro é o
    item 27, ainda não feito.
 
+## 8.67 `P-PAGO-AO-VIVO` — detecção de premium/gerente/assistente a cada resposta (2026-10-18)
+
+**Pedido do usuário:** antes de o bot ceder fases ao gerente, ele precisa
+detectar sozinho quando o premium liga e quando acaba, e trocar de modo.
+
+**O que havia, e por que não servia.** `world.premium_account` (Feature 22)
+lia a visão geral **uma vez**, enquanto o valor era `null`, e gravava no
+config para sempre. Em 18/10, com os três pagos ativos, o `config.json` dizia
+`false`. Num bot que cede fases ao gerente, um detector assim faria o pior
+erro possível: com o gerente vencido e o bot ainda achando que ele está ativo,
+a construção da aldeia para.
+
+**O que mudou.** `core/paid_features.py`: o `WebWrapper` passa o `game_data`
+de **toda** resposta (HTML e envelope AJAX) a `PaidFeatures.observe()`, ao lado
+do `account_pulse`. Custa zero requisição, e o vencimento aparece na primeira
+resposta depois dele. Bloco verbatim de 18/10 15:35 (`am_village`):
+`{"Premium":{"possible":true,"active":true},"AccountManager":{"possible":true,"active":true},"FarmAssistent":{"possible":true,"active":true}}`.
+
+- **Só `active` booleano conta.** Tela sem `features`, recurso ausente ou valor
+  não booleano não muda nada: é falta de leitura, não "desligado". Sem essa
+  regra, uma resposta sem o bloco derrubaria o modo pago no meio do ciclo
+  (15º padrão).
+- `active(nome)` → `True`/`False`/`None`. `None` = não lido neste processo, e
+  `Village.paid_active()` o trata como **inativo**: na dúvida, o bot faz.
+- Troca ao vivo → `WARNING` no log (`PaidFeatures`) e Telegram, uma vez por
+  troca. A primeira leitura do processo só loga (`Gerente de conta: ativo`).
+- `cache/paid_features.json` guarda o último estado e as 50 últimas trocas. No
+  restart, o valor do arquivo **não** vale como ativo; ele só serve de
+  referência para detectar a troca que aconteceu com o bot parado (o aviso
+  diz "Mudou com o bot parado"). Arquivo gravado só depois de
+  `paid_features.arm()`, que só `twb.main()` chama (21º padrão).
+
+**Consumidor hoje:** `building.auto_queue_len` passou a ler o premium ao vivo
+(`Village.premium_active()`). A coleta em lote da §8.64 continua lendo a
+própria tela de coleta, de propósito.
+
+**Removido:** `world.premium_account` saiu do `config.example.json`, da ajuda e
+do painel, e o `twb.py` não o grava mais. No formato do 4º padrão:
+*`world.premium_account` não é mais lido — mas `wrapper.paid_features` dá o
+mesmo dado ao vivo e sem ficar velho.* A chave segue no `config.json` vivo, sem
+efeito (não houve bump de `build.version`; o próximo merge a descarta).
+
+**Não feito, e é o passo seguinte:** ceder as fases. Este módulo é só o
+interruptor. Cada fase cedida consulta `paid_active("AccountManager")` na hora
+de agir, nunca uma decisão guardada. Teste: `tests/test_paid_features.py`
+(as três guardas provadas por mutação). Suíte: 104/104. **Efeito só depois de
+reiniciar o bot.**
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

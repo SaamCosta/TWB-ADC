@@ -50,6 +50,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     Fase nova em `Village.run()`/`twb.py` precisa de `_gate(...)` antes dela,
     senão vira o furo de 2026-10-08 (§8.58). `Hunter: FURO` no log = alguma
     tarefa escapou do gate.
+  - `core/paid_features.py` — **o** interruptor do modo pago (§8.67):
+    premium/gerente/assistente lidos ao vivo do `game_data` de toda resposta.
+    Fase cedida ao recurso pago consulta `Village.paid_active(nome)` na hora
+    de agir; "não lido" conta como gratuito. Nunca guardar a detecção em
+    config (foi o defeito do antigo `world.premium_account`).
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
   `config.json`. Rotas em `server.py`, lógica de leitura em `utils.py`.
   `BotManager` (reescrito em 2026-09-14) sobe o bot num **console visível

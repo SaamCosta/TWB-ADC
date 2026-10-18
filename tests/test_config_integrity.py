@@ -106,7 +106,7 @@ GLOBAL_READS, VILLAGE_READS = collect_calls()
 AUTODETECTED = {
     ("world", "flags_enabled"), ("world", "knight_enabled"),
     ("world", "boosters_enabled"), ("world", "quests_enabled"),
-    ("world", "archers_enabled"), ("world", "premium_account"),
+    ("world", "archers_enabled"),
 }
 
 

@@ -5,6 +5,7 @@ Class for using one generic cookie jar, emulating a single tab
 import requests
 
 from core import account_pulse
+from core import paid_features
 from core import game_data_shadow
 from core.reward_gate import RewardGate
 from core.cycle_meter import CycleMeter
@@ -79,6 +80,9 @@ class WebWrapper:
         # frontend 2.8 W1/W4: incomings/supports da conta, de toda resposta,
         # para o painel. So grava depois de account_pulse.arm() (twb.main).
         self.account_pulse = account_pulse.AccountPulse()
+        # §8.67: premium/gerente/assistente ao vivo, de toda resposta -- e o
+        # interruptor do modo pago. So grava depois de paid_features.arm().
+        self.paid_features = paid_features.PaidFeatures()
         # 8.44: recompensas de missao prontas, por aldeia, lidas de toda tela
         # HTML -- decide se o GET do popup de missoes vale a requisicao.
         self.reward_gate = RewardGate()
@@ -103,6 +107,8 @@ class WebWrapper:
             gd = game_data_shadow.extract_game_data(response.text)
             if gd and getattr(self, "account_pulse", None) is not None:
                 self.account_pulse.observe(gd)
+            if gd and getattr(self, "paid_features", None) is not None:
+                self.paid_features.observe(gd)
             snap = game_data_shadow.snapshot(gd, source_url=response.url, ajax=ajax) if gd else None
             if snap:
                 self.game_data_seen[snap["village_id"]] = snap

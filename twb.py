@@ -138,6 +138,7 @@ import requests
 from core.notification import Notification
 from core.village_label import village_label
 from core import account_pulse
+from core import paid_features
 from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
@@ -644,10 +645,9 @@ class TWB:
         check_and_set("knight_enabled", world_settings.knight)
         check_and_set("boosters_enabled", world_settings.boosters)
         check_and_set("quests_enabled", world_settings.quests, "Quests.setQuestData")
-        # Feature 22: auto-detect premium account status once, same pattern as the
-        # options above. Only fires while config["world"]["premium_account"] is null,
-        # so a manual override in config.json always wins over re-detection.
-        check_and_set("premium_account", overview_page.is_premium)
+        # `premium_account` saiu daqui (§8.67): detectado uma vez e gravado para
+        # sempre, ficava errado quando o premium vencia ou voltava. O estado
+        # vem ao vivo de `wrapper.paid_features` (core/paid_features.py).
 
         return changed, config
 
@@ -1843,6 +1843,8 @@ def main():
     # Mesmo motivo: so o processo do bot grava cache/account_pulse.json, que o
     # painel le (core/account_pulse.py).
     account_pulse.arm()
+    # Idem para cache/paid_features.json (core/paid_features.py).
+    paid_features.arm()
     # A26-01: eram 3 tentativas na VIDA do processo, sem pausa e sem zerar --
     # e ate uma volta normal de t.start() gastava uma. Agora contam so quedas
     # SEGUIDAS: um processo que fechou pelo menos um ciclo completo antes de

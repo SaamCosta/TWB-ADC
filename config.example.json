@@ -220,8 +220,7 @@
     "trade_for_premium": false,
     "archers_enabled": true,
     "building_destruction_enabled": true,
-    "boosters_enabled": null,
-    "premium_account": null
+    "boosters_enabled": null
   },
   "hunter": {
     "enabled": false,

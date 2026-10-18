@@ -133,6 +133,18 @@ class Village:
             return default
         return self.config[section][parameter]
 
+    def paid_active(self, name):
+        """Recurso pago `name` ativo agora, pelo game_data ao vivo (§8.67).
+        Nao lido ainda (None) conta como inativo: na duvida, o caminho gratis."""
+        detector = getattr(self.wrapper, "paid_features", None)
+        try:
+            return detector is not None and detector.active(name) is True
+        except Exception:
+            return False
+
+    def premium_active(self):
+        return self.paid_active("Premium")
+
     def get_village_config(self, village_id, parameter, default=None):
         if village_id not in self.config["villages"]:
             return default
@@ -651,14 +663,11 @@ class Village:
         )
         # Feature 22: opt-in auto-bump of the build queue length for premium
         # accounts. Off by default (auto_queue_len=False) so existing configs keep
-        # their current behaviour. premium_account is auto-detected once from the
-        # overview page (see twb.py::get_world_options) but can be overridden
-        # manually in config.json.
+        # their current behaviour. O premium vem ao vivo do game_data (§8.67);
+        # antes era `world.premium_account`, detectado uma vez e nunca revisto.
         if self.get_config(
                 section="building", parameter="auto_queue_len", default=False
-        ) and self.get_config(
-            section="world", parameter="premium_account", default=False
-        ):
+        ) and self.premium_active():
             max_queue_len = self.get_config(
                 section="building", parameter="premium_max_queued_items", default=5
             )
