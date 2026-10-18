@@ -7197,6 +7197,58 @@ provadas por mutação; a do `claim_reward` só melhora o log, porque o
 `.get('response')` já devolve falso na recusa — a correção ali é o fim do
 `KeyError`. Suíte: 103/103.
 
+## 8.66 Premium e gerente de volta: grupos e modelos do gerente por aldeia (2026-10-18)
+
+**Pedido do usuário:** premium e gerente de conta reativados. Antes de qualquer
+otimização da camada 2 (§9, itens 26–28), pôr cada aldeia no seu grupo do jogo
+e aplicar o modelo do gerente que corresponde a ela. **Ação no jogo, nenhum
+código mudou.**
+
+**Estado ao reativar:** os modelos sobreviveram ao vencimento de 08/10, mas
+**todas** as aldeias voltaram a "Sem gerência" em construção, pesquisa e
+tropas (meta zerada). Nos grupos estáticos, BBM 001–035 estavam certos e
+BBM 036–054 seguiam "não classificado".
+
+**Regra usada:** o papel de cada aldeia é o do `config.json`
+(`building`), porque é ele que o bot já segue:
+
+| Papel (`building`) | Grupo (id) | Construção | Tropas | Pesquisa |
+|---|---|---|---|---|
+| `purple_predator_into_off` (12) | Ataque (335606) | ADC - OFENSIVA BOT (2108) | ADC - OFENSIVA (3893462) | ADC - OFENSIVA (707) |
+| `purple_predator_into_def` (35) | Defesa (335607) | ADC - DEFENSIVA (2109) | ADC - DEFENSIVA (3893463) | ADC - DEFENSIVA (708) |
+| `watchtower_support` (6) | Watch Tower (335608) | ADC - TORRE (2110) | ADC - TORRE (3893464) | ADC - TORRE (709) |
+
+A pesquisa usava `ALL` em 15 aldeias antes de 08/10; agora segue o papel
+(defensiva não pesquisa bárbaro, aríete nem catapulta). A **81571** (bárbara
+conquistada nesta madrugada) ficou de fora: ainda não tem papel no config
+(`purple_predator`/`basic`, `inherit_on_first_run`), e quem o define é
+`Village.apply_nearest_village_inheritance()` na primeira vez que o bot rodar nela.
+
+**Método:** 16 POSTs pelo `WebWrapper` com a sessão do bot (formulários em
+lote do próprio jogo: `overview_villages&action=bulk_edit_villages`,
+`am_village`/`am_research` `action=village_mass`, `am_troops`
+`action=save_village` com `edit[]`), 75 s entre eles, com o bot rodando. Sem
+captcha.
+
+**Três coisas medidas que valem para o item 27:**
+
+1. **O jogo tira o modelo da aldeia que já o cumpre.** Segundos depois de
+   aplicado, a construção de BBM 001, 005 e 010 (as maiores ofensivas) voltou a
+   "Sem gerência", e a pesquisa de 34 aldeias antigas também, porque já tinham
+   pesquisado tudo. Nada do bot toca nas telas `am_*`. É o mesmo retrato de 04/10
+   (BBM 001, 010 e 011 sem gerência). Então **"Sem gerência" não quer dizer
+   "esquecida"**, e uma verificação que exija o modelo em toda aldeia vai falhar
+   à toa.
+2. **As listas do gerente e dos grupos paginam a 50.** "Aldeia (50)" é a
+   página, não o total. BBM 051–053 estavam na página 2 e só foram cobertas
+   numa segunda passada (26º padrão, de novo). O POST aceita qualquer id da
+   conta, então não é preciso abrir a página 2 (o que mexeria na preferência
+   do jogador) para aplicar.
+3. **Duplo comando continua.** O bot segue construindo, recrutando e
+   pesquisando nessas aldeias com modelos de mesmo destino (§8.25, achado 2).
+   Ceder essas fases quando `features.AccountManager.active` for verdadeiro é o
+   item 27, ainda não feito.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
