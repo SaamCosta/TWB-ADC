@@ -1061,7 +1061,7 @@ class DefenceManager:
         return counts
 
     def support(self, vid, troops=None, position=None, arrive_by=None,
-                clamp_to_available=False, arrive_after=None):
+                clamp_to_available=False, arrive_after=None, trim=None):
         """
         Envia apoio desta aldeia para `vid` (ou só para a coordenada
         `position`, quando o destino está longe demais para constar do cache
@@ -1088,6 +1088,12 @@ class DefenceManager:
           cache/managed, que pode ter horas; aqui mandar menos é melhor que
           não mandar nada. Sem esta flag o comportamento é o de sempre: o
           número pedido sai, ou o jogo recusa.
+        - `trim(tropas) -> (tropas, motivo)`: chamado depois do corte, com o
+          que vai sair de fato. Devolve o pacote final ou ({}, motivo) para
+          desistir -- ainda antes do POST, só a praça foi pedida. É onde a
+          defesa própria corta ao necessário e confere o piso do pacote
+          sobre o que está EM CASA (2026-10-18: o piso conferido sobre o
+          cache deixava sair 2 espadas e 1 pesada).
         """
         self.last_support_error = None
         self.last_support_duration = None
@@ -1135,6 +1141,14 @@ class DefenceManager:
                                  village_label(vid), self.last_support_error)
                 return False
             troops = clamped
+        if troops is not None and trim is not None:
+            troops, why = trim(dict(troops))
+            troops = {u: int(q) for u, q in (troops or {}).items() if int(q) > 0}
+            if not troops:
+                self.last_support_error = why or "pacote vazio depois do corte"
+                self.logger.info("[Support] %s -> %s: %s", village_label(self.village_id),
+                                 village_label(vid), self.last_support_error)
+                return False
         pre_data = {}
         for u in Extractor.attack_form(pre_support):
             k, v = u

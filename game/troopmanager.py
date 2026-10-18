@@ -108,6 +108,12 @@ class TroopManager:
         # Pesquisa cedida ao gerente de conta nesta aldeia (§8.68). A Village
         # recalcula antes de cada uso; aqui só nasce falso.
         self.research_ceded = False
+        # Onde está a tropa desta aldeia que saiu em apoio, e quem a apoia
+        # (`Extractor.place_troop_locations`), lido de graça da praça que
+        # `update_totals` já pede. None = ainda não lido neste processo; o
+        # valor sobrevive entre ciclos com a hora da leitura.
+        self.troop_locations = None
+        self.troop_locations_at = None
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
@@ -175,6 +181,12 @@ class TroopManager:
         for u in Extractor.units_in_village(result_all):
             k, v = u
             self.troops[k] = v
+
+        # Painel /support: relatório de onde está o apoio (2026-10-18).
+        locations = Extractor.place_troop_locations(result_all)
+        if locations is not None:
+            self.troop_locations = locations
+            self.troop_locations_at = int(time.time())
 
         self.logger.debug("Units in village: %s", str(self.troops))
 

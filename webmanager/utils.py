@@ -4371,6 +4371,14 @@ class TribeSupportReader:
             l["arrival_fmt"] = (datetime.datetime.fromtimestamp(l["arrival_at"]).strftime("%d/%m %H:%M")
                                 if l.get("arrival_at") else None)
             by_status.setdefault(l.get("status"), []).append(l)
+        # Enviado e falho não ficam empilhados para sempre: o enviado aparece
+        # no relatório "onde estão as tropas" (lido da praça), e aqui só o
+        # das últimas 24 h, para a resposta do tópico. Falha antiga sai.
+        recent = now - 24 * 3600
+        by_status["sent_recent"] = [l for l in by_status["sent"]
+                                    if int(l.get("sent_at") or 0) >= recent]
+        by_status["failed"] = [l for l in by_status["failed"]
+                               if int(l.get("failed_at") or 0) >= recent]
         proposed_totals = {}
         for l in by_status["proposed"]:
             for u, q in l["troops"].items():
@@ -4399,14 +4407,145 @@ class TribeSupportReader:
             if plan.get("planned_at") else None,
         }
 
+class TroopLocationReader:
+    """
+    Relatório "onde estão as tropas" do painel /support (2026-10-18).
+
+    Junta o `troop_locations` que cada aldeia gerenciada grava no
+    `cache/managed` (lido da praça no `TroopManager.update_totals`, sem
+    requisição extra): o apoio dela a caminho, voltando e pousado em aldeia de
+    outro jogador, e o apoio que outras aldeias deixaram nela. Agrupa por
+    destino. O apoio pousado entre aldeias PRÓPRIAS chega pela linha da aldeia
+    que o recebe (`home_support`), e é deduplicado se a de origem também o
+    listar em `away`.
+    """
+
+    STATUS_ORDER = ("stationed", "transit", "back")
+    STATUS_LABELS = {"stationed": "Pousado", "transit": "A caminho", "back": "Voltando"}
+
+    @staticmethod
+    def _managed():
+        base = os.path.join(os.path.dirname(__file__), "..", "cache", "managed")
+        out = {}
+        for fname in os.listdir(base) if os.path.isdir(base) else []:
+            if not fname.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(base, fname), encoding="utf-8-sig") as fh:
+                    out[fname[:-5]] = json.load(fh)
+            except (OSError, ValueError):
+                continue
+        return out
+
+    @staticmethod
+    def _pop(troops):
+        from core.templates import UNIT_POP
+        return sum(UNIT_POP.get(u, 1) * int(q) for u, q in (troops or {}).items())
+
+    @staticmethod
+    def view(now=None):
+        from core.village_label import village_label
+        now = int(now or time.time())
+        managed = TroopLocationReader._managed()
+        names = {vid: d.get("name") for vid, d in managed.items()}
+        rows = []          # (origem, destino, situação, tropas, rótulo do destino, jogador)
+        stationed_pairs = set()
+        read, unread, oldest = 0, [], None
+        for src, data in managed.items():
+            loc = data.get("troop_locations")
+            if not isinstance(loc, dict):
+                unread.append(src)
+                continue
+            read += 1
+            at = loc.get("read_at")
+            if at and (oldest is None or at < oldest):
+                oldest = at
+            for row in loc.get("transit") or []:
+                status = "back" if row.get("kind") == "back" else "transit"
+                rows.append((src, str(row.get("vid")), status, row.get("troops") or {}, row))
+            for row in loc.get("away") or []:
+                stationed_pairs.add((src, str(row.get("vid"))))
+                rows.append((src, str(row.get("vid")), "stationed", row.get("troops") or {}, row))
+        for dst, data in managed.items():
+            for row in (data.get("troop_locations") or {}).get("home_support") or []:
+                src = str(row.get("vid"))
+                if (src, dst) in stationed_pairs:
+                    continue
+                rows.append((src, dst, "stationed", row.get("troops") or {},
+                             {"name": names.get(dst), "player_name": None,
+                              "x": data.get("x"), "y": data.get("y")}))
+        groups = collections.OrderedDict()
+        totals = {s: {} for s in TroopLocationReader.STATUS_ORDER}
+        counts = {s: 0 for s in TroopLocationReader.STATUS_ORDER}
+        for src, dst, status, troops, info in rows:
+            if not troops:
+                continue
+            g = groups.get(dst)
+            if g is None:
+                # Aldeia de outro jogador vem com "(Jogador)" no rótulo; a
+                # própria não -- e a recém-conquistada ainda nem está no
+                # cache/managed, então só o nome do jogador separa as duas.
+                own = dst in managed or not info.get("player_name")
+                name = names.get(dst) or info.get("name") or dst
+                label = village_label(dst)
+                g = groups[dst] = {
+                    "vid": dst, "own": own, "name": name,
+                    "label": label if label != dst else "%s (%s)" % (name, dst),
+                    "player": None if own else info.get("player_name"),
+                    "x": info.get("x"), "y": info.get("y"),
+                    "by_status": {s: {} for s in TroopLocationReader.STATUS_ORDER},
+                    "sources": [],
+                }
+            for u, q in troops.items():
+                g["by_status"][status][u] = g["by_status"][status].get(u, 0) + int(q)
+                totals[status][u] = totals[status].get(u, 0) + int(q)
+            counts[status] += 1
+            g["sources"].append({"vid": src, "status": status, "troops": troops})
+        out = []
+        for g in groups.values():
+            merged = {}
+            for status in TroopLocationReader.STATUS_ORDER:
+                for u, q in g["by_status"][status].items():
+                    merged[u] = merged.get(u, 0) + q
+            # Não "pop": no Jinja a chave perde para dict.pop (8º padrão).
+            g["pop_total"] = TroopLocationReader._pop(merged)
+            g["status_pop"] = {s: TroopLocationReader._pop(g["by_status"][s])
+                               for s in TroopLocationReader.STATUS_ORDER}
+            # Uma linha por (origem, situação): a mesma origem com 7 comandos
+            # a caminho vira uma linha só.
+            per = collections.OrderedDict()
+            for s in g["sources"]:
+                key = (s["vid"], s["status"])
+                acc = per.setdefault(key, {"vid": s["vid"], "status": s["status"], "troops": {},
+                                           "commands": 0})
+                acc["commands"] += 1
+                for u, q in s["troops"].items():
+                    acc["troops"][u] = acc["troops"].get(u, 0) + int(q)
+            g["sources"] = sorted(per.values(), key=lambda s: (
+                TroopLocationReader.STATUS_ORDER.index(s["status"]),
+                -TroopLocationReader._pop(s["troops"])))
+            out.append(g)
+        out.sort(key=lambda g: (not g["own"], -g["pop_total"]))
+        return {
+            "groups": out, "totals": totals, "counts": counts,
+            "pops": {s: TroopLocationReader._pop(totals[s]) for s in totals},
+            "read": read, "unread": len(unread),
+            "oldest_age_h": round((now - int(oldest)) / 3600.0, 1) if oldest else None,
+            "labels": TroopLocationReader.STATUS_LABELS,
+        }
+
+
 class DefenseReader:
     """
     Aba /defense: defesa automática das aldeias próprias (docs/backend.md
     §8.60). Lê `cache/defense/state.json`, que só o bot escreve
-    (game/own_defense.py), e escreve só `cache/defense/force.json` -- o pedido
-    "defender esta aldeia mesmo sem ameaça de nobre", que o bot lê na próxima
-    checagem.
+    (game/own_defense.py), e escreve só dois pedidos que o bot lê na próxima
+    checagem: `cache/defense/force.json` ("defender mesmo sem ameaça de
+    nobre", vale 24 h) e `cache/defense/shield.json` (blindagem: sem teto de
+    apoio, até ser desligada).
     """
+
+    HISTORY_HOURS = 24
 
     @staticmethod
     def _fmt(ts, with_day=True):
@@ -4424,29 +4563,51 @@ class DefenseReader:
         return data if isinstance(data, dict) else {}
 
     @staticmethod
-    def set_force(vid, on):
-        from game.own_defense import FORCE_PATH
-        vid = str(vid or "").strip()
+    def _vid(raw):
+        vid = str(raw or "").strip()
         match = re.search(r"village=(\d+)", vid)
         if match:
             vid = match.group(1)
         if not vid.isdigit():
             raise ValueError("informe o id da aldeia (ou cole o link dela no jogo)")
+        return vid
+
+    @staticmethod
+    def _toggle(path, vid, on):
+        vid = DefenseReader._vid(vid)
         FileManager.create_directory(FileManager.get_path("cache/defense"))
-        with file_lock(FileManager.get_path(FORCE_PATH)):
-            data = DefenseReader._load(FORCE_PATH)
+        with file_lock(FileManager.get_path(path)):
+            data = DefenseReader._load(path)
             if on:
                 data[vid] = int(time.time())
             else:
                 data.pop(vid, None)
-            FileManager.save_json_file(data, FORCE_PATH)
+            FileManager.save_json_file(data, path)
         return vid
 
     @staticmethod
+    def set_force(vid, on):
+        from game.own_defense import FORCE_PATH
+        return DefenseReader._toggle(FORCE_PATH, vid, on)
+
+    @staticmethod
+    def set_shield(vid, on):
+        from game.own_defense import SHIELD_PATH
+        return DefenseReader._toggle(SHIELD_PATH, vid, on)
+
+    @staticmethod
+    def _pop(troops):
+        from core.templates import UNIT_POP
+        return sum(UNIT_POP.get(u, 1) * int(q) for u, q in (troops or {}).items())
+
+    @staticmethod
     def view():
-        from game.own_defense import FORCE_PATH, FORCE_TTL, STATE_PATH, settings as defense_settings
+        from game.own_defense import (FORCE_PATH, FORCE_TTL, SHIELD_PATH, STATE_PATH,
+                                      settings as defense_settings)
         from core import account_pulse
         state = DefenseReader._load(STATE_PATH)
+        shield = DefenseReader._load(SHIELD_PATH)
+        cfg = defense_settings(FileManager.load_json_file("config.json") or {})
         now = int(time.time())
         fmt = DefenseReader._fmt
         attacked = []
@@ -4462,32 +4623,89 @@ class DefenseReader:
                 rows.append(atk)
             v["attack_rows"] = rows
             v["deadline_fmt"] = fmt(v.get("deadline_at") or a.get("deadline_at"))
+            sent = []
             for s in v.get("sent") or []:
-                s["arrival_fmt"] = fmt(s.get("arrival_at"))
+                s = dict(s)
+                s["arrival_fmt"] = fmt(s.get("arrival_at"), with_day=False)
+                sent.append(s)
+            v["sent"] = sent
+            v["sent_ok"] = [s for s in sent if s.get("ok")]
+            ok_troops = {}
+            for s in v["sent_ok"]:
+                for u, q in (s.get("troops") or {}).items():
+                    ok_troops[u] = ok_troops.get(u, 0) + int(q)
+            v["sent_ok_troops"] = ok_troops
+            # A blindagem vale pelo arquivo de agora, não pelo da varredura:
+            # o botão da página tem que mostrar o estado que o bot vai ler.
+            v["shield_now"] = str(v.get("vid")) in shield
             attacked.append(v)
+
+        # Envios recentes agrupados por alvo; as linhas cruas ficam num
+        # <details>. A tabela de 40 linhas soltas era o que deixava a página
+        # longa e misturava ataques de dias diferentes.
+        since = now - DefenseReader.HISTORY_HOURS * 3600
+        recent = [h for h in state.get("history") or [] if int(h.get("at") or 0) >= since]
+        by_target = collections.OrderedDict()
+        for h in sorted(recent, key=lambda h: -int(h.get("at") or 0)):
+            t = by_target.setdefault(str(h.get("target_vid")), {
+                "target_vid": str(h.get("target_vid")), "ok": 0, "failed": 0, "troops": {},
+                "sources": set(), "first_arrival": None, "last_arrival": None, "last_at": h.get("at")})
+            if h.get("ok"):
+                t["ok"] += 1
+                t["sources"].add(str(h.get("source_vid")))
+                for u, q in (h.get("troops") or {}).items():
+                    t["troops"][u] = t["troops"].get(u, 0) + int(q)
+                arr = h.get("arrival_at")
+                if arr:
+                    t["first_arrival"] = min(t["first_arrival"] or arr, arr)
+                    t["last_arrival"] = max(t["last_arrival"] or arr, arr)
+            else:
+                t["failed"] += 1
+        # Aldeia recém-conquistada ainda não tem cache/managed: o rótulo
+        # cairia no id puro. O nome vem da varredura.
+        from core.village_label import village_label
+        names = {str(a.get("vid")): a.get("name") for a in attacked if a.get("name")}
+
+        def label(vid):
+            lbl = village_label(vid)
+            return "%s (%s)" % (names[vid], vid) if lbl == str(vid) and vid in names else lbl
+
+        for a in attacked:
+            a["label"] = label(str(a.get("vid")))
+        summary = []
+        for t in by_target.values():
+            t["label"] = label(t["target_vid"])
+            t["sources"] = len(t["sources"])
+            # Não "pop": no Jinja a chave perde para dict.pop (8º padrão).
+            t["pop_total"] = DefenseReader._pop(t["troops"])
+            t["first_arrival_fmt"] = fmt(t["first_arrival"])
+            t["last_arrival_fmt"] = fmt(t["last_arrival"])
+            t["last_at_fmt"] = fmt(t["last_at"])
+            summary.append(t)
         history = []
-        for h in reversed(state.get("history") or []):
+        for h in sorted(recent, key=lambda h: -int(h.get("at") or 0))[:30]:
             h = dict(h)
             h["at_fmt"] = fmt(h.get("at"))
             h["arrival_fmt"] = fmt(h.get("arrival_at"))
-            h["deadline_fmt"] = fmt(h.get("deadline_at"))
             history.append(h)
-            if len(history) >= 40:
-                break
+
         force = DefenseReader._load(FORCE_PATH)
-        forces = [{"vid": k, "at_fmt": fmt(t),
-                   "expired": now - int(t or 0) > FORCE_TTL}
+        forces = [{"vid": k, "at_fmt": fmt(t), "expired": now - int(t or 0) > FORCE_TTL}
                   for k, t in force.items()]
+        shields = [{"vid": k, "at_fmt": fmt(t)} for k, t in shield.items()]
         return {
             "scanned_fmt": fmt(state.get("scanned_at")),
             "scanned_age_min": (now - int(state["scanned_at"])) // 60 if state.get("scanned_at") else None,
             "reason": state.get("reason"), "incomings": state.get("incomings"),
             "villages_seen": state.get("villages_seen"), "attacked": attacked,
-            "history": history, "forces": forces, "labels": UNIT_LABELS_PT,
+            "summary": summary, "history": history, "recent_count": len(recent),
+            "history_hours": DefenseReader.HISTORY_HOURS,
+            "forces": forces, "shields": shields, "labels": UNIT_LABELS_PT,
             "pulse": account_pulse.read(),
             # A mesma leitura do bot (seção ausente = padrões, ligada).
-            "enabled": bool(defense_settings(FileManager.load_json_file("config.json") or {})
-                            .get("enabled")),
+            "enabled": bool(cfg.get("enabled")),
+            "shield_min_send_pop": cfg.get("shield_min_send_pop"),
+            "luck_pct": cfg.get("attacker_luck_pct"),
         }
 
 

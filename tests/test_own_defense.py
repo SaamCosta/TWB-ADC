@@ -3,6 +3,9 @@ Defesa automática das aldeias próprias (docs/backend.md §8.60): extratores da
 telas que ela lê, o estudo do ataque (`core.own_defense.assess`), o plano
 (`plan_defense`), as duas travas novas de `DefenceManager.support()`
 (`arrive_by` e `clamp_to_available`) e o gatilho do `OwnDefenseManager`.
+Desde 2026-10-18 (§8.69): o teto do maior ataque com nobre, o corte ao
+necessário, o `trim` do `support()`, a blindagem e as leituras da praça
+(`units_home_total`, `place_troop_locations`).
 
 O caso de referência é o de 2026-10-11: BBM 048 (40808, 531|289), conquistada
 às 14:50 com lealdade deixada em 25 e seis ataques chegando, um rotulado
@@ -318,6 +321,200 @@ def test_gatilho():
         od.load_force = original
 
 
+# -- teto e blindagem (2026-10-18) ---------------------------------------------
+
+TRANSIT = _fixture("place_units_transit_br143.html")
+GAME_DATA = _fixture("game_data_village_br143.html")
+
+
+def _sim():
+    from game.simulator import Simulator
+    return Simulator().simulate
+
+
+def test_maior_ataque_com_nobre():
+    print("test_maior_ataque_com_nobre")
+    # pop_max do game_data da BBM 016 (fazenda 30) em 2026-10-18.
+    _check("fazenda 30", own_defense.FARM_MAX_POP, 24000)
+    _check("ofensiva máxima com nobre", own_defense.max_noble_nuke_pop(), 24000 - 702 - 100)
+    nukes = own_defense.noble_nukes()
+    _check("três composições sem arqueiro", sorted(nukes), ["cavalaria", "infantaria", "mista"])
+    _check("cada uma leva um nobre", {n: t["snob"] for n, t in nukes.items()},
+           {"cavalaria": 1, "infantaria": 1, "mista": 1})
+    pops = {n: own_defense._pop({u: q for u, q in t.items() if u != "snob"})
+            for n, t in nukes.items()}
+    _check("população de cada uma perto do teto",
+           all(23000 < p <= 23198 for p in pops.values()), True)
+    _check("mundo com arqueiro ganha a quarta",
+           "arqueiros" in own_defense.noble_nukes(archers=True), True)
+
+
+def test_teto_corta_ao_necessario():
+    print("test_teto_corta_ao_necessario")
+    sim, nukes = _sim(), own_defense.noble_nukes()
+    one_d = {"spear": 4000, "sword": 3400, "heavy": 900}
+    _check("uma aldeia de defesa não segura",
+           own_defense.assess_defense(one_d, 20, sim, nukes)["holds"], False)
+    big = {"spear": 20000, "sword": 20000, "heavy": 4000}
+    part = own_defense.fit_package(big, one_d, 20, sim, nukes)
+    _check("corte segura", own_defense.assess_defense(
+        own_defense._add(one_d, part), 20, sim, nukes)["holds"], True)
+    _check("corte é menos que tudo", own_defense._pop(part) < own_defense._pop(big), True)
+    smaller = {u: int(q * 0.9) for u, q in part.items()}
+    _check("10% a menos já não segura", own_defense.assess_defense(
+        own_defense._add(one_d, smaller), 20, sim, nukes)["holds"], False)
+    _check("mesma proporção do que estava em casa",
+           round(part["spear"] / part["heavy"], 1), round(big["spear"] / big["heavy"], 1))
+    _check("se nem tudo segura, vai tudo",
+           own_defense.fit_package({"heavy": 100}, {}, 0, sim, nukes), {"heavy": 100})
+    _check("já seguro, o corte é vazio", own_defense.fit_package(
+        {"heavy": 100}, own_defense._add(one_d, part), 20, sim, nukes), {})
+
+
+def test_praca_total_e_transito():
+    print("test_praca_total_e_transito")
+    _check("Total da BBM 026", Extractor.units_home_total(TRANSIT), {"sword": 1, "light": 200})
+    _check("Total com explorador de fora", Extractor.units_home_total(
+        _fixture("place_units_support_away_br143.html")), {"sword": 5, "spy": 150})
+    _check("página que não é a praça", Extractor.units_home_total("<html></html>"), None)
+    loc = Extractor.place_troop_locations(TRANSIT)
+    _check("8 comandos em trânsito", len(loc["transit"]), 8)
+    back = loc["transit"][0]
+    _check("apoio voltando", (back["kind"], back["vid"], back["name"], back["troops"]),
+           ("back", "45215", "BBM 049", {"spy": 2}))
+    big = loc["transit"][5]
+    _check("o apoio grande a caminho da BBM 055",
+           (big["kind"], big["vid"], big["x"], big["y"], big["troops"]),
+           ("support", "74966", 579, 257, {"spear": 2615, "sword": 2475, "spy": 48, "heavy": 613}))
+    _check("2 apoios pousados em outros jogadores", len(loc["away"]), 2)
+    first = loc["away"][0]
+    _check("rótulo decomposto",
+           (first["vid"], first["name"], first["player_name"], first["player_id"],
+            first["x"], first["y"], first["distance"], first["troops"]),
+           ("58044", "Aldeia Aliada", "JogadorA", "1001", 734, 533, 286.2,
+            {"spy": 40, "heavy": 10}))
+    _check("ninguém apoiando a BBM 026", loc["home_support"], [])
+    _check("não é a praça", Extractor.place_troop_locations(""), None)
+
+
+def test_support_trim():
+    print("test_support_trim")
+    dm = DefenceManager(village_id="49709", wrapper=_Wrapper(PLACE_UNITS))
+    ok = dm.support("40808", troops={"heavy": 900}, position=(531, 289), clamp_to_available=True,
+                    trim=lambda t: ({"heavy": t["heavy"] // 2}, None))
+    _check("corte enviado", (bool(ok), dm.wrapper.confirm_payload["heavy"]), (True, 280))
+    dm = DefenceManager(village_id="49709", wrapper=_Wrapper(PLACE_UNITS))
+    ok = dm.support("40808", troops={"heavy": 900}, position=(531, 289), clamp_to_available=True,
+                    trim=lambda t: ({}, "abaixo do mínimo"))
+    _check("corte que desiste não posta",
+           (ok, dm.wrapper.confirm_payload, dm.last_support_error),
+           (False, None, "abaixo do mínimo"))
+
+
+class _DefendWrapper:
+    def __init__(self, place_html):
+        self.place_html = place_html
+        self.urls = []
+
+    def get_url(self, url):
+        self.urls.append(url)
+        return self.place_html if "mode=units" in url else None
+
+
+def _run_defend(home_html, shield, sources, available, history=None):
+    """
+    `_defend` de ponta a ponta com o que fala com o jogo trocado: veredito de
+    proteção, origens, e um `_send` que faz o que o `support()` faz com o
+    `trim` -- corta ao que está em casa (`available`) e chama o trim.
+    """
+    import game.own_defense as od
+    mgr = OwnDefenseManager(_DefendWrapper(home_html), clock=lambda: 1000.0)
+    mgr.origins, mgr.attempts, mgr.history = {}, {}, list(history or [])
+    mgr._village_page = lambda vid: GAME_DATA  # BBM 049, muralha 9
+    mgr._sources = lambda config, attacked: sources
+    calls = []
+
+    def fake_send(target_vid, village, line, arrive_by, trim=None):
+        home = available.get(line["source_vid"], {})
+        have = {u: min(q, home.get(u, 0)) for u, q in line["troops"].items()}
+        have = {u: q for u, q in have.items() if q > 0}
+        troops, why = trim(have) if have else ({}, "nada em casa")
+        entry = {"source_vid": line["source_vid"], "ok": bool(troops),
+                 "troops": troops or line["troops"], "error": why}
+        calls.append(entry)
+        return entry
+
+    mgr._send = fake_send
+    verdict = {"protect": True, "deadline_at": 1000 + 36000, "threat_arrivals": [1000 + 36000],
+               "attacks": [], "reason": "teste"}
+    saved = (od.own_defense.assess, od.load_shield, od.Notification.send)
+    od.own_defense.assess = lambda *a, **k: dict(verdict)
+    od.load_shield = lambda: {"74966": 1} if shield else {}
+    od.Notification.send = lambda *a, **k: None
+    try:
+        result = mgr._defend({}, od.settings({}), {"vid": "74966", "name": "BBM 055", "x": 0,
+                                                   "y": 0, "incomings": 0},
+                             set(), SPEEDS, 70, (20, 35), False)
+    finally:
+        od.own_defense.assess, od.load_shield, od.Notification.send = saved
+    return result, calls, mgr
+
+
+def test_defesa_com_teto():
+    print("test_defesa_com_teto")
+    # Três aldeias de defesa cheia a 1 campo: a primeira não basta, a segunda
+    # completa (cortada), a terceira não sai.
+    full = {"spear": 9000, "sword": 9000, "heavy": 1800}
+    sources = [_source(v, 1, 0, **full) for v in ("1", "2", "3")]
+    available = {v: dict(full) for v in ("1", "2", "3")}
+    result, calls, mgr = _run_defend(TRANSIT, False, sources, available)
+    _check("a praça do alvo foi lida", any("mode=units" in u for u in mgr.wrapper.urls), True)
+    _check("defesa lida da praça", result["defense"]["home"], {"sword": 1, "light": 200})
+    _check("muralha do game_data", result["defense"]["wall"], 9)
+    sent = [c for c in calls if c["ok"]]
+    _check("enviou de duas das três", len(sent), 2)
+    _check("terminou seguro", result["defense"]["after_holds"], True)
+    _check("o último envio foi cortado",
+           own_defense._pop(sent[-1]["troops"]) < own_defense._pop(full), True)
+
+
+def test_ja_seguro_nao_manda():
+    print("test_ja_seguro_nao_manda")
+    sources = [_source("1", 1, 0, heavy=1000)]
+    history = [{"ok": True, "target_vid": "74966", "arrival_at": 1000 + 3600,
+                "troops": {"spear": 30000, "sword": 30000, "heavy": 6000}}]
+    result, calls, _ = _run_defend(TRANSIT, False, sources, {"1": {"heavy": 1000}}, history)
+    _check("apoio a caminho conta", result["defense"]["inflight_pop"], 96000)
+    _check("seguro", result["defense"]["holds"], True)
+    _check("nenhum envio", calls, [])
+    late = [dict(history[0], arrival_at=1000 + 40000)]  # pousa depois da janela
+    result, calls, _ = _run_defend(TRANSIT, False, sources, {"1": {"heavy": 1000}}, late)
+    _check("apoio que pousa depois da janela não conta", result["defense"]["inflight_pop"], 0)
+
+
+def test_gota_abaixo_do_piso_nao_sai():
+    print("test_gota_abaixo_do_piso_nao_sai")
+    # O incidente: o cache diz 2.400 pesadas, a praça tem 1 em casa.
+    sources = [_source("1", 1, 0, heavy=2400, sword=3000)]
+    result, calls, _ = _run_defend(TRANSIT, False, sources, {"1": {"heavy": 1, "sword": 2}})
+    _check("não enviou", [c["ok"] for c in calls], [False])
+    _check("motivo é o piso", "abaixo do mínimo de 30" in calls[0]["error"], True)
+
+
+def test_blindagem():
+    print("test_blindagem")
+    history = [{"ok": True, "target_vid": "74966", "arrival_at": 1000 + 3600,
+                "troops": {"spear": 30000, "sword": 30000, "heavy": 6000}}]
+    sources = [_source("1", 1, 0, heavy=2000), _source("2", 1, 0, heavy=2000)]
+    available = {"1": {"heavy": 2000}, "2": {"heavy": 100}}
+    result, calls, _ = _run_defend(TRANSIT, True, sources, available, history)
+    _check("seguro, e a blindagem manda mesmo assim", result["defense"]["holds"], True)
+    by = {c["source_vid"]: c for c in calls}
+    _check("vai tudo o que está em casa, sem corte", by["1"]["troops"], {"heavy": 2000})
+    _check("600 pop fica abaixo do mínimo de 1000",
+           (by["2"]["ok"], "da blindagem" in by["2"]["error"]), (False, True))
+
+
 if __name__ == "__main__":
     test_comandos_recebidos_reais()
     test_lealdade_e_bonus()
@@ -333,4 +530,12 @@ if __name__ == "__main__":
     test_support_respeita_prazo()
     test_support_limita_ao_que_esta_em_casa()
     test_gatilho()
+    test_maior_ataque_com_nobre()
+    test_teto_corta_ao_necessario()
+    test_praca_total_e_transito()
+    test_support_trim()
+    test_defesa_com_teto()
+    test_ja_seguro_nao_manda()
+    test_gota_abaixo_do_piso_nao_sai()
+    test_blindagem()
     print("\nOK - todos os testes da defesa própria passaram")

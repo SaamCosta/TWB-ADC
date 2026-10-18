@@ -1161,6 +1161,133 @@ class Extractor:
         return {unit: int(count) for unit, count in re.findall(
             r'<input id="unit_input_(\w+)"[^>]*data-all-count="(\d+)"', res)}
 
+    PLACE_UNIT_CELL_RE = re.compile(
+        r"<t[dh][^>]*class='unit-item unit-item-([a-z]+)[^']*'[^>]*>(\d+)</t[dh]>")
+    PLACE_VILLAGE_LABEL_RE = re.compile(r"^(.*?)\s*\((\d+)\|(\d+)\)\s*K\d+\s*$")
+
+    @staticmethod
+    def _place_row_units(row):
+        return {u: int(q) for u, q in Extractor.PLACE_UNIT_CELL_RE.findall(row) if int(q) > 0}
+
+    @staticmethod
+    def _place_village_label(label):
+        """'Aldeia (Jogador) (734|533) K57' -> {name, player_name, x, y}."""
+        label = html.unescape(re.sub(r"\s+", " ", label or "")).strip()
+        out = {"label": label, "name": label, "player_name": None, "x": None, "y": None}
+        m = Extractor.PLACE_VILLAGE_LABEL_RE.match(label)
+        if not m:
+            return out
+        name = m.group(1)
+        owner = re.match(r"^(.*\S)\s+\(([^()]+)\)$", name)
+        out.update(name=owner.group(1) if owner else name,
+                   player_name=owner.group(2) if owner else None,
+                   x=int(m.group(2)), y=int(m.group(3)))
+        return out
+
+    @staticmethod
+    def units_home_total(res):
+        """
+        Tudo o que está DENTRO da aldeia agora -- a tropa dela em casa mais o
+        apoio que outras aldeias deixaram lá --, lido da linha "Total" da
+        tabela `units_home` de `screen=place&mode=units&display=units`.
+        Verbatim do br143 (tests/fixtures/place_units_transit_br143.html):
+
+            <tr><th colspan="3">Total</th>
+                <th ... class='unit-item unit-item-sword' >1</th> ...
+
+        Devolve {unidade: qtd} só com as positivas, ou None quando a tabela
+        ou a linha não existem (sessão, captcha, markup novo): None não é
+        "aldeia vazia" (15º padrão).
+        """
+        res = _page_text(res)
+        table = re.search(r'(?s)<table id="units_home".*?</table>', res)
+        if not table:
+            return None
+        total = re.search(r'(?s)<tr>\s*<th colspan="\d+">\s*Total\s*</th>(.*?)</tr>',
+                          table.group(0))
+        if not total:
+            return None
+        return Extractor._place_row_units(total.group(1))
+
+    @staticmethod
+    def place_troop_locations(res):
+        """
+        Onde está a tropa desta aldeia que saiu em apoio, e quem apoia esta
+        aldeia, lido da mesma `screen=place&mode=units&display=units` que o
+        `TroopManager.update_totals()` já pede todo ciclo. Verbatim do br143 em
+        2026-10-18 (tests/fixtures/place_units_transit_br143.html, BBM 026):
+
+        - `units_transit` ("Tropas em trânsito"): comando a caminho, com o
+          ícone do tipo (`graphic/command/support.webp` "Suporte" = apoio
+          indo; `back.webp` "Apoio enviado de volta" = voltando) e o link do
+          destino por id. Apoio entre aldeias próprias aparece aqui.
+        - `units_away` ("Tropas nas aldeias de outros jogadores"): apoio
+          pousado, com `village_anchor` (data-player, data-id), o rótulo
+          "Aldeia (Jogador) (x|y) Kxx" e a distância.
+        - `units_home`, linhas além de "Desta aldeia" e "Total": apoio que
+          outras aldeias deixaram AQUI. ⚠️ Formato NÃO capturado: nenhuma
+          aldeia da conta tinha apoio pousado no dia (BBM 026, 049 e 048
+          sondadas). A leitura aceita `village_anchor` ou link `info_village`,
+          como nas outras duas tabelas, e precisa ser conferida quando o
+          primeiro apoio pousar. É por ela que o apoio pousado numa aldeia
+          PRÓPRIA aparece, se a tabela `units_away` mostrar só a de outros
+          jogadores, como o título dela diz.
+
+        Devolve {transit, away, home_support} (listas de dicts com `vid`,
+        `troops` e o rótulo decomposto) ou None se a página não é a praça.
+        """
+        res = _page_text(res)
+        home = re.search(r'(?s)<table id="units_home".*?</table>', res)
+        if not home:
+            return None
+
+        def rows(table_id):
+            table = re.search(r'(?s)<table id="%s".*?</table>' % table_id, res)
+            return re.findall(r"(?s)<tr>(.*?)</tr>", table.group(0)) if table else []
+
+        def where(row):
+            anchor = re.search(r'<span class="village_anchor" data-player="(\d*)" data-id="(\d+)">'
+                               r'\s*<a [^>]*>([^<]*)</a>', row)
+            if anchor:
+                out = Extractor._place_village_label(anchor.group(3))
+                out.update(vid=anchor.group(2), player_id=anchor.group(1) or None)
+                return out
+            link = re.search(r'screen=info_village&amp;id=(\d+)"\s*>([^<]*)</a>', row)
+            if link:
+                out = Extractor._place_village_label(link.group(2))
+                out.update(vid=link.group(1), player_id=None)
+                return out
+            return None
+
+        transit = []
+        for row in rows("units_transit"):
+            spot = where(row)
+            if not spot:
+                continue
+            icon = re.search(r'graphic/command/(\w+)\.\w+" title="([^"]*)"', row)
+            spot.update(kind=icon.group(1) if icon else None,
+                        kind_label=html.unescape(icon.group(2)) if icon else None,
+                        troops=Extractor._place_row_units(row))
+            transit.append(spot)
+        away = []
+        for row in rows("units_away"):
+            spot = where(row)
+            if not spot:
+                continue
+            dist = re.search(r"</span></td>\s*<td>([\d.]+)</td>", row)
+            spot.update(distance=float(dist.group(1)) if dist else None,
+                        troops=Extractor._place_row_units(row))
+            away.append(spot)
+        home_support = []
+        for row in re.findall(r"(?s)<tr>(.*?)</tr>", home.group(0)):
+            if "Desta aldeia" in row:
+                continue
+            spot = where(row)
+            if spot:
+                spot["troops"] = Extractor._place_row_units(row)
+                home_support.append(spot)
+        return {"transit": transit, "away": away, "home_support": home_support}
+
     @staticmethod
     def incoming_support_speed_bonus(res):
         """

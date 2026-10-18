@@ -42,6 +42,28 @@ uma margem, unidade por unidade -- um comando anda na velocidade da mais
 lenta, então a lança que não chega não vai junto com a pesada que chega.
 O que está em casa só se sabe na praça; o plano usa o total do cache/managed
 como teto e o envio limita ao que a praça mostrar (`clamp_to_available`).
+
+QUANTO BASTA (2026-10-18)
+-------------------------
+A primeira versão não tinha teto. A cada revarredura (10 min) ela replanejava
+como se nada tivesse saído, e cada origem voltava a mandar o que tinha em
+casa assim que passavam os 30 min de `retry_minutes`. Em 4 h saíram 129 apoios
+para a BBM 055 (74966), a mesma origem até 7 vezes, a maior parte em gotas de
+3 a 20 de população: o piso `min_package_pop` era conferido sobre o total do
+cache, antes de a praça cortar para o que estava em casa.
+
+Agora o teto é a defesa que mata o MAIOR ataque que pode trazer um nobre: a
+fazenda máxima cheia de tropa ofensiva (`max_noble_nuke_pop`), em três
+composições (`noble_nukes`), com sorte a favor do atacante, contra a muralha
+do alvo. A defesa conta o que está na aldeia (linha Total da praça, que inclui
+apoio já pousado) mais o apoio próprio a caminho que pousa dentro da janela.
+Quando o nobre morre nas três composições, não sai mais nada. O último envio
+é cortado ao necessário (`fit_package`).
+
+BLINDAGEM: em guerra, uma aldeia importante recebe vários nobres, cada um
+atrás de uma limpeza. Com a blindagem ligada (pelo painel, por aldeia) não há
+teto: tudo o que chega a tempo vai, mas cada envio precisa ter pelo menos
+`shield_min_send_pop` de população.
 """
 import math
 
@@ -64,7 +86,111 @@ DEFAULT_OPTIONS = {
     "max_pop_per_target": 0,
     # Origem com ataque chegando não manda defesa embora.
     "exclude_attacked_sources": True,
+    # População do maior ataque com nobre. 0 = automático
+    # (`max_noble_nuke_pop`, fazenda máxima menos o mínimo de prédios).
+    "nuke_pop": 0,
+    # Sorte do atacante, em %, na simulação do teto. O jogo sorteia entre -25
+    # e +25; o pior caso para quem defende é +25.
+    "attacker_luck_pct": 25,
+    # Blindagem: piso de população de cada envio. Sem teto, sem piso alto a
+    # blindagem viraria a mesma gota de 30 em 30 min do incidente.
+    "shield_min_send_pop": 1000,
 }
+
+# Capacidade da fazenda no nível máximo, medida no `pop_max` do game_data em
+# 2026-10-18: BBM 016 (34597, fazenda 30) = 24.000. A fórmula que circula,
+# 240 * 1.172103 ** (nível - 1), erra por 1 nos níveis abaixo (fazenda 27:
+# jogo 14.904, fórmula 14.904,6; fazenda 19: jogo 4.183, fórmula 4.184,0),
+# então o número fica medido, e não calculado.
+FARM_MAX_POP = 24000
+
+
+# População que os prédios de uma aldeia que forma nobre consomem, no mínimo:
+# academia exige edifício principal 20, ferreiro 20 e mercado 10; o ataque
+# precisa de quartel, estábulo 3 (cavalaria leve) e oficina (aríete).
+# Números da tabela do twstats (`cache/world/buildings_br143.json`):
+# main 20 = 94, smith 20 = 395, market 10 = 82, snob 1 = 80, barracks 1 = 7,
+# stable 3 = 11, garage 1 = 8, wood 1 = 5, stone 1 = 10, iron 1 = 10.
+NOBLE_VILLAGE_MIN_BUILDING_POP = 702
+
+# Composições do ataque com nobre, em fração da população ofensiva. A mista é
+# a forma do ataque completo da própria BBM 001 (5.804 machados, 3.000 cav.
+# leves, 250 aríetes, 50 catapultas). Infantaria pura e cavalaria pura são os
+# extremos: lança segura cavalaria e espada segura infantaria, então cada uma
+# acha o ponto fraco de uma defesa desequilibrada.
+NUKE_SHAPES = {
+    "infantaria": {"axe": 0.94, "ram": 0.06},
+    "cavalaria": {"light": 0.94, "ram": 0.06},
+    "mista": {"axe": 0.30, "light": 0.62, "ram": 0.06, "catapult": 0.02},
+}
+ARCHER_SHAPE = {"marcher": 0.94, "ram": 0.06}
+
+
+def max_noble_nuke_pop():
+    """Maior população ofensiva que cabe numa aldeia junto de um nobre."""
+    return FARM_MAX_POP - NOBLE_VILLAGE_MIN_BUILDING_POP - UNIT_POP.get("snob", 100)
+
+
+def noble_nukes(pop=None, archers=False):
+    """{nome: tropas} -- cada composição com `pop` de ofensiva e um nobre."""
+    pop = int(pop or 0) or max_noble_nuke_pop()
+    shapes = dict(NUKE_SHAPES)
+    if archers:
+        shapes["arqueiros"] = ARCHER_SHAPE
+    out = {}
+    for name, shape in shapes.items():
+        troops = {u: int(pop * share / UNIT_POP.get(u, 1)) for u, share in shape.items()}
+        troops["snob"] = 1
+        out[name] = troops
+    return out
+
+
+def _add(a, b):
+    out = dict(a or {})
+    for u, q in (b or {}).items():
+        out[u] = out.get(u, 0) + int(q)
+    return out
+
+
+def assess_defense(defense, wall, simulate, nukes, luck_pct=25):
+    """
+    {holds, survivors: {composição: atacantes vivos}}. Segura quando o
+    ataque inteiro morre em todas as composições: atacante vivo leva o nobre
+    junto. Não se olha só o grupo do nobre (infantaria) porque o jogo aplica
+    as perdas ao exército todo, e o simulador por tipo deixaria o nobre morrer
+    com a cavalaria ainda viva.
+    """
+    survivors = {}
+    for name, nuke in nukes.items():
+        result = simulate(dict(nuke), {u: int(q) for u, q in (defense or {}).items()},
+                          int(wall or 0), False, 100, luck_pct)
+        att = result["attacker"]
+        survivors[name] = sum(max(0, int(att["quantity"][u]) - int(att["losses"][u]))
+                              for u in nuke)
+    return {"holds": all(v < 1 for v in survivors.values()), "survivors": survivors}
+
+
+def fit_package(available, defense, wall, simulate, nukes, luck_pct=25, steps=12):
+    """
+    A menor fração de `available` que, somada a `defense`, segura todas as
+    composições. Se nem tudo segura, devolve tudo: falta defesa e cada tropa
+    conta. Busca binária na fração, a mesma para todas as unidades, para não
+    mudar a proporção do pacote (e a velocidade dele, que é a da mais lenta).
+    """
+    available = {u: int(q) for u, q in (available or {}).items() if int(q) > 0}
+    if not available or assess_defense(defense, wall, simulate, nukes, luck_pct)["holds"]:
+        return {}
+    if not assess_defense(_add(defense, available), wall, simulate, nukes, luck_pct)["holds"]:
+        return available
+    lo, hi = 0.0, 1.0
+    for _ in range(steps):
+        mid = (lo + hi) / 2
+        part = {u: int(math.ceil(q * mid)) for u, q in available.items()}
+        if assess_defense(_add(defense, part), wall, simulate, nukes, luck_pct)["holds"]:
+            hi = mid
+        else:
+            lo = mid
+    return {u: q for u, q in ((u, int(math.ceil(q * hi))) for u, q in available.items()) if q > 0}
 
 NOBLE_TIME_TOLERANCE_SEC = 60
 
@@ -178,8 +304,10 @@ def plan_defense(target, deadline_at, sources, speeds, now, bonus_pct=0, options
 
     Devolve {lines, skipped, total_troops, total_pop, options}. Cada linha:
     {source_vid, source_name, troops, distance, travel_sec, arrival_at,
-    slack_sec, beats}, ordenadas pela folga (quem tem menos folga sai
-    primeiro).
+    slack_sec, beats}, em ordem de prioridade: quem vence mais ataques da
+    janela primeiro, e entre elas quem pousa antes. Com teto (`fit_package`)
+    a ordem decide quem vai; antes ela era pela menor folga, o que punha na
+    frente justamente o apoio que pousa por último.
     """
     opts = dict(DEFAULT_OPTIONS)
     opts.update({k: v for k, v in (options or {}).items() if v is not None})
@@ -241,7 +369,7 @@ def plan_defense(target, deadline_at, sources, speeds, now, bonus_pct=0, options
             kept.append(line)
             total += _pop(line["troops"])
         lines = kept
-    lines.sort(key=lambda l: l["slack_sec"])
+    lines.sort(key=lambda l: (-l["beats"], l["arrival_at"]))
     totals = {}
     for line in lines:
         for u, q in line["troops"].items():

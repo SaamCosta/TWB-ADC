@@ -2392,6 +2392,11 @@ class Village:
             # Publicado para as outras aldeias: quem calcula a viagem é a
             # doadora, e ela só descobre isto lendo o cache do destino.
             "support_speed_bonus_pct": self.def_man.support_speed_bonus_pct,
+            # Apoio desta aldeia em trânsito/pousado e apoio recebido aqui,
+            # lido da praça no `update_totals` (painel /support).
+            "troop_locations": dict(self.units.troop_locations,
+                                    read_at=self.units.troop_locations_at)
+            if getattr(self.units, "troop_locations", None) is not None else None,
             "last_run": int(time.time()),
             "zone": current_zone,
             "points": self.points,

@@ -6897,9 +6897,9 @@ com 4 fixtures verbatim do dia (nomes de terceiros anonimizados). Smoke seco
 contra o servidor às 15:39 e às 15:41 (varredura real, envio desligado).
 
 **Aberto:**
-- **Não validado em campo:** nenhum envio automático aconteceu ainda. O
-  código entra no próximo restart do bot (o merge do `build.version` 5.1 traz a
-  seção `own_defense`).
+- ~~Não validado em campo~~ — **validado, e mal:** em 18/10 a BBM 055
+  recebeu 161 apoios automáticos em ~5 h, porque nada dizia "basta". Teto,
+  blindagem e o piso conferido sobre o que está em casa: §8.69.
 - **Não medido:** o que acontece com um apoio a caminho quando a aldeia muda
   de dono antes de ele pousar.
 - Não há esquiva de limpeza: o apoio sai na hora e pode pousar antes de um
@@ -7439,6 +7439,106 @@ esperado fica perto de **120–150 req/ciclo**, quase todo no recrutamento.
   `ReportAMStockpileDistribution` em cache não trazem origem/destino. Conferir
   numa campanha ativa; se for o caso, o hub entra num grupo de "Reservas" do
   Estoque.
+
+## 8.69 `P-DEFESA-TETO` — teto de apoio, blindagem e "onde estão as tropas" (2026-10-18)
+
+**Incidente.** A BBM 055 (74966, 579|257), lealdade 31, com 1 ataque que podia
+ser nobre e janela até 19/10 15:07. A defesa própria (§8.60) mandou **161
+apoios em ~5 h** (histórico de `cache/defense/state.json` às 19:21, que guarda
+só os últimos 300): 4.097 lanças, 3.527 espadas e 1.102 pesadas, de 32 aldeias,
+a mesma origem até 7 vezes. A BBM 026 sozinha mandou 2.615 lanças, 2.475
+espadas e 613 pesadas (lido na praça dela, tabela "Tropas em trânsito"). Em
+paralelo, gotas de `{'sword': 2, 'heavy': 1}`.
+
+**Causa, três peças:**
+1. Nenhum critério de "basta". A revarredura (10 min) replanejava do zero, e
+   cada origem voltava a ser candidata depois de `retry_minutes` (30). Só o
+   prazo parava o laço: origem cuja viagem não cabia mais na janela.
+2. O plano não conhecia o apoio já mandado, nem o que já estava na aldeia.
+3. `min_package_pop` era conferido sobre o total do `cache/managed`, **antes**
+   de `clamp_to_available` cortar para o que a praça mostrava em casa. Daí as
+   gotas: tropa que voltava da coleta saía assim que aparecia.
+
+**O que foi feito:**
+- **Teto = o maior ataque possível com nobre.** `max_noble_nuke_pop()` =
+  fazenda máxima (24.000, `pop_max` medido na BBM 016, fazenda 30) − prédios
+  mínimos de uma aldeia que forma nobre (702: principal 20, ferreiro 20,
+  mercado 10, academia, quartel, estábulo 3, oficina, recursos 1, pela tabela
+  do twstats) − o nobre (100) = **23.198** pop. Três composições
+  (`noble_nukes`): infantaria, cavalaria e mista (a forma do ataque completo
+  da BBM 001), mais arqueiro a cavalo em mundo com arqueiro. Sorte +25% para o
+  atacante (`attacker_luck_pct`), muralha do `game_data` do alvo. Segura quando
+  o ataque inteiro morre nas três (`assess_defense`; atacante vivo leva o
+  nobre). Contra muralha 20 isso pede ~27 mil pop de defesa; contra muralha 0,
+  ~38 mil.
+- **O que já defende:** a linha Total de `units_home` na praça do alvo
+  (`Extractor.units_home_total`, 1 GET por aldeia ameaçada) mais o apoio que o
+  próprio bot mandou e que pousa dentro da janela (histórico). Se já segura,
+  nada sai. Se não, os envios saem em ordem de prioridade (vence mais ataques
+  da janela, depois pousa antes) e param quando segura. O último é cortado ao
+  necessário (`fit_package`, busca binária na fração do pacote).
+- **Corte depois do clamp:** `DefenceManager.support(trim=...)` chama o corte
+  com o que está em casa **antes** do POST. É lá que o piso é conferido; abaixo
+  dele, só a praça foi pedida.
+- **Blindagem**, por aldeia, pelo painel (`cache/defense/shield.json`, sem
+  vencimento): sem teto, tudo o que chega a tempo, mas cada envio com pelo
+  menos `shield_min_send_pop` (1.000). Para guerra, quando a aldeia recebe
+  vários nobres atrás de limpezas.
+- **Config nova** em `own_defense`: `nuke_pop` (0 = automático),
+  `attacker_luck_pct` (25), `shield_min_send_pop` (1.000); `build.version` 5.3.
+
+**Medido no servidor (br143, 2026-10-18):**
+- `screen=place&mode=units&display=units` tem três tabelas: `units_home`
+  (Desta aldeia + quem apoia + Total), `units_transit` ("Tropas em trânsito":
+  ícone `support.webp` = apoio indo, `back.webp` "Apoio enviado de volta" =
+  voltando, link do destino por id) e `units_away` ("Tropas nas aldeias de
+  outros jogadores", com `village_anchor` e distância). Apoio entre aldeias
+  próprias aparece em `units_transit`. Fixture:
+  `tests/fixtures/place_units_transit_br143.html` (BBM 026, nomes de terceiros
+  anonimizados).
+- `pop_max` = 24.000 na fazenda 30 (BBM 016), 14.904 na 27 (BBM 026) e 4.183
+  na 19 (BBM 048). A fórmula `240·1,172103^(n−1)` erra por 1 nas duas de baixo;
+  o código usa só o máximo medido.
+- `game_data.village.buildings.wall` existe em toda página (fixture
+  `tests/fixtures/game_data_village_br143.html`).
+
+**Painel.**
+- `/defense` (Ameaças) ficou compacto: por aldeia, uma linha de lealdade,
+  ataques, defesa (na aldeia + a caminho, muralha) e o veredito contra o maior
+  ataque. A tabela de ataques e os envios da varredura ficam em `<details>`. A
+  blindagem liga e desliga ali mesmo. O histórico de 40 linhas soltas virou um
+  resumo das últimas 24 h por alvo, com as linhas cruas recolhidas.
+- `/support` (Apoios): título "Apoios", e no topo o relatório **onde estão
+  as tropas** (`TroopLocationReader`), por destino: pousado, a caminho e
+  voltando, de quais aldeias. Vem do `troop_locations` que cada aldeia grava no
+  `cache/managed`, lido da praça que `TroopManager.update_totals()` já pedia:
+  nenhuma requisição a mais, e cada aldeia se atualiza na rodada dela. O fluxo
+  do pedido da tribo continua embaixo, com as opções do cálculo e o ranking de
+  origens recolhidos. "Andamento" mostra só aprovado, em envio e o que saiu ou
+  falhou nas últimas 24 h.
+
+Testes: `tests/test_own_defense.py` (+8: teto, corte, praça, `trim`, `_defend`
+com teto, já seguro, gota abaixo do piso, blindagem) e
+`tests/test_troop_locations.py` (agrupamento, aldeia própria fora do
+`cache/managed`, apoio entre próprias sem contar duas vezes).
+
+**Aberto:**
+- **⏳ Campo:** entra no próximo reinício do bot. O que já saiu para a BBM 055
+  continua a caminho. Na primeira varredura depois do reinício, o histórico
+  conta como "a caminho" e o log deve dizer `já segura o maior ataque com
+  nobre ... nada a enviar`.
+- **Formato não capturado:** a linha de `units_home` de uma aldeia que
+  **recebe** apoio. Nenhuma aldeia da conta tinha apoio pousado no dia (BBM 026,
+  049 e 048 sondadas). O parser aceita `village_anchor` ou link `info_village`,
+  como nas outras tabelas. Conferir quando o apoio pousar na BBM 055
+  (19/10, ~05:11 em diante). Também não se sabe se apoio pousado em aldeia
+  própria aparece em `units_away` da origem; o relatório cobre os dois casos e
+  não conta em dobro.
+- Apoio mandado à mão, ou pelo Hunter, só entra na conta do teto depois de
+  pousar. A tropa da própria aldeia fora de casa (farm, coleta) não conta. As
+  duas faltas erram para o lado de mandar mais.
+- O teto supõe um ataque completo por nobre. Uma limpeza separada, seguida de
+  nobres pequenos, mata a defesa antes; é o caso de ligar a blindagem.
 
 ## 9. Próximos passos
 

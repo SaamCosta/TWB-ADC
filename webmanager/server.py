@@ -11,10 +11,10 @@ from core.village_label import village_label
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, TroopLocationReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
+    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, TroopLocationReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -403,7 +403,8 @@ def get_conquest():
 
 @app.route('/support', methods=['GET', 'POST'])
 def get_support():
-    # Apoio a membros da tribo (docs/backend.md §8.39). O painel lê o pedido,
+    # Apoios: onde está a tropa que saiu em apoio (TroopLocationReader, do
+    # cache/managed) e o pedido de apoio da tribo (docs/backend.md §8.39). O painel lê o pedido,
     # propõe, aprova e cancela; quem envia é o bot, no ciclo da aldeia de
     # origem (Village.run_tribe_support). Erros aparecem inline e nada é
     # gravado quando a validação falha.
@@ -431,13 +432,14 @@ def get_support():
         except ValueError as e:
             error = str(e)
     return render_template('support.html', v=TribeSupportReader.view(),
-                           error=error, message=message)
+                           where=TroopLocationReader.view(), error=error, message=message)
 
 @app.route('/defense', methods=['GET', 'POST'])
 def get_defense():
     # Defesa automática das aldeias próprias (docs/backend.md §8.60). Quem
     # decide e envia é o bot (game/own_defense.py); o painel mostra o que ele
-    # viu e pode pedir "defender esta aldeia mesmo sem ameaça de nobre".
+    # viu e pode pedir "defender esta aldeia mesmo sem ameaça de nobre" e
+    # ligar/desligar a blindagem (sem teto de apoio) por aldeia.
     error = None
     message = request.args.get('msg')
     if request.method == 'POST':
@@ -450,6 +452,14 @@ def get_defense():
             elif action == 'unforce':
                 vid = DefenseReader.set_force(request.form.get('vid', ''), False)
                 msg = "Pedido de %s removido." % village_label(vid)
+            elif action == 'shield':
+                vid = DefenseReader.set_shield(request.form.get('vid', ''), True)
+                msg = ("Blindagem ligada em %s: quando ela estiver ameaçada, o bot manda tudo o "
+                       "que chega a tempo, sem teto." % village_label(vid))
+            elif action == 'unshield':
+                vid = DefenseReader.set_shield(request.form.get('vid', ''), False)
+                msg = ("Blindagem desligada em %s: volta o teto do maior ataque com nobre."
+                       % village_label(vid))
             else:
                 raise ValueError("ação desconhecida")
             return redirect(url_for('get_defense', msg=msg))

@@ -7,17 +7,43 @@
 {% set bs = v.by_status %}
 {% set parsed = v.parsed %}
 <header class="twb-page-header">
-  <div><p class="twb-eyebrow">Defesa · apoio à tribo</p><h1 class="twb-page-title">Apoio a membros da tribo</h1><p class="twb-page-summary">Cole o pedido (link do tópico do fórum, a tabela ou uma linha por aldeia). O bot calcula de quais aldeias suas é mais seguro tirar tropa, você aprova, e ele envia na próxima rodada de cada aldeia de origem.</p></div>
+  <div><p class="twb-eyebrow">Defesa · tropas fora de casa</p><h1 class="twb-page-title">Apoios</h1><p class="twb-page-summary">Onde está cada tropa que suas aldeias mandaram em apoio, lido da praça de cada aldeia a cada ciclo. Para atender um pedido da tribo, cole o pedido abaixo: o bot propõe de onde tirar, você aprova e ele envia.</p></div>
 </header>
 
 {% if error %}<div class="twb-inline-alert twb-inline-alert--danger mb-3" role="alert"><strong>Não foi possível.</strong> {{ error }}</div>{% endif %}
 {% if message %}<div class="twb-inline-alert mb-3" role="status">{{ message }}</div>{% endif %}
 
-<section class="twb-health-strip" aria-label="Resumo do apoio">
-  <div class="twb-health-item"><span class="twb-health-label">Pedido</span><span class="twb-health-value">{% if parsed %}{{ v.rows | length }} aldeias{% else %}<span class="twb-status twb-status--muted">Nenhum</span>{% endif %}</span><span class="twb-health-meta">{% if parsed.title %}{{ parsed.title }} · {% endif %}{% if v.loaded_fmt %}lido em {{ v.loaded_fmt }}{% else %}cole um pedido abaixo{% endif %}</span></div>
-  <div class="twb-health-item"><span class="twb-health-label">Ainda falta</span><span class="twb-health-value">{% if v.totals %}{{ troops_inline(v.totals, v.labels, v.unit_order) }}{% else %}—{% endif %}</span><span class="twb-health-meta">Tabela menos as respostas postadas depois da última edição dela.</span></div>
-  <div class="twb-health-item"><span class="twb-health-label">Plano</span><span class="twb-health-value">{{ bs['proposed'] | length }} propostos · {{ bs['approved'] | length }} aprovados · {{ bs['sent'] | length }} enviados</span><span class="twb-health-meta">{% if bs['failed'] %}{{ bs['failed'] | length }} falharam · {% endif %}{% if bs['dispatching'] %}{{ bs['dispatching'] | length }} com resultado desconhecido · {% endif %}{% if v.planned_fmt %}calculado em {{ v.planned_fmt }}{% else %}ainda não calculado{% endif %}</span></div>
+{% macro pop(n) %}<span class="twb-number">{{ '{:,}'.format(n or 0).replace(',', '.') }}</span>{% endmacro %}
+<section class="twb-health-strip" aria-label="Resumo das tropas em apoio">
+  <div class="twb-health-item"><span class="twb-health-label">Pousado</span><span class="twb-health-value">{{ pop(where.pops.stationed) }} pop</span><span class="twb-health-meta">{{ where.counts.stationed }} apoio(s) parado(s) em outra aldeia</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">A caminho</span><span class="twb-health-value">{{ pop(where.pops.transit) }} pop</span><span class="twb-health-meta">{{ where.counts.transit }} comando(s) de apoio indo</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Voltando</span><span class="twb-health-value">{{ pop(where.pops.back) }} pop</span><span class="twb-health-meta">{{ where.counts.back }} apoio(s) mandado(s) de volta</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Leitura</span><span class="twb-health-value">{{ where.read }} aldeias</span><span class="twb-health-meta">{% if where.unread %}{{ where.unread }} ainda sem leitura (lidas na próxima rodada de cada uma){% elif where.oldest_age_h is not none %}a mais antiga tem {{ where.oldest_age_h }} h{% else %}—{% endif %}</span></div>
 </section>
+
+<section class="twb-panel" aria-labelledby="titulo-onde">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-onde">Onde estão as tropas</h2><span class="small text-muted">por destino · suas aldeias primeiro</span></div>
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Tropas em apoio por destino">
+    <table class="table table-sm twb-operational-table">
+      <thead><tr><th scope="col">Destino</th><th scope="col">Situação</th><th scope="col">Tropas</th><th scope="col">De onde</th></tr></thead>
+      <tbody>
+      {% for g in where.groups %}
+        <tr>
+          <td><strong>{% if g.own %}{{ g.label }}{% else %}{{ g.name }}{% endif %}</strong>{% if g.x is not none %} <span class="text-muted small">{{ g.x }}|{{ g.y }}</span>{% endif %}<br><span class="small text-muted">{% if g.own %}sua aldeia{% elif g.player %}{{ g.player }}{% else %}outro jogador{% endif %}</span></td>
+          <td class="small">{% for st in ['stationed', 'transit', 'back'] if g.status_pop[st] %}<span class="twb-status {% if st == 'stationed' %}twb-status--info{% elif st == 'transit' %}twb-status--warning{% else %}twb-status--muted{% endif %}">{{ where.labels[st] }}</span> {{ pop(g.status_pop[st]) }} pop{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+          <td>{% for st in ['stationed', 'transit', 'back'] if g.by_status[st] %}<div>{{ troops_inline(g.by_status[st], v.labels, v.unit_order + ['axe', 'light', 'ram', 'catapult', 'knight', 'snob']) }}</div>{% endfor %}</td>
+          <td class="small">{% if g.sources | length <= 3 %}{% for s in g.sources %}<div>{{ s.vid | vlabel }} <span class="text-muted">· {{ where.labels[s.status] | lower }}{% if s.commands > 1 %} em {{ s.commands }} comandos{% endif %}</span></div>{% endfor %}{% else %}<details><summary>{{ g.sources | length }} aldeias</summary>{% for s in g.sources %}<div>{{ s.vid | vlabel }} <span class="text-muted">· {{ where.labels[s.status] | lower }}{% if s.commands > 1 %} em {{ s.commands }} comandos{% endif %}</span> · {{ troops_inline(s.troops, v.labels, v.unit_order + ['axe', 'light', 'ram', 'catapult', 'knight', 'snob']) }}</div>{% endfor %}</details>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="text-muted">{% if where.read %}Nenhuma tropa fora em apoio.{% else %}Ainda sem leitura: cada aldeia grava onde está o apoio dela na próxima rodada (a praça já lida pelo bot, sem requisição a mais).{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<h2 class="h5 mt-4 mb-2">Pedido de apoio da tribo</h2>
+<p class="small text-muted mb-3">{% if parsed %}{{ v.rows | length }} aldeias no pedido{% if parsed.title %} · {{ parsed.title }}{% endif %}{% if v.loaded_fmt %} · lido em {{ v.loaded_fmt }}{% endif %} · {{ bs['proposed'] | length }} propostos, {{ bs['approved'] | length }} aprovados, {{ bs['sent'] | length }} enviados{% if bs['failed'] %}, {{ bs['failed'] | length }} falharam nas últimas 24 h{% endif %}{% else %}Nenhum pedido carregado.{% endif %}</p>
 
 <section class="twb-panel" aria-labelledby="titulo-pedido">
   <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-pedido">Pedido</h2>{% if v.request.source and v.request.source.kind == 'forum' %}<form method="post" class="d-inline"><input type="hidden" name="action" value="reload"><button class="btn btn-outline-secondary btn-sm" type="submit">Reler o tópico</button></form>{% endif %}</div>
@@ -45,7 +71,7 @@
 
 {% if v.rows %}
 <section class="twb-panel" aria-labelledby="titulo-aldeias">
-  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-aldeias">Aldeias que pedem apoio</h2><span class="small text-muted">{{ v.rows_missing }} com falta</span></div>
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-aldeias">Aldeias que pedem apoio</h2><span class="small text-muted">{{ v.rows_missing }} com falta{% if v.totals %} · faltam {{ troops_inline(v.totals, v.labels, v.unit_order) }}{% endif %}</span></div>
   <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Aldeias que pedem apoio">
     <table class="table table-sm twb-operational-table">
       <thead><tr><th scope="col">Nº</th><th scope="col">Destino</th><th scope="col">Pedido na tabela</th><th scope="col">Enviado depois da edição</th><th scope="col">Falta</th></tr></thead>
@@ -74,7 +100,8 @@
         <div class="custom-control custom-checkbox custom-control-inline"><input class="custom-control-input" type="checkbox" id="unit-{{ u }}" name="unit_{{ u }}" value="1" {% if u in v.options.units %}checked{% endif %}><label class="custom-control-label" for="unit-{{ u }}"><img src="/static/images/unit_{{ u }}.png" alt="" width="16" height="16"> {{ v.labels[u] }}</label></div>
         {% endfor %}
       </fieldset>
-      <div class="twb-form-grid">
+      <details class="mb-3"><summary class="small">Opções do cálculo (reserva, coleta, raio de perigo, viagem, pacote mínimo)</summary>
+      <div class="twb-form-grid mt-2">
         <div class="form-group twb-form-field"><label for="opt-reserve">Reserva em casa (%)</label><input class="form-control twb-number" type="number" id="opt-reserve" name="reserve_pct" min="0" max="99" step="1" value="{{ (v.options.reserve_pct * 100) | round | int }}"><small class="form-text text-muted">De cada unidade, esta fração fica na aldeia de origem.</small></div>
         <div class="form-group twb-form-field"><label for="opt-share">Fatia da coleta para apoio (%)</label><input class="form-control twb-number" type="number" id="opt-share" name="gather_share" min="0" max="100" step="5" value="{{ ((v.options.gather_share or 0) * 100) | round | int }}"><small class="form-text text-muted">Em aldeia que coleta, lança, espada e pesada podem sair até esta fração do total; o resto fica na coleta. Com 20%, a coleta perde ~2,7% de recurso/h. Se a tropa estiver coletando, o envio espera ela voltar.</small></div>
         <div class="form-group twb-form-field"><label for="opt-radius">Raio de perigo (campos)</label><input class="form-control twb-number" type="number" id="opt-radius" name="danger_radius" min="1" max="60" step="1" value="{{ v.options.danger_radius }}"><small class="form-text text-muted">Aldeias inimigas e de tribos sem acordo dentro deste raio deixam a origem menos segura.</small></div>
@@ -86,6 +113,7 @@
       <div class="custom-control custom-checkbox mb-2"><input class="custom-control-input" type="checkbox" id="opt-split" name="split_fast" value="1" {% if v.options.split_fast %}checked{% endif %}><label class="custom-control-label" for="opt-split">Separar pesada e explorador de lança e espada (chegam em cerca de metade do tempo; um comando a mais por envio)</label></div>
       <div class="custom-control custom-checkbox mb-3"><input class="custom-control-input" type="checkbox" id="opt-exposed" name="include_exposed" value="1" {% if v.options.include_exposed %}checked{% endif %}><label class="custom-control-label" for="opt-exposed">Usar também origens expostas (nunca as com ataque chegando)</label></div>
       {% if not v.diplomacy_loaded %}<p class="small text-muted">Diplomacia ainda não lida pelo bot: toda tribo de fora conta como "outros" (peso 1), inclusive aliados e PNA.</p>{% endif %}
+      </details>
       <div class="twb-form-actions"><button class="btn btn-primary" type="submit">Calcular plano</button></div>
     </form>
   </div>
@@ -94,7 +122,8 @@
 
 {% if v.ranking %}
 <section class="twb-panel" aria-labelledby="titulo-origens">
-  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-origens">Suas aldeias, da mais segura para a menos</h2><span class="small text-muted">{% if v.stale_sources %}{{ v.stale_sources }} com dados de mais de 6 h{% else %}dados do cache/managed{% endif %}</span></div>
+  <details class="twb-details">
+  <summary id="titulo-origens">De onde é mais seguro tirar tropa ({{ v.ranking | length }} aldeias{% if v.stale_sources %}, {{ v.stale_sources }} com dados de mais de 6 h{% endif %})</summary>
   <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Ranking de segurança das aldeias de origem">
     <table class="table table-sm twb-operational-table">
       <thead><tr><th scope="col">Aldeia</th><th scope="col">Segurança</th><th scope="col">Hostil mais próximo</th><th scope="col">Motivo</th><th scope="col">Em casa</th><th scope="col">Pode sair</th></tr></thead>
@@ -112,6 +141,7 @@
       </tbody>
     </table>
   </div>
+  </details>
 </section>
 {% endif %}
 
@@ -154,22 +184,22 @@
 </section>
 {% endif %}
 
-{% if bs['approved'] or bs['dispatching'] or bs['sent'] or bs['failed'] %}
+{% if bs['approved'] or bs['dispatching'] or bs['sent_recent'] or bs['failed'] %}
 <section class="twb-panel" aria-labelledby="titulo-andamento">
-  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-andamento">Andamento</h2><span class="small text-muted">"Enviado" é o jogo confirmando o comando; chegada é estimada</span></div>
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-andamento">Andamento</h2><span class="small text-muted">aprovados, em envio e o que saiu ou falhou nas últimas 24 h · o que já pousou está em "Onde estão as tropas"</span></div>
   <form method="post">
   <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Andamento dos envios">
     <table class="table table-sm twb-operational-table">
       <thead><tr><th scope="col"><span class="sr-only">Selecionar</span></th><th scope="col">Estado</th><th scope="col">Origem</th><th scope="col">Destino</th><th scope="col">Tropas</th><th scope="col">Detalhe</th></tr></thead>
       <tbody>
-      {% for status in ['dispatching', 'approved', 'failed', 'sent'] %}{% for l in bs[status] %}
+      {% for status in ['dispatching', 'approved', 'failed', 'sent_recent'] %}{% for l in bs[status] %}
         <tr class="{% if status == 'failed' %}twb-row--danger{% elif status == 'dispatching' %}twb-row--unknown{% endif %}">
           <td>{% if status == 'approved' %}<input type="checkbox" name="line_id" value="{{ l.id }}" aria-label="Selecionar para cancelar">{% endif %}</td>
-          <td>{% if status == 'approved' %}<span class="twb-status twb-status--warning">Aprovado</span>{% elif status == 'dispatching' %}<span class="twb-status twb-status--unknown">Resultado desconhecido</span>{% elif status == 'sent' %}<span class="twb-status twb-status--info">Enviado</span>{% else %}<span class="twb-status twb-status--danger">Falhou</span>{% endif %}</td>
+          <td>{% if status == 'approved' %}<span class="twb-status twb-status--warning">Aprovado</span>{% elif status == 'dispatching' %}<span class="twb-status twb-status--unknown">Resultado desconhecido</span>{% elif status == 'sent_recent' %}<span class="twb-status twb-status--info">Enviado</span>{% else %}<span class="twb-status twb-status--danger">Falhou</span>{% endif %}</td>
           <td>{{ l.source_name }}</td>
           <td><span class="twb-number">{{ '%02d' % l.num if l.num is number else l.num }}</span> {{ l.target_name }}</td>
           <td>{{ troops_inline(l.troops, v.labels, v.unit_order) }}</td>
-          <td class="small">{% if status == 'approved' %}{{ l.note or 'aguardando a rodada da aldeia de origem' }}{% elif status == 'dispatching' %}o bot começou o envio e não registrou o resultado; confira os comandos da aldeia no jogo antes de repetir{% elif status == 'sent' %}{% if l.arrival_fmt %}chega por volta de {{ l.arrival_fmt }}{% else %}duração não lida{% endif %}{% else %}{{ l.error }}{% endif %}</td>
+          <td class="small">{% if status == 'approved' %}{{ l.note or 'aguardando a rodada da aldeia de origem' }}{% elif status == 'dispatching' %}o bot começou o envio e não registrou o resultado; confira os comandos da aldeia no jogo antes de repetir{% elif status == 'sent_recent' %}{% if l.arrival_fmt %}chega por volta de {{ l.arrival_fmt }}{% else %}duração não lida{% endif %}{% else %}{{ l.error }}{% endif %}</td>
         </tr>
       {% endfor %}{% endfor %}
       </tbody>
@@ -183,10 +213,12 @@
 {% if v.sent_reply %}
 <section class="twb-panel" aria-labelledby="titulo-resposta">
   <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-resposta">Resposta para o tópico</h2><button class="btn btn-outline-secondary btn-sm" type="button" id="copy-reply">Copiar</button></div>
-  <div class="twb-panel-body">
+  <details class="twb-details"{% if bs['sent_recent'] %} open{% endif %}><summary>Ver texto ({{ bs['sent'] | length }} envio(s) deste pedido)</summary>
+  <div>
     <p class="small text-muted">O que o bot já enviou, somado por aldeia, no formato do organizador. O painel não posta no fórum: copie e responda você.</p>
     <textarea class="form-control twb-number" id="reply-text" rows="{{ [v.sent_reply.count('\n') + 1, 12] | min }}" readonly>{{ v.sent_reply }}</textarea>
   </div>
+  </details>
 </section>
 {% endif %}
 {% endblock %}

@@ -2,10 +2,11 @@
 {% block title %}Ameaças{% endblock %}
 
 {% macro troops_inline(troops, labels) %}{% set shown = namespace(n=0) %}{% for u, q in (troops or {}).items() if q %}{% set shown.n = shown.n + 1 %}<span class="twb-support-unit"><img src="/static/images/unit_{{ u }}.png" alt="{{ labels.get(u, u) }}" title="{{ labels.get(u, u) }}" width="16" height="16"> <strong class="twb-number">{{ '{:,}'.format(q).replace(',', '.') }}</strong></span>{% endfor %}{% if shown.n == 0 %}<span class="text-muted">—</span>{% endif %}{% endmacro %}
+{% macro pop(n) %}<span class="twb-number">{{ '{:,}'.format(n or 0).replace(',', '.') }}</span>{% endmacro %}
 
 {% block content %}
 <header class="twb-page-header">
-  <div><p class="twb-eyebrow">Defesa · aldeias próprias</p><h1 class="twb-page-title">Ameaças</h1><p class="twb-page-summary">Quando o número de ataques chegando muda, o bot para o que está fazendo, lê as aldeias atacadas, estuda cada ataque e manda apoio das suas outras aldeias se os ataques que <em>podem</em> ser nobre bastam para zerar a lealdade. Esta página mostra o que ele viu e decidiu na última varredura.</p></div>
+  <div><p class="twb-eyebrow">Defesa · aldeias próprias</p><h1 class="twb-page-title">Ameaças</h1><p class="twb-page-summary">Aldeias suas que podem ser conquistadas e o apoio que o bot mandou. Sem blindagem ele manda só o bastante para matar o maior ataque possível com nobre; com blindagem, tudo o que chega a tempo.</p></div>
 </header>
 
 {% if error %}<div class="twb-inline-alert twb-inline-alert--danger mb-3" role="alert"><strong>Não foi possível.</strong> {{ error }}</div>{% endif %}
@@ -13,50 +14,66 @@
 
 <section class="twb-health-strip" aria-label="Resumo da defesa">
   {% with pulse = v.pulse %}{% include "_account_pulse.html" %}{% endwith %}
-  <div class="twb-health-item"><span class="twb-health-label">Defesa automática</span><span class="twb-health-value">{% if v.enabled %}<span class="twb-status twb-status--info">Ligada</span>{% else %}<span class="twb-status twb-status--muted">Desligada</span>{% endif %}</span><span class="twb-health-meta"><code>own_defense.enabled</code> na configuração.</span></div>
-  <div class="twb-health-item"><span class="twb-health-label">Última varredura</span><span class="twb-health-value">{% if v.scanned_fmt %}{{ v.scanned_fmt }}{% else %}<span class="twb-status twb-status--muted">Nenhuma</span>{% endif %}</span><span class="twb-health-meta">{% if v.scanned_fmt %}há {{ v.scanned_age_min }} min · {{ v.reason }} · {{ v.villages_seen }} aldeias lidas{% else %}o bot grava <code>cache/defense/state.json</code> na primeira varredura{% endif %}</span></div>
-  <div class="twb-health-item"><span class="twb-health-label">Aldeias atacadas</span><span class="twb-health-value">{% if v.attacked %}<span class="twb-status twb-status--danger">{{ v.attacked | length }}</span>{% else %}<span class="twb-number">0</span>{% endif %}</span><span class="twb-health-meta">Inclui aldeia recém-conquistada que ainda não está na configuração.</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Defesa automática</span><span class="twb-health-value">{% if v.enabled %}<span class="twb-status twb-status--info">Ligada</span>{% else %}<span class="twb-status twb-status--muted">Desligada</span>{% endif %}</span><span class="twb-health-meta">{% if v.scanned_fmt %}varrida há {{ v.scanned_age_min }} min · {{ v.villages_seen }} aldeias{% else %}nenhuma varredura ainda{% endif %}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Aldeias atacadas</span><span class="twb-health-value">{% if v.attacked %}<span class="twb-status twb-status--danger">{{ v.attacked | length }}</span>{% else %}<span class="twb-number">0</span>{% endif %}</span><span class="twb-health-meta">{{ v.reason or 'inclui aldeia recém-conquistada' }}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Blindagem</span><span class="twb-health-value">{% if v.shields %}<span class="twb-status twb-status--warning">{{ v.shields | length }} aldeia(s)</span>{% else %}<span class="twb-status twb-status--muted">Nenhuma</span>{% endif %}</span><span class="twb-health-meta">sem teto, envio mínimo de {{ v.shield_min_send_pop }} pop</span></div>
 </section>
 
-{% for a in v.attacked %}{% set asm = a.assessment or {} %}
+{% for a in v.attacked %}{% set asm = a.assessment or {} %}{% set d = a.defense or {} %}
 <section class="twb-panel" aria-labelledby="alvo-{{ a.vid }}">
   <div class="twb-panel-header">
-    <h2 class="twb-panel-title" id="alvo-{{ a.vid }}">{{ a.name or a.vid }} <span class="text-muted small">({{ a.vid }}){% if a.x is not none %} · {{ a.x }}|{{ a.y }}{% endif %}</span></h2>
+    <h2 class="twb-panel-title" id="alvo-{{ a.vid }}">{{ a.label }}{% if a.x is not none %} <span class="text-muted small">{{ a.x }}|{{ a.y }}</span>{% endif %}</h2>
     <span>
       {% if a.error %}<span class="twb-status twb-status--warning">{{ a.error }}</span>
-      {% elif asm.protect or a.forced %}<span class="twb-status twb-status--danger">Precisa de apoio</span>
-      {% else %}<span class="twb-status twb-status--info">Sem ameaça de conquista</span>{% endif %}
+      {% elif not (asm.protect or a.forced) %}<span class="twb-status twb-status--info">Sem ameaça de conquista</span>
+      {% elif a.shield %}<span class="twb-status twb-status--warning">Blindagem</span>
+      {% elif d.after_holds or d.holds %}<span class="twb-status twb-status--info">Defesa suficiente</span>
+      {% elif d %}<span class="twb-status twb-status--danger">Falta defesa</span>
+      {% else %}<span class="twb-status twb-status--danger">Precisa de apoio</span>{% endif %}
     </span>
   </div>
   <div class="twb-panel-body">
     {% if not a.error %}
     <dl class="twb-meta">
-      <div><dt>Lealdade</dt><dd>{% if a.loyalty is none %}não lida{% elif a.loyalty < 100 %}<span class="twb-status twb-status--warning">{{ a.loyalty }}</span>{% else %}{{ a.loyalty }}{% endif %}</dd></div>
-      <div><dt>Nobres que a tomam</dt><dd>{{ asm.nobles_needed }} · {{ asm.possible_nobles }} ataque(s) podem ser nobre</dd></div>
-      <div><dt>Decisão</dt><dd>{{ asm.reason }}{% if a.forced %} <span class="twb-status twb-status--warning">pedido do painel</span>{% endif %}</dd></div>
-      {% if a.deadline_fmt %}<div><dt>Janela do apoio</dt><dd>serve se chegar antes de {{ a.deadline_fmt }} (último ataque que pode tomar a aldeia); quanto antes, mais ataques ele vence</dd></div>{% endif %}
-      {% if a.bonus_pct %}<div><dt>Sinal da Aflição</dt><dd>apoio chega {{ a.bonus_pct }}% mais rápido</dd></div>{% endif %}
+      <div><dt>Lealdade</dt><dd>{% if a.loyalty is none %}não lida{% elif a.loyalty < 100 %}<span class="twb-status twb-status--warning">{{ a.loyalty }}</span>{% else %}{{ a.loyalty }}{% endif %} · {{ asm.nobles_needed }} nobre(s) a tomam</dd></div>
+      <div><dt>Ataques</dt><dd>{{ a.attack_rows | length }} · {{ asm.possible_nobles }} podem ser nobre{% if a.deadline_fmt %} · janela até {{ a.deadline_fmt }}{% endif %}</dd></div>
+      {% if d %}
+      <div><dt>Defesa</dt><dd>{{ pop(d.home_pop) }} na aldeia{% if not d.home_read %} <span class="twb-status twb-status--warning">praça ilegível</span>{% endif %} + {{ pop(d.inflight_pop) }} a caminho{% if d.after_pop is defined %} → {{ pop(d.after_pop) }} depois desta varredura{% endif %} · muralha {{ d.wall }}</dd></div>
+      <div><dt>Maior ataque com nobre</dt><dd>{{ pop(d.nuke_pop) }} pop, sorte +{{ d.luck_pct }}% · {% set surv = d.after_survivors if d.after_survivors is defined else d.survivors %}{% if (d.after_holds if d.after_holds is defined else d.holds) %}morre nas {{ surv | length }} composições{% else %}sobrevivem {% for n, q in (surv or {}).items() %}{{ n }} {{ pop(q) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd></div>
+      {% endif %}
+      {% if a.bonus_pct %}<div><dt>Sinal da Aflição</dt><dd>apoio {{ a.bonus_pct }}% mais rápido</dd></div>{% endif %}
     </dl>
+    <form method="post" class="mb-2">
+      <input type="hidden" name="vid" value="{{ a.vid }}">
+      {% if a.shield_now %}<button class="btn btn-outline-secondary btn-sm" type="submit" name="action" value="unshield">Desligar blindagem</button> <span class="small text-muted">sem teto: tudo o que chega a tempo, de {{ v.shield_min_send_pop }} pop para cima por envio</span>
+      {% else %}<button class="btn btn-outline-danger btn-sm" type="submit" name="action" value="shield">Ligar blindagem</button> <span class="small text-muted">para guerra: vários nobres, cada um atrás de uma limpeza</span>{% endif %}
+    </form>
+    {% endif %}
+  </div>
+  {% if a.attack_rows %}
+  <details class="twb-details">
+    <summary>Ataques chegando ({{ a.attack_rows | length }})</summary>
     <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Ataques chegando em {{ a.name }}">
       <table class="table table-sm twb-operational-table">
-        <thead><tr><th scope="col">Chegada</th><th scope="col">Rótulo</th><th scope="col">Origem</th><th scope="col">Distância</th><th scope="col">Pode ser nobre?</th></tr></thead>
+        <thead><tr><th scope="col">Chegada</th><th scope="col">Origem</th><th scope="col">Distância</th><th scope="col">Pode ser nobre?</th></tr></thead>
         <tbody>
         {% for atk in a.attack_rows %}
           <tr{% if atk.in_window %} class="table-warning"{% endif %}>
-            <td class="twb-number">{{ atk.arrival_fmt }}{% if atk.eta_min is not none %} <span class="text-muted small">em {{ atk.eta_min // 60 }}h{{ '%02d' % (atk.eta_min % 60) }}</span>{% endif %}{% if atk.in_window %} <span class="twb-status twb-status--warning">pode tomar</span>{% endif %}</td>
-            <td>{{ atk.origin_label or '—' }}{% if atk.label_unit %} <img src="/static/images/unit_{{ atk.label_unit }}.png" width="14" height="14" alt="{{ atk.label_unit }}" title="Ícone tirado do TEXTO do rótulo, não é detecção do jogo"> <span class="text-muted small">(do nome)</span>{% endif %}</td>
-            <td>{% if atk.origin %}{{ atk.origin.name }} ({{ atk.origin.x }}|{{ atk.origin.y }}){% else %}<span class="text-muted">não lida</span>{% endif %}</td>
+            <td class="twb-number">{{ atk.arrival_fmt }}{% if atk.eta_min is not none %} <span class="text-muted small">em {{ atk.eta_min // 60 }}h{{ '%02d' % (atk.eta_min % 60) }}</span>{% endif %}</td>
+            <td>{% if atk.origin %}{{ atk.origin.name }} ({{ atk.origin.x }}|{{ atk.origin.y }}){% else %}{{ atk.origin_label or '—' }} <span class="text-muted small">(origem não lida)</span>{% endif %}{% if atk.label_unit %} <img src="/static/images/unit_{{ atk.label_unit }}.png" width="14" height="14" alt="{{ atk.label_unit }}" title="Ícone tirado do TEXTO do rótulo, não é detecção do jogo">{% endif %}</td>
             <td class="twb-number">{% if atk.distance is not none %}{{ atk.distance }}{% else %}—{% endif %}</td>
-            <td>{% if atk.noble_possible %}<span class="twb-status twb-status--warning">Pode</span>{% else %}<span class="twb-status twb-status--info">Não</span>{% endif %} <span class="text-muted small">{{ atk.noble_reason }}</span></td>
+            <td>{% if atk.noble_possible %}<span class="twb-status twb-status--warning">{% if atk.in_window %}Pode tomar{% else %}Pode{% endif %}</span>{% else %}<span class="twb-status twb-status--info">Não</span>{% endif %} <span class="text-muted small">{{ atk.noble_reason }}</span></td>
           </tr>
-        {% else %}
-          <tr><td colspan="5" class="text-muted">Nenhum ataque futuro lido.</td></tr>
         {% endfor %}
         </tbody>
       </table>
     </div>
-    {% if a.plan %}
-    <h3 class="h6 mt-3">Plano: {{ a.plan.lines | length }} envio(s), {{ a.plan.total_pop }} de população</h3>
+  </details>
+  {% endif %}
+  {% if a.plan %}
+  <details class="twb-details">
+    <summary>Nesta varredura: {{ a.sent_ok | length }} apoio(s) enviado(s){% if a.sent | length > a.sent_ok | length %}, {{ a.sent | length - a.sent_ok | length }} não{% endif %}{% if a.sent_ok %} · {{ troops_inline(a.sent_ok_troops, v.labels) }}{% endif %}</summary>
+    <div>
     {% if a.sent %}
     <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Envios para {{ a.name }}">
       <table class="table table-sm twb-operational-table">
@@ -68,47 +85,69 @@
         </tbody>
       </table>
     </div>
-    {% else %}<p class="text-muted small mb-1">Nenhuma aldeia própria chega antes do prazo com as unidades configuradas.</p>{% endif %}
-    {% for sk in a.plan.skipped %}<p class="small text-muted mb-0">{{ sk.vid | vlabel }}: {{ sk.reason }}</p>{% endfor %}
-    {% endif %}
-    {% endif %}
-  </div>
+    {% elif d.holds and not a.shield %}<p class="small text-muted mb-1">A defesa já bastava: nada saiu.</p>
+    {% else %}<p class="small text-muted mb-1">Nenhuma aldeia própria chega antes do prazo com as unidades configuradas.</p>{% endif %}
+    {% if a.plan.skipped %}<p class="small text-muted mb-0 mt-2">Fora do plano: {% for sk in a.plan.skipped %}{{ sk.vid | vlabel }} ({{ sk.reason }}){% if not loop.last %}; {% endif %}{% endfor %}</p>{% endif %}
+    </div>
+  </details>
+  {% endif %}
 </section>
 {% endfor %}
 
-<section class="twb-panel" aria-labelledby="titulo-forcar">
-  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-forcar">Defender mesmo sem ameaça de nobre</h2></div>
+<section class="twb-panel" aria-labelledby="titulo-pedidos">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-pedidos">Pedidos manuais</h2></div>
   <div class="twb-panel-body">
-    <p class="small text-muted">O bot só manda apoio sozinho quando a aldeia pode ser conquistada. Para defender uma aldeia contra um ataque comum (por exemplo, um ataque completo numa aldeia de lealdade 100), peça aqui: na próxima checagem ele manda o que chegar antes do <em>primeiro</em> ataque. O pedido vale 24 h.</p>
-    <form method="post" class="form-inline">
-      <input type="hidden" name="action" value="force">
-      <label class="sr-only" for="force-vid">Aldeia</label>
-      <input class="form-control mr-2" id="force-vid" name="vid" placeholder="id da aldeia ou link do jogo" required>
-      <button class="btn btn-primary" type="submit">Defender</button>
-    </form>
-    {% for f in v.forces %}
-    <form method="post" class="mt-2">
-      <input type="hidden" name="action" value="unforce"><input type="hidden" name="vid" value="{{ f.vid }}">
-      {{ f.vid | vlabel }} · pedido em {{ f.at_fmt }}{% if f.expired %} <span class="twb-status twb-status--muted">vencido</span>{% endif %}
-      <button class="btn btn-outline-secondary btn-sm ml-2" type="submit">Remover</button>
-    </form>
-    {% endfor %}
+    <div class="twb-form-grid">
+      <form method="post">
+        <input type="hidden" name="action" value="shield">
+        <label for="shield-vid"><strong>Blindar aldeia</strong></label>
+        <p class="small text-muted mb-2">Sem teto de apoio quando ela estiver ameaçada; cada envio com pelo menos {{ v.shield_min_send_pop }} pop. Vale até você desligar.</p>
+        <div class="form-inline"><input class="form-control mr-2" id="shield-vid" name="vid" placeholder="id ou link da aldeia" required><button class="btn btn-outline-danger" type="submit">Blindar</button></div>
+      </form>
+      <form method="post">
+        <input type="hidden" name="action" value="force">
+        <label for="force-vid"><strong>Defender sem ameaça de nobre</strong></label>
+        <p class="small text-muted mb-2">Para um ataque comum: manda o que chega antes do <em>primeiro</em> ataque, com o mesmo teto. Vale 24 h.</p>
+        <div class="form-inline"><input class="form-control mr-2" id="force-vid" name="vid" placeholder="id ou link da aldeia" required><button class="btn btn-primary" type="submit">Defender</button></div>
+      </form>
+    </div>
+    {% if v.shields or v.forces %}
+    <ul class="list-unstyled small mt-3 mb-0">
+      {% for s in v.shields %}<li class="mb-1"><form method="post" class="d-inline"><input type="hidden" name="action" value="unshield"><input type="hidden" name="vid" value="{{ s.vid }}"><span class="twb-status twb-status--warning">Blindagem</span> {{ s.vid | vlabel }} · desde {{ s.at_fmt }} <button class="btn btn-link btn-sm p-0 ml-2" type="submit">desligar</button></form></li>{% endfor %}
+      {% for f in v.forces %}<li class="mb-1"><form method="post" class="d-inline"><input type="hidden" name="action" value="unforce"><input type="hidden" name="vid" value="{{ f.vid }}"><span class="twb-status twb-status--info">Defender</span> {{ f.vid | vlabel }} · pedido em {{ f.at_fmt }}{% if f.expired %} <span class="twb-status twb-status--muted">vencido</span>{% endif %} <button class="btn btn-link btn-sm p-0 ml-2" type="submit">remover</button></form></li>{% endfor %}
+    </ul>
+    {% endif %}
   </div>
 </section>
 
 <section class="twb-panel" aria-labelledby="titulo-historico">
-  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-historico">Histórico de envios</h2></div>
-  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Histórico de envios de defesa">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-historico">Apoio automático nas últimas {{ v.history_hours }} h</h2><span class="small text-muted">onde as tropas estão agora: aba <a href="/support">Apoios</a></span></div>
+  <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Resumo do apoio automático por aldeia">
     <table class="table table-sm twb-operational-table">
-      <thead><tr><th scope="col">Quando</th><th scope="col">De</th><th scope="col">Para</th><th scope="col">Tropas</th><th scope="col">Chega</th><th scope="col">Prazo</th><th scope="col">Resultado</th></tr></thead>
+      <thead><tr><th scope="col">Para</th><th scope="col">Enviados</th><th scope="col">Tropas</th><th scope="col">População</th><th scope="col">Chegadas</th></tr></thead>
       <tbody>
-      {% for h in v.history %}
-        <tr><td class="twb-number">{{ h.at_fmt }}</td><td>{{ h.source_vid | vlabel }}</td><td>{{ h.target_vid | vlabel }}</td><td>{{ troops_inline(h.troops, v.labels) }}</td><td class="twb-number">{{ h.arrival_fmt or '—' }}</td><td class="twb-number">{{ h.deadline_fmt or '—' }}</td><td>{% if h.ok %}<span class="twb-status twb-status--info">Enviado</span>{% else %}<span class="twb-status twb-status--muted">Não enviado</span> <span class="small text-muted">{{ h.error }}</span>{% endif %}</td></tr>
+      {% for t in v.summary %}
+        <tr><td>{{ t.label }}</td><td class="twb-number">{{ t.ok }} de {{ t.sources }} aldeia(s){% if t.failed %} <span class="small text-muted">· {{ t.failed }} tentativa(s) sem envio</span>{% endif %}</td><td>{{ troops_inline(t.troops, v.labels) }}</td><td>{{ pop(t.pop_total) }}</td><td class="twb-number small">{% if t.first_arrival_fmt %}{{ t.first_arrival_fmt }}{% if t.last_arrival_fmt != t.first_arrival_fmt %} a {{ t.last_arrival_fmt }}{% endif %}{% else %}—{% endif %}</td></tr>
       {% else %}
-        <tr><td colspan="7" class="text-muted">Nenhum envio ainda.</td></tr>
+        <tr><td colspan="5" class="text-muted">Nenhum apoio automático nas últimas {{ v.history_hours }} h.</td></tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
+  {% if v.history %}
+  <details class="twb-details">
+    <summary>Últimas {{ v.history | length }} tentativas</summary>
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Tentativas de apoio automático">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th scope="col">Quando</th><th scope="col">De</th><th scope="col">Para</th><th scope="col">Tropas</th><th scope="col">Resultado</th></tr></thead>
+        <tbody>
+        {% for h in v.history %}
+          <tr><td class="twb-number">{{ h.at_fmt }}</td><td>{{ h.source_vid | vlabel }}</td><td>{{ h.target_vid | vlabel }}</td><td>{{ troops_inline(h.troops, v.labels) }}</td><td>{% if h.ok %}<span class="twb-status twb-status--info">Enviado</span>{% if h.arrival_fmt %} <span class="small text-muted">chega {{ h.arrival_fmt }}</span>{% endif %}{% else %}<span class="twb-status twb-status--muted">Não enviado</span> <span class="small text-muted">{{ h.error }}</span>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
 </section>
 {% endblock %}

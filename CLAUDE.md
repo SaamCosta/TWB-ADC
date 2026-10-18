@@ -41,6 +41,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   de aldeias da visão geral grátis, e não do `config.json`, porque aldeia
   recém-conquistada atacada não está lá. O ícone de nobre num ataque recebido
   vem do **nome** da aldeia de origem, não do jogo.
+  ⚠️ **Todo envio automático precisa de um "basta"** (§8.69): a primeira
+  versão replanejava do zero a cada 10 min e mandou 161 apoios para uma aldeia
+  só. O teto é a defesa que mata o maior ataque possível com nobre (na aldeia
+  + a caminho); a blindagem por aldeia tira o teto, mas não o piso por envio.
+  Piso de pacote se confere sobre o que a praça mostra em casa (`trim`), nunca
+  sobre o total do `cache/managed`.
 - **Managers de jogo (`game/`) e infraestrutura (`core/`)**: um módulo por
   sistema, cada um abrindo com docstring (`ls game/ core/`). O que o código
   não conta:

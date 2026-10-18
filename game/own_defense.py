@@ -21,12 +21,21 @@ VARREDURA (requisições, nesta ordem):
   3. `info_command` de cada ataque ainda sem origem conhecida, para a
      distância. 1 GET por ataque, uma vez só (a origem não muda; fica em
      cache no state.json).
-  4. por envio: praça + confirmação + envio (`DefenceManager.support`, com
-     `arrive_by` e `clamp_to_available`). 3 requisições.
+  4. praça da aldeia atacada (`place&mode=units`), para a defesa que já está
+     lá dentro (linha Total). 1 GET por aldeia que precisa de apoio.
+  5. por envio: praça + confirmação + envio (`DefenceManager.support`, com
+     `arrive_by`, `clamp_to_available` e `trim`). 3 requisições; 1 só quando o
+     corte desiste antes do POST.
+
+TETO (2026-10-18, `core/own_defense.py` "QUANTO BASTA"): sem blindagem, para
+de mandar quando a defesa na aldeia mais o apoio próprio a caminho matam o
+maior ataque possível com nobre. Com blindagem (`cache/defense/shield.json`,
+escrito pelo painel), sem teto e com piso `shield_min_send_pop` por envio.
 
 Estado em `cache/defense/state.json` -- só o bot escreve; o painel lê.
 Pedido manual do painel ("defender mesmo sem ameaça de nobre") chega por
-`cache/defense/force.json`, que só o painel escreve e o bot só lê.
+`cache/defense/force.json`, e a blindagem por `cache/defense/shield.json`;
+os dois só o painel escreve e o bot só lê.
 """
 import logging
 import os
@@ -39,9 +48,11 @@ from core.notification import Notification
 from core.village_label import village_label
 from core.world_config import WorldConfig
 from game.defence_manager import DefenceManager
+from game.simulator import Simulator
 
 STATE_PATH = "cache/defense/state.json"
 FORCE_PATH = "cache/defense/force.json"
+SHIELD_PATH = "cache/defense/shield.json"
 HISTORY_MAX = 300
 
 DEFAULTS = {
@@ -57,6 +68,9 @@ DEFAULTS = {
     "min_package_pop": own_defense.DEFAULT_OPTIONS["min_package_pop"],
     "max_pop_per_target": own_defense.DEFAULT_OPTIONS["max_pop_per_target"],
     "exclude_attacked_sources": own_defense.DEFAULT_OPTIONS["exclude_attacked_sources"],
+    "nuke_pop": own_defense.DEFAULT_OPTIONS["nuke_pop"],
+    "attacker_luck_pct": own_defense.DEFAULT_OPTIONS["attacker_luck_pct"],
+    "shield_min_send_pop": own_defense.DEFAULT_OPTIONS["shield_min_send_pop"],
 }
 
 
@@ -100,6 +114,19 @@ def load_force(now=None):
     return out
 
 
+def load_shield():
+    """
+    {vid: timestamp} -- aldeias com blindagem ligada no painel. Não vence
+    sozinha: em guerra a blindagem dura o que a guerra durar, e o painel
+    mostra a lista para desligar.
+    """
+    try:
+        data = FileManager.load_json_file(SHIELD_PATH)
+    except Exception:
+        data = None
+    return {str(k): v for k, v in data.items()} if isinstance(data, dict) else {}
+
+
 class OwnDefenseManager:
     def __init__(self, wrapper, clock=time.time):
         self.wrapper = wrapper
@@ -118,6 +145,8 @@ class OwnDefenseManager:
         # (aldeia, prazo) já avisados no Telegram sem envio -- a revarredura
         # de 10 em 10 min não pode repetir o mesmo aviso.
         self._notified = set()
+        self.simulate = Simulator().simulate
+        self._archers = False
 
     # -- gatilho -----------------------------------------------------------
 
@@ -183,6 +212,8 @@ class OwnDefenseManager:
         endpoint = (config.get("server") or {}).get("endpoint")
         world = WorldConfig.get(server, endpoint) or {}
         speeds = WorldConfig.unit_speeds(server, endpoint) or {}
+        # Mundo com arqueiro ganha a composição de arqueiro a cavalo no teto.
+        self._archers = bool(WorldConfig.feature_enabled(world, "archer", False))
         return speeds, WorldConfig.noble_max_distance(world), WorldConfig.loyalty_drop_range(world)
 
     def _sources(self, config, attacked_ids):
@@ -310,9 +341,10 @@ class OwnDefenseManager:
             attack.pop("_village", None)
         target = dict(village, loyalty=loyalty)
         verdict = own_defense.assess(target, attacks, speeds, max_dist, drop_range, now)
+        shield = vid in load_shield()
         result = {"vid": vid, "name": village["name"], "x": village["x"], "y": village["y"],
-                  "loyalty": loyalty, "bonus_pct": bonus, "forced": forced,
-                  "assessment": verdict, "sent": [], "plan": None}
+                  "loyalty": loyalty, "bonus_pct": bonus, "forced": forced, "shield": shield,
+                  "assessment": verdict, "sent": [], "plan": None, "defense": None}
         deadline = verdict["deadline_at"]
         if not verdict["protect"] and forced:
             upcoming = [a for a in verdict["attacks"] if a.get("arrival_at")]
@@ -323,27 +355,54 @@ class OwnDefenseManager:
             self.logger.info("OwnDefense: %s sem necessidade de apoio -- %s",
                              village_label(vid), verdict.get("reason"))
             return result
+        margin = int(cfg["arrival_margin_sec"] or 0)
+        defense = self._defense_state(cfg, vid, page, deadline, now)
+        result["defense"] = self._defense_report(defense)
+        result["deadline_at"] = deadline
+        if defense["holds"] and not shield:
+            self.logger.info(
+                "OwnDefense: %s já segura o maior ataque com nobre (%d pop de ofensiva, "
+                "muralha %s): %d pop na aldeia%s e %d pop a caminho -- nada a enviar",
+                village_label(vid), defense["nuke_pop"], defense["wall"], defense["home_pop"],
+                "" if defense["home_read"] else " (praça ilegível)", defense["inflight_pop"])
+            return result
         retry = float(cfg["retry_minutes"]) * 60
         skip = {}
         for key, at in self.attempts.items():
             t_vid, s_vid = key.split(":", 1)
             if t_vid == vid and now - float(at) < retry:
                 skip[s_vid] = "tentada há %d min" % ((now - float(at)) // 60)
+        floor = int((cfg["shield_min_send_pop"] if shield else cfg["min_package_pop"]) or 0)
         plan = own_defense.plan_defense(
             target, deadline, self._sources(config, attacked_ids), speeds, now,
-            bonus_pct=bonus, options=cfg, skip_sources=skip,
+            bonus_pct=bonus, options=dict(cfg, min_package_pop=floor), skip_sources=skip,
             threat_arrivals=verdict.get("threat_arrivals") or [deadline])
         result["plan"] = {k: plan[k] for k in ("lines", "skipped", "total_troops", "total_pop")}
-        result["deadline_at"] = deadline
         self.logger.warning(
-            "OwnDefense: %s precisa de apoio (%s); janela até %s; %d envio(s) planejado(s): %s",
+            "OwnDefense: %s precisa de apoio (%s); janela até %s; %s; %d origem(ns) candidata(s)",
             village_label(vid), verdict.get("reason"),
-            time.strftime("%H:%M:%S", time.localtime(deadline)), len(plan["lines"]),
-            plan["total_troops"])
-        margin = int(cfg["arrival_margin_sec"] or 0)
+            time.strftime("%H:%M:%S", time.localtime(deadline)),
+            ("BLINDAGEM: sem teto, envio mínimo de %d pop" % floor) if shield else
+            ("teto: matar %d pop de ofensiva com nobre (atacantes vivos hoje: %s)"
+             % (defense["nuke_pop"], defense["survivors"])),
+            len(plan["lines"]))
+        current = dict(defense["total"])
         for line in plan["lines"]:
-            sent = self._send(vid, village, line, deadline - margin)
+            if not shield and own_defense.assess_defense(
+                    current, defense["wall"], self.simulate, defense["nukes"],
+                    defense["luck_pct"])["holds"]:
+                self.logger.info("OwnDefense: %s -- defesa suficiente, as outras origens ficam",
+                                 village_label(vid))
+                break
+            trim = self._trimmer(shield, floor, current, defense)
+            sent = self._send(vid, village, line, deadline - margin, trim)
             result["sent"].append(sent)
+            if sent["ok"]:
+                current = own_defense._add(current, sent["troops"])
+        after = own_defense.assess_defense(current, defense["wall"], self.simulate,
+                                           defense["nukes"], defense["luck_pct"])
+        result["defense"].update(after_holds=after["holds"], after_survivors=after["survivors"],
+                                 after_pop=own_defense._pop(current))
         ok = [s for s in result["sent"] if s["ok"]]
         quiet_key = (vid, deadline)
         if not ok and (plan["lines"] or skip or quiet_key in self._notified):
@@ -353,12 +412,78 @@ class OwnDefenseManager:
             "Defesa: %s (lealdade %s) -- %s. %s" % (
                 village_label(vid), loyalty if loyalty is not None else "?",
                 verdict.get("reason"),
-                ("%d apoio(s) enviado(s): %s" % (len(ok), ", ".join(
-                    "%s %s" % (village_label(s["source_vid"]), s["troops"]) for s in ok)))
+                ("%d apoio(s) enviado(s)%s: %s" % (
+                    len(ok), " [blindagem]" if shield else "",
+                    ", ".join("%s %s" % (village_label(s["source_vid"]), s["troops"]) for s in ok)))
                 if ok else "nenhuma aldeia própria chega antes do prazo."))
         return result
 
-    def _send(self, target_vid, village, line, arrive_by):
+    def _defense_state(self, cfg, vid, page, deadline, now):
+        """
+        O que defende a aldeia no fim da janela e se isso basta. Na aldeia:
+        a linha Total da praça (a tropa dela mais o apoio já pousado). A
+        caminho: o apoio que ESTE bot mandou (histórico) e que pousa dentro
+        da janela -- apoio mandado à mão só conta depois de pousar, e a tropa
+        da própria aldeia fora de casa (farm, coleta) não conta: as duas
+        faltas erram para o lado de mandar mais.
+        """
+        state = Extractor.game_state(page) if page is not None else None
+        village = (state.get("village") or {}) if isinstance(state, dict) else {}
+        try:
+            wall = int((village.get("buildings") or {}).get("wall") or 0)
+        except (TypeError, ValueError, AttributeError):
+            wall = 0
+        place = self.wrapper.get_url(
+            "game.php?village=%s&screen=place&mode=units&display=units" % vid)
+        home = Extractor.units_home_total(place) if place is not None else None
+        if home is None:
+            self.logger.warning("OwnDefense: praça de %s ilegível -- a defesa já na aldeia "
+                                "conta como zero", village_label(vid))
+        inflight = {}
+        for entry in self.history:
+            arrival = entry.get("arrival_at")
+            if (entry.get("ok") and str(entry.get("target_vid")) == str(vid) and arrival
+                    and now < arrival <= deadline):
+                inflight = own_defense._add(inflight, entry.get("troops"))
+        luck = int(cfg.get("attacker_luck_pct") or 0)
+        nuke_pop = int(cfg.get("nuke_pop") or 0) or own_defense.max_noble_nuke_pop()
+        nukes = own_defense.noble_nukes(nuke_pop, archers=self._archers)
+        # O simulador não conhece milícia; unidade fora da tabela dele cai fora.
+        total = {u: q for u, q in own_defense._add(home or {}, inflight).items()
+                 if u in Simulator.pool}
+        verdict = own_defense.assess_defense(total, wall, self.simulate, nukes, luck)
+        return {"wall": wall, "home": home or {}, "home_read": home is not None,
+                "home_pop": own_defense._pop(home or {}), "inflight": inflight,
+                "inflight_pop": own_defense._pop(inflight), "total": total,
+                "nuke_pop": nuke_pop, "nukes": nukes, "luck_pct": luck,
+                "holds": verdict["holds"], "survivors": verdict["survivors"]}
+
+    @staticmethod
+    def _defense_report(defense):
+        """O que o painel mostra (sem as composições inteiras)."""
+        return {k: defense[k] for k in ("wall", "home", "home_read", "home_pop", "inflight",
+                                        "inflight_pop", "nuke_pop", "luck_pct", "holds",
+                                        "survivors")}
+
+    def _trimmer(self, shield, floor, current, defense):
+        """O `trim` do `support()`: corta ao necessário e confere o piso."""
+        def trim(available):
+            package = dict(available)
+            if not shield:
+                package = own_defense.fit_package(
+                    package, current, defense["wall"], self.simulate, defense["nukes"],
+                    defense["luck_pct"])
+            # Explorador não segura nobre: como no plano, sozinho não vira envio.
+            if package and all(u in own_defense.RIDE_ALONG_UNITS for u in package):
+                return {}, "em casa só explorador agora (%s)" % package
+            pop = own_defense._pop(package)
+            if pop < floor:
+                return {}, "pacote de %d pop em casa, abaixo do mínimo de %d%s (%s)" % (
+                    pop, floor, " da blindagem" if shield else "", package)
+            return package, None
+        return trim
+
+    def _send(self, target_vid, village, line, arrive_by, trim=None):
         src = line["source_vid"]
         now = self.clock()
         self.attempts["%s:%s" % (target_vid, src)] = int(now)
@@ -367,7 +492,7 @@ class OwnDefenseManager:
         try:
             ok = bool(dm.support(target_vid, troops=dict(line["troops"]),
                                  position=(int(village["x"]), int(village["y"])),
-                                 arrive_by=arrive_by, clamp_to_available=True))
+                                 arrive_by=arrive_by, clamp_to_available=True, trim=trim))
         except Exception as exc:
             dm.last_support_error = "exceção no envio: %s (confira no jogo)" % exc
         entry = {
