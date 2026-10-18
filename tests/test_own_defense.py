@@ -501,6 +501,19 @@ def test_gota_abaixo_do_piso_nao_sai():
     _check("motivo é o piso", "abaixo do mínimo de 30" in calls[0]["error"], True)
 
 
+def test_explorador_em_casa_nao_quebra_o_corte():
+    print("test_explorador_em_casa_nao_quebra_o_corte")
+    # 18/10 20:06: BBM 038 e BBM 029 deram "exceção no envio: 'spy'" -- o
+    # simulador não conhece explorador e o corte o levava junto.
+    full = {"spear": 9000, "sword": 9000, "heavy": 1800, "spy": 100}
+    sources = [_source(v, 1, 0, **full) for v in ("1", "2", "3")]
+    available = {v: dict(full) for v in ("1", "2", "3")}
+    result, calls, _ = _run_defend(TRANSIT, False, sources, available)
+    _check("sem exceção, envios saíram", [c["ok"] for c in calls][:2], [True, True])
+    _check("explorador vai junto", "spy" in calls[0]["troops"], True)
+    _check("terminou seguro", result["defense"]["after_holds"], True)
+
+
 def test_blindagem():
     print("test_blindagem")
     history = [{"ok": True, "target_vid": "74966", "arrival_at": 1000 + 3600,
@@ -537,5 +550,6 @@ if __name__ == "__main__":
     test_defesa_com_teto()
     test_ja_seguro_nao_manda()
     test_gota_abaixo_do_piso_nao_sai()
+    test_explorador_em_casa_nao_quebra_o_corte()
     test_blindagem()
     print("\nOK - todos os testes da defesa própria passaram")

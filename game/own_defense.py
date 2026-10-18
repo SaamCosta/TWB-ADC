@@ -145,8 +145,21 @@ class OwnDefenseManager:
         # (aldeia, prazo) já avisados no Telegram sem envio -- a revarredura
         # de 10 em 10 min não pode repetir o mesmo aviso.
         self._notified = set()
-        self.simulate = Simulator().simulate
+        self._sim = Simulator()
         self._archers = False
+
+    def simulate(self, attacker, defender, wall, night, moral, luck):
+        """
+        `Simulator.simulate` só com as unidades que ele conhece. A tabela dele
+        não tem explorador nem milícia, e o pacote cortado (`fit_package`) leva
+        o explorador junto na proporção do que está em casa: sem este filtro o
+        corte levantava KeyError 'spy' e a origem nunca mandava (18/10, BBM 038
+        e BBM 029).
+        """
+        known = Simulator.pool
+        return self._sim.simulate(
+            {u: q for u, q in attacker.items() if u in known},
+            {u: q for u, q in defender.items() if u in known}, wall, night, moral, luck)
 
     # -- gatilho -----------------------------------------------------------
 
