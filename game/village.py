@@ -1688,6 +1688,11 @@ class Village:
                 village_id=self.village_id,
                 params={"quest": result, "skip": "false"},
             )
+            # A26-09: a recusa (`{"error": [...]}`) tambem e verdadeira.
+            refusal = Extractor.ajax_error(qres)
+            if refusal:
+                self.logger.info("Quest %s recusada pelo jogo: %s", str(result), refusal)
+                return False
             if qres:
                 self.logger.info("Completed quest: %s", str(result))
                 return True
@@ -1737,8 +1742,15 @@ class Village:
                 params={"screen": "new_quests"},
                 data={"reward_id": reward["id"]}
             )
+            # A26-09: a recusa vem sem `response` (`{"error": [...]}`) e o
+            # `qres['response']` antigo levantava KeyError nela; resposta que
+            # nao e JSON chega como Response e levantava TypeError.
+            refusal = Extractor.ajax_error(qres)
+            if refusal:
+                self.logger.info("Quest reward %s recusada pelo jogo: %s", reward["id"], refusal)
+                return False
             if qres:
-                if not qres['response']:
+                if not isinstance(qres, dict) or not qres.get('response'):
                     self.logger.debug("Error getting reward! %s", qres)
                     return False
                 else:

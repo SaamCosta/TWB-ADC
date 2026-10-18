@@ -275,14 +275,25 @@ class Extractor:
         função."]}`, status 200, e nada saiu. Um dict assim e verdadeiro, e
         era isso que fazia `if sent:` contar a recusa como envio (A26-09).
 
-        So o formato capturado conta: dict com `error` nao vazio. Lista vira
-        texto unido; qualquer outra coisa devolve None.
+        O formato e o de TODA acao AJAX, nao so da coleta. O cliente do jogo
+        passa toda resposta de `TribalWars.post/get` por um tratador so,
+        `TribalWars.handleResponse` (lido no `game.47097f.js` do br143 em
+        2026-10-18): `a.error` verdadeiro vai para o callback de ERRO, e o de
+        sucesso nunca roda. Objeto vira `Object.values(a.error)`, lista mostra
+        todas as linhas, texto vai como esta. Esta funcao segue a mesma regra.
+
+        So `error` conta. `bot_protect` ("forced"/"throttled") tambem cai no
+        callback de erro do cliente, mas ninguem viu o servidor recusar a acao
+        nesse caso, e no caminho do nobre extra "recusa" libera a proxima
+        origem: fica como desfecho desconhecido, nao como recusa.
         """
         if not isinstance(res, dict):
             return None
         err = res.get("error")
         if not err:
             return None
+        if isinstance(err, dict):
+            err = list(err.values())
         if isinstance(err, (list, tuple)):
             return "; ".join(str(e) for e in err if e) or None
         return str(err)

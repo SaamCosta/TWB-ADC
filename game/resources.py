@@ -333,9 +333,12 @@ class ResourceManager:
             params={"screen": "market"},
             data={f"sell_{resource}": amount, "rate_hash": rate_hash, "mb": "1"},
         )
-        if not confirm:
+        # A26-09: `{"error": [...]}` e verdadeiro e era logado como "sold".
+        refusal = Extractor.ajax_error(confirm)
+        if not confirm or refusal:
             self.logger.warning(
-                "Premium trade: exchange_confirm failed for %s %s", amount, resource
+                "Premium trade: exchange_confirm failed for %s %s%s", amount, resource,
+                " (recusado pelo jogo: %s)" % refusal if refusal else ""
             )
             self._premium_dump("confirm_failed", confirm)
             return False

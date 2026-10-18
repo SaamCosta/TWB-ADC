@@ -490,6 +490,15 @@ class TroopManager:
                     "h": self.wrapper.last_h,
                 },
             )
+            # A26-09: a recusa e um dict verdadeiro. Contada como pesquisa
+            # iniciada, ela armava `_research_wait` pelo tempo da pesquisa e o
+            # ferreiro ficava parado sem nada na fila.
+            refusal = Extractor.ajax_error(res)
+            if refusal:
+                self.logger.warning(
+                    "Research of %s recusada pelo jogo: %s", unit_type, refusal
+                )
+                return False
             if res:
                 if "research_time" in data:
                     self._research_wait = time.time() + self.research_time(

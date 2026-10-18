@@ -4432,10 +4432,10 @@ doadora nunca mais apoia ninguém até o bot reiniciar, e também não volta a
 apoiar a mesma aldeia num ataque futuro. Hoje está latente, porque nenhum apoio
 real saiu até agora, mas é justamente o caminho que a §6.2 manda exercitar.
 
-**A26-09 — Resposta de erro de ação AJAX é contada como sucesso.** *(Metade da
-coleta corrigida em 2026-10-17, §8.63, com a recusa capturada:
-`{"error": [...]}` no topo, status 200. `popup_command`, `research` e
-`assign_flag` seguem abertos.)* Texto original: ainda não
+**✅ A26-09 — Resposta de erro de ação AJAX é contada como sucesso.** *(Coleta
+corrigida em 2026-10-17, §8.63, com a recusa capturada: `{"error": [...]}` no
+topo, status 200. O resto — `popup_command`, `research`, `assign_flag`, troca
+premium e missões — em 2026-10-18, §8.65.)* Texto original: ainda não
 verificado contra o servidor. `get_api_action` devolve o JSON inteiro e nenhum
 chamador procura chave de erro (grep por `"error"` em `game/` e `core/`: zero).
 Afeta:
@@ -4531,7 +4531,8 @@ segue como ressalva de documentação (§5), não como bug.
    A26-14. ✅ **Feito em 2026-09-27** (§8.35).
 3. ~~**Lote C:**~~ A26-05, A26-06, A26-07, A26-08 e A26-12. ✅ **Feito em
    2026-09-27** (§8.36).
-4. A26-09 e A26-11 só depois de sondar o servidor.
+4. A26-09 e A26-11 só depois de sondar o servidor. ✅ A26-09 fechado em
+   2026-10-17/18 (§8.63, §8.65).
 
 ## 8.33 ✅ `P-QUEDA-HUNTER` — a rede caiu e o 4º nobre não saiu (2026-09-27)
 
@@ -7147,13 +7148,62 @@ grátis; lote = fatias do grátis; recusa → um por um; sem resposta → nada
 reenviado; uma opção → POST normal). Provado por mutação na detecção e no
 retorno ao um por um.
 
+## 8.65 ✅ `P-AJAX-RECUSA` — o resto do A26-09: recusa AJAX não é ação feita (2026-10-18)
+
+A §8.63 fechou a coleta e deixou aberto o resto do A26-09 com a ressalva "o
+formato provavelmente é o mesmo, mas foi visto num endpoint só". A ressalva
+caiu sem sondar o servidor: o cliente do jogo passa **toda** resposta de
+`TribalWars.post/get` por um tratador só, `TribalWars.handleResponse`
+(`cache/debug/game.47097f.js`, br143). Nele, `error` verdadeiro vai para o
+callback de **erro** e o de sucesso nunca roda; objeto vira
+`Object.values(error)`, lista mostra todas as linhas. A recusa capturada em
+17/10 é o caso geral, não um formato da coleta. `Extractor.ajax_error()`
+passou a aceitar também o erro em forma de objeto.
+
+| Consumidor | Antes, com `{"error": [...]}` | Agora |
+|---|---|---|
+| `AttackManager.attack()` (`popup_command`) | dict verdadeiro: farm logava `Attacking` e descontava tropa, Hunter marcava `sent`, PvP gravava a espionagem como enviada | `False`, `last_attack_failure = "recusado_pelo_jogo"`, texto em `last_refusal`, WARNING |
+| `DefenceManager.support()` | `enviado e confirmado pelo jogo` | `False`, `last_support_error = "recusado pelo jogo: ..."` (vai ao `fail_reason` do Hunter e à defesa própria) |
+| `flag_logic()` (`assign_flag`) | gravava `current_flag` e logava `Setting flag` | WARNING, estado local intocado |
+| `attempt_research()` | armava `_research_wait` pelo tempo da pesquisa | `False`, ferreiro livre |
+| troca premium (`exchange_confirm`) | `sold` | falha, com dump |
+| missão (`quest_complete`) | `Completed quest` | `False` |
+| recompensa (`claim_reward`) | **`KeyError`** em `qres['response']` (e `TypeError` com resposta não-JSON) | `False`, sem quebrar |
+
+O recrutamento (`train`) já exigia `game_data` no envelope e o upgrade de
+bandeira tinha `_flag_upgrade_error` (§8.54): ficaram como estavam.
+
+**O que muda em tropa real.** No nobre extra (§8.41), recusa com marcador
+libera a próxima origem; falso **sem** marcador (POST final sem resposta)
+continua parando tudo, porque o comando pode ter saído. Classificar o
+`{"error": ...}` como recusa é o que o próprio cliente do jogo faz. Na
+espionagem do PvP, a recusa passa a tentar a próxima origem em vez de deixar o
+alvo em `pending_troops` esperando um relatório que não vem. No farm, a recusa
+entra em `_refused_for_pack_reason()` como a do `try=confirm`: "unidades
+insuficientes" bloqueia o pacote no ciclo, o resto vai a `/village` como
+`recusado_pelo_jogo`.
+
+**O que fica de fora, de propósito.** `bot_protect` (`"forced"`/`"throttled"`)
+também cai no callback de erro do cliente, mas ninguém viu se o servidor deixa
+de executar a ação nesse caso, e tratá-lo como recusa liberaria outra origem de
+nobre. Segue como desfecho desconhecido. Resposta `None` também não muda.
+
+**Sem campo para esperar:** a recusa no envio final é rara (o `try=confirm`
+filtra quase tudo). O sinal no log é `recusado pelo jogo no envio final`.
+
+Teste: `tests/test_ajax_refusal_callers.py` (recusa verbatim de 17/10; os sete
+consumidores; `None` segue sem marcador). As quatro guardas que decidem foram
+provadas por mutação; a do `claim_reward` só melhora o log, porque o
+`.get('response')` já devolve falso na recusa — a correção ali é o fim do
+`KeyError`. Suíte: 103/103.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
 §8.33) e B (A26-03, 04, 14; §8.35) foram fechados em 2026-09-27, e **nenhum P1
 segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
-(§8.36). Sobram A26-09 e A26-11, que pedem sondagem do servidor antes, e os
-P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
+(§8.36). O A26-09 fechou em 2026-10-18 (§8.65). Sobra o A26-11, que pede
+sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

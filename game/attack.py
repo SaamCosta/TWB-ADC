@@ -1331,6 +1331,21 @@ class AttackManager:
                 params={"screen": "place"},
                 data=confirm_data,
             )
+            # A26-09: a recusa vem com status 200 como `{"error": [...]}`, um
+            # dict verdadeiro, e os quatro chamadores (farm, Hunter, conquista,
+            # PvP) contavam isso como comando criado. O cliente do jogo manda
+            # essa resposta para o callback de erro (Extractor.ajax_error), ou
+            # seja, o comando nao existe -- e e por isso que ela pode levar o
+            # marcador de recusa, que no nobre extra libera a proxima origem.
+            refusal = Extractor.ajax_error(result)
+            if refusal:
+                self.last_refusal = refusal
+                self.last_attack_failure = "recusado_pelo_jogo"
+                self.logger.warning(
+                    "[Attack] %s -> %s recusado pelo jogo no envio final: %s",
+                    village_label(self.village_id), village_label(vid), refusal
+                )
+                return False
 
         return result
 

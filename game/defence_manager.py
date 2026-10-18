@@ -762,7 +762,19 @@ class DefenceManager:
                 self._sf_logged = True
             return
         self._sf_logged = False
-        self.flag_set(chosen, level=chosen_level)
+        result = self.flag_set(chosen, level=chosen_level)
+        # A26-09: recusa (`{"error": [...]}`) não equipou nada. Gravar
+        # `current_flag` faria a aldeia acreditar na bandeira nova até a
+        # próxima leitura, e a linha `Setting flag` é justamente o que a
+        # validação do Bug 1 conta (§6.3). Sem resposta (None) é outro caso:
+        # pode ter equipado, e segue o caminho antigo até a releitura.
+        refusal = Extractor.ajax_error(result)
+        if refusal:
+            self.logger.warning(
+                "Flag %d level %d for village %s recusada pelo jogo: %s",
+                chosen, chosen_level, village_label(self.village_id), refusal
+            )
+            return
         # Atualiza o estado local imediatamente para não re-disparar
         # flag_set() nos ciclos seguintes antes da próxima confirmação.
         self.current_flag = [chosen, chosen_level]
@@ -1232,6 +1244,16 @@ class DefenceManager:
             params={"screen": "place"},
             data=confirm_data,
         )
+        # A26-09: `{"error": [...]}` e verdadeiro e era logado como "enviado e
+        # confirmado pelo jogo" -- o cliente do jogo trata como erro.
+        refusal = Extractor.ajax_error(result)
+        if refusal:
+            self.last_support_error = "recusado pelo jogo: %s" % refusal
+            self.logger.warning(
+                "[Support] %s -> %s recusado pelo jogo no envio final: %s",
+                village_label(self.village_id), village_label(vid), refusal,
+            )
+            return False
         if result:
             self.last_support_troops = dict(troops) if troops is not None else None
             self.last_support_arrival = int(time.time() + duration) if duration else None
