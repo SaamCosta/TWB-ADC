@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "5.3",
+    "version": "5.4",
     "author": "stefan2200"
   },
   "server": {
@@ -299,12 +299,13 @@
     "units": ["spear", "sword", "archer", "heavy", "spy"],
     "reserve_pct": 0.0,
     "arrival_margin_sec": 60,
-    "min_package_pop": 30,
+    "min_package_pop": 500,
     "max_pop_per_target": 0,
     "exclude_attacked_sources": true,
     "nuke_pop": 0,
     "attacker_luck_pct": 25,
-    "shield_min_send_pop": 1000
+    "shield_min_send_pop": 1000,
+    "resend_min_pop": 1000
   },
   "villages": {}
 }

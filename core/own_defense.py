@@ -79,8 +79,10 @@ DEFAULT_OPTIONS = {
     # Folga entre a chegada do apoio e o prazo. Cobre a demora entre o plano
     # e o envio de verdade; o envio ainda confere a duração do jogo.
     "arrival_margin_sec": 60,
-    # Menos que isso não vale um comando.
-    "min_package_pop": 30,
+    # Menos que isso não vale um comando. Era 30 até 18/10, baixo demais
+    # contra um teto de dezenas de milhares: uma origem com 37 pop em casa
+    # ainda virava comando a cada `retry_minutes`.
+    "min_package_pop": 500,
     # Teto de população mandada para UM alvo (0 = sem teto). Sem teto, um
     # ataque grande puxaria a defesa de todo o império para uma aldeia.
     "max_pop_per_target": 0,
@@ -95,6 +97,9 @@ DEFAULT_OPTIONS = {
     # Blindagem: piso de população de cada envio. Sem teto, sem piso alto a
     # blindagem viraria a mesma gota de 30 em 30 min do incidente.
     "shield_min_send_pop": 1000,
+    # Origem que já mandou para o mesmo alvo numa janela ainda aberta só
+    # manda de novo com pelo menos isto (vale também na blindagem).
+    "resend_min_pop": 1000,
 }
 
 # Capacidade da fazenda no nível máximo, medida no `pop_max` do game_data em
@@ -150,6 +155,19 @@ def _add(a, b):
     for u, q in (b or {}).items():
         out[u] = out.get(u, 0) + int(q)
     return out
+
+
+def scale_to_pop(available, pop):
+    """A menor fração de `available`, na proporção dele, com pelo menos `pop`."""
+    total = _pop(available)
+    if total <= 0:
+        return {}
+    share = min(1.0, float(pop) / total)
+    while True:
+        part = {u: int(math.ceil(int(q) * share)) for u, q in available.items() if int(q) > 0}
+        if _pop(part) >= pop or share >= 1.0:
+            return {u: q for u, q in part.items() if q > 0}
+        share = min(1.0, share * 1.02 + 0.001)
 
 
 def assess_defense(defense, wall, simulate, nukes, luck_pct=25):

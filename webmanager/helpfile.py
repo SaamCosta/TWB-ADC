@@ -277,11 +277,12 @@ help_file = {
     'own_defense.units': 'Unidades que a defesa manda. Cavalaria leve fica de fora por padrão: é tropa de farm. Padrão: spear, sword, archer, heavy, spy',
     'own_defense.reserve_pct': 'Fração de cada unidade que fica na aldeia de origem (0.2 = 20%). Padrão: 0',
     'own_defense.arrival_margin_sec': 'Folga, em segundos, entre a chegada do apoio e o ataque que ele precisa vencer. O envio confere a duração mostrada pelo jogo e desiste antes de criar o comando se ela passar do prazo. Padrão: 60',
-    'own_defense.min_package_pop': 'População mínima de um envio; menos que isso não vale um comando. Padrão: 30',
+    'own_defense.min_package_pop': 'População mínima de um envio, conferida sobre o que a praça mostra em casa; menos que isso não vale um comando. Se o que falta para o teto for menos que isso, o envio sobe até este mínimo. Padrão: 500',
     'own_defense.max_pop_per_target': 'Teto de população mandada para uma aldeia atacada, das origens mais próximas para as mais distantes (0 = sem teto). Padrão: 0',
     'own_defense.exclude_attacked_sources': 'Aldeia que também tem ataque chegando não manda defesa embora. Padrão: true',
     'own_defense.nuke_pop': 'População do maior ataque com nobre que a defesa precisa matar. 0 = automático: fazenda máxima (24.000) menos os prédios mínimos de uma aldeia que forma nobre (702) e o nobre (100) = 23.198. Sem blindagem, o bot para de mandar apoio quando a defesa na aldeia mais o apoio a caminho matam esse ataque em três composições (infantaria, cavalaria, mista). Padrão: 0',
     'own_defense.attacker_luck_pct': 'Sorte do atacante, em %, na simulação do teto (o jogo sorteia entre -25 e +25; +25 é o pior caso para quem defende). Padrão: 25',
+    'own_defense.resend_min_pop': 'Aldeia de origem que já mandou apoio para o mesmo alvo, numa janela que ainda não acabou, só manda de novo com pelo menos esta população (vale também na blindagem). Evita um comando a cada 30 min com a tropa que volta aos poucos da coleta. Padrão: 1000',
     'own_defense.shield_min_send_pop': 'Blindagem (ligada por aldeia na aba Ameaças): sem teto, manda tudo o que chega a tempo, mas cada envio precisa ter pelo menos esta população. Padrão: 1000',
 }
 

@@ -71,6 +71,7 @@ DEFAULTS = {
     "nuke_pop": own_defense.DEFAULT_OPTIONS["nuke_pop"],
     "attacker_luck_pct": own_defense.DEFAULT_OPTIONS["attacker_luck_pct"],
     "shield_min_send_pop": own_defense.DEFAULT_OPTIONS["shield_min_send_pop"],
+    "resend_min_pop": own_defense.DEFAULT_OPTIONS["resend_min_pop"],
 }
 
 
@@ -399,6 +400,13 @@ class OwnDefenseManager:
             ("teto: matar %d pop de ofensiva com nobre (atacantes vivos hoje: %s)"
              % (defense["nuke_pop"], defense["survivors"])),
             len(plan["lines"]))
+        # Origem que já mandou para este alvo numa janela que ainda não acabou
+        # só manda de novo com um pacote de verdade: a tropa que volta aos
+        # poucos da coleta não vira um comando a cada 30 min.
+        already = {str(e.get("source_vid")) for e in self.history
+                   if e.get("ok") and str(e.get("target_vid")) == str(vid)
+                   and int(e.get("deadline_at") or 0) >= now}
+        resend_floor = max(floor, int(cfg.get("resend_min_pop") or 0))
         current = dict(defense["total"])
         for line in plan["lines"]:
             if not shield and own_defense.assess_defense(
@@ -407,7 +415,9 @@ class OwnDefenseManager:
                 self.logger.info("OwnDefense: %s -- defesa suficiente, as outras origens ficam",
                                  village_label(vid))
                 break
-            trim = self._trimmer(shield, floor, current, defense)
+            repeat = str(line["source_vid"]) in already
+            trim = self._trimmer(shield, resend_floor if repeat else floor, current, defense,
+                                 repeat=repeat)
             sent = self._send(vid, village, line, deadline - margin, trim)
             result["sent"].append(sent)
             if sent["ok"]:
@@ -478,7 +488,7 @@ class OwnDefenseManager:
                                         "inflight_pop", "nuke_pop", "luck_pct", "holds",
                                         "survivors")}
 
-    def _trimmer(self, shield, floor, current, defense):
+    def _trimmer(self, shield, floor, current, defense, repeat=False):
         """O `trim` do `support()`: corta ao necessário e confere o piso."""
         def trim(available):
             package = dict(available)
@@ -486,13 +496,19 @@ class OwnDefenseManager:
                 package = own_defense.fit_package(
                     package, current, defense["wall"], self.simulate, defense["nukes"],
                     defense["luck_pct"])
+                # Falta pouco para o teto: o corte ficaria abaixo do piso e
+                # nada sairia, para sempre. Sobe ao piso se a casa tem.
+                if package and own_defense._pop(package) < floor <= own_defense._pop(available):
+                    package = own_defense.scale_to_pop(available, floor)
             # Explorador não segura nobre: como no plano, sozinho não vira envio.
             if package and all(u in own_defense.RIDE_ALONG_UNITS for u in package):
                 return {}, "em casa só explorador agora (%s)" % package
             pop = own_defense._pop(package)
             if pop < floor:
                 return {}, "pacote de %d pop em casa, abaixo do mínimo de %d%s (%s)" % (
-                    pop, floor, " da blindagem" if shield else "", package)
+                    pop, floor,
+                    " (já mandou para este alvo nesta janela)" if repeat else
+                    " da blindagem" if shield else "", package)
             return package, None
         return trim
 

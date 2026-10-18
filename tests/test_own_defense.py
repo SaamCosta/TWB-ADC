@@ -231,7 +231,7 @@ def test_plano_exclusoes_e_teto():
     plan = own_defense.plan_defense(target, 10 ** 6, [_source("6", 4, 0, spy=500)], SPEEDS, now)
     _check("só explorador não vira envio", plan["lines"], [])
     plan = own_defense.plan_defense(target, 10 ** 6, [_source("3", 4, 0, heavy=100)], SPEEDS,
-                                    now, options={"reserve_pct": 0.25})
+                                    now, options={"reserve_pct": 0.25, "min_package_pop": 30})
     _check("reserva fica em casa", plan["lines"][0]["troops"], {"heavy": 75})
 
 
@@ -498,7 +498,7 @@ def test_gota_abaixo_do_piso_nao_sai():
     sources = [_source("1", 1, 0, heavy=2400, sword=3000)]
     result, calls, _ = _run_defend(TRANSIT, False, sources, {"1": {"heavy": 1, "sword": 2}})
     _check("não enviou", [c["ok"] for c in calls], [False])
-    _check("motivo é o piso", "abaixo do mínimo de 30" in calls[0]["error"], True)
+    _check("motivo é o piso", "abaixo do mínimo de 500" in calls[0]["error"], True)
 
 
 def test_explorador_em_casa_nao_quebra_o_corte():
