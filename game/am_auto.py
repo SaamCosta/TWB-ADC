@@ -174,9 +174,9 @@ class AccountManagerAuto:
                              ("add", ("add_to_group", "Adicionar"))):
             for gid, vids in sorted(changes[kind].items()):
                 labels = ", ".join(village_label(v) for v in vids)
-                verb = "tira de" if kind == "remove" else "põe em"
+                verb = "tira do" if kind == "remove" else "põe no"
                 if dry:
-                    logger.info("GerenteAuto [simulação]: %s o grupo %s: %s", verb, names[gid], labels)
+                    logger.info("GerenteAuto [simulação]: %s grupo %s: %s", verb, names[gid], labels)
                     continue
                 data = [("village_ids[]", v) for v in vids]
                 data += [("selected_group", str(gid)), button]
@@ -195,7 +195,7 @@ class AccountManagerAuto:
                     else:
                         current.discard(names[gid])
                     membership[v] = sorted(current)
-                logger.info("GerenteAuto: %s o grupo %s: %s", verb, names[gid], labels)
+                logger.info("GerenteAuto: %s grupo %s: %s", verb, names[gid], labels)
         if posts:
             self._save()
         return posts

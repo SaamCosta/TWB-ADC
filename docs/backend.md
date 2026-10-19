@@ -7582,8 +7582,31 @@ gerente automático, sem construção nem farm do bot. Agora
 `TWB.stale_first_order()`: quem nunca fechou uma rodada vem primeiro, depois a
 mais antiga, pelo mtime de `cache/managed/<vid>.json`, que só
 `Village.set_cache_vars()` grava (fim da rodada). Teste:
-`tests/test_village_order.py`. Suíte 109/109. **⏳ Próximo:** reiniciar com
-essas correções e só então `auto_manage: true`.
+`tests/test_village_order.py`. Suíte 109/109.
+
+**✅ Ligado em campo, 19/10 15:34** (`auto_manage: true`, processo novo com
+as correções e com a §8.70 da outra sessão; suíte 110/110). Até 16:30:
+- grupos: BBM 054 (81571) → Ataque, BBM 055 (74966) e BBM 056 (69861) →
+  Defesa, **conferido no jogo** com uma leitura da página 2 da lista de grupos.
+  As três tinham herdado papel no ciclo anterior (1 ofensiva para 3 defensivas,
+  `empire_ratio`);
+- reserva do nobre no gerente de tropas nas recrutadoras BBM 008, 012, 013 e
+  014, cada uma conferida na tela de resposta;
+- modelo de tropas na BBM 011 (`ADC - DEFENSIVA`), conferido na tela;
+- modelo de construção na BBM 015 (pendentes: quartel 23→25, fazenda 28→30); o
+  widget do próximo ciclo diz se o jogo o manteve;
+- decisões de NÃO aplicar que se confirmaram: BBM 005 já tinha reposto os
+  exploradores (125 de 100); BBM 012 já estava com fazenda 30.
+
+**Incidente no mesmo dia, anterior ao reinício (processo de 10:49): nobre
+perdido por furo do Hunter.** O trem contra a 81800 (agendado às 15:16:25,
+2 nobres da BBM 008 às 15:25:41 e 2 da BBM 012 às 16:37:38) perdeu os dois da
+BBM 008: às 15:20:44 o log marca `Hunter: FURO` (um GET de
+`report&mode=all&view=...` na fase `init` da BBM 002, a 296 s de uma saída) e às
+15:32:22 o Hunter recusou os dois por atraso de 401 s. Os da BBM 012 saíram na
+hora (16:37:38, num POST só). O trem segue como 2 de 4, com os extras da §8.41.
+**Aberto:** o `init` (leitura de relatórios) ainda escapa do gate; é o mesmo
+furo da §8.58 e custou dois nobres.
 
 ## 8.69 `P-DEFESA-TETO` — teto de apoio, blindagem e "onde estão as tropas" (2026-10-18)
 
