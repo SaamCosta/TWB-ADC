@@ -283,10 +283,19 @@ class SnobManager:
 
         Consequencia deliberada: uma aldeia que nunca alcanca o template nunca
         cunha. A moeda e' a ultima prioridade da aldeia, nao a primeira.
+
+        None = contagem desconhecida (aldeia sem praca de reuniao cujo predio
+        nao foi lido neste ciclo, §8.70). Quem chama nao age.
         """
         wanted = getattr(self.troop_manager, "wanted", None) or {}
-        totals = getattr(self.troop_manager, "total_troops", None) or {}
-        for per_building in wanted.values():
+        known_totals = getattr(self.troop_manager, "known_totals", None)
+        for building, per_building in wanted.items():
+            if known_totals:
+                totals = known_totals(building)
+                if totals is None:
+                    return None
+            else:
+                totals = getattr(self.troop_manager, "total_troops", None) or {}
             for unit, amount in per_building.items():
                 if int(totals.get(unit, 0)) < int(amount):
                     return True
@@ -308,7 +317,11 @@ class SnobManager:
             # esta' sendo construida, a aldeia nao tem excedente nenhum.
             self.logger.debug("Not minting coins, builder still needs resources")
             return False
-        if self.troops_are_short():
+        short = self.troops_are_short()
+        if short is None:
+            self.logger.debug("Not minting coins, troop count unknown this cycle")
+            return False
+        if short:
             # A aldeia de torre e' tambem uma aldeia de suporte: se ela perdeu
             # cavalaria pesada apoiando alguem, o recurso e' do estabulo, nao
             # da moeda.
@@ -348,6 +361,12 @@ class SnobManager:
         if self.mint_only:
             return self.mint_coins()
         if self.wanted > 0:
+            if self.troop_manager.total_troops is None:
+                # Aldeia sem praca de reuniao (§8.70): o nobre nao esta' na
+                # tela dos predios de recrutamento, e desconhecido nao e'
+                # zero -- recrutar aqui seria recrutar `snobs` nobres de novo.
+                self.logger.info("Snob count unknown (no rally point), not recruiting nobles")
+                return False
             if "snob" not in self.troop_manager.total_troops:
                 self.needs_noble = True
                 return self.attempt_recruit(amount=self.wanted)

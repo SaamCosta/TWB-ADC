@@ -571,6 +571,58 @@ class Extractor:
         return []
 
     @staticmethod
+    def place_units_unavailable(res):
+        """
+        Por que `screen=place&mode=units&display=units` veio sem a tabela de
+        tropas, ou None quando ela veio. Ancorada no mesmo `<table
+        id="units_home"` que `units_in_village` procura (15º padrão): sem a
+        tabela, os parsers de tropa devolvem lista vazia, e lista vazia NÃO é
+        zero tropa.
+
+        - "not_built": o `game_data` da própria resposta diz `place` "0".
+          Verbatim do br143, BBM 002 (38409), 19/10: a tela responde
+          `<h2>Praça de reunião (não construído)</h2>` e `"place":"0"`, numa
+          aldeia com 4.075 exploradores (§8.70).
+        - "unreadable": nem tabela nem praça zerada (login, captcha, markup
+          novo, resposta None).
+        """
+        text = _page_text(res)
+        if '<table id="units_home"' in text:
+            return None
+        state = Extractor.game_state(text) or {}
+        place = ((state.get("village") or {}).get("buildings") or {}).get("place")
+        if place is not None and str(place) == "0":
+            return "not_built"
+        return "unreadable"
+
+    @staticmethod
+    def recruit_screen_counts(res):
+        """
+        `{unidade: (em_casa, total)}` da coluna "Na aldeia/total" da tela de
+        recrutamento de um prédio (`screen=barracks|stable|garage`, a mesma
+        que `TroopManager.recruit()` pede). É a fonte de contagem da aldeia
+        sem praça de reunião (§8.70): o total é o de tropas DA aldeia, onde
+        quer que estejam. Conferido no br143 em 19/10, BBM 002: `629/4075`
+        exploradores no estábulo, contra 4.050 no `am_troops` das 01:03 mais
+        os 25 que o bot recrutou às 11:15.
+
+        Só lista unidade pesquisada e só deste prédio: não é um total da
+        aldeia, é um total POR PRÉDIO. None quando a tela não traz o
+        formulário de recrutamento ou nenhuma linha casa (vazio não é zero).
+        """
+        text = _page_text(res)
+        form = re.search(r'(?s)<form[^>]*id="train_form".*?</form>', text)
+        if not form:
+            return None
+        counts = {}
+        for row in re.findall(r'(?s)<tr class="row_\w+">(.*?)</tr>', form.group(0)):
+            unit = re.search(r'data-unit="(\w+)"', row)
+            count = re.search(r'>\s*(\d+)/(\d+)\s*</td>', row)
+            if unit and count:
+                counts[unit.group(1)] = (int(count.group(1)), int(count.group(2)))
+        return counts or None
+
+    @staticmethod
     def active_building_queue(res):
         """
         Detects queued building entries

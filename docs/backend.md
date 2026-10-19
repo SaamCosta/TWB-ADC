@@ -7705,6 +7705,81 @@ contar duas vezes).
 - O teto supõe um ataque completo por nobre. Uma limpeza separada, seguida de
   nobres pequenos, mata a defesa antes; é o caso de ligar a blindagem.
 
+## 8.70 Aldeia sem praça de reunião: contagem de tropas desconhecida não é zero (2026-10-19)
+
+**Incidente.** A BBM 002 (38409, papel `watchtower_support`) não tem praça de
+reunião construída: `"place":"0"` em `game_data.village.buildings`. A tela
+`screen=place&mode=units&display=units` responde só `<h2>Praça de reunião (não
+construído)</h2>`, sem nenhuma tabela. `Extractor.units_in_village` e
+`units_owned_total` devolvem `[]` (a mesma lista vazia de "zero tropa"), e
+`update_totals()` gravava `troops = {}` e `total_troops = {}`. No
+`session_latest.log` de 19/10, às 11:14:52, aparecem `Village units total: {}`
+e, às 11:15, `Attempting recruitment of 4000 spy` → `Recruitment of 25 spy
+started`, numa aldeia que já tinha a meta (template `{'stable': {'spy': 4000}}`).
+O `am_troops` das 01:03 mostrava 4.050 exploradores. O "out-of-sync" de 18/10
+vem do mesmo caminho, mas aquele log já foi sobrescrito e não foi possível
+reconferir.
+
+**Consumidores de `troops`/`total_troops`, conferidos um a um:**
+
+| Consumidor | O que fazia com `{}` |
+|---|---|
+| `TroopManager.start_update` (recrutamento) | recrutava o template inteiro. **O defeito.** |
+| `SnobManager.troops_are_short` (mint) | "curta" sempre: a BBM 002 (`mint_coins: true`) nunca cunhava |
+| `SnobManager.run` (nobre) | `"snob" not in {}` → recrutaria `snobs` nobres (a BBM 002 tem `snobs: 0`) |
+| `TroopManager.gather` | pedia `place&mode=scavenge`, que também não existe → "config de coleta não encontrada… sessão expirada?" |
+| `cache/managed` `troops` → `am_auto.troops_pending`, painel `/empire`, `pvp_conquest` (população), `twb.py` (tem nobre?) | todos já fazem `or {}`, e `troops_pending` trata vazio como sem dado (§8.68) |
+| `troops` (em casa): farm, apoio, esconder, PvP, Hunter, `conquest_planner` | `{}` = nada sai, **e isso é verdade**: sem praça não há tela de comando |
+
+**Correção.**
+- `Extractor.place_units_unavailable(res)` usa a mesma âncora do parser
+  (`<table id="units_home"`). Sem a tabela, devolve `"not_built"` quando o
+  `game_data` da própria resposta diz `place` "0", ou `"unreadable"` nos outros
+  casos (login, captcha, markup novo).
+- Sem a tabela, `update_totals()` deixa **`total_troops = None`**
+  (desconhecido) e `troops = {}`. `place_built` vira False ou None,
+  conforme o caso. O `{}` em casa é proposital: são dezenas de pontos de envio, e
+  todos acertam com "nada sai".
+- **Fonte alternativa, grátis:** a tela de recrutamento do próprio prédio tem a
+  coluna "Na aldeia/total". Sondada em 19/10 com o cliente do bot
+  (`cache/_probe_train_totals.py`, GET em `screen=stable`), deu `629/4075`
+  exploradores. O total bate com o `am_troops` (4.050 + os 25 de 11:15) e conta
+  a tropa fora de casa. `Extractor.recruit_screen_counts` lê essa coluna, e
+  `start_update` a usa quando `total_troops` é None (`read_screen_totals`, um
+  GET por prédio, só nas aldeias sem praça). Sem essa leitura também, não
+  recruta.
+- **Por que o total da tela do prédio não vira `total_troops`:** ele é **por
+  prédio**. Um `total_troops` montado só do estábulo não teria `snob`, e o
+  `SnobManager.run` leria isso como zero nobre: o mesmo defeito, com outra
+  unidade. Por isso ele fica em `screen_totals[predio]`, consultado por
+  `known_totals(predio)`.
+- `troops_are_short` devolve None quando algum prédio do template não tem
+  contagem conhecida, e o mint não age. Com o estábulo lido no ciclo, a BBM
+  002 volta a poder cunhar. O nobre não recruta com `total_troops` None.
+  A coleta sai sem GET quando `place_built is False`.
+- Outras fontes avaliadas: `am_troops` e a visão geral de tropas
+  (`overview_villages&mode=units`) são pagas, e o bot mira a conta gratuita.
+  O `game_data` não traz tropa nenhuma.
+
+**Teste:** `tests/test_place_not_built.py`, com fixtures verbatim da BBM 002:
+`place_units_not_built_br143.html` (objeto `village` do `game_data` e o bloco
+do `content_value`, sem player nem csrf) e `train_stable_counts_br143.html`
+(o `train_form`, com `h=` redigido). 8 mutantes (detector desligado, `{}` em
+vez de None, recrutar sem ler a tela, usar a coluna "na aldeia" em vez do
+total, coleta sem gate, nobre sem gate, desconhecido virando "curta", mint
+ignorando desconhecido): os 8 derrubam o teste.
+
+**Aberto:**
+- Só o estábulo foi sondado. O quartel e a oficina usam o mesmo `train_form`
+  no jogo, mas o parser não foi conferido contra eles. Se falhar, o efeito é
+  "não recruta", não "recruta demais".
+- Na aldeia sem praça, o recrutamento faz um GET a mais por prédio quando há o
+  que recrutar: `read_screen_totals` lê a tela, e o `recruit()` lê de novo.
+- 3.446 dos 4.075 exploradores da BBM 002 estão fora de casa, sem praça para
+  terem saído. Provavelmente saíram antes de a praça ser demolida, mas isso não
+  foi apurado. `cache/managed` grava `available_troops: {}` para ela, embora
+  haja 629 em casa.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

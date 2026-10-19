@@ -32,7 +32,16 @@ class TroopManager:
     queue = []
     troops = {}
 
+    # None = contagem DESCONHECIDA (a aldeia sem praça de reunião não tem a
+    # tela de tropas, §8.70); {} não quer dizer isso, quer dizer zero tropa.
     total_troops = {}
+    # Praça de reunião, pela última `update_totals`: True construída, False
+    # não construída, None não lido/ilegível (§8.70).
+    place_built = None
+    # Total por prédio lido da coluna "Na aldeia/total" da tela de
+    # recrutamento quando `total_troops` é None: {predio: {unidade: total}}.
+    # None aqui, dict na instância (1º padrão).
+    screen_totals = None
 
     _research_wait = 0
     # §8.68. Bool (imutável) no corpo da classe de propósito: é o padrão de
@@ -121,6 +130,7 @@ class TroopManager:
         # valor sobrevive entre ciclos com a hora da leitura.
         self.troop_locations = None
         self.troop_locations_at = None
+        self.screen_totals = {}
         if not self.resman:
             self.resman = ResourceManager(
                 wrapper=self.wrapper, village_id=self.village_id
@@ -152,6 +162,8 @@ class TroopManager:
         """
         Updates the total amount of recruited units
         """
+        # Total por prédio é deste ciclo: zera antes de qualquer retorno cedo.
+        self.screen_totals = {}
         reused = game_data_shadow.reuse(self.wrapper, self.village_id, "update_totals")
         if reused:
             self.game_data = reused
@@ -184,6 +196,28 @@ class TroopManager:
         if result_all is None:
             self.logger.warning("TroopManager: units request timed out, skipping this cycle")
             return
+
+        # Sem a tabela de tropas os parsers abaixo devolvem lista vazia, e o
+        # recrutamento lia {} como "zero tropa": a BBM 002, sem praça, com
+        # 4.075 exploradores e template de 4.000, recrutou mais 25 em 19/10
+        # (§8.70). Em casa fica {} -- sem praça nada sai, e na tela ilegível
+        # não enviar é o seguro --, mas o total vira desconhecido.
+        unavailable = Extractor.place_units_unavailable(result_all)
+        if unavailable:
+            self.place_built = False if unavailable == "not_built" else None
+            self.total_troops = None
+            if unavailable == "not_built":
+                self.logger.info(
+                    "Village %s: praça de reunião não construída -- contagem de "
+                    "tropas desconhecida; recrutamento lê a tela do prédio",
+                    village_label(self.village_id))
+            else:
+                self.logger.warning(
+                    "Village %s: tela de tropas sem a tabela units_home (sessão "
+                    "expirada ou markup novo?) -- contagem desconhecida neste ciclo",
+                    village_label(self.village_id))
+            return
+        self.place_built = True
 
         for u in Extractor.units_in_village(result_all):
             k, v = u
@@ -221,6 +255,17 @@ class TroopManager:
             )
             return False
 
+        totals = self.total_troops
+        if totals is None:
+            totals = self.read_screen_totals(building)
+            if totals is None:
+                # Desconhecido não é zero: recrutar aqui seria recrutar o
+                # template inteiro de novo (§8.70).
+                self.logger.warning(
+                    "Recruitment:%s skipped -- troop count unknown in %s",
+                    building, village_label(self.village_id))
+                return False
+
         run_selection = list(self.wanted[building].keys())
         if self.randomize_unit_queue:
             random.shuffle(run_selection)
@@ -230,23 +275,55 @@ class TroopManager:
             if wanted in disabled_units:
                 continue
 
-            if wanted not in self.total_troops:
+            if wanted not in totals:
                 if self.recruit(
                         wanted, self.wanted[building][wanted], building=building
                 ):
                     return True
                 continue
 
-            if self.wanted[building][wanted] > self.total_troops[wanted]:
+            if self.wanted[building][wanted] > totals[wanted]:
                 if self.recruit(
                         wanted,
-                        self.wanted[building][wanted] - self.total_troops[wanted],
+                        self.wanted[building][wanted] - totals[wanted],
                         building=building,
                 ):
                     return True
 
         self.logger.info("Recruitment:%s up-to-date", building)
         return False
+
+    def read_screen_totals(self, building):
+        """
+        Total de tropas das unidades de `building`, lido da coluna "Na
+        aldeia/total" da tela de recrutamento dele -- a fonte da aldeia sem
+        praça de reunião, cuja tela de tropas não existe (§8.70). Guarda em
+        `screen_totals` para o resto do ciclo (`known_totals`). None quando a
+        tela não vem ou não traz a coluna.
+        """
+        data = self.wrapper.get_action(action=building, village_id=self.village_id)
+        counts = Extractor.recruit_screen_counts(data)
+        if counts is None:
+            return None
+        totals = {unit: total for unit, (_home, total) in counts.items()}
+        if self.screen_totals is None:
+            self.screen_totals = {}
+        self.screen_totals[building] = totals
+        self.logger.info(
+            "Recruitment:%s contagem lida da tela do prédio (sem praça): %s",
+            building, totals)
+        return totals
+
+    def known_totals(self, building):
+        """
+        Total de tropas que vale para as unidades de `building` neste ciclo:
+        `total_troops` quando a praça foi lida, senão o que `read_screen_totals`
+        leu da tela do prédio. None = desconhecido, e quem consulta não age
+        (§8.70).
+        """
+        if self.total_troops is not None:
+            return self.total_troops
+        return (self.screen_totals or {}).get(building)
 
     def get_min_possible(self, entry):
         """
@@ -807,6 +884,12 @@ class TroopManager:
         """
         if not self.can_gather:
             return False
+        if self.place_built is False:
+            # A coleta mora na praça (`screen=place&mode=scavenge`): sem ela a
+            # tela não existe, e o GET só produzia o aviso enganoso de
+            # "sessão expirada ou markup novo?" (BBM 002, 19/10, §8.70).
+            self.logger.debug("Gather: praça de reunião não construída, nada a coletar")
+            return False
         url = f"game.php?village={self.village_id}&screen=place&mode=scavenge"
         result = self.wrapper.get_url(url=url)
         if result is None:
@@ -870,7 +953,7 @@ class TroopManager:
         # ordem e mesmas cargas de antes (UNIT_CARRY).
         haul_dict = [
             "%s:%d" % (unit, UNIT_CARRY[unit]) for unit in GATHER_UNITS
-            if unit not in ("archer", "marcher") or "archer" in self.total_troops
+            if unit not in ("archer", "marcher") or "archer" in (self.total_troops or {})
         ]
 
         # ADVANCED GATHER: Goes from gather_selection to 1, trying the same time (approximately) for every gather. Active hours exclude LC and Axes, at night everything is used for gather (except Paladin)
