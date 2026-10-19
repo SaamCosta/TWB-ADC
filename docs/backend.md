@@ -7977,6 +7977,58 @@ todas), e a fase 3 lê até 13 praças. As duas pagam a pausa normal do
 `get_url`, mas são rajadas. Não mexi no ritmo do prime. Fica registrado
 porque é o próximo candidato a causa de captcha.
 
+**Reforço de trem incompleto, antes do pouso (pedido do usuário, 19/10).**
+A conta sobre a 81800 mostrou que o caminho do extra **nunca** fecharia esse
+alvo. As origens mais rápidas no alcance (BBM 018, 014 e 024) ficam a ~64
+campos, ou seja ~37,5 h de voo, e a lealdade regenera ~37 nesse tempo, mais
+que a queda máxima de um nobre (35). Todo extra avulso pousaria com a lealdade
+entre 68 e 98, e a regra da §8.41 corretamente recusaria (`sem_progresso`).
+`BarbarianTrainPlanner.plan_reinforcements` resolve isso mandando os nobres que
+faltam **juntos**, sincronizados pelo Hunter (schedule `label: "barb_reforco"`),
+para pousarem logo **depois** do trem.
+
+O reforço só sai com todas estas condições, reconferidas na hora:
+- o trem é `extra_pending`, `hits_done` < `hits_needed`, ainda está no ar e
+  todas as chegadas são conhecidas (`reinforcement_need`);
+- o trem não conquista sozinho nem na queda máxima (`nobres × 35 < 100`),
+  porque um reforço pousando depois da conquista autoconquistaria;
+- o extra avulso depois do pouso **não** progride
+  (`queda mínima ≤ regen × horas de voo` da origem mais rápida). Perto do
+  alvo fica o caminho de antes, que lê o relatório e manda só o que falta;
+- o alvo não é nosso, não foi perdido e não foi reservado pela tribo;
+- a praça das aldeias com nobre não mostra nobre além dos do trem
+  (`unmatched_observed`, tolerância de 5 s). Nobre a mais é manual: o bot não
+  agenda o reforço e registra os nobres do jogador;
+- o reforço pousa pelo menos 60 s depois do trem e derruba mais do que a
+  lealdade regenera nesse intervalo.
+
+Plano parcial vale: 1 dos 2 que faltam ainda é útil. A decisão é tomada uma
+vez por trem, gravada em `reinforcement` no registro. Falta de dado (praça
+ilegível, nenhuma origem fecha a escolta) tenta de novo no ciclo seguinte; no
+tick, a cada 30 min por alvo.
+- A tropa fica reservada em `barb_reforco:<alvo>` até sair. O prefixo é
+  próprio porque o `_release_orphan_reserves` solta `barb_train:*` de todo
+  alvo fora de `train_scheduled`.
+- Reforço **agendado** conta como nobre no ar: `ConquestCache.nobles_in_flight`
+  e o `EventTick.landing_of` olham a chegada planejada. Assim o extra avulso
+  não sai no pouso do trem enquanto o reforço espera a hora dele.
+- Quando o Hunter encerra o schedule, `promote_reinforcements` soma as
+  chegadas e `hits_done`. Schedule apagado no painel vira `lost`.
+- Roda no início do ciclo, antes de montar trem novo, e no tick logo depois
+  da promoção do trem.
+- Nobre atrasado de reforço **não** sai atrasado: o label não é `barb`, e o
+  registro aponta para o schedule do trem.
+
+No estado de 19/10 ~18:30 a regra pede 2 nobres para a 81800, mas o plano
+**não fecha**: os 2 nobres livres da BBM 008 estão sem escolta (1 cavalaria
+leve em casa) e a BBM 009 não chega ao `min_escort_total` (50 por nobre). A
+política de escolta é a do trem, de propósito.
+
+Testes: 13 em `test_conquest_planner.py` (o caso da 81800, regra pura,
+casamento da praça, manual, ilegível, perto do alvo, tarde demais, alvo
+perdido/nosso/reservado, promoção, schedule apagado, reserva, trava de voo) e
+2 em `test_event_tick.py`. 19 mutantes, todos derrubados. Suíte: 114/114.
+
 **Item 5 do pedido — o que ainda só se trata no início do ciclo** (mapa em
 `twb.py`, bloco do ciclo):
 

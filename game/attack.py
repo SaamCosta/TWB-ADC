@@ -1533,6 +1533,18 @@ class ConquestCache:
                 pending.append(float("inf"))
             elif ts > now:
                 pending.append(ts)
+        # §8.71: reforco AGENDADO e nobre comprometido com este alvo, mesmo
+        # que ainda nao tenha saido. Sem isto o extra avulso sairia no pouso
+        # do trem com o reforco esperando a hora dele. Conta ate a chegada
+        # planejada: depois dela, saiu (e esta em noble_arrivals) ou falhou.
+        reinforcement = data.get("reinforcement") or {}
+        if reinforcement.get("status") == "scheduled":
+            try:
+                arrival = float(reinforcement.get("arrival") or 0)
+            except (TypeError, ValueError):
+                arrival = 0
+            if arrival > now:
+                pending.append(arrival)
         return sorted(pending)
 
     @staticmethod

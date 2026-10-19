@@ -148,6 +148,8 @@ class BarbarianTrainPlanner:
             self.reservation_writer.begin_cycle()
 
         self._promote_scheduled_trains()
+        # §8.71: reforco que ja saiu (ou falhou) vira chegada registrada.
+        self.promote_reinforcements()
         # Feature 35: antes de soltar as orfas, de proposito -- cancelar um
         # trem agendado tira o alvo de "train_scheduled", e e justamente isso
         # que faz `_release_orphan_reserves()` devolver a tropa dele. Na ordem
@@ -165,6 +167,7 @@ class BarbarianTrainPlanner:
         # depois de um reinicio os nobres que esperam o `send_time` contariam
         # como livres e entrariam num segundo trem.
         self._sync_scheduled_reserves()
+        self._sync_reinforcement_reserves()
 
         if not self.config.get("hunter", {}).get("enabled", False):
             self.logger.warning(
@@ -173,6 +176,10 @@ class BarbarianTrainPlanner:
                 "Sem ele o planejador nao agenda nada"
             )
             return None
+
+        # §8.71: completar um trem que saiu incompleto vem antes de montar um
+        # novo -- os nobres que faltam a ele sao os mais valiosos do imperio.
+        self.plan_reinforcements()
 
         # Teto de trens simultaneos no imperio (8.43). Conta toda conquista em
         # andamento -- agendada, em voo, esperando nobre extra, ou com nobre no
@@ -401,10 +408,15 @@ class BarbarianTrainPlanner:
     # Plano
     # ------------------------------------------------------------------
 
-    def _build_plan(self, target_id, sources, cfg, target_location=None):
+    def _build_plan(self, target_id, sources, cfg, target_location=None, size=None,
+                    partial=False):
         """
         [{source_village_id, troops}] com exatamente TRAIN_SIZE nobres, um por
         comando, cada um com sua escolta.
+
+        `size`/`partial` (§8.71, reforco de trem incompleto): `size` nobres em
+        vez de TRAIN_SIZE, e com `partial` devolve o que fechou (>= 1) em vez
+        de None -- o reforco que manda 1 dos 2 que faltam ainda vale.
 
         Um nobre por comando e a regra do jogo, nao uma escolha: cada ataque
         derruba lealdade uma vez, entao quatro nobres num comando so seriam um
@@ -416,7 +428,8 @@ class BarbarianTrainPlanner:
         comportamento anterior, que nao era errado, so era mudo.
         """
         plan = []
-        remaining = ConquestManager.TRAIN_SIZE
+        wanted = ConquestManager.TRAIN_SIZE if size is None else int(size)
+        remaining = wanted
         noble_range = self._noble_range()
 
         for vid, available in self._order_by_arrival(sources, target_location):
@@ -440,15 +453,18 @@ class BarbarianTrainPlanner:
             remaining -= take
 
         if remaining > 0:
+            if partial and plan:
+                return plan
             # "escolta ou alcance" e nao "escolta": a recusa por distancia
             # entrou depois e tem linha propria acima, mas um resumo que
             # afirma a causa errada manda quem le procurar tropa faltando
             # quando o problema era geografia.
             self.logger.info(
                 "Conquest: so %d/%d nobres passaram no gate de escolta e alcance "
-                "-- nao agendo trem parcial (o motivo de cada aldeia esta nas "
+                "-- nao agendo %s (o motivo de cada aldeia esta nas "
                 "linhas acima)",
-                ConquestManager.TRAIN_SIZE - remaining, ConquestManager.TRAIN_SIZE
+                wanted - remaining, wanted,
+                "reforco" if partial else "trem parcial"
             )
             return None
         return plan
@@ -703,13 +719,13 @@ class BarbarianTrainPlanner:
         ConquestCache.set(target_id, data)
 
     @staticmethod
-    def _sched_key(target_id, arrival_str):
+    def _sched_key(target_id, arrival_str, label="barb"):
         """Mesma regra de HunterReader.add_schedule, para achar o schedule depois."""
-        return "%s_%s_barb" % (
-            target_id, arrival_str.replace(" ", "T").replace(":", "-")
+        return "%s_%s_%s" % (
+            target_id, arrival_str.replace(" ", "T").replace(":", "-"), label
         )
 
-    def _add_hunter_schedule(self, target_id, arrival_str, plan):
+    def _add_hunter_schedule(self, target_id, arrival_str, plan, label="barb"):
         try:
             from webmanager.utils import HunterReader
         except ImportError:
@@ -736,14 +752,14 @@ class BarbarianTrainPlanner:
                 }
                 for atk in plan
             ],
-            label="barb",
+            label=label,
         ))
 
     # ------------------------------------------------------------------
     # Reserva de tropa ate o Hunter disparar
     # ------------------------------------------------------------------
 
-    def _reserve(self, target_id, plan):
+    def _reserve(self, target_id, plan, prefix=None):
         """
         Segura a tropa comprometida ate o Hunter mandar.
 
@@ -759,14 +775,14 @@ class BarbarianTrainPlanner:
             for unit, qty in atk["troops"].items():
                 acc[unit] = acc.get(unit, 0) + int(qty)
 
-        key = "%s:%s" % (self.RESERVE_PREFIX, target_id)
+        key = "%s:%s" % (prefix or self.RESERVE_PREFIX, target_id)
         for vid, troops in by_source.items():
             village = self.villages.get(vid)
             if village and village.units is not None:
                 village.units.conquest_reserve[key] = troops
 
-    def _release(self, target_id):
-        key = "%s:%s" % (self.RESERVE_PREFIX, target_id)
+    def _release(self, target_id, prefix=None):
+        key = "%s:%s" % (prefix or self.RESERVE_PREFIX, target_id)
         for village in self.villages.values():
             units = getattr(village, "units", None)
             if units is not None:
@@ -1029,6 +1045,333 @@ class BarbarianTrainPlanner:
                         "Conquest: reserva do trem contra %s solta na aldeia %s "
                         "(nenhum comando dela pendente no Hunter)", village_label(target_id), village_label(vid)
                     )
+
+    # ------------------------------------------------------------------
+    # Reforco de trem incompleto, antes do pouso (§8.71)
+    # ------------------------------------------------------------------
+
+    REINFORCE_PREFIX = "barb_reforco"
+    REINFORCE_LABEL = "barb_reforco"
+    # O reforco pousa DEPOIS do ultimo nobre do trem, nunca antes nem junto:
+    # e a ordem que torna a regra "o trem nao conquista sozinho" suficiente.
+    REINFORCE_MIN_GAP = 60
+    # Chegada dos nobres do trem na praca contra a registrada (o Hunter manda
+    # ~1 s depois do send_time; medido: 07:11:06 e :07 contra :05 na 81800).
+    REINFORCE_MATCH_TOLERANCE = 5
+    BARB_START_LOYALTY = 100
+
+    @staticmethod
+    def reinforcement_need(data, now, drop_max, start_loyalty=100):
+        """
+        `(faltam, pouso_do_trem, motivo)`: quantos nobres o reforco manda e
+        depois de que instante pousa, ou `(None, None, motivo)` quando nao e
+        caso de reforco.
+
+        Caso de reforco: trem barbaro que saiu INCOMPLETO (`extra_pending`,
+        `hits_done` < `hits_needed`), ainda no ar, com todas as chegadas
+        conhecidas, sem reforco decidido -- e que nao pode conquistar sozinho
+        nem na queda maxima. Se pudesse, um reforco pousando depois dele
+        autoconquistaria a aldeia (12/08, §6.1): ai o certo e esperar o
+        relatorio, que e o caminho de antes.
+        """
+        if data.get("status") != "extra_pending":
+            return None, None, "status %s" % data.get("status")
+        if data.get("reinforcement"):
+            return None, None, "reforco ja decidido (%s)" % data["reinforcement"].get("status")
+        arrivals = data.get("noble_arrivals") or []
+        if not arrivals or any(a is None for a in arrivals):
+            return None, None, "chegada do trem desconhecida"
+        if not any(float(a) > now for a in arrivals):
+            return None, None, "o trem ja pousou"
+        try:
+            missing = int(data.get("hits_needed") or ConquestManager.TRAIN_SIZE) - int(
+                data.get("hits_done") if data.get("hits_done") is not None else len(arrivals))
+        except (TypeError, ValueError):
+            return None, None, "contagem do trem ilegivel"
+        if missing <= 0:
+            return None, None, "trem completo"
+        if len(arrivals) * float(drop_max) >= start_loyalty:
+            return None, None, ("os %d nobres do trem podem conquistar sozinhos (queda "
+                                "maxima %s): espero o relatorio" % (len(arrivals), drop_max))
+        return missing, max(float(a) for a in arrivals), None
+
+    @classmethod
+    def unmatched_observed(cls, observed, known):
+        """
+        Chegadas lidas na praca que NAO sao do trem registrado: cada chegada
+        registrada consome uma observada a ate `REINFORCE_MATCH_TOLERANCE`
+        segundos. O que sobra e nobre que o bot nao mandou (o jogador, a mao).
+        """
+        pool = sorted(float(k) for k in known if k is not None)
+        extra = []
+        for arrival, vid, cid in sorted(observed):
+            match = next((k for k in pool if abs(k - arrival) <= cls.REINFORCE_MATCH_TOLERANCE), None)
+            if match is None:
+                extra.append((arrival, vid, cid))
+            else:
+                pool.remove(match)
+        return extra
+
+    def _travel_seconds(self, vid, target_location):
+        server_cfg = (self.config or {}).get("server", {})
+        speeds = WorldConfig.unit_speeds(server_cfg.get("server"), server_cfg.get("endpoint"))
+        location = village_location(vid, self.villages.get(vid))
+        if not location or not target_location or len(target_location) != 2:
+            return None
+        distance = field_distance(tuple(location), (int(target_location[0]), int(target_location[1])))
+        return WorldConfig.travel_seconds(speeds, distance, {"snob": 1})
+
+    def reinforcement_candidates(self, now=None):
+        """{alvo: (dados, faltam, pouso_do_trem)} -- so leitura de disco."""
+        now = time.time() if now is None else now
+        out = {}
+        for target_id, data in sorted(ConquestCache.active_conquests().items()):
+            drop_max = (data.get("loyalty_drop_range") or [None, None])[1]
+            if drop_max is None:
+                drop_max = ConquestManager.world_drop_range(self.config)[1]
+            missing, landing, _why = self.reinforcement_need(
+                data, now, drop_max, self.BARB_START_LOYALTY)
+            if missing:
+                out[str(target_id)] = (data, missing, landing)
+        return out
+
+    def _decide_reinforcement(self, target_id, data, record):
+        data = dict(data)
+        data.pop("target_id", None)
+        data["reinforcement"] = dict(record, decided_at=int(time.time()))
+        ConquestCache.set(target_id, data)
+
+    def plan_reinforcements(self, now=None):
+        """
+        Agenda no Hunter os nobres que faltam a um trem barbaro incompleto,
+        para pousarem LOGO DEPOIS dele. Devolve [alvos agendados].
+
+        POR QUE ANTES DO POUSO (19/10, Barbara 81800): o trem saiu com 2 de 4.
+        O caminho de antes esperava o pouso e mandava UM nobre extra por vez
+        (§8.41) -- e a ~64 campos cada um voa ~37,5 h, regenerando ~37 de
+        lealdade no caminho, mais que a queda maxima (35). Nenhum extra
+        avulso fechava; o bot so avisaria "mande dois juntos a mao". O reforco
+        e esse "dois juntos", automatico e sincronizado com o trem.
+
+        So quando o extra avulso NAO progride (`queda minima <= regen x horas
+        de voo` da origem mais rapida). Perto do alvo o caminho de antes e
+        melhor: espera o relatorio e manda so o que falta de verdade.
+
+        Tudo e decidido UMA vez por trem (`reinforcement` no registro), menos
+        quando falta dado (praca ilegivel, nenhuma origem fecha escolta): ai
+        tenta de novo no proximo ciclo ou tick.
+        """
+        cfg = self.config.get("conquest", {})
+        if not cfg.get("enabled") or not self.config.get("hunter", {}).get("enabled"):
+            return []
+        now = time.time() if now is None else now
+        scheduled = []
+        regen = float(cfg.get("loyalty_regen_per_hour", 1) or 0)
+        noble_range = self._noble_range()
+        for target_id, (data, missing, train_landing) in self.reinforcement_candidates(now).items():
+            label = conquest_label(target_id, data)
+            location = data.get("target_location") or self._known_location(target_id)
+            drop_min, drop_max = (data.get("loyalty_drop_range")
+                                  or list(ConquestManager.world_drop_range(self.config)))
+
+            ordered = [(vid, n) for vid, n in self._order_by_arrival(self._noble_sources(), location)
+                       if self._source_reaches(vid, location, noble_range)]
+            if not ordered:
+                self.logger.info("Conquest: reforco do trem contra %s -- nenhuma aldeia com "
+                                 "nobre livre no alcance agora", village_label(target_id))
+                continue
+            fastest = self._travel_seconds(ordered[0][0], location)
+            if fastest is not None and float(drop_min) > regen * fastest / 3600.0:
+                self.logger.info(
+                    "Conquest: trem contra %s incompleto, mas o extra avulso depois do pouso "
+                    "progride (%.1f h de voo) -- sem reforco antecipado",
+                    village_label(target_id), fastest / 3600.0)
+                self._decide_reinforcement(target_id, data, {
+                    "status": "skipped", "reason": "extra avulso progride"})
+                continue
+
+            anchor = str(data.get("reserved_by") or ordered[0][0])
+            manager = ConquestManager(
+                wrapper=self.wrapper, village_id=anchor,
+                troopmanager=getattr(self.villages.get(anchor), "units", None),
+                map_obj=getattr(self.villages.get(anchor), "area", None),
+                config=self.config, reservation_board=self.reservation_board,
+                world_villages=self.world_villages, villages=self.villages,
+            )
+            # 6o padrao: o alvo ainda e o mesmo de quando o trem saiu?
+            if manager._target_is_mine(target_id) or manager._target_taken_by_other(target_id):
+                continue  # o acompanhamento encerra; reforco nenhum
+            if manager._claim_block_reason(target_id, location):
+                continue
+
+            plan = self._build_plan(target_id, ordered, cfg, target_location=location,
+                                    size=missing, partial=True)
+            if not plan:
+                continue
+
+            # Nobre a mao (fase 3): o reforco nao sai por cima dele.
+            found = manager._scan_nobles_in_flight(location)
+            if found["unknown"] or found["unreadable"]:
+                self.logger.info(
+                    "Conquest: reforco contra %s adiado -- praca ilegivel ou comando com "
+                    "destino ilegivel (%s)", village_label(target_id),
+                    ", ".join(village_label(v) for v in found["unreadable"]) or "renomeado")
+                continue
+            manual = self.unmatched_observed(found["arrivals"], data.get("noble_arrivals") or [])
+            if manual:
+                arrivals = sorted((data.get("noble_arrivals") or []) + [int(a) for a, _v, _c in manual])
+                data = dict(data, noble_arrivals=arrivals,
+                            last_hit_timestamp=max(arrivals),
+                            observed_nobles=[{"village_id": v, "command_id": c, "arrival": int(a)}
+                                             for a, v, c in manual])
+                self._decide_reinforcement(target_id, data, {
+                    "status": "skipped", "reason": "nobre manual no ar", "manual": len(manual)})
+                Notification.send(
+                    "Conquista: %d nobre(s) a caminho de %s que o bot nao mandou (%s) -- "
+                    "nao agendo reforco; o bot acompanha depois do pouso."
+                    % (len(manual), label,
+                       ", ".join(sorted({village_label(v) for _a, v, _c in manual}))))
+                continue
+
+            if self._schedule_reinforcement(target_id, data, plan, train_landing,
+                                             drop_min, regen):
+                scheduled.append(target_id)
+        return scheduled
+
+    def _schedule_reinforcement(self, target_id, data, plan, train_landing, drop_min, regen):
+        hunter = self._get_hunter()
+        durations = {}
+        for atk in plan:
+            key = (atk["source_village_id"], tuple(sorted(atk["troops"].items())))
+            if key not in durations:
+                durations[key] = hunter._probe_duration(atk["source_village_id"], target_id,
+                                                        atk["troops"])
+            if not durations[key]:
+                self.logger.warning("Conquest: reforco contra %s sem duracao de %s pelo "
+                                    "servidor -- tento depois", village_label(target_id),
+                                    village_label(atk["source_village_id"]))
+                return False
+            atk["duration_seconds"] = float(durations[key])
+
+        longest = max(atk["duration_seconds"] for atk in plan)
+        arrival_ts = max(time.time() + longest + self.ARRIVAL_MARGIN_SECONDS,
+                         float(train_landing) + self.REINFORCE_MIN_GAP)
+        gap_hours = (arrival_ts - float(train_landing)) / 3600.0
+        if len(plan) * float(drop_min) <= regen * gap_hours:
+            self.logger.info(
+                "Conquest: reforco de %d nobre(s) contra %s pousaria %.1f h depois do trem -- "
+                "regenera mais do que derruba, nao agendo", len(plan), village_label(target_id), gap_hours)
+            self._decide_reinforcement(target_id, data, {
+                "status": "skipped", "reason": "pousaria tarde demais"})
+            return False
+        arrival_str = datetime.datetime.fromtimestamp(arrival_ts).strftime(DATETIME_FMT)
+        if not self._add_hunter_schedule(target_id, arrival_str, plan, label=self.REINFORCE_LABEL):
+            return False
+        sched_key = self._sched_key(target_id, arrival_str, label=self.REINFORCE_LABEL)
+        per_source = {}
+        for atk in plan:
+            per_source[atk["source_village_id"]] = per_source.get(atk["source_village_id"], 0) + 1
+        self._reserve(target_id, plan, prefix=self.REINFORCE_PREFIX)
+        self._decide_reinforcement(target_id, data, {
+            "status": "scheduled", "sched_key": sched_key, "arrival": int(arrival_ts),
+            "nobles": len(plan), "sources": per_source,
+            "train_landing": int(train_landing),
+        })
+        landing = datetime.datetime.fromtimestamp(train_landing).strftime("%d/%m %H:%M:%S")
+        self.logger.info(
+            "Conquest: reforco de %d nobre(s) agendado contra %s, pouso %s (o trem pousa %s; "
+            "origens: %s)", len(plan), village_label(target_id), arrival_str, landing,
+            ", ".join("%s x%d" % (village_label(v), n) for v, n in sorted(per_source.items())))
+        Notification.send(
+            "Conquista: reforco de %d nobre(s) agendado contra %s -- pousa %s, logo depois "
+            "do trem (%s). O extra avulso nao fecharia: voa demais e a lealdade regenera."
+            % (len(plan), conquest_label(target_id, data), arrival_str, landing))
+        return True
+
+    def promote_reinforcements(self):
+        """
+        Reforco cujo schedule nao tem mais comando por sair entra em
+        `noble_arrivals` (chegada propria de cada um, `arrival_real` quando
+        houver) e em `hits_done`. Schedule sumido do arquivo (apagado no
+        painel) vira `lost`: o reforco deixa de contar como no ar.
+        """
+        schedules = FileManager.load_json_file(Hunter.SCHEDULE_CACHE)
+        if schedules is None:
+            return
+        for target_id, data in sorted(ConquestCache.active_conquests().items()):
+            info = data.get("reinforcement") or {}
+            if info.get("status") != "scheduled":
+                continue
+            sched = schedules.get(info.get("sched_key") or "")
+            data = dict(data)
+            data.pop("target_id", None)
+            if sched is None:
+                if schedules:
+                    data["reinforcement"] = dict(info, status="lost")
+                    ConquestCache.set(target_id, data)
+                    self._release(target_id, prefix=self.REINFORCE_PREFIX)
+                continue
+            attacks = sched.get("attacks", [])
+            if (any(atk.get("status") == "pending" for atk in attacks)
+                    and not self._schedule_over(sched)):
+                continue
+            sent = [atk for atk in attacks if atk.get("status") == "sent"]
+            arrival = int(sched.get("arrival_time") or 0) or None
+            arrivals = [atk.get("arrival_real") or arrival for atk in sent]
+            data["noble_arrivals"] = (data.get("noble_arrivals") or []) + arrivals
+            data["hits_done"] = int(data.get("hits_done") or 0) + len(sent)
+            if arrivals and all(arrivals):
+                data["last_hit_timestamp"] = max(
+                    [int(data.get("last_hit_timestamp") or 0)] + [int(a) for a in arrivals])
+            data["reinforcement"] = dict(info, status="sent" if sent else "failed",
+                                         sent=len(sent))
+            ConquestCache.set(target_id, data)
+            self._release(target_id, prefix=self.REINFORCE_PREFIX)
+            self.logger.info("Conquest: reforco contra %s -- %d de %d nobre(s) sairam",
+                             village_label(target_id), len(sent), len(attacks))
+            Notification.send(
+                "Conquista: reforco contra %s -- %d de %d nobre(s) sairam%s."
+                % (conquest_label(target_id, data), len(sent), len(attacks),
+                   "" if sent else "; o bot volta ao extra depois do pouso"))
+
+    def _sync_reinforcement_reserves(self):
+        """
+        Reserva `barb_reforco:<alvo>` = tropa dos comandos do reforco ainda
+        `pending` no Hunter; o resto e solto. Mesmo desenho do
+        `_sync_scheduled_reserves`, com prefixo proprio: o
+        `_release_orphan_reserves` solta `barb_train:*` de todo alvo fora de
+        `train_scheduled`, e o alvo de um reforco esta em `extra_pending`.
+        """
+        wanted = {}
+        schedules = FileManager.load_json_file(Hunter.SCHEDULE_CACHE)
+        if schedules is None:
+            return
+        for target_id, data in ConquestCache.active_conquests().items():
+            info = data.get("reinforcement") or {}
+            if info.get("status") != "scheduled":
+                continue
+            sched = schedules.get(info.get("sched_key") or "") or {}
+            for atk in sched.get("attacks") or []:
+                if atk.get("status") != "pending":
+                    continue
+                bucket = wanted.setdefault(str(atk.get("source_village_id")), {}).setdefault(
+                    "%s:%s" % (self.REINFORCE_PREFIX, target_id), {})
+                for unit, qty in (atk.get("troops") or {}).items():
+                    try:
+                        bucket[unit] = bucket.get(unit, 0) + int(qty)
+                    except (TypeError, ValueError):
+                        continue
+        prefix = "%s:" % self.REINFORCE_PREFIX
+        for vid, village in self.villages.items():
+            reserve = getattr(getattr(village, "units", None), "conquest_reserve", None)
+            if reserve is None:
+                continue
+            mine = wanted.get(str(vid), {})
+            for key in [k for k in reserve if str(k).startswith(prefix)]:
+                if key not in mine:
+                    reserve.pop(key, None)
+            for key, troops in mine.items():
+                reserve[key] = dict(troops)
 
     # ------------------------------------------------------------------
     # Transicao: agendado -> enviado

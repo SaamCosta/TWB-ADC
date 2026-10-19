@@ -67,6 +67,7 @@ class EventTick:
     def __init__(self):
         # Mutaveis em __init__ (1o padrao).
         self._handled = {}
+        self._reinforce_tried = {}
         self._busy = False
 
     # ------------------------------------------------------------------
@@ -75,8 +76,15 @@ class EventTick:
 
     @staticmethod
     def landing_of(data):
-        """Ultimo pouso registrado, se TODOS ja tem hora conhecida; senao None."""
-        arrivals = data.get("noble_arrivals") or []
+        """
+        Ultimo pouso registrado, se TODOS ja tem hora conhecida; senao None.
+        Reforco agendado (§8.71) conta pela chegada planejada: acompanhar no
+        pouso do trem, com o reforco ainda por pousar, nao decide nada.
+        """
+        arrivals = list(data.get("noble_arrivals") or [])
+        reinforcement = data.get("reinforcement") or {}
+        if reinforcement.get("status") == "scheduled" and reinforcement.get("arrival"):
+            arrivals.append(reinforcement["arrival"])
         if not arrivals or any(a is None for a in arrivals):
             return None
         try:
@@ -126,9 +134,14 @@ class EventTick:
             schedules = FileManager.load_json_file(Hunter.SCHEDULE_CACHE) or {}
         due = []
         for target_id, data in sorted(conquests.items()):
-            if data.get("status") != "train_scheduled":
+            reinforcement = data.get("reinforcement") or {}
+            if data.get("status") == "train_scheduled":
+                key = data.get("hunter_schedule_key")
+            elif reinforcement.get("status") == "scheduled":
+                key = reinforcement.get("sched_key")  # §8.71: reforco que ja saiu
+            else:
                 continue
-            sched = schedules.get(data.get("hunter_schedule_key") or "")
+            sched = schedules.get(key or "")
             if not sched:
                 continue
             attacks = sched.get("attacks", [])
@@ -137,6 +150,29 @@ class EventTick:
                 continue
             due.append(str(target_id))
         return due
+
+    # Uma tentativa de reforco por alvo a cada tanto: o tick roda antes de
+    # cada alvo do farm, e sem isto o mesmo "nao fecha escolta" iria ao log
+    # centenas de vezes por ciclo.
+    REINFORCE_RETRY = 30 * 60
+
+    def reinforcements_due(self, conquests, config, now):
+        """Alvos com trem incompleto no ar que pedem reforco (§8.71)."""
+        from game.attack import ConquestManager
+        from game.conquest_planner import BarbarianTrainPlanner
+
+        out = []
+        for target_id, data in sorted(conquests.items()):
+            if now - self._reinforce_tried.get(str(target_id), 0) < self.REINFORCE_RETRY:
+                continue
+            drop_max = (data.get("loyalty_drop_range") or [None, None])[1]
+            if drop_max is None:
+                drop_max = ConquestManager.world_drop_range(config)[1]
+            missing, _landing, _why = BarbarianTrainPlanner.reinforcement_need(
+                data, now, drop_max, BarbarianTrainPlanner.BARB_START_LOYALTY)
+            if missing:
+                out.append(str(target_id))
+        return out
 
     # ------------------------------------------------------------------
     # O relatorio do pouso
@@ -189,18 +225,37 @@ class EventTick:
             conquests = ConquestCache.active_conquests()
             promote = self.promotions_due(conquests)
             due = self.due_landings(now, conquests)
+            reinforce = self.reinforcements_due(conquests, config, now)
         except Exception as exc:
             logger.warning("Eventos: nao consegui ler o estado da conquista (%s)", exc)
             return False
-        if not promote and not due:
+        if not promote and not due and not reinforce:
             return False
 
         self._busy = True
         try:
-            if promote and callable(planner_factory):
-                logger.info("Eventos: trem(ns) %s com o Hunter encerrado -- promovendo agora",
-                            ", ".join(village_label(t) for t in promote))
-                planner_factory()._promote_scheduled_trains()
+            planner = planner_factory() if callable(planner_factory) else None
+            if promote and planner is not None:
+                logger.info("Eventos: trem(ns)/reforco(s) %s com o Hunter encerrado -- "
+                            "promovendo agora", ", ".join(village_label(t) for t in promote))
+                planner._promote_scheduled_trains()
+                planner.promote_reinforcements()
+                planner._sync_reinforcement_reserves()
+                # Trem recem-promovido incompleto: o reforco se decide ja.
+                reinforce = self.reinforcements_due(
+                    ConquestCache.active_conquests(), config, now)
+            if reinforce and planner is not None and (not callable(gate) or gate("eventos")):
+                for target_id in reinforce:
+                    self._reinforce_tried[target_id] = now
+                if callable(prime):
+                    stale = [vid for vid, v in (villages or {}).items()
+                             if (not getattr(v, "units", None) or not getattr(v, "area", None))
+                             and self._may_hold_noble(vid, v)]
+                    if stale:
+                        prime(sorted(stale))
+                logger.info("Eventos: trem incompleto no ar contra %s -- avaliando reforco agora",
+                            ", ".join(village_label(t) for t in reinforce))
+                planner.plan_reinforcements(now=now)
             handled = False
             for target_id, data, landing in due:
                 if callable(gate) and not gate("eventos"):

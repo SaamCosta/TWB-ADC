@@ -848,6 +848,187 @@ def test_config_real_tem_as_duas_chaves_separadas():
     print("     (PvP %s · bárbara %s)" % (c["escort_ratio"], c["barbarian_escort_ratio"]))
 
 
+# --------------------------------------------------------------------------
+# §8.71: reforco de trem incompleto, antes do pouso
+# --------------------------------------------------------------------------
+# Caso real: o trem contra a Barbara 81800 saiu com 2 de 4 nobres em 19/10 e
+# pousa em 21/10 07:11:05. A ~64 campos o nobre extra avulso voa ~37,5 h e
+# regenera mais do que derruba; o reforco manda os 2 que faltam juntos, para
+# pousarem logo depois do trem.
+
+T81800 = 1792577465
+SCAN_EMPTY = {"arrivals": [], "unknown": [], "unreadable": []}
+
+
+def _train(**over):
+    data = {"status": "extra_pending", "reserved_by": "41140", "hits_done": 2,
+            "hits_needed": 4, "noble_arrivals": [T81800, T81800],
+            "loyalty_drop_range": [20, 35], "target_location": [650, 292],
+            "target_name": "Bárbara #81800"}
+    data.update(over)
+    return data
+
+
+def _reinforce_planner(data=None, scan=None, mine=False, taken=None, blocked=None):
+    store = {"81800": _train() if data is None else data}
+    p, calls = _planner(store=store, active=store)
+    m = planner_mod.ConquestManager
+    m._target_is_mine = lambda self, t: mine
+    m._target_taken_by_other = lambda self, t: taken
+    m._claim_block_reason = lambda self, t, loc=None: blocked
+    m._scan_nobles_in_flight = lambda self, loc: dict(scan or SCAN_EMPTY)
+
+    def add(t, a, plan, label="barb"):
+        calls["schedules"].append({"target_id": t, "arrival_str": a, "label": label,
+                                   "attacks": [dict(x) for x in plan]})
+        return True
+    p._add_hunter_schedule = add
+    p._travel_seconds = lambda vid, loc: 37.5 * 3600  # ~64 campos
+    _FakeHunter.duration = 3600.0
+    return p, calls, store
+
+
+def test_reforco_necessidade_regra_pura():
+    need = BarbarianTrainPlanner.reinforcement_need
+    now = T81800 - 37 * 3600
+    assert need(_train(), now, 35)[:2] == (2, T81800)
+    assert need(_train(noble_arrivals=[T81800] * 3, hits_done=3), now, 35)[0] is None, \
+        "3 x 35 >= 100: o trem pode conquistar sozinho, espera o relatorio"
+    assert need(_train(), T81800 + 60, 35)[0] is None, "trem ja pousou: caminho de antes"
+    assert need(_train(noble_arrivals=[T81800, None]), now, 35)[0] is None
+    assert need(_train(status="train_sent"), now, 35)[0] is None
+    assert need(_train(reinforcement={"status": "skipped"}), now, 35)[0] is None
+    assert need(_train(hits_done=4), now, 35)[0] is None
+
+
+def test_reforco_casa_chegadas_da_praca_com_o_trem():
+    um = BarbarianTrainPlanner.unmatched_observed
+    obs = [(T81800 + 1, "41140", "a"), (T81800 + 2, "41140", "b")]
+    assert um(obs, [T81800, T81800]) == [], "os 2 do trem, 1 e 2 s depois do registrado"
+    manual = (T81800 + 9000, "41114", "c")
+    assert um(obs + [manual], [T81800, T81800]) == [manual]
+    assert um(obs, [T81800]) == [obs[1]], "cada registro casa UMA observada"
+
+
+def test_reforco_81800_agenda_os_dois_que_faltam_logo_depois_do_trem():
+    p, calls, store = _reinforce_planner()
+    out = p.plan_reinforcements(now=T81800 - 37 * 3600)
+    assert out == ["81800"], out
+    sched = calls["schedules"][-1]
+    assert sched["label"] == "barb_reforco" and len(sched["attacks"]) == 2, sched
+    assert all(a["troops"]["snob"] == 1 for a in sched["attacks"])
+    rec = store["81800"]["reinforcement"]
+    assert rec["status"] == "scheduled" and rec["nobles"] == 2, rec
+    assert rec["arrival"] >= T81800 + BarbarianTrainPlanner.REINFORCE_MIN_GAP, \
+        "pousa depois do trem, nunca antes: %s" % rec
+    assert rec["sched_key"].endswith("_barb_reforco")
+    reserved = {vid: v.units.conquest_reserve.get("barb_reforco:81800")
+                for vid, v in p.villages.items()}
+    assert any(reserved.values()), "a tropa do reforco fica reservada: %s" % reserved
+    assert store["81800"]["status"] == "extra_pending"
+
+
+def test_reforco_decidido_uma_vez_so():
+    p, calls, store = _reinforce_planner()
+    p.plan_reinforcements(now=T81800 - 37 * 3600)
+    p.plan_reinforcements(now=T81800 - 36 * 3600)
+    assert len(calls["schedules"]) == 1
+
+
+def test_nobre_manual_no_ar_nao_agenda_e_registra():
+    scan = {"arrivals": [(T81800 + 1, "41140", "a"), (T81800 + 2, "41140", "b"),
+                         (T81800 + 9000, "41114", "manual")],
+            "unknown": [], "unreadable": []}
+    p, calls, store = _reinforce_planner(scan=scan)
+    assert p.plan_reinforcements(now=T81800 - 37 * 3600) == []
+    assert calls["schedules"] == []
+    assert store["81800"]["reinforcement"]["status"] == "skipped"
+    assert T81800 + 9000 in store["81800"]["noble_arrivals"]
+
+
+def test_praca_ilegivel_adia_sem_decidir():
+    p, calls, store = _reinforce_planner(scan=dict(SCAN_EMPTY, unreadable=["41114"]))
+    p.plan_reinforcements(now=T81800 - 37 * 3600)
+    assert calls["schedules"] == [] and "reinforcement" not in store["81800"]
+
+
+def test_perto_do_alvo_o_extra_avulso_progride_e_nao_ha_reforco():
+    p, calls, store = _reinforce_planner()
+    p._travel_seconds = lambda vid, loc: 10 * 3600  # 10 h: regenera 10 < 20
+    p.plan_reinforcements(now=T81800 - 37 * 3600)
+    assert calls["schedules"] == []
+    assert store["81800"]["reinforcement"]["reason"] == "extra avulso progride"
+
+
+def test_reforco_que_pousaria_tarde_demais_nao_sai():
+    p, calls, store = _reinforce_planner()
+    _FakeHunter.duration = 3600.0 * 80  # pousaria ~43 h depois do trem
+    p.plan_reinforcements(now=T81800 - 37 * 3600)
+    assert calls["schedules"] == []
+    assert store["81800"]["reinforcement"]["reason"] == "pousaria tarde demais"
+
+
+def test_alvo_perdido_ou_nosso_ou_reservado_nao_reforca():
+    for kwargs in ({"mine": True}, {"taken": "848912345"}, {"blocked": ("tribe", {})}):
+        p, calls, store = _reinforce_planner(**kwargs)
+        p.plan_reinforcements(now=T81800 - 37 * 3600)
+        assert calls["schedules"] == [], kwargs
+
+
+def test_promocao_do_reforco_entra_nas_chegadas():
+    key = "81800_2026-10-21T07-12-05_barb_reforco"
+    data = _train(reinforcement={"status": "scheduled", "sched_key": key,
+                                 "arrival": T81800 + 60, "nobles": 2})
+    schedules = {key: {"arrival_time": T81800 + 60, "status": "complete",
+                       "attacks": [{"status": "sent"}, {"status": "sent"}]}}
+    store = {"81800": data}
+    p, _ = _planner(store=store, schedules=schedules, active=store)
+    p.villages["41123"].units.conquest_reserve["barb_reforco:81800"] = {"snob": 2}
+    p.promote_reinforcements()
+    rec = store["81800"]
+    assert rec["noble_arrivals"] == [T81800, T81800, T81800 + 60, T81800 + 60], rec
+    assert rec["hits_done"] == 4 and rec["reinforcement"]["status"] == "sent"
+    assert "barb_reforco:81800" not in p.villages["41123"].units.conquest_reserve
+
+
+def test_reforco_com_schedule_apagado_vira_lost():
+    data = _train(reinforcement={"status": "scheduled", "sched_key": "sumiu",
+                                 "arrival": T81800 + 60})
+    store = {"81800": data}
+    p, _ = _planner(store=store, schedules={"outro": {"attacks": []}}, active=store)
+    p.promote_reinforcements()
+    assert store["81800"]["reinforcement"]["status"] == "lost"
+
+
+def test_reserva_do_reforco_segue_o_hunter():
+    key = "k_barb_reforco"
+    data = _train(reinforcement={"status": "scheduled", "sched_key": key,
+                                 "arrival": T81800 + 60})
+    schedules = {key: {"attacks": [
+        {"status": "pending", "source_village_id": "41123", "troops": {"snob": 1, "axe": 100}},
+        {"status": "sent", "source_village_id": "41140", "troops": {"snob": 1, "axe": 100}}]}}
+    store = {"81800": data}
+    p, _ = _planner(store=store, schedules=schedules, active=store)
+    p.villages["41140"].units.conquest_reserve["barb_reforco:81800"] = {"snob": 1}
+    p._sync_reinforcement_reserves()
+    assert p.villages["41123"].units.conquest_reserve["barb_reforco:81800"] == {"snob": 1, "axe": 100}
+    assert "barb_reforco:81800" not in p.villages["41140"].units.conquest_reserve, \
+        "comando que ja saiu solta a reserva"
+
+
+def test_reforco_agendado_conta_como_nobre_no_ar():
+    from game.attack import ConquestCache as RealCache
+    from game.event_tick import EventTick
+    data = _train(noble_arrivals=[T81800 - 10, T81800 - 10],
+                  reinforcement={"status": "scheduled", "arrival": T81800 + 60})
+    assert RealCache.nobles_in_flight(data, now=T81800) == [T81800 + 60], \
+        "trem pousado, reforco agendado: a trava segura o extra avulso"
+    assert RealCache.nobles_in_flight(data, now=T81800 + 61) == []
+    assert EventTick.landing_of(data) == T81800 + 60, "o tick espera o reforco pousar"
+    done = dict(data, reinforcement={"status": "sent", "arrival": T81800 + 60})
+    assert RealCache.nobles_in_flight(done, now=T81800) == []
+
+
 if __name__ == "__main__":
     falhas = 0
     for nome, fn in sorted(globals().items()):

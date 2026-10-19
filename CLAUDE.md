@@ -66,6 +66,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     com nobre é lida (`Extractor.place_outgoing_commands`, grátis) e nobre
     nosso no ar, até manual, bloqueia o extra. Nobre **atrasado** de trem
     bárbaro sai (`Hunter.late_barbarian_verdict`); PvP/snipe/fake/apoio não.
+    Trem que saiu incompleto contra alvo longe ganha **reforço** antes do
+    pouso (`plan_reinforcements`, schedule `barb_reforco`), que conta como
+    nobre no ar enquanto agendado.
   - `core/paid_features.py` — **o** interruptor do modo pago (§8.67):
     premium/gerente/assistente lidos ao vivo do `game_data` de toda resposta.
     Fase cedida ao recurso pago consulta `Village.paid_active(nome)` na hora

@@ -198,15 +198,48 @@ def test_conquistada_nao_prima_ninguem():
     assert primed == [] and anchor.runs == 1, "o acompanhamento marca conquistada e avisa"
 
 
+def fake_planner(calls):
+    return SimpleNamespace(
+        _promote_scheduled_trains=lambda: calls.append("promote"),
+        promote_reinforcements=lambda: calls.append("promote_reforco"),
+        _sync_reinforcement_reserves=lambda: calls.append("sync"),
+        plan_reinforcements=lambda now=None: calls.append("plan") or [])
+
+
 def test_promocao_chama_o_planejador():
     calls = []
-    planner = SimpleNamespace(_promote_scheduled_trains=lambda: calls.append(1))
     done = {SCHED: {"status": "failed", "arrival_time": LANDING,
                     "attacks": [{"status": "sent"}, {"status": "failed"}]}}
     t = EventTick()
     with Fakes({"81800": conquest(status="train_scheduled")}, schedules=done):
-        t.tick(CONFIG, {}, None, planner_factory=lambda: planner, now=LANDING - 3600)
-    assert calls == [1]
+        t.tick(CONFIG, {}, None, planner_factory=lambda: fake_planner(calls), now=LANDING - 3600)
+    assert calls == ["promote", "promote_reforco", "sync"], calls
+
+
+def test_trem_incompleto_no_ar_avalia_reforco_a_cada_30_min():
+    calls = []
+    incomplete = conquest(hits_done=2, hits_needed=4, loyalty_drop_range=[20, 35])
+    t = EventTick()
+    now = LANDING - 36 * 3600
+    with Fakes({"81800": incomplete}):
+        t.tick(CONFIG, {}, None, planner_factory=lambda: fake_planner(calls), now=now)
+        t.tick(CONFIG, {}, None, planner_factory=lambda: fake_planner(calls), now=now + 600)
+        assert calls == ["plan"], "uma tentativa a cada 30 min, nao a cada checkpoint: %s" % calls
+        t.tick(CONFIG, {}, None, planner_factory=lambda: fake_planner(calls),
+               now=now + EventTick.REINFORCE_RETRY + 1)
+    assert calls == ["plan", "plan"], calls
+
+
+def test_trem_completo_ou_que_conquista_sozinho_nao_pede_reforco():
+    calls = []
+    t = EventTick()
+    now = LANDING - 36 * 3600
+    for data in (conquest(hits_done=4, hits_needed=4),
+                 conquest(arrivals=(LANDING,) * 3, hits_done=3, hits_needed=4,
+                          loyalty_drop_range=[20, 35])):
+        with Fakes({"81800": data}):
+            t.tick(CONFIG, {}, None, planner_factory=lambda: fake_planner(calls), now=now)
+    assert calls == [], calls
 
 
 def test_conquista_desligada_ou_reentrada_nao_faz_nada():
