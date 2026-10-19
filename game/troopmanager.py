@@ -42,6 +42,9 @@ class TroopManager:
     # antes de recrutar (§8.68). None, não {}: dict no corpo da classe seria
     # compartilhado entre aldeias (1º padrão).
     noble_reserve = None
+    # Pesquisa pedida e ainda não resolvida, pela última leitura do ferreiro;
+    # None = não lido neste processo (§8.68, gerente automático).
+    research_pending = None
 
     wrapper = None
     village_id = None
@@ -379,6 +382,7 @@ class TroopManager:
             return
         unit_levels = self.wanted_levels
         if not unit_levels:
+            self.research_pending = False
             self.logger.debug("Not upgrading because nothing is requested")
             return
         # §9 item 20: a tela do ferreiro era lida em toda aldeia, todo ciclo
@@ -386,6 +390,7 @@ class TroopManager:
         # dia no imperio inteiro. Com tudo resolvido, nao ha o que fazer nela.
         if not self.smith_read_needed(
                 unit_levels, self._smith_settled, self._smith_settled_at, time.time()):
+            self.research_pending = False
             self.logger.debug(
                 "Smith: pesquisas pedidas %s ja resolvidas, sem GET", str(unit_levels)
             )
@@ -396,6 +401,8 @@ class TroopManager:
             self.logger.debug("Error reading smith data")
             return False
         settled = self.smith_settled_levels(smith_data, unit_levels)
+        # §8.68 (gerente automático): o que a última leitura do ferreiro disse.
+        self.research_pending = len(settled) != len(unit_levels)
         if len(settled) == len(unit_levels):
             if not self._smith_settled:
                 self.logger.info(

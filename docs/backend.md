@@ -7493,6 +7493,68 @@ esperado fica perto de **120–150 req/ciclo**, quase todo no recrutamento.
   numa campanha ativa; se for o caso, o hub entra num grupo de "Reservas" do
   Estoque.
 
+### `P-GERENTE-AUTO` — o bot mantém o gerente sozinho (2026-10-19)
+
+**Pedido do usuário:** "tudo tem que ser automatizado, até o bot definir o
+grupo de cada aldeia no sistema premium e ativar e renovar construção, tropa e
+pesquisa no gerente de conta."
+
+**O que o bot mantém**, só com o gerente ativo agora e
+`account_manager.auto_manage` ligado, por papel (`villages[vid].building`) e
+pelo **nome** que o jogo mostra (`account_manager.roles`; o nome vira id pelo
+que o próprio jogo oferece):
+
+| O quê | Quando aplica | Onde decide |
+|---|---|---|
+| modelo de construção | widget "Sem gerência" (ou outro modelo) **e** o template do bot tem `predio:nivel` acima do nível atual | fase `gerente`, no fim da aldeia |
+| modelo de pesquisa | widget "Sem gerência" **e** a última leitura do ferreiro diz pedido não resolvido (`TroopManager.research_pending`) | idem |
+| modelo de tropas | widget "Sem gerência" **e** alguma unidade abaixo da meta do modelo | idem |
+| reserva do gerente de tropas | ≠ reserva do nobre (`noble_reserve()`), que segue o portão | idem |
+| grupo estático | a aldeia não está no grupo do papel; sai dos grupos dos **outros** papéis | `gerente_conta`, início do ciclo |
+
+"Sem gerência" sozinho nunca aplica: o jogo tira o modelo cumprido, e
+reaplicar é um POST que ele desfaz na hora. Pendência desconhecida (`None`)
+não aplica. O mesmo modelo não volta à mesma aldeia antes de
+`reapply_backoff_hours` (24). A renovação do gerente se resolve sozinha: tudo
+volta a "Sem gerência" e cada aldeia é reaplicada na sua vez.
+
+**Leituras da conta** (`game/am_auto.py`), uma vez por `account_refresh_hours`
+(24) e de novo quando o gerente volta: 3 GETs. Sondado em 19/10 (só leitura):
+- grupos: `page=1` e depois `page=0`; a visita seguinte sem `page` mostra a
+  primeira página, então a tela do jogador fica como estava;
+- `am_troops`: `page=1` voltou **vazio** (sem linhas nem navegação, apesar do
+  link `[2]`), e `page=-1` ("todos") **fica gravado como preferência**: a
+  visita seguinte sem `page` trouxe as 55, e `page=0` não desfez. ⚠️ **Efeito
+  colateral da sonda, a tela de tropas do gerente do usuário ficou em
+  "todos".** O bot lê `am_troops` sem `page`; os modelos vêm em qualquer
+  página, e a reserva de aldeia fora da página lida é a que o bot gravou.
+
+**Gravações** (formulários em lote do jogo, payloads lidos das telas):
+`am_village`/`am_research` `action=village_mass` (`action=apply`, `template`,
+`villages[]`); `am_troops` `action=save_village` (meta de cada unidade do
+modelo + `template_id` + `buffer_*` + `edit[]` + `save`; o formulário regrava a
+meta junto, então vai sempre a do modelo do papel); grupos
+`overview_villages&action=bulk_edit_villages&mode=groups&type=static&partial`
+(`village_ids[]`, `selected_group`, `add_to_group`/`remove_from_group`).
+Recusa = presença de `error_box` (o `Extractor.error_box_text` devolve texto
+sempre; o teste pegou o executor contando toda resposta como recusa).
+
+**Parsers novos**, com fixture verbatim: `Extractor.account_manager_widget_options`,
+`account_manager_troops` (`tests/fixtures/am_troops_br143.html`) e
+`village_groups` (`tests/fixtures/village_groups_br143.html`; "não
+classificado" não é grupo). Teste: `tests/test_am_auto.py`, com seis guardas
+provadas por mutação (pendência desconhecida, backoff, dry_run, detecção de
+recusa, ordem das páginas, grupo fora do mapa). Suíte 108/108.
+
+**Config:** `auto_manage` (false / `"dry_run"` / true), `roles`,
+`reapply_backoff_hours`, `account_refresh_hours`; `build.version` 5.4 → 5.5 só
+no exemplo. No `config.json` do usuário: `"dry_run"` e o mapa da §8.66
+(Ataque/Defesa/Watch Tower; `ADC - OFENSIVA BOT`/`ADC - DEFENSIVA`/`ADC -
+TORRE` na construção; `ADC - OFENSIVA`/`DEFENSIVA`/`TORRE` em pesquisa e
+tropas). **⏳ Próximo:** reiniciar, ler as linhas `GerenteAuto [simulação]`
+do ciclo das 6h (em especial quantas das BBM 001–012 o bot acha pendentes de
+construção com o jogo dizendo cumprido) e só então `auto_manage: true`.
+
 ## 8.69 `P-DEFESA-TETO` — teto de apoio, blindagem e "onde estão as tropas" (2026-10-18)
 
 **Incidente.** A BBM 055 (74966, 579|257), lealdade 31, com 1 ataque que podia

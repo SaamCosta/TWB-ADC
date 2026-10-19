@@ -1070,6 +1070,102 @@ class Extractor:
         return out
 
     @staticmethod
+    def account_manager_widget_options(res):
+        """
+        Modelos que o gerente oferece, por linha do mesmo widget
+        (`show_am_settings`): {"construction": {"ADC - DEFENSIVA": 2109, ...},
+        "research": {...}, "troops": {...}}. É de onde o nome do modelo no
+        config vira o id que o formulário do jogo pede (§8.68, gerente
+        automático). Ficam de fora as opções de controle (`- Parar o
+        gerenciamento -`, `- Sem gerência -`, `- Recrutamento ativo -`), que
+        não são modelo (value 0/-1). None sem o widget; linha que não casa
+        fica {}.
+        """
+        res = _page_text(res)
+        start = res.find('id="show_am_settings"')
+        if start == -1:
+            return None
+        end = res.find("registerAMWidgetEvents", start)
+        block = res[start:end if end != -1 else start + 20000]
+        out = {}
+        for key, name in Extractor.AM_WIDGET_SELECTS.items():
+            sel = re.search(r'<select[^>]*\bname="%s"[^>]*>(.*?)</select>' % name, block, re.S)
+            options = {}
+            for value, label in re.findall(r'<option value="(\d+)"[^>]*>([^<]*)</option>',
+                                           sel.group(1) if sel else ""):
+                label = html.unescape(label).strip()
+                if int(value) > 0 and label and not label.startswith("-"):
+                    options[label] = int(value)
+            out[key] = options
+        return out
+
+    @staticmethod
+    def account_manager_troops(res):
+        """
+        Tela `am_troops` (gerente de tropas), verbatim do br143 de 18/10 em
+        tests/fixtures/am_troops_br143.html:
+
+        - `templates`: {nome: {"id", "buffer_wood".., unidade: meta}} do
+          `Accountmanager.initTroopManagement([...])`;
+        - `villages`: {vid: {"buffer_wood".., unidade: meta}} das linhas
+          (`<input name="edit[]" value="vid">` + `<span data-field="x">n</span>`;
+          o número verde/vermelho antes de cada meta é a contagem atual e não
+          entra).
+
+        ⚠️ A lista pagina a 50 (26º padrão): `villages` é só a página pedida.
+        None quando a tela não é essa (sem o init dos modelos).
+        """
+        res = _page_text(res)
+        raw = re.search(r"Accountmanager\.initTroopManagement\((\[.*?\])\s*[,)]", res, re.S)
+        if not raw:
+            return None
+        try:
+            templates = {}
+            for entry in json.loads(raw.group(1)):
+                fields = {}
+                for key, value in entry.items():
+                    if key in ("player_id", "village_id", "template", "village_type"):
+                        continue
+                    try:
+                        fields[key] = int(value)
+                    except (TypeError, ValueError):
+                        continue
+                templates[str(entry.get("template", "")).strip()] = fields
+        except (ValueError, TypeError, AttributeError):
+            return None
+        villages = {}
+        for row in re.findall(r'<tr class="row_[ab]">(.*?)</tr>', res, re.S):
+            vid = re.search(r'name="edit\[\]"[^>]*value="(\d+)"', row)
+            if vid:
+                villages[vid.group(1)] = {
+                    k: int(v) for k, v in re.findall(r'data-field="(\w+)">\s*(-?\d+)', row)}
+        return {"templates": templates, "villages": villages}
+
+    @staticmethod
+    def village_groups(res):
+        """
+        Tela de grupos estáticos (`overview_villages&mode=groups&type=static`):
+        `groups` = {nome: id} do `<select name="selected_group">` e
+        `villages` = {vid: [nomes]} de `<td id="assigned_groups_<vid>_names">`.
+        Verbatim em tests/fixtures/village_groups_br143.html. ⚠️ Pagina a 50:
+        `villages` é só a página pedida. None sem o select (não é essa tela).
+        """
+        res = _page_text(res)
+        sel = re.search(r'<select name="selected_group">(.*?)</select>', res, re.S)
+        if not sel:
+            return None
+        groups = {html.unescape(label).strip(): int(value)
+                  for value, label in re.findall(r'<option value="(\d+)">([^<]*)</option>', sel.group(1))}
+        villages = {}
+        for vid, names in re.findall(r'<td id="assigned_groups_(\d+)_names">(.*?)</td>', res, re.S):
+            text = html.unescape(re.sub(r"<[^>]+>", "", names)).strip()
+            # Sem grupo, o jogo escreve "não classificado" (BBM 054, 18/10):
+            # fica só o que é grupo estático de verdade.
+            villages[vid] = [n.strip() for n in re.split(r"[;,]", text)
+                             if n.strip() in groups]
+        return {"groups": groups, "villages": villages}
+
+    @staticmethod
     def own_villages_overview(res):
         """
         Todas as aldeias da conta, da visão geral (`overview_villages`). A

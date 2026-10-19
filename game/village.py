@@ -6,7 +6,7 @@ import time
 from codecs import decode
 from datetime import datetime
 
-from core import am_cession
+from core import am_auto, am_cession
 from core import game_data_shadow
 from core import support_store
 from core.village_label import register as register_village_name, village_label
@@ -102,6 +102,10 @@ class Village:
     # desta aldeia neste ciclo (None, ou dict com role "hub"/"donor").
     mint_manager = None
     mint_route = None
+    # Gerente automático (§8.68, game/am_auto.py): uma instância por processo,
+    # injetada pelo twb.py como o mint_manager.
+    am_auto = None
+    am_widget_options = None
 
     # Feature 35: quadro de reservas da tribo para este ciclo, instalado por
     # twb.py junto dos dois acima. Mesma nota de seguranca: sempre reatribuido,
@@ -127,6 +131,7 @@ class Village:
         # a última decisão de cessão por fase (só para logar a troca). Dict
         # mutável: instância, não classe (1º padrão).
         self.am_widget = None
+        self.am_widget_options = None
         self._am_cession = {}
         self._am_cession_at = {}
         # Última reserva de nobre logada (§8.68). {} = "sem reserva", o estado
@@ -198,6 +203,7 @@ class Village:
         """
         # Widget de um ciclo anterior não vale: sem leitura nova, o bot faz.
         self.am_widget = None
+        self.am_widget_options = None
         if not self.village_id:
             data = self.wrapper.get_url("game.php?screen=overview&intro")
             if data:
@@ -238,6 +244,7 @@ class Village:
             register_village_name(self.village_id, self.game_data["village"].get("name"))
             # §8.68: modelos do gerente nesta aldeia, da mesma resposta.
             self.am_widget = Extractor.account_manager_widget(data)
+            self.am_widget_options = Extractor.account_manager_widget_options(data)
         if (
                 self.village_set_name
                 and self.game_data
@@ -977,6 +984,39 @@ class Village:
         if not self.builder or self.builder.get_level("snob") <= 0:
             return False
         return not self._noble_too_far()
+
+    def run_am_auto(self):
+        """
+        Gerente automático nesta aldeia (§8.68, `P-GERENTE-AUTO`): aplica o
+        modelo de construção, pesquisa ou tropas do papel onde o widget diz
+        que falta e o bot sabe que a aldeia não chegou lá, e mantém a reserva
+        do gerente de tropas igual à reserva do nobre. Roda no fim da aldeia,
+        depois de builder, ferreiro e tropas terem dado o que o bot sabe dela.
+        """
+        cfg = (self.config or {}).get("account_manager") or {}
+        if self.am_auto is None or am_auto.mode(cfg) == "off":
+            return
+        if not self.paid_active("AccountManager") or self.am_widget is None:
+            return
+        role = self.get_village_config(self.village_id, parameter="building", default=None)
+        targets = am_auto.role_targets(cfg, role)
+        if not targets:
+            return
+        entries = None
+        if self.builder and self.builder.raw_template:
+            # A estátua sai do template quando o mundo não tem paladino (o
+            # builder faz o mesmo); sem isto ela ficaria "pendente" para sempre.
+            entries = [e for e in self.builder.raw_template
+                       if self.knight_enabled or not str(e).startswith("statue")]
+        template = (self.am_auto.troop_templates() or {}).get(targets.get("troops"))
+        pending = {
+            "construction": am_auto.construction_pending(
+                entries, self.builder.levels if self.builder else None),
+            "research": getattr(self.units, "research_pending", None),
+            "troops": am_auto.troops_pending(template, getattr(self.units, "total_troops", None)),
+        }
+        self.am_auto.run_village(cfg, self.village_id, role, self.am_widget,
+                                 self.am_widget_options, pending, self.noble_reserve())
 
     def noble_reserve(self):
         """
@@ -1752,6 +1792,11 @@ class Village:
         if not paused and self._gate("mercado"):
             with self._phase("mercado"):
                 self.go_manage_market()
+        # §8.68: gerente automático. No fim, porque decide com o que builder,
+        # ferreiro e tropas leram neste ciclo; a cessão vê o efeito no próximo.
+        if self.am_auto is not None and self._gate("gerente"):
+            with self._phase("gerente"):
+                self.run_am_auto()
 
         self.set_cache_vars()
         self.logger.info("Village cycle done, returning to overview")

@@ -139,6 +139,7 @@ from core.notification import Notification
 from core.village_label import village_label
 from core import account_pulse
 from core import paid_features
+from core import am_auto
 from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
@@ -161,6 +162,7 @@ from game.world_villages import WorldVillages
 from game.noble_recruit_gate import NobleRecruitGate
 from game.player_stats import PlayerStats
 from game.in_flight import InFlight
+from game.am_auto import AccountManagerAuto
 from manager import VillageManager
 from pages.overview import OverviewPage
 from core.exceptions import UnsupportedPythonVersion, VillageInitException
@@ -204,6 +206,8 @@ class TWB:
     mint_manager = None
     # Defesa propria (§8.60): uma instancia por processo, como a cunhagem.
     own_defense = None
+    # Gerente automatico (§8.68): idem.
+    am_auto = None
     # Feature 35: sobrevive entre ciclos de proposito, para o TTL do quadro de
     # reservas valer de verdade. Imutavel como default de classe (o objeto e
     # criado sob demanda), mesma forma do `hunter` acima.
@@ -718,6 +722,32 @@ class TWB:
     # impede o laco de reconferir a rede sem pausa.
     BLIND_SLEEP_FLOOR = 30
 
+    def run_am_auto_account(self, config, managed_villages_dict):
+        """
+        Gerente automatico, parte da conta (§8.68, `P-GERENTE-AUTO`): relê
+        `am_troops` e os grupos quando a leitura venceu ou o gerente voltou, e
+        poe cada aldeia no grupo do seu papel. So com o gerente ativo agora e
+        `account_manager.auto_manage` ligado (ou em "dry_run").
+        """
+        cfg = (config or {}).get("account_manager") or {}
+        if self.am_auto is None or am_auto.mode(cfg) == "off" or not managed_villages_dict:
+            return
+        detector = getattr(self.wrapper, "paid_features", None)
+        try:
+            active = detector is not None and detector.active("AccountManager") is True
+        except Exception:
+            active = False
+        if not self._hunter_gate(config, "gerente_conta"):
+            return
+        any_vid = sorted(managed_villages_dict)[0]
+        with meter_phase(self.wrapper, "gerente_conta"):
+            self.am_auto.refresh_account(cfg, any_vid, active)
+            if active:
+                roles = {vid: (data or {}).get("building")
+                         for vid, data in (config.get("villages") or {}).items()
+                         if (data or {}).get("managed")}
+                self.am_auto.sync_groups(cfg, roles, any_vid)
+
     def _hunter_gate(self, config, phase, skippable=True, village=None):
         """
         `Hunter.gate()` com a previsao da fase: True roda, False adia. Fase
@@ -1058,6 +1088,7 @@ class TWB:
         # em memória só o que é barato perder; o estado vive em cache/mint.
         self.mint_manager = MintManager(self.wrapper)
         self.own_defense = OwnDefenseManager(self.wrapper)
+        self.am_auto = AccountManagerAuto(self.wrapper)
         for vid in config["villages"]:
             # Village(...) already creates a fresh instance.  Deep-copying it
             # cloned the whole shared WebWrapper graph as well (requests
@@ -1300,6 +1331,11 @@ class TWB:
                     with meter_phase(self.wrapper, "em_voo"):
                         self.in_flight.refresh(sorted(managed_villages_dict)[0])
 
+                # §8.68 gerente automatico: listas da conta (no maximo 1x/dia,
+                # e de novo quando o gerente volta) e o grupo de cada aldeia
+                # pelo papel. Os modelos ficam por aldeia, na fase "gerente".
+                self.run_am_auto_account(config, managed_villages_dict)
+
                 pvp_manager = None
                 if config.get("pvp_conquest", {}).get("enabled", False):
                     pvp_manager = PvpConquestManager(
@@ -1369,6 +1405,7 @@ class TWB:
                         self._hunter_gate(_config, phase, skippable, vid)
                     )
                     _v.mint_manager = self.mint_manager
+                    _v.am_auto = self.am_auto
                     _v.reservation_board = reservation_board
 
                 # Defesa propria (§8.60) antes de qualquer fase gastar tropa:

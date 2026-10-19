@@ -102,6 +102,10 @@ help_file = {
     'account_manager.cede_construction': 'Stop building where the manager has an active construction template. The builder still reads the main screen every cycle (recruitment and the academy need the levels) and still finishes free instant builds',
     'account_manager.cede_research': 'Stop smith research where the manager has an active research template, including the research recruitment would start on its own for a unit not yet researched',
     'account_manager.cede_recruitment': 'Stop recruiting where the manager has an active troop template. Note: the manager templates have resource buffers of 0, so the manager spends what this village saves for nobles or coins whether or not the bot hands over. That is fixed in the game (buffer per village on the Tropas screen), not here',
+    'account_manager.auto_manage': 'Account manager on autopilot (docs/backend.md §8.68): false = off, "dry_run" = log what it would do without writing anything in the game, true = do it. While the account manager is active, the bot keeps each village in the static group of its role, applies the role construction / research / troop templates where the village widget says "Sem gerência" and the bot knows the village is not there yet (a finished template is never reapplied), and sets the troop manager resource buffer to the next noble cost in the villages the noble recruit gate picked (zero elsewhere)',
+    'account_manager.roles': 'Per building role (the village "building" value), the NAMES as they appear in the game: {"purple_predator_into_off": {"group": "Ataque", "construction": "ADC - OFENSIVA BOT", "research": "ADC - OFENSIVA", "troops": "ADC - OFENSIVA"}}. Names become ids from what the game itself offers. A role missing here is left alone',
+    'account_manager.reapply_backoff_hours': 'Never reapply the same template to the same village sooner than this, even if the game drops it again (the game drops a template the village already fulfilled)',
+    'account_manager.account_refresh_hours': 'How often the account-wide lists (troop manager and static groups) are re-read: 3 requests. Also re-read right after the account manager becomes active again',
     'resource_sharing': 'Automatic direct resource transfer between your own villages (Feature 9)',
     'resource_sharing.enabled': 'Enable automatic resource sharing between managed villages',
     'resource_sharing.priority': 'Priority mode for need-based transfers — "new_villages" sends to the lowest-point villages first, anything else sends to the largest deficit first',
@@ -290,4 +294,4 @@ buildings = ["main", "barracks", "stable", "watchtower", "smith", "garage", "pla
              "stone", "iron", "farm", "hide", "wall", "snob", "church"]
 
 # Sections that contain nested dicts and need special rendering in the config UI
-nested_sections = ["conquest", "resource_sharing", "inheritance", "empire", "watchtower", "profile_templates", "pvp_conquest"]
+nested_sections = ["conquest", "resource_sharing", "inheritance", "empire", "watchtower", "profile_templates", "pvp_conquest", "account_manager"]

@@ -67,6 +67,10 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     gerente (§8.68) só na aldeia cujo widget do gerente, na visão geral,
     mostra modelo ativo **e** com o gerente ativo agora. "Sem gerência" vale
     para modelo cumprido e para aldeia sem modelo: nos dois, o bot faz.
+  - `core/am_auto.py` + `game/am_auto.py` — o bot mantém o gerente sozinho
+    (§8.68, `P-GERENTE-AUTO`): grupo, modelos e reserva de tropas por papel.
+    ⚠️ Nunca ler lista do gerente com `page=-1`: fica gravado como preferência
+    do jogador (sondado em 19/10).
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
   `config.json`. Rotas em `server.py`, lógica de leitura em `utils.py`.
   `BotManager` (reescrito em 2026-09-14) sobe o bot num **console visível
