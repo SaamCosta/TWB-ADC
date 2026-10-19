@@ -99,6 +99,8 @@ class ResourceSharingManager:
         self.current_village_id = str(current_village_id)
         self.config = config
         self.sharing_cfg = config.get("resource_sharing", {})
+        # Reserva do próximo nobre desta aldeia, posta pela Village (§8.68).
+        self.noble_reserve = {}
 
     # ------------------------------------------------------------------
     # Ponto de entrada principal
@@ -684,16 +686,21 @@ class ResourceSharingManager:
         """
         village_cfg = (self.config.get("villages") or {}).get(self.current_village_id) or {}
         keep = village_cfg.get("keep_resources")
-        if not isinstance(keep, dict):
-            return {}
         clean = {}
-        for res, amount in keep.items():
+        for res, amount in (keep.items() if isinstance(keep, dict) else ()):
             if res not in RESOURCES:
                 continue
             try:
                 clean[res] = max(0, int(amount))
             except (TypeError, ValueError):
                 continue
+        # §8.68: a reserva do próximo nobre, quando o NobleRecruitGate pôs esta
+        # aldeia entre as recrutadoras. Não é inferida do `required_resources`
+        # (o problema descrito acima): é o custo inteiro do nobre, enquanto a
+        # aldeia quiser nobre. Vale o maior dos dois.
+        for res, amount in (self.noble_reserve or {}).items():
+            if res in RESOURCES:
+                clean[res] = max(clean.get(res, 0), int(amount))
         return clean
 
     @staticmethod

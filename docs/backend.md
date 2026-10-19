@@ -7454,23 +7454,32 @@ esperado fica perto de **120–150 req/ciclo**, quase todo no recrutamento.
   74966 (§8.69) rodando no meio do ciclo. Projeção para 53 aldeias: ~100–180
   req/ciclo a menos, dentro da estimativa.
 - **Reserva do nobre, pedido do usuário em 18/10 ("não posso parar de
-  conquistar"):** nas 9 aldeias com `keep_resources` 40k/50k/50k o gerente
-  gasta tudo (buffer 0) e o recrutamento do bot também (só `prioritize_snob`
-  segura o bot, e estava falso nas 55). Duas metades:
-  1. **Bot, feito:** `prioritize_snob: true` no `config.json` das 9 (BBM 001,
-     010, 022, 027, 032, 036, 040, 046, 050). Com isso o bot não recruta
-     enquanto o nobre da aldeia não tem recurso (`SnobManager.is_incomplete`),
-     e a aldeia que só cunha por estar longe (§8.48) não é afetada. Vale para as
-     3 em que o bot recruta hoje (010, 040, 046, meta do gerente zerada) e para
-     as outras 6 se o gerente vencer.
-  2. **Gerente, preparado e não executado:** nas 6 com meta ativa (BBM 001,
-     022, 027, 032, 036, 050, todas com a meta do `ADC - OFENSIVA`), reserva
-     40.000/50.000/50.000 e 100 de população pelo formulário em massa de
-     `am_troops` (`action=save_village`, `edit[]`). O POST regrava a meta
-     junto, então o script (`cache/_am_troops_buffer.py`) relê a tela, aborta
-     se a meta de alguma das 6 mudou, reenvia a mesma meta e confere depois. A
-     execução foi barrada pela permissão do ambiente (ação em produção) e
-     espera o usuário.
+  conquistar") — `P-NOBRE-RESERVA`.** O gerente gasta tudo (buffer 0) e o
+  recrutamento do bot também (ele não lia `keep_resources`).
+  **Primeira tentativa, errada e desfeita no mesmo dia:** `prioritize_snob:
+  true` nas 9 aldeias com `keep_resources`, e uma reserva no gerente para as 6
+  delas com meta ativa (script `cache/_am_troops_buffer.py`, barrado pela
+  permissão do ambiente antes de rodar). O erro: as aldeias que poupam para
+  nobre mudam com os alvos. No ciclo de 18/10 o NobleRecruitGate (§8.48)
+  escolheu BBM 008, 012, 013, 014, 017, 018, 024 e mais uma, e as do
+  `keep_resources` (001, 010, 022, 027...) estavam em "só cunha moeda". A lista
+  estática protegia quem não poupava e deixava sem nada quem poupava. O
+  `prioritize_snob` voltou a `false` nas 9, e o script do gerente **não deve
+  ser rodado** (alvos errados).
+  **O que ficou, lado do bot:** `Village.noble_reserve()` = custo do próximo
+  nobre lido da academia (`next_snob`, em qualquer ramo do `attempt_recruit`)
+  + 100 de população, **só** na aldeia que o portão pôs entre as recrutadoras
+  e que ainda quer nobre (`SnobManager.needs_noble`). Muda sozinha quando os
+  alvos mudam, e loga a troca (`Nobre: tropa e doação só com o que passar
+  de ...`). Vale em dois lugares: `TroopManager.get_min_possible` recruta só o
+  que passa da reserva (a tropa continua saindo da sobra, ao contrário do
+  `prioritize_snob`, que trava tudo), e o compartilhamento não doa abaixo dela
+  (o maior entre ela e o `keep_resources`, que vira só ajuste manual).
+  Teste: `tests/test_noble_reserve.py` (quatro guardas por mutação). Suíte
+  107/107. **Efeito no próximo reinício do bot.**
+  **Falta, lado do gerente:** a mesma reserva como buffer do gerente de tropas
+  nas recrutadoras, gravada pelo próprio bot quando o conjunto muda. Entra no
+  `P-GERENTE-AUTO` (§9, item 27).
   Nota de procedimento: um `Start-Process` lançado pelo agente morre junto com
   a chamada que o lançou. Para subir o bot de fora do painel, usar
   `Win32_Process.Create` (WMI), que o deixa fora da árvore do processo.
@@ -8101,6 +8110,13 @@ zero; prazo em `premium&mode=feature_log`):
     ✅ *Construção, pesquisa e recrutamento em 2026-10-18 (§8.68), pelo widget
     do gerente na visão geral de cada aldeia, a custo zero. ✅ Campo em 18/10:
     44 cessões em 31 aldeias, 0 retomadas, recrutamento 4,5 → 2,3 req/aldeia.
+    **Próximo, pedido do usuário em 19/10 ("tudo tem que ser automatizado"):
+    `P-GERENTE-AUTO`.** O bot mantém sozinho, com o gerente ativo: o grupo de
+    cada aldeia pelo papel; os modelos de construção, tropas e pesquisa pelo
+    papel, reaplicados depois da renovação do gerente e na aldeia nova, e nunca
+    reaplicados onde o jogo tirou por estar cumprido; e o buffer de tropas =
+    reserva do nobre nas recrutadoras do portão (zero nas outras). Sondar antes
+    a leitura completa das listas paginadas (`page=-1` mexe na preferência?).
     O transporte ficou desenhado e não implementado: hoje todo envio é rota
     de cunhagem, que nunca se cede.*
 28. **Assistente de saque:** envio de farm em 1 requisição e dimensionamento

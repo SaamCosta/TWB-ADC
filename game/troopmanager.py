@@ -38,6 +38,10 @@ class TroopManager:
     # §8.68. Bool (imutável) no corpo da classe de propósito: é o padrão de
     # quem nasce por __new__ nos testes.
     research_ceded = False
+    # Reserva do próximo nobre ({recurso: qtd, "pop": n}), posta pela Village
+    # antes de recrutar (§8.68). None, não {}: dict no corpo da classe seria
+    # compartilhado entre aldeias (1º padrão).
+    noble_reserve = None
 
     wrapper = None
     village_id = None
@@ -245,17 +249,24 @@ class TroopManager:
         """
         Calculates which units are needed the most
         To get some balance of the total amount
+
+        Desconta a reserva do próximo nobre (`noble_reserve`, §8.68): na aldeia
+        que o NobleRecruitGate escolheu para formar nobre, a tropa só sai do que
+        passar do custo do nobre e dos 100 de população dele.
         """
+        village = self.game_data["village"]
+        reserve = self.noble_reserve or {}
+
+        def free(resource):
+            return max(0, village[resource] - reserve.get(resource, 0))
+
         return min(
             [
-                math.floor(self.game_data["village"]["wood"] / entry["wood"]),
-                math.floor(self.game_data["village"]["stone"] / entry["stone"]),
-                math.floor(self.game_data["village"]["iron"] / entry["iron"]),
+                math.floor(free("wood") / entry["wood"]),
+                math.floor(free("stone") / entry["stone"]),
+                math.floor(free("iron") / entry["iron"]),
                 math.floor(
-                    (
-                            self.game_data["village"]["pop_max"]
-                            - self.game_data["village"]["pop"]
-                    )
+                    max(0, village["pop_max"] - village["pop"] - reserve.get("pop", 0))
                     / entry["pop"]
                 ),
             ]

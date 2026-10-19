@@ -13,7 +13,7 @@ from core.village_label import register as register_village_name, village_label
 from core.cycle_meter import meter_phase
 from core.extractors import Extractor
 from core.filemanager import FileManager
-from core.templates import GATHER_UNITS, TemplateManager, resolve_troop_template
+from core.templates import GATHER_UNITS, UNIT_POP, TemplateManager, resolve_troop_template
 from core.twstats import TwStats
 from core import watchtower_plan
 from core.world_config import WorldConfig
@@ -116,6 +116,7 @@ class Village:
     noble_recruit_plan = None
     # Ultimo modo logado ("recruit"/"mint"), para logar so na troca.
     _noble_mode_logged = None
+    _noble_reserve_logged = None
 
     twp = TwStats()
 
@@ -128,6 +129,9 @@ class Village:
         self.am_widget = None
         self._am_cession = {}
         self._am_cession_at = {}
+        # Última reserva de nobre logada (§8.68). {} = "sem reserva", o estado
+        # de sempre, que não precisa de linha a cada reinício.
+        self._noble_reserve_logged = {}
 
     def get_config(self, section, parameter, default=None):
         if section not in self.config:
@@ -865,6 +869,7 @@ class Village:
         """
         Recruits new units
         """
+        self.units.noble_reserve = self.noble_reserve()
         if self.get_config(section="units", parameter="recruit", default=False):
             self.units.research_ceded = self.am_ceded("research")
             if self.am_ceded("recruitment"):
@@ -944,6 +949,7 @@ class Village:
             current_village_id=self.village_id,
             config=self.config,
         )
+        sharing.noble_reserve = self.noble_reserve()
         if route:
             # Roteamento de cunhagem ligado: tudo acima do piso vai para o
             # hub, no lugar das duas regras normais (§8.55). Quem recruta nobre
@@ -971,6 +977,33 @@ class Village:
         if not self.builder or self.builder.get_level("snob") <= 0:
             return False
         return not self._noble_too_far()
+
+    def noble_reserve(self):
+        """
+        O que esta aldeia guarda para o próximo nobre neste ciclo (§8.68):
+        `{wood, stone, iron, pop}` ou {}.
+
+        Segue o NobleRecruitGate, não o config: só a aldeia que recruta nobre
+        AGORA (`_recruits_nobles()`, os N mais perto do 3º alvo) e que ainda
+        quer nobre (`snobman.needs_noble`, menos nobres que `snobs`) reserva.
+        Muda sozinho quando os alvos mudam. O custo é o `next_snob` que a
+        academia publica, e não o `required_resources`, que registra o que
+        FALTA e some exatamente quando a aldeia juntou o suficiente.
+        """
+        sm = self.snobman
+        if not sm or not sm.needs_noble or not sm.noble_cost:
+            reserve = {}
+        elif not self._recruits_nobles():
+            reserve = {}
+        else:
+            reserve = {r: int(sm.noble_cost[r]) for r in ("wood", "stone", "iron")}
+            reserve["pop"] = UNIT_POP.get("snob", 100)
+        if reserve != (self._noble_reserve_logged or {}):
+            (self.logger or logging.getLogger("Village")).info(
+                "Nobre: tropa e doação só com o que passar de %s (reserva do próximo nobre)"
+                % reserve if reserve else "Nobre: sem reserva de nobre nesta aldeia agora")
+            self._noble_reserve_logged = reserve
+        return reserve
 
     def _mint_spending_paused(self):
         """True no hub de uma campanha ativa com `campaign_pause_hub_spending`."""

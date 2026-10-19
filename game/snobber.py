@@ -22,6 +22,8 @@ class SnobManager:
     is_incomplete = False
     using_coin_system = False
     mint_only = False
+    noble_cost = None
+    needs_noble = False
 
     def level_system(self):
         """
@@ -37,6 +39,11 @@ class SnobManager:
         self.wrapper = wrapper
         self.village_id = village_id
         self.logger = logging.getLogger(f"Snob:{self.village_id}")
+        # Reserva do nobre (§8.68): custo do próximo nobre lido da academia e
+        # se a aldeia ainda quer nobre neste ciclo. A Village decide a reserva
+        # com isto e com o NobleRecruitGate.
+        self.noble_cost = None
+        self.needs_noble = False
 
     def need_reserve(self, text):
         """
@@ -76,6 +83,11 @@ class SnobManager:
             return False
         if '"id":"coin"' in result.text:
             self.using_coin_system = True
+        # O script do próximo nobre vem na academia em qualquer ramo (falte
+        # moeda ou recurso), então a reserva não depende de onde parou.
+        cost = self.next_snob_cost(result.text)
+        if cost:
+            self.noble_cost = cost
         game_data = Extractor.game_state(result)
         self.resman.update(game_data)
 
@@ -123,7 +135,7 @@ class SnobManager:
         # nao diz se ESTA aldeia paga o nobre. Antes daqui o bot mandava o
         # action=train as cegas e o jogo recusava calado: em toda aldeia
         # recrutadora, todo ciclo, sem nunca pedir o recurso do nobre (8.52).
-        next_cost = self.next_snob_cost(result.text)
+        next_cost = cost
         if next_cost:
             self.resman.requested.pop("snob", None)
             if not self.has_enough(next_cost, request=True):
@@ -328,6 +340,7 @@ class SnobManager:
         """
         Run the snob updater
         """
+        self.needs_noble = False
         if not self.can_snob:
             return False
         if self.building_level == 0:
@@ -336,9 +349,11 @@ class SnobManager:
             return self.mint_coins()
         if self.wanted > 0:
             if "snob" not in self.troop_manager.total_troops:
+                self.needs_noble = True
                 return self.attempt_recruit(amount=self.wanted)
 
             current = int(self.troop_manager.total_troops["snob"])
             if current < self.wanted:
+                self.needs_noble = True
                 return self.attempt_recruit(amount=self.wanted - current)
             self.logger.info("Snob up-to-date (%d/%d)", current, self.wanted)
