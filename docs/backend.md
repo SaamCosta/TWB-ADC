@@ -7453,6 +7453,24 @@ esperado fica perto de **120–150 req/ciclo**, quase todo no recrutamento.
   a fase `aldeia` (165 req, 119 de `place`) é o apoio da defesa própria à
   74966 (§8.69) rodando no meio do ciclo. Projeção para 53 aldeias: ~100–180
   req/ciclo a menos, dentro da estimativa.
+- **Reserva do nobre, pedido do usuário em 18/10 ("não posso parar de
+  conquistar"):** nas 9 aldeias com `keep_resources` 40k/50k/50k o gerente
+  gasta tudo (buffer 0) e o recrutamento do bot também (só `prioritize_snob`
+  segura o bot, e estava falso nas 55). Duas metades:
+  1. **Bot, feito:** `prioritize_snob: true` no `config.json` das 9 (BBM 001,
+     010, 022, 027, 032, 036, 040, 046, 050). Com isso o bot não recruta
+     enquanto o nobre da aldeia não tem recurso (`SnobManager.is_incomplete`),
+     e a aldeia que só cunha por estar longe (§8.48) não é afetada. Vale para as
+     3 em que o bot recruta hoje (010, 040, 046, meta do gerente zerada) e para
+     as outras 6 se o gerente vencer.
+  2. **Gerente, preparado e não executado:** nas 6 com meta ativa (BBM 001,
+     022, 027, 032, 036, 050, todas com a meta do `ADC - OFENSIVA`), reserva
+     40.000/50.000/50.000 e 100 de população pelo formulário em massa de
+     `am_troops` (`action=save_village`, `edit[]`). O POST regrava a meta
+     junto, então o script (`cache/_am_troops_buffer.py`) relê a tela, aborta
+     se a meta de alguma das 6 mudou, reenvia a mesma meta e confere depois. A
+     execução foi barrada pela permissão do ambiente (ação em produção) e
+     espera o usuário.
   Nota de procedimento: um `Start-Process` lançado pelo agente morre junto com
   a chamada que o lançou. Para subir o bot de fora do painel, usar
   `Win32_Process.Create` (WMI), que o deixa fora da árvore do processo.
