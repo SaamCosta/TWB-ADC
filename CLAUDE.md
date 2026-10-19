@@ -46,7 +46,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   só. O teto é a defesa que mata o maior ataque possível com nobre (na aldeia
   + a caminho); a blindagem por aldeia tira o teto, mas não o piso por envio.
   Piso de pacote se confere sobre o que a praça mostra em casa (`trim`), nunca
-  sobre o total do `cache/managed`.
+  sobre o total do `cache/managed`; piso 500, e 1.000 para origem que já
+  mandou ao mesmo alvo na janela. O `Simulator` não conhece explorador nem
+  milícia: filtre antes de simular.
 - **Managers de jogo (`game/`) e infraestrutura (`core/`)**: um módulo por
   sistema, cada um abrindo com docstring (`ls game/ core/`). O que o código
   não conta:

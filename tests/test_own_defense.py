@@ -514,6 +514,32 @@ def test_explorador_em_casa_nao_quebra_o_corte():
     _check("terminou seguro", result["defense"]["after_holds"], True)
 
 
+def test_reenvio_so_com_pacote_de_verdade():
+    print("test_reenvio_so_com_pacote_de_verdade")
+    # Origem "1" já mandou para a BBM 055 numa janela ainda aberta; a "2" não.
+    history = [{"ok": True, "target_vid": "74966", "source_vid": "1", "arrival_at": 1000 + 3600,
+                "deadline_at": 1000 + 36000, "troops": {"heavy": 10}}]
+    sources = [_source("1", 1, 0, heavy=2000), _source("2", 1, 0, heavy=2000)]
+    available = {"1": {"heavy": 150}, "2": {"heavy": 150}}  # 900 pop em casa em cada
+    result, calls, _ = _run_defend(TRANSIT, False, sources, available, history)
+    by = {c["source_vid"]: c for c in calls}
+    _check("quem já mandou precisa de 1000", (by["1"]["ok"], "já mandou" in by["1"]["error"]),
+           (False, True))
+    _check("quem não mandou sai com 900", (by["2"]["ok"], by["2"]["troops"]), (True, {"heavy": 150}))
+    old = [dict(history[0], deadline_at=999)]  # janela já acabou: vale o piso normal
+    result, calls, _ = _run_defend(TRANSIT, False, sources, available, old)
+    _check("janela encerrada não conta", [c["ok"] for c in calls], [True, True])
+
+
+def test_corte_sobe_ao_piso():
+    print("test_corte_sobe_ao_piso")
+    # 1.000 lanças + 100 pesadas = 1.600 pop; 500 pop = 31,25% de cada.
+    _check("sobe à proporção", own_defense.scale_to_pop({"spear": 1000, "heavy": 100}, 500),
+           {"spear": 313, "heavy": 32})
+    _check("pede mais do que tem: tudo", own_defense.scale_to_pop({"heavy": 10}, 500),
+           {"heavy": 10})
+
+
 def test_blindagem():
     print("test_blindagem")
     history = [{"ok": True, "target_vid": "74966", "arrival_at": 1000 + 3600,
@@ -551,5 +577,7 @@ if __name__ == "__main__":
     test_ja_seguro_nao_manda()
     test_gota_abaixo_do_piso_nao_sai()
     test_explorador_em_casa_nao_quebra_o_corte()
+    test_reenvio_so_com_pacote_de_verdade()
+    test_corte_sobe_ao_piso()
     test_blindagem()
     print("\nOK - todos os testes da defesa própria passaram")

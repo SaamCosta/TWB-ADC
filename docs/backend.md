@@ -7517,16 +7517,36 @@ paralelo, gotas de `{'sword': 2, 'heavy': 1}`.
   origens recolhidos. "Andamento" mostra só aprovado, em envio e o que saiu ou
   falhou nas últimas 24 h.
 
-Testes: `tests/test_own_defense.py` (+8: teto, corte, praça, `trim`, `_defend`
-com teto, já seguro, gota abaixo do piso, blindagem) e
-`tests/test_troop_locations.py` (agrupamento, aldeia própria fora do
-`cache/managed`, apoio entre próprias sem contar duas vezes).
+**Em campo, no mesmo dia (três correções depois do primeiro reinício):**
+1. **Explorador quebrava o corte.** O `Simulator` não conhece explorador nem
+   milícia, e o `fit_package` leva o explorador na proporção do que está em
+   casa. Às 20:06, BBM 038 e BBM 029 deram `exceção no envio: 'spy'` antes do
+   POST (nada saiu errado, mas elas nunca mandavam).
+   `OwnDefenseManager.simulate` agora filtra as unidades que o simulador
+   conhece.
+2. **Piso de 30 era baixo demais.** A primeira varredura (19:55) segurou 14
+   gotas de 1 a 26 pop, mas uma origem com 37 pop em casa ainda viraria
+   comando a cada `retry_minutes`. `min_package_pop` passou a 500, e um corte
+   abaixo do piso sobe ao piso quando a casa tem (`scale_to_pop`), senão o
+   último pedaço do teto nunca sairia.
+3. **Reenvio.** `resend_min_pop` (1.000): origem que já mandou para o alvo,
+   numa janela que ainda não acabou (`deadline_at` do histórico ≥ agora), só
+   manda de novo com pacote de verdade. Vale também na blindagem.
+   `build.version` 5.4.
+
+Medido depois do reinício das 21:25: nas varreduras das 21:29 e das 21:39, 11
+origens recusadas com 10 a 108 pop em casa (`já mandou para este alvo nesta
+janela` ou `abaixo do mínimo de 500`), um envio de verdade (BBM 004, 3.009
+lanças e 500 pesadas) e nenhuma exceção. A BBM 055 segue abaixo do teto:
+muralha 2 e ~15 mil pop a caminho contra 23.198 de ofensiva.
+
+Testes: `tests/test_own_defense.py` (+11: teto, corte, praça, `trim`,
+`_defend` com teto, já seguro, gota abaixo do piso, explorador em casa,
+reenvio, corte que sobe ao piso, blindagem) e `tests/test_troop_locations.py`
+(agrupamento, aldeia própria fora do `cache/managed`, apoio entre próprias sem
+contar duas vezes).
 
 **Aberto:**
-- **⏳ Campo:** entra no próximo reinício do bot. O que já saiu para a BBM 055
-  continua a caminho. Na primeira varredura depois do reinício, o histórico
-  conta como "a caminho" e o log deve dizer `já segura o maior ataque com
-  nobre ... nada a enviar`.
 - **Formato não capturado:** a linha de `units_home` de uma aldeia que
   **recebe** apoio. Nenhuma aldeia da conta tinha apoio pousado no dia (BBM 026,
   049 e 048 sondadas). O parser aceita `village_anchor` ou link `info_village`,
