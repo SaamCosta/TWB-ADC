@@ -149,6 +149,7 @@ from game.village import Village
 from game.reports import ReportManager
 from game.attack import ConquestCache
 from game.conquest_planner import BarbarianTrainPlanner
+from game.event_tick import EventTick
 from game.hunter import Hunter
 from game.zone_manager import ZoneManager
 from game.statue_manager import StatueManager
@@ -240,6 +241,9 @@ class TWB:
         self.found_villages = []
         # §8.47: UM leitor de relatorios por processo. Ver _new_village.
         self.report_manager = None
+        # §8.71: tick de eventos (pouso de nobre, trem que acabou de sair),
+        # um por processo: guarda quais pousos ja acompanhou.
+        self.event_tick = EventTick()
 
     def _new_village(self, village_id):
         """Create an isolated village state object on the shared HTTP wrapper.
@@ -825,7 +829,38 @@ class TWB:
                 sleep = config["bot"]["inactive_delay"]
         return sleep + self._jitter(config)
 
-    def _defended_sleep(self, sleep, config):
+    def _event_tick_callback(self, config, villages, reservation_board,
+                             world_villages, reservation_writer):
+        """
+        O tick de eventos (§8.71) como um callable sem argumentos, para o
+        checkpoint do Hunter e para o sono. Leva o gate do Hunter (fase
+        "eventos", adiavel), o prime das aldeias sem leitura e o planejador
+        do ciclo para a promocao do trem.
+        """
+        def gate(phase):
+            return self._hunter_gate(config, phase)
+
+        def prime(vids):
+            TWB._prime_villages(villages, config, vids, "Eventos")
+
+        def planner():
+            return BarbarianTrainPlanner(
+                wrapper=self.wrapper, villages=villages, config=config,
+                hunter=self.hunter, reservation_board=reservation_board,
+                world_villages=world_villages, reservation_writer=reservation_writer,
+            )
+
+        def events():
+            if not villages:
+                return
+            with meter_phase(self.wrapper, "eventos", village=False):
+                self.event_tick.tick(
+                    config, villages, report_manager=self.report_manager,
+                    gate=gate, prime=prime, planner_factory=planner)
+
+        return events
+
+    def _defended_sleep(self, sleep, config, events=None):
         """
         Sono entre ciclos em fatias de `own_defense.rescan_minutes`, com uma
         varredura da defesa propria (§8.60) entre elas.
@@ -836,22 +871,39 @@ class TWB:
         estende o sono -- quem chama ja o limitou pelos prazos do Hunter
         (vigesimo oitavo padrao) --, e a fatia final de menos de 30 s fica
         sem varredura, porque o ciclo ja vai recomecar com a sua.
+
+        §8.71: com `events`, a fatia tambem termina no proximo pouso de nobre
+        conhecido (+margem), e o tick de eventos roda ao fim de cada fatia --
+        o extra sai no pouso, nao quando o sono acaba.
         """
         from game.own_defense import settings as defense_settings
         cfg = defense_settings(config)
-        if not self.own_defense or not cfg.get("enabled"):
+        defense = self.own_defense if (self.own_defense and cfg.get("enabled")) else None
+        if defense is None and events is None:
             time.sleep(sleep)
             return
         end = time.time() + sleep
-        chunk = max(60.0, float(cfg.get("rescan_minutes") or 10) * 60)
+        chunk = max(60.0, float(cfg.get("rescan_minutes") or 10) * 60) if defense else None
         while True:
-            left = end - time.time()
+            now = time.time()
+            left = end - now
             if left <= 0:
                 return
-            time.sleep(min(chunk, left))
+            step = min(chunk, left) if chunk else left
+            if events is not None:
+                try:
+                    wake = self.event_tick.next_landing(now)
+                except Exception:
+                    wake = None
+                if wake:
+                    step = min(step, max(1.0, wake - now))
+            time.sleep(step)
             if end - time.time() <= 30:
                 return
-            self.own_defense.tick(config, force=True)
+            if defense is not None:
+                defense.tick(config, force=True)
+            if events is not None:
+                events()
 
     def _hunter_capped_sleep(self, sleep, config, reason):
         """
@@ -1433,11 +1485,18 @@ class TWB:
                 # quando o numero de ataques chegando muda.
                 _hunter_base_cb = service_callback
                 _defense = self.own_defense
+                # §8.71: tick de eventos logo depois da defesa -- pouso de
+                # nobre e trem recem-saido tratados no checkpoint, nao no
+                # inicio do proximo ciclo.
+                _events = self._event_tick_callback(
+                    config, managed_villages_dict, reservation_board,
+                    world_villages, reservation_writer)
 
                 def service_callback():
                     if _hunter_base_cb:
                         _hunter_base_cb()
                     _defense.tick(config)
+                    _events()
 
                 _base_cb = service_callback
                 _mint = self.mint_manager
@@ -1849,7 +1908,7 @@ class TWB:
                     % (sleep / 60, dt_next.time())
                 )
                 sys.stdout.flush()
-                self._defended_sleep(sleep, config)
+                self._defended_sleep(sleep, config, events=_events)
 
                 # Feature 10: fire any attacks that became due during the sleep
                 if self.hunter:

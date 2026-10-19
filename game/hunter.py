@@ -468,17 +468,181 @@ class Hunter:
         )
         prime(config=config)
 
-    def _refuse_late(self, atk, target_id, time_to_send):
+    def _refuse_late(self, atk, target_id, time_to_send, why=None):
         """A hora de saida passou: o comando vira `failed`, nunca sai atrasado."""
         missed = abs(float(time_to_send))
         atk["status"] = "failed"
         atk["fail_reason"] = "send_time_missed"
         atk["missed_by_seconds"] = missed
+        if why:
+            atk["late_refused_because"] = why
         self.logger.error(
-            "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago",
-            village_label(atk["source_village_id"]), village_label(target_id), missed
+            "Hunter: refusing late attack %s -> %s; send_time passed %.3fs ago%s",
+            village_label(atk["source_village_id"]), village_label(target_id), missed,
+            " (%s)" % why if why else ""
         )
         self._note_failure(atk, target_id, "a hora de saida passou ha %.0f s" % missed)
+
+    # ------------------------------------------------------------------
+    # Nobre atrasado de trem barbaro (§8.71, fase 4)
+    # ------------------------------------------------------------------
+
+    # Teto do atraso. Cada hora de atraso e uma hora a mais de regeneracao
+    # (1/h no br143) entre o pouso do trem e o deste nobre; com queda minima
+    # de 20, o nobre deixa de ajudar so com ~20 h. 4 h e folga larga para o
+    # caso real (BBM 008, 401 s em 19/10) sem mandar nobre de um plano velho
+    # depois de um bot parado a noite inteira.
+    LATE_BARB_MAX_SECONDS = 4 * 3600
+    BARB_START_LOYALTY = 100
+
+    def _conquest_record(self, target_id):
+        from game.attack import ConquestCache
+        return ConquestCache.get(target_id)
+
+    def _target_owners(self, target_id):
+        """
+        Dono do alvo segundo CADA fonte que o bot tem: `cache/villages` (scan
+        de mapa) e a lista do mundo (`map/village.txt`, `WorldVillages.entry`).
+        Lista de strings, "0" = barbaro; vazia = nao sei.
+
+        As duas, e nao a primeira que responder: para POSSE a lista do mundo e
+        a fonte nova -- em 38 alvos o snapshot local dizia barbara para aldeia
+        que o village.txt ja dava como de jogador, e zero no sentido inverso
+        (27o padrao, §8.6).
+        """
+        owners = []
+        data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
+        if data and data.get("owner") is not None:
+            owners.append(str(data.get("owner")))
+        for village in (self.villages or {}).values():
+            world = getattr(village, "world_villages", None)
+            entry = getattr(world, "entry", None)
+            if callable(entry):
+                try:
+                    row = entry(target_id)
+                except Exception:
+                    row = None
+                if row and row.get("owner") is not None:
+                    owners.append(str(row.get("owner")))
+                break  # a lista do mundo e uma so, compartilhada
+        return owners
+
+    def _late_batch(self, sched, atk):
+        return [c for c in sched.get("attacks", [])
+                if c.get("status") == "pending"
+                and str(c.get("source_village_id")) == str(atk.get("source_village_id"))
+                and c.get("send_time") is not None and atk.get("send_time") is not None
+                and abs(float(c["send_time"]) - float(atk["send_time"])) < 0.5
+                and self._kind(c) == self._kind(atk)]
+
+    def late_barbarian_verdict(self, config, sched_key, sched, atk, missed):
+        """
+        (pode_sair, motivo). Decide se um comando ATRASADO ainda sai.
+
+        So nobre de trem barbaro. Trem PvP, snipe, fake e apoio dependem do
+        instante exato (sincronia com o clear, chegada antes do ataque
+        inimigo), e atrasado eles nao cumprem a promessa: continuam recusados,
+        como sempre (§8.58). Nobre de barbaro atrasado pousa DEPOIS do trem e
+        ainda derruba lealdade -- vira o nobre extra da §8.41, so que saindo
+        horas mais cedo.
+
+        Tudo e reconferido aqui, na hora de agir (6o padrao):
+        - o schedule e do planejador barbaro (`label` "barb") e o registro em
+          `cache/conquest` aponta para ele e ainda esta `train_scheduled` --
+          trem ja promovido, encerrado, perdido ou bloqueado nao recebe nobre;
+        - o alvo continua barbaro e nao e nosso;
+        - o atraso cabe em `LATE_BARB_MAX_SECONDS`;
+        - os OUTROS nobres do trem (enviados ou ainda por sair) nao zeram a
+          lealdade sozinhos nem na queda maxima. Se zerassem, este pousaria
+          depois da conquista: autoconquista, moeda queimada e a guarnicao
+          morta pelo proprio nobre (o incidente de 12/08, §6.1).
+        """
+        troops = atk.get("troops") or {}
+        if self._kind(atk) != "attack" or atk.get("is_fake"):
+            return False, "so ataque real sai atrasado"
+        if int(troops.get("snob", 0) or 0) <= 0:
+            return False, "sem nobre: so nobre de trem barbaro sai atrasado"
+        if sched.get("label") != "barb":
+            return False, "nao e trem barbaro (PvP, snipe e manual nunca saem atrasados)"
+        if missed > self.LATE_BARB_MAX_SECONDS:
+            return False, "atraso de %.0f s passa do teto de %d s" % (missed, self.LATE_BARB_MAX_SECONDS)
+        target_id = str(sched.get("target_id"))
+        record = self._conquest_record(target_id) or {}
+        if record.get("hunter_schedule_key") != sched_key:
+            return False, "o registro da conquista nao aponta para este schedule"
+        if record.get("status") != "train_scheduled":
+            return False, "conquista em '%s', nao mais agendada" % record.get("status")
+        if target_id in ((config or {}).get("villages") or {}):
+            return False, "o alvo ja e nosso"
+        owners = self._target_owners(target_id)
+        if not owners:
+            return False, "nao sei se o alvo ainda e barbaro"
+        taken = [o for o in owners if o != "0"]
+        if taken:
+            return False, "o alvo deixou de ser barbaro (dono %s)" % taken[0]
+        batch = self._late_batch(sched, atk)
+        # O lote sao ESTES objetos: comparo por identidade, nao por igualdade
+        # de dict (os nobres de uma mesma origem sao dicts iguais).
+        ahead = sum(
+            int((c.get("troops") or {}).get("snob", 0) or 0)
+            for c in sched.get("attacks", [])
+            if not any(c is b for b in batch) and c.get("status") in ("sent", "pending"))
+        drop_range = record.get("loyalty_drop_range") or []
+        try:
+            drop_max = float(drop_range[1])
+        except (IndexError, TypeError, ValueError):
+            from game.attack import ConquestManager
+            drop_max = float(ConquestManager.world_drop_range(config)[1])
+        if ahead * drop_max >= self.BARB_START_LOYALTY:
+            return False, ("os outros %d nobre(s) podem conquistar sozinhos (queda "
+                           "maxima %.0f): este pousaria depois e autoconquistaria"
+                           % (ahead, drop_max))
+        return True, ("trem barbaro: os outros %d nobre(s) derrubam no maximo %.0f, "
+                      "este pousa depois e segue util" % (ahead, ahead * drop_max))
+
+    def _send_late(self, config, sched_key, sched, atk, missed, why):
+        """Manda o lote atrasado da mesma origem. Marca e anota; devolve o resultado."""
+        target_id = sched["target_id"]
+        batch = self._late_batch(sched, atk)
+        self._ensure_source_ready(atk["source_village_id"], config)
+        result = self._send_attack_batch(batch, target_id)
+        sent_at = int(time.time())
+        village = self.villages.get(str(atk["source_village_id"]))
+        duration = getattr(getattr(village, "attack", None), "last_attack_duration", None)
+        for batch_atk in batch:
+            batch_atk["status"] = "sent" if result else "failed"
+            batch_atk["sent_at"] = sent_at
+            batch_atk["late_by_seconds"] = round(missed, 1)
+            if not result:
+                batch_atk["fail_reason"] = "late_send_failed"
+            elif duration:
+                # Chegada real: a deste nobre e a do trem nao coincidem mais.
+                # 0/None do parser nao vira "ja pousou" (6o padrao): sem
+                # duracao, quem le cai na chegada planejada + atraso.
+                batch_atk["arrival_real"] = int(sent_at + duration)
+            else:
+                batch_atk["arrival_real"] = int(float(sched.get("arrival_time") or 0) + missed) or None
+        self.logger.warning(
+            "Hunter: [ATRASADO] %d nobre(s) %s -> %s sairam %.0f s depois da hora -- %s: %s",
+            len(batch), village_label(atk["source_village_id"]), village_label(target_id),
+            missed, "OK" if result else "FALHOU", why)
+        self._notes.append(
+            "Hunter: %d nobre(s) do trem barbaro %s -> %s %s %.0f s atrasado(s) (%s)."
+            % (len(batch), village_label(atk["source_village_id"]), village_label(target_id),
+               "saiu/sairam" if result else "NAO saiu/sairam,", missed, why))
+        return result
+
+    def _late(self, config, sched_key, sched, atk, time_to_send):
+        """Comando cuja hora passou: sai atrasado se a regra deixar, senao recusa."""
+        missed = abs(float(time_to_send))
+        try:
+            allowed, why = self.late_barbarian_verdict(config, sched_key, sched, atk, missed)
+        except Exception as exc:
+            allowed, why = False, "falha ao avaliar o envio atrasado (%s)" % exc
+        if allowed:
+            self._send_late(config, sched_key, sched, atk, missed, why)
+        else:
+            self._refuse_late(atk, sched["target_id"], time_to_send, why=why)
 
     def _run(self, config, horizon=None):
         window = self.window if horizon is None else max(self.window, float(horizon))
@@ -551,8 +715,10 @@ class Hunter:
             # promise; it only creates a real, late attack.  This path is
             # deliberately strict -- even the explicit PvP scout override
             # never authorizes an expired departure.
+            # §8.71 fase 4: a unica excecao e o nobre de trem BARBARO, que
+            # atrasado vira extra util -- ver `late_barbarian_verdict`.
             if time_to_send <= 0:
-                self._refuse_late(atk, target_id, time_to_send)
+                self._late(config, sched_key, sched, atk, time_to_send)
                 changed = True
                 continue
 
@@ -563,7 +729,7 @@ class Hunter:
             self._ensure_source_ready(atk["source_village_id"], config)
             time_to_send = send_time - time.time()
             if time_to_send <= 0:
-                self._refuse_late(atk, target_id, time_to_send)
+                self._late(config, sched_key, sched, atk, time_to_send)
                 changed = True
                 continue
             if hasattr(self.wrapper, "priority_mode"):

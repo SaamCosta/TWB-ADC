@@ -592,6 +592,27 @@ def test_promove_para_enviado_quando_o_hunter_despachou():
     assert store["49709"]["loyalty_after_train"] == 20
 
 
+def test_nobre_atrasado_promove_com_a_chegada_dele():
+    """
+    §8.71 fase 4: o par da BBM 008 contra a 81800 saiu 401 s atrasado. Ele
+    pousa depois do trem, e a trava de nobre em voo e o tick de eventos
+    precisam da chegada DELE, nao da comum -- senao o acompanhamento rodaria
+    no pouso do trem com dois nobres ainda no ar.
+    """
+    store = {"49709": {"status": "train_scheduled", "hunter_schedule_key": "k"}}
+    schedules = {"k": {"arrival_time": 2000000000, "attacks": [
+        {"status": "sent"}, {"status": "sent"},
+        {"status": "sent", "late_by_seconds": 401.8, "arrival_real": 2000000402},
+        {"status": "sent", "late_by_seconds": 401.8, "arrival_real": 2000000402},
+    ]}}
+    p, _ = _planner(store=store, schedules=schedules)
+    p._promote_scheduled_trains()
+    assert store["49709"]["status"] == "train_sent"
+    assert store["49709"]["noble_arrivals"] == [2000000000, 2000000000,
+                                                2000000402, 2000000402]
+    assert store["49709"]["last_hit_timestamp"] == 2000000402
+
+
 def test_nao_promove_com_comando_ainda_pendente():
     store = {"49709": {"status": "train_scheduled", "hunter_schedule_key": "k"}}
     schedules = {"k": {"arrival_time": 2000000000, "attacks": [

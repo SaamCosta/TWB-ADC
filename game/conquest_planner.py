@@ -1088,6 +1088,11 @@ class BarbarianTrainPlanner:
                 continue
 
             arrival = int(sched.get("arrival_time") or 0) or None
+            # §8.71 fase 4: nobre de trem barbaro que saiu atrasado tem chegada
+            # propria (`arrival_real`), depois da do trem. Os demais pousam na
+            # chegada comum.
+            arrivals = [atk.get("arrival_real") or arrival for atk in sent]
+            late = [atk for atk in sent if atk.get("late_by_seconds")]
             drop_min = data.get("loyalty_drop_per_noble")
             if drop_min is None:
                 # A26-03: registro agendado antes de o planejador gravar a
@@ -1103,27 +1108,34 @@ class BarbarianTrainPlanner:
                 # estimativa um limite SUPERIOR da lealdade que sobrou.
                 "loyalty_after_train": max(0, 100 - (len(sent) * int(drop_min))),
                 "loyalty_source": "estimate",
-                "noble_arrivals": [arrival] * len(sent),
-                "last_hit_timestamp": arrival or int(time.time()),
+                "noble_arrivals": arrivals,
+                "last_hit_timestamp": max([a for a in arrivals if a] or [int(time.time())]),
             })
             landing = (datetime.datetime.fromtimestamp(arrival).strftime(DATETIME_FMT)
                        if arrival else "horário desconhecido")
+            late_text = ""
+            if late:
+                late_text = " (%d atrasado(s), pouso %s)" % (len(late), ", ".join(
+                    datetime.datetime.fromtimestamp(a["arrival_real"]).strftime("%d/%m %H:%M:%S")
+                    if a.get("arrival_real") else "?" for a in late))
             self.logger.info(
                 "Conquest: %d/%d nobres do trem contra %s sairam pelo Hunter, "
-                "pouso comum em %s",
-                len(sent), len(attacks), village_label(target_id), landing
+                "pouso comum em %s%s",
+                len(sent), len(attacks), village_label(target_id), landing, late_text
             )
             if len(sent) == len(attacks):
                 Notification.send(
-                    "Conquista: os %d nobres do trem contra %s sairam; pouso %s."
-                    % (len(sent), conquest_label(target_id, data), landing)
+                    "Conquista: os %d nobres do trem contra %s sairam; pouso %s%s."
+                    % (len(sent), conquest_label(target_id, data), landing, late_text)
                 )
             else:
                 Notification.send(
                     "Conquista INCOMPLETA: so %d de %d nobres do trem contra %s "
-                    "sairam; pouso %s. O bot tenta completar com nobre extra "
-                    "depois do pouso -- se quiser mandar na mao, e agora."
-                    % (len(sent), len(attacks), conquest_label(target_id, data), landing)
+                    "sairam; pouso %s%s. O bot tenta completar com nobre extra "
+                    "logo depois do pouso -- se quiser mandar na mao, e agora: "
+                    "ele le a praca antes do extra e nao manda por cima (§8.71)."
+                    % (len(sent), len(attacks), conquest_label(target_id, data), landing,
+                       late_text)
                 )
 
     @staticmethod

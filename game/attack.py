@@ -223,6 +223,55 @@ def rank_extra_noble_origins(origins, target_location, unit_speeds, noble_range,
     return ranked, dropped
 
 
+def nobles_heading_to(parsed_by_village, target_location, now):
+    """
+    O que a praca de cada aldeia diz sobre nobre NOSSO a caminho do alvo
+    (§8.71, fase 3), a partir de `{vid: Extractor.place_outgoing_commands(...)}`.
+
+    Devolve dict com:
+      - `arrivals`: [(chegada, vid, command_id)] dos comandos com nobre ainda
+        no ar cuja coordenada no rotulo e a do alvo -- os do bot e os que o
+        jogador mandou a mao, sem distincao;
+      - `unknown`: [(chegada, vid, command_id)] de nobre no ar com rotulo SEM
+        coordenada (o jogador renomeou o comando): pode ser para o alvo;
+      - `unreadable`: [vid] cuja praca nao foi lida (None) ou veio com menos
+        linhas do que o bloco declara (lista cortada, 26o padrao).
+
+    Quem decide e o chamador; a regra dele e que qualquer um dos tres impede o
+    nobre extra -- os dois ultimos porque "nao sei" nao e "nao ha".
+    """
+    target = ("%s|%s" % (int(target_location[0]), int(target_location[1]))
+              if target_location and len(target_location) == 2 else None)
+    out = {"arrivals": [], "unknown": [], "unreadable": []}
+    for vid, parsed in sorted(parsed_by_village.items()):
+        if parsed is None:
+            out["unreadable"].append(vid)
+            continue
+        commands = parsed.get("commands") or []
+        declared = parsed.get("declared")
+        if declared is not None and declared != len(commands):
+            out["unreadable"].append(vid)
+        for cmd in commands:
+            arrival = cmd.get("arrival_ts")
+            if arrival is not None and arrival <= now:
+                continue
+            entry = (arrival if arrival is not None else float("inf"), vid, cmd.get("command_id"))
+            if cmd.get("has_snob") is None:
+                # Linha cujo icone o parser nao leu: pode ser nobre.
+                out["unknown"].append(entry)
+                continue
+            # So ataque: o nobre que VOLTA do alvo (retorno) leva a mesma
+            # coordenada no rotulo e esta indo para casa.
+            if not cmd.get("has_snob") or cmd.get("command_type") != "attack":
+                continue
+            coords = cmd.get("target_coords")
+            if coords is None or target is None:
+                out["unknown"].append(entry)
+            elif coords == target:
+                out["arrivals"].append(entry)
+    return out
+
+
 def extra_noble_worth_sending(entry):
     """
     Politica do nobre extra, decidida pelo usuario em 2026-09-30:
@@ -3172,6 +3221,112 @@ class ConquestManager:
         stored = {k: v for k, v in conquest_data.items() if k != "target_id"}
         ConquestCache.set(target_id, stored)
 
+    # ------------------------------------------------------------------
+    # Nobre no ar de qualquer origem, lido do jogo (§8.71, fase 3)
+    # ------------------------------------------------------------------
+
+    def _noble_owner_villages(self):
+        """
+        [(vid, Village ou None)] de toda aldeia gerenciada que pode ter nobre,
+        dentro ou fora de casa: o total e o em-casa do objeto `Village` e do
+        snapshot `cache/managed`. Superconjunto de proposito, como no prime
+        da conquista: aldeia que fica de fora nunca e conferida.
+        """
+        villages = self.villages or {self.village_id: None}
+        owners = []
+        for vid, village in sorted(villages.items()):
+            units = getattr(village, "units", None)
+            cached = FileManager.load_json_file(f"cache/managed/{vid}.json") or {}
+            counts = (getattr(units, "total_troops", None), getattr(units, "troops", None),
+                      cached.get("troops"), cached.get("available_troops"))
+            for count in counts:
+                try:
+                    if int((count or {}).get("snob", 0) or 0) > 0:
+                        owners.append((vid, village))
+                        break
+                except (TypeError, ValueError, AttributeError):
+                    continue
+        return owners
+
+    def _scan_nobles_in_flight(self, target_location):
+        """
+        Le a tela de comando da praca de cada aldeia com nobre e devolve
+        `nobles_heading_to(...)`. Um GET por aldeia (13 aldeias com nobre em
+        19/10), so na hora de mandar um extra. Aldeia alem do alcance do nobre
+        nao pode ter nobre a caminho e nao e lida.
+        """
+        _speeds, noble_range = self._world_travel_params()
+        target = tuple(target_location) if target_location and len(target_location) == 2 else None
+        parsed = {}
+        for vid, village in self._noble_owner_villages():
+            location = self._extra_origin_location(vid, village)
+            if (location and target and noble_range
+                    and field_distance(location, target) > noble_range):
+                continue
+            res = self.wrapper.get_url("game.php?village=%s&screen=place" % vid)
+            parsed[vid] = Extractor.place_outgoing_commands(res)
+        return nobles_heading_to(parsed, target_location, time.time())
+
+    def _nobles_in_flight_block(self, target_id, conquest_data, target_location, loyalty_at):
+        """
+        True quando o extra NAO pode sair porque ha (ou pode haver) nobre
+        nosso a caminho do alvo que o bot nao registrou -- o jogador mandou a
+        mao, ou um envio do proprio bot que se perdeu do registro.
+
+        Nobre achado entra em `noble_arrivals` (com `observed_nobles` dizendo
+        de onde veio): a trava de nobre em voo passa a vale-lo no ciclo e no
+        tick, e o pouso dele vira um pouso novo a acompanhar. Praca ilegivel
+        ou nobre com rotulo sem coordenada bloqueiam sem registrar: "nao sei"
+        nao e "nao ha", e o custo de esperar e um tick, nao um nobre.
+        """
+        found = self._scan_nobles_in_flight(target_location)
+        label = conquest_label(target_id, conquest_data)
+        if found["arrivals"]:
+            now = time.time()
+            observed = [int(a) for a, _v, _c in found["arrivals"]]
+            # Um registro do bot ainda no futuro aparece de novo na praca: a
+            # previsao sai e fica o observado (a praca da o segundo real). Dois
+            # observados nunca se fundem -- nobres de um trem pousam com 1 s
+            # de diferenca (07:11:06 e 07:11:07 na 81800).
+            known = [ts for ts in (conquest_data.get("noble_arrivals") or [])
+                     if (ts is None or ts > now)
+                     and not (ts is not None and any(abs(o - ts) <= 2 for o in observed))]
+            conquest_data["noble_arrivals"] = sorted(
+                known + observed, key=lambda t: float("inf") if t is None else t)
+            conquest_data["observed_nobles"] = [
+                {"village_id": v, "command_id": c, "arrival": int(a)}
+                for a, v, c in found["arrivals"]]
+            conquest_data["last_hit_timestamp"] = max(
+                [int(conquest_data.get("last_hit_timestamp") or 0)]
+                + [int(a) for a, _v, _c in found["arrivals"]])
+            stored = {k: v for k, v in conquest_data.items() if k != "target_id"}
+            ConquestCache.set(target_id, stored)
+            first = min(a for a, _v, _c in found["arrivals"])
+            self._alert_extra_once(
+                target_id, conquest_data, "nobre_no_ar", loyalty_at,
+                "Conquista: %d nobre(s) nosso(s) a caminho de %s que o bot nao tinha "
+                "registrado (%s), o primeiro pousa as %s -- nao mando nobre extra; "
+                "o bot reavalia depois do pouso."
+                % (len(found["arrivals"]), label,
+                   ", ".join(sorted({village_label(v) for _a, v, _c in found["arrivals"]})),
+                   self._fmt_ts(first)))
+            return True
+        if found["unknown"] or found["unreadable"]:
+            self._alert_extra_once(
+                target_id, conquest_data, "nobre_incerto", loyalty_at,
+                "Conquista: nao mando nobre extra contra %s agora -- %s. Tento de novo "
+                "no proximo pouso ou ciclo."
+                % (label, "; ".join(filter(None, [
+                    ("comando no ar com destino ou icone ilegivel (renomeado, ou "
+                     "markup novo) em %s"
+                     % ", ".join(sorted({village_label(v) for _a, v, _c in found["unknown"]})))
+                    if found["unknown"] else None,
+                    ("praca ilegivel em %s" % ", ".join(village_label(v) for v in found["unreadable"]))
+                    if found["unreadable"] else None,
+                ]))))
+            return True
+        return False
+
     def _send_extra_noble(self, target_id, conquest_data, cfg, loyalty, loyalty_at,
                           current_loyalty, loyalty_source, regen):
         """
@@ -3219,6 +3374,7 @@ class ConquestManager:
         sent = None
         refused = []
         viable = 0
+        flight_checked = False
         for entry in ranked:
             vid = entry["vid"]
             manager, attack_manager = self._extra_sender(vid, villages.get(vid))
@@ -3246,6 +3402,15 @@ class ConquestManager:
                        regen * entry["travel_seconds"] / 3600.0, drop_min)
                 )
                 return False
+
+            # §8.71 fase 3: reconferir no jogo, na hora de agir, que nao ha
+            # nobre nosso a caminho -- o jogador pode ter completado o trem a
+            # mao. Uma vez por chamada, e so quando um envio vai mesmo sair.
+            if not flight_checked:
+                flight_checked = True
+                if self._nobles_in_flight_block(target_id, conquest_data,
+                                                target_location, loyalty_at):
+                    return False
 
             troops = dict(escort)
             troops["snob"] = 1

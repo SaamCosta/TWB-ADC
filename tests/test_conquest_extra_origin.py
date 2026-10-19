@@ -226,12 +226,22 @@ CFG = {"loyalty_regen_per_hour": 1, "barbarian_escort_ratio": 0.5,
        "min_escort_total": 50}
 
 
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
+                       "place_commands_empty_br143.html"), encoding="utf-8") as _fh:
+    # §8.71 fase 3: antes do envio o extra le a praca de cada aldeia com
+    # nobre. Aqui ela responde a praca real sem comando nenhum (captura de
+    # 06/10), o caso "nada no ar"; o bloqueio tem teste proprio em
+    # tests/test_noble_flight_scan.py.
+    EMPTY_PLACE = _fh.read()
+
+
 def anchor(villages, now):
     cm = ConquestManager.__new__(ConquestManager)
     cm.village_id = "74689"
     cm.config = CONFIG
     cm.logger = logging.getLogger("test")
-    cm.wrapper = SimpleNamespace(reporter=SimpleNamespace(report=lambda *a, **k: None))
+    cm.wrapper = SimpleNamespace(reporter=SimpleNamespace(report=lambda *a, **k: None),
+                                 get_url=lambda url: SimpleNamespace(text=EMPTY_PLACE))
     cm.villages = villages
     anchor_v = (villages or {}).get("74689") or village("74689", BBM010[1], {"snob": 0})
     cm.troopmanager = anchor_v.units
@@ -314,6 +324,25 @@ check(ConquestCache.nobles_in_flight(rec, now=MANUAL_DEPARTURE + 60),
 check(len(env.notes.messages) == 1 and "BBM 001" in env.notes.messages[0]
       and "basta com certeza" in env.notes.messages[0],
       "aviso de envio com a origem: %r" % env.notes.messages)
+
+# 1b. §8.71 fase 3: o mesmo caso, mas o jogador ja mandou um nobre a mao. A
+# praca (fixture real da BBM 012, so com a coordenada e a chegada trocadas para
+# este alvo) mostra o nobre no ar: nenhum extra sai, e ele entra no registro.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
+                       "place_commands_noble_br143.html"), encoding="utf-8") as _fh:
+    MANUAL_PLACE = (_fh.read().replace("(650|292)", "(583|285)")
+                    .replace('data-endtime="1792577466"', 'data-endtime="%d"' % (MANUAL_DEPARTURE + 3600))
+                    .replace('data-endtime="1792577467"', 'data-endtime="%d"' % (MANUAL_DEPARTURE + 3601)))
+vs = empire()
+with Env(MANUAL_DEPARTURE) as env:
+    cm = anchor(vs, MANUAL_DEPARTURE)
+    cm.wrapper.get_url = lambda url: SimpleNamespace(text=MANUAL_PLACE)
+    sent = send(cm)
+check(sent is False, "nobre manual no ar: o extra nao sai")
+check(not any(v.attack.calls for v in vs.values()),
+      "nenhuma aldeia mandou: %r" % {k: v.attack.calls for k, v in vs.items() if v.attack.calls})
+check(env.written and MANUAL_DEPARTURE + 3600 in env.written[-1][1]["noble_arrivals"],
+      "o nobre manual entra em noble_arrivals: %r" % (env.written[-1:],))
 
 # 2. A trava vale venha o nobre de onde vier: com esse registro, nada sai.
 vs = empire()

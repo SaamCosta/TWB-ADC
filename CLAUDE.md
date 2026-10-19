@@ -60,6 +60,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     tarefa escapou do gate; desde §8.71 o wrapper **preempta** (GET dentro
     da janela entrega o controle ao Hunter antes de sair), então o FURO
     vira aviso de previsão errada, não nobre perdido. POST não preempta.
+  - `game/event_tick.py` (§8.71) — pouso de nobre bárbaro e trem recém-saído
+    são tratados no checkpoint do Hunter e no sono (que acorda no pouso), não
+    só no início do ciclo. Antes de todo nobre extra, a praça de cada aldeia
+    com nobre é lida (`Extractor.place_outgoing_commands`, grátis) e nobre
+    nosso no ar, até manual, bloqueia o extra. Nobre **atrasado** de trem
+    bárbaro sai (`Hunter.late_barbarian_verdict`); PvP/snipe/fake/apoio não.
   - `core/paid_features.py` — **o** interruptor do modo pago (§8.67):
     premium/gerente/assistente lidos ao vivo do `game_data` de toda resposta.
     Fase cedida ao recurso pago consulta `Village.paid_active(nome)` na hora

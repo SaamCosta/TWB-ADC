@@ -1849,6 +1849,72 @@ class Extractor:
         return int(datetime.datetime.combine(date, clock).timestamp()), None
 
     @staticmethod
+    def place_outgoing_commands(res):
+        """
+        "Proprios comandos" da tela de comando da praca (`screen=place`) de UMA
+        aldeia -- o que esta aldeia tem no ar, de graca (§8.71, fase 3). A
+        visao geral de comandos (`own_commands`, o `InFlight`) e premium: sem
+        ele o jogo serve a tabela de producao (§8.53).
+
+        Verbatim do br143 em 19/10/2026 (BBM 012 com 2 nobres contra a 81800,
+        `tests/fixtures/place_commands_noble_br143.html`): cada
+        `<tr class="command-row">` traz um `command_hover_details` por icone,
+        com `data-icon-hint` e `data-command-type`; o comando com nobre tem um
+        segundo icone `graphic/command/snob` ("Com nobre"). A chegada vem em
+        `data-endtime` (epoch, segundos inteiros; a tela mostra 07:11:06:913
+        para endtime ...466). O destino so aparece na coordenada do rotulo
+        ("Ataque a Aldeia de barbaros (650|292) K26"), e o rotulo e
+        renomeavel pelo jogador: sem coordenada, `target_coords` e None e quem
+        consome tem de tratar como destino desconhecido.
+
+        Sem comando nenhum o jogo NAO poe o bloco (medido: captura de 06/10 da
+        44683, formulario da praca presente, sem `commands_outgoings`). Por
+        isso a ancora da tela e o formulario `command-data-form`: com ele e sem
+        o bloco, `commands` e []. Sem o formulario (login, captcha, markup
+        novo), devolve None -- None nao e "nada no ar" (15o padrao).
+
+        Devolve {"commands": [...], "declared": int|None} ou None. Cada
+        comando: {command_id, command_type, hints, has_snob, label,
+        target_coords, arrival_ts}. `declared` e o `data-commands` do bloco;
+        divergir do numero de linhas e lista possivelmente cortada (26o
+        padrao), e quem consome decide.
+        """
+        res = _page_text(res)
+        if not res or 'id="command-data-form"' not in res:
+            return None
+        box = re.search(
+            r'(?s)<div id="commands_outgoings"([^>]*)>(.*?)</table>', res)
+        if not box:
+            return {"commands": [], "declared": 0}
+        declared = re.search(r'data-commands="(\d+)"', box.group(1))
+        commands = []
+        for row in re.findall(r'(?s)<tr class="command-row">(.*?)</tr>', box.group(2)):
+            command_id = re.search(r'data-command-id="(\d+)"', row)
+            if not command_id:
+                continue
+            icons = re.findall(
+                r'data-icon-hint="([^"]*)" data-command-type="([^"]*)"\s*>\s*'
+                r'<img\s+src="[^"]*/graphic/command/(\w+)\.\w+"', row)
+            label = re.search(r'(?s)<span class="quickedit-label">\s*(.*?)\s*</span>', row)
+            label = html.unescape(label.group(1)) if label else None
+            coord = OWN_COMMAND_COORD_RE.search(label or "")
+            end = re.search(r'data-endtime="(\d+)"', row)
+            commands.append({
+                "command_id": command_id.group(1),
+                "command_type": icons[0][1] if icons else None,
+                "hints": [hint for hint, _t, _i in icons],
+                # Linha sem icone legivel: None, nao False. Markup novo nao
+                # pode virar "nenhum nobre no ar" em silencio (15o padrao) --
+                # e exatamente o que mandaria um extra por cima.
+                "has_snob": any(icon == "snob" for _h, _t, icon in icons) if icons else None,
+                "label": label,
+                "target_coords": "%s|%s" % (coord.group(1), coord.group(2)) if coord else None,
+                "arrival_ts": int(end.group(1)) if end else None,
+            })
+        return {"commands": commands,
+                "declared": int(declared.group(1)) if declared else None}
+
+    @staticmethod
     def own_commands(res):
         """
         `screen=overview_villages&mode=commands&page=-1`: tudo que esta no ar

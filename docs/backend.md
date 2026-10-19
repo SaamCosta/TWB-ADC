@@ -7866,6 +7866,130 @@ leitor de prazo, retomada da leitura e as duas bordas da paginação. 9
 mutantes (sem preempção, preempta POST, sem "uma vez", sem trava de
 reentrância, preempta dentro do Hunter, sem leitor, janela ignorada, paginação
 antiga, paginar com qualquer novo): os 9 derrubam o teste. Suíte: 111/111.
+Em campo desde 17:29 de 19/10 (commit `df84560`).
+
+**Fase 2 — tick de eventos (`game/event_tick.py`).** O acompanhamento da
+conquista bárbara (`ConquestManager._handle_existing`), a promoção do trem
+depois que o Hunter manda (`_promote_scheduled_trains`) e os avisos de
+Telegram dos dois só rodavam no início do ciclo. O `EventTick` roda no
+`service_callback` (logo depois de `OwnDefense.tick`, antes da cunhagem) e no
+sono entre ciclos, que agora acorda no pouso. Quando não há nada a fazer, ele
+só lê `cache/conquest` e o `schedules.json`, sem requisição.
+
+- **Promoção**: um trem em `train_scheduled` cujo schedule não tem mais
+  comando por sair é promovido no checkpoint seguinte, com o aviso "saíram" ou
+  "INCOMPLETA" na hora.
+- **Pouso**: a conquista entra em acompanhamento quando todos os
+  `noble_arrivals` já passaram, mais 30 s (`LANDING_MARGIN`). O tick lê a
+  lista de relatórios (o `ReportManager` único, §8.47). Achado o relatório de
+  nobre **deste** pouso (`when` ≥ pouso − 120 s), ele roda o mesmo
+  `Village.run_conquest()` do início do ciclo, com as mesmas travas: posse,
+  alvo perdido, lealdade real, extra (que passa pela fase 3) e aviso. Sem o
+  relatório, insiste por 45 min (`REPORT_WAIT`) e não age por estimativa;
+  depois disso o caso fica para o ciclo, como antes. Cada pouso é tratado uma
+  vez por processo.
+- O **gatilho é o relógio**, não o `game_data.player.new_report`. Esse campo
+  existe (contagem de não lidos: 0 a 21 nas 30 capturas de `cache/debug/`),
+  mas no sono não há resposta para lê-lo, e a chegada dos nossos nobres já
+  está gravada com o horário da confirmação do jogo.
+- Antes de um extra (lealdade > 0), o tick lê só as aldeias que **podem ter
+  nobre e ainda não têm tropa/mapa neste processo**. Quem já rodou usa a
+  contagem que tem; o que não existir mais o jogo recusa na confirmação, e o
+  extra tenta a próxima origem (§8.41). Ele passa pelo gate do Hunter (fase
+  `eventos`, adiável).
+
+**Fase 3 — nobre no ar de qualquer origem, lido do jogo.** Logo antes de o
+nobre extra sair (uma vez por chamada, só quando um envio vai mesmo
+acontecer), `ConquestManager._nobles_in_flight_block` lê a **tela de comando
+da praça** (`screen=place`, "Próprios comandos") de cada aldeia que pode ter
+nobre e está no alcance do alvo. Em 19/10 eram 13 aldeias, ou seja, até 13
+GETs por decisão de extra.
+
+- Por que essa tela: a visão geral de comandos do `InFlight` é **paga** (sem
+  premium, o jogo serve a tabela de produção, §8.53), e o bot mira conta
+  gratuita. A praça é grátis e por aldeia.
+- `Extractor.place_outgoing_commands`, escrito contra markup real: a praça da
+  BBM 012 em 19/10, com os 2 nobres do trem da 81800 no ar
+  (`tests/fixtures/place_commands_noble_br143.html`), e a da 44683 em 06/10
+  sem comando nenhum (`place_commands_empty_br143.html`). Conferido também
+  nas capturas de 30/09 (5 ataques sem nobre) e de 08/10, conta **grátis**,
+  com 2 nobres contra (574|271). Na linha, o nobre é um segundo ícone
+  `graphic/command/snob` ("Com nobre"). A chegada vem em `data-endtime`, e o
+  destino só aparece na coordenada do rótulo, que o jogador pode renomear.
+  Sem comando nenhum o jogo **não põe o bloco** `commands_outgoings`, então a
+  âncora da tela é o formulário `command-data-form`. `data-commands` declara o
+  total, e divergência vira "lista cortada".
+- Regra: nobre de ataque com a coordenada do alvo e chegada futura bloqueia o
+  extra e **entra em `noble_arrivals`** (com `observed_nobles`, de onde veio).
+  A trava de nobre em voo passa a respeitá-lo no ciclo e no tick, e o pouso
+  dele vira um pouso novo a acompanhar. Bloqueia também, sem registrar:
+  rótulo sem coordenada, linha sem ícone legível (markup novo), praça que não
+  respondeu e lista cortada, porque "não sei" não é "não há". Nobre que
+  **volta** do alvo (rótulo com a mesma coordenada) não conta.
+- A mensagem "INCOMPLETA" agora diz que dá para completar o trem à mão.
+
+**Fase 4 — nobre atrasado de trem bárbaro sai.**
+`Hunter.late_barbarian_verdict` decide no lugar do "nunca sai atrasado".
+Sai atrasado só se **todas** estas condições valerem, reconferidas na hora do
+envio:
+- nobre de ataque real em schedule `label: "barb"`;
+- o `cache/conquest/<alvo>` aponta para o schedule e ainda está em
+  `train_scheduled`;
+- o alvo não está no `config` e é bárbaro **nas duas fontes** (`cache/villages`
+  e `village.txt`; para posse a lista do mundo é a fonte nova, 27º padrão);
+- o atraso é de no máximo 4 h (`LATE_BARB_MAX_SECONDS`);
+- os **outros** nobres do trem, enviados ou por sair, não zeram a lealdade
+  sozinhos nem na queda máxima: `outros × 35 < 100`. Se zerassem, este
+  pousaria depois da conquista: autoconquista, moeda queimada e a guarnição
+  morta pelo próprio nobre (§6.1, a ressalva da §8.58).
+
+No caso real, 2 × 35 = 70 e o par da BBM 008 sairia, 401 s atrasado. PvP,
+snipe, manual, fake e apoio continuam recusados. Recusa atrasada agora grava
+`late_refused_because`. O lote atrasado grava `late_by_seconds` e
+`arrival_real` (o envio mais a duração que o jogo devolveu), e a promoção usa
+essa chegada própria em `noble_arrivals`. Com isso, a trava de voo e o tick
+esperam também o atrasado pousar.
+
+**Testes:** `tests/test_event_tick.py` (12), `tests/test_noble_flight_scan.py`
+(13), `tests/test_hunter_late_barb.py` (11), o caso 1b de
+`test_conquest_extra_origin.py` (nobre manual no ar → nenhum extra) e
+`test_nobre_atrasado_promove_com_a_chegada_dele` no planejador. Prova por
+mutação: 31 mutantes (7+2 da fase 3, 8 da fase 2, 14 da fase 4), todos
+derrubam o teste. Suíte: 114/114.
+⚠️ **Sem teste:** a ligação do tick no `service_callback` dentro de
+`TWB.run()` (a função é o laço principal inteiro). Ela só se prova em campo:
+`Eventos:` no log.
+
+**Validação em campo pendente:** o pouso do trem da 81800, em **21/10 07:11:05**
+(2 nobres da BBM 012, pela praça às 07:11:06 e 07:11:07). O esperado é
+`Eventos: pouso em 81800 ... acompanhando agora` minutos depois do pouso, e
+então uma de duas coisas: se o usuário completar à mão, a praça bloqueia o
+extra e registra os nobres dele; senão, sai um nobre extra.
+
+**⚠️ Rajada de requisições e captcha, medido em 19/10.** Logo depois do
+reinício das 17:29, o próprio bot fez **9 a 13 requisições/min** (prime da
+conquista no início do ciclo, 17:29 a 17:32), contra ~4/min no laço normal.
+Uma GET minha de sonda às 17:31, por cima disso, deixou a conta em
+`data-bot-protect="pending"`, e às 17:33:16 o captcha foi forçado (saiu às
+17:41:24). O prime do início de **todo** ciclo tem essa forma. O tick da fase 2
+prima só as aldeias com nobre e sem leitura (depois de um reinício podem ser
+todas), e a fase 3 lê até 13 praças. As duas pagam a pausa normal do
+`get_url`, mas são rajadas. Não mexi no ritmo do prime. Fica registrado
+porque é o próximo candidato a causa de captcha.
+
+**Item 5 do pedido — o que ainda só se trata no início do ciclo** (mapa em
+`twb.py`, bloco do ciclo):
+
+| Informação | Onde é tratada | Situação |
+|---|---|---|
+| Pouso de nobre bárbaro, lealdade, extra, aviso de conquista | `run_barbarian_conquest` | ✅ também no tick (fase 2) |
+| Trem bárbaro despachado (promoção, aviso "saíram"/"INCOMPLETA") | `BarbarianTrainPlanner.run` | ✅ também no tick (fase 2) |
+| Ataque chegando (defesa própria) | `OwnDefense.tick` | já era por evento (§8.60) |
+| Aldeia recém-conquistada vira gerenciada (`config.villages`, objeto `Village`) | `get_overview` + `add_village` | ⏳ só no ciclo. A posse vem antes pelo relatório (lealdade ≤ 0), mas a aldeia nova só roda (construir, recrutar) no ciclo seguinte |
+| Conquista PvP (`check-complete`, clear e nobres) | `pvp_inicio` + `Village.run_pvp_conquest` | ⏳ por aldeia no laço; candidato natural ao tick, com o mesmo gatilho de pouso |
+| Quem recruta nobre (`NobleRecruitGate`) | início do ciclo | ⏳ não reage a uma conquista que acabou de fechar |
+| Quadro de reservas da tribo, estatísticas, comandos no ar (`InFlight`) | início do ciclo, com TTL | leitura por TTL; ninguém decide em cima disso no meio do ciclo |
+| Relatórios novos em geral | init de cada aldeia (~8 min) e agora o tick | o `new_report` do `game_data` fica como gatilho futuro para relatório que não é pouso nosso |
 
 ## 9. Próximos passos
 
