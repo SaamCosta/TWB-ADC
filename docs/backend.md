@@ -8029,6 +8029,21 @@ No estado de 19/10 ~18:30 a regra pede 2 nobres para a 81800, mas o plano
 leve em casa) e a BBM 009 não chega ao `min_escort_total` (50 por nobre). A
 política de escolta é a do trem, de propósito.
 
+**Em campo, 19/10 19:04 (reinício com `4ecbbf6`):**
+- 19:08:29: o tick avaliou o reforço da 81800 e leu a praça de 5 aldeias com
+  nobre no alcance. Não havia nobre além dos do trem.
+- 19:09:17: **reforço de 2 nobres agendado**, BBM 008 (sai 19:19:17, 572 de
+  escolta) e BBM 012 (sai 20:31:14, 440 de escolta), pouso comum em 21/10
+  11:04:41, 3h54 depois do trem. A escolta da BBM 008 tinha voltado para casa.
+
+O mesmo trecho expôs um **defeito**: o tick rodou num checkpoint do início do
+ciclo, **antes** do bloco da conquista, e primou 12 aldeias (`Eventos: primed
+12/12`). O prime da conquista releu as mesmas logo depois. A subida ficou a
+9–12 req/min durante ~6 min. Corrigido com `TWB._events_armed`: o tick não faz
+nada num ciclo até o bloco da conquista daquele ciclo rodar (teste
+`test_tick_parado_ate_a_conquista_do_inicio_do_ciclo`, mutante morto). Entra
+no próximo reinício.
+
 Testes: 13 em `test_conquest_planner.py` (o caso da 81800, regra pura,
 casamento da praça, manual, ilegível, perto do alvo, tarde demais, alvo
 perdido/nosso/reservado, promoção, schedule apagado, reserva, trava de voo) e

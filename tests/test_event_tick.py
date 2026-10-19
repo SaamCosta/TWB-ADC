@@ -276,6 +276,27 @@ def test_conquista_desligada_ou_reentrada_nao_faz_nada():
     assert anchor.runs == 0
 
 
+def test_tick_parado_ate_a_conquista_do_inicio_do_ciclo():
+    """
+    19/10 19:08: o tick primou 12 aldeias num checkpoint do inicio do ciclo e o
+    prime da conquista releu as mesmas logo depois (11 req/min). Ate o bloco da
+    conquista rodar, o tick nao faz nada.
+    """
+    from twb import TWB
+
+    bot = TWB()
+    calls = []
+    bot.event_tick.tick = lambda *a, **k: calls.append(1)
+    bot.wrapper = SimpleNamespace(meter=None)
+    events = bot._event_tick_callback(CONFIG, {"41140": Anchor()}, None, None, None)
+    bot._events_armed = False
+    events()
+    assert calls == [], "antes da conquista do inicio do ciclo, nada"
+    bot._events_armed = True
+    events()
+    assert calls == [1]
+
+
 # --- 3. O sono acorda no pouso --------------------------------------------------------
 
 def test_sono_acorda_no_pouso_e_roda_o_tick():

@@ -851,7 +851,7 @@ class TWB:
             )
 
         def events():
-            if not villages:
+            if not villages or not getattr(self, "_events_armed", True):
                 return
             with meter_phase(self.wrapper, "eventos", village=False):
                 self.event_tick.tick(
@@ -1210,6 +1210,9 @@ class TWB:
                 # overview ate o sono. `between` sao as requisicoes feitas
                 # entre um ciclo e outro (o Hunter depois do sono).
                 between = self.wrapper.meter.begin_cycle()
+                # §8.71: o tick de eventos fica parado ate a conquista do
+                # inicio deste ciclo rodar (ver `_events_armed` mais abaixo).
+                self._events_armed = False
                 config = self.config()
                 if self.phase_forecast is None:
                     self.phase_forecast = PhaseForecast()
@@ -1585,6 +1588,12 @@ class TWB:
                             world_villages=world_villages,
                             reservation_writer=reservation_writer,
                         )
+                # §8.71: so daqui em diante o tick de eventos age neste ciclo.
+                # Antes, ele repetiria o que o bloco acima faz (prime das
+                # aldeias com nobre, acompanhamento, reforco): em 19/10 19:08 o
+                # tick primou 12 aldeias num checkpoint do inicio do ciclo e o
+                # prime da conquista releu as mesmas logo depois, a 11 req/min.
+                self._events_armed = True
 
                 # 8.48: quem recruta nobre e quem so cunha, decidido uma vez
                 # para o imperio. Depois do planejador de proposito: o alvo que
