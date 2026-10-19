@@ -217,7 +217,7 @@
     "cede_recruitment": true,
     "auto_manage": false,
     "roles": {},
-    "reapply_backoff_hours": 24,
+    "reapply_backoff_hours": 168,
     "account_refresh_hours": 24
   },
   "world": {

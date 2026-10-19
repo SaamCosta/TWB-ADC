@@ -7551,9 +7551,39 @@ recusa, ordem das páginas, grupo fora do mapa). Suíte 108/108.
 no exemplo. No `config.json` do usuário: `"dry_run"` e o mapa da §8.66
 (Ataque/Defesa/Watch Tower; `ADC - OFENSIVA BOT`/`ADC - DEFENSIVA`/`ADC -
 TORRE` na construção; `ADC - OFENSIVA`/`DEFENSIVA`/`TORRE` em pesquisa e
-tropas). **⏳ Próximo:** reiniciar, ler as linhas `GerenteAuto [simulação]`
-do ciclo das 6h (em especial quantas das BBM 001–012 o bot acha pendentes de
-construção com o jogo dizendo cumprido) e só então `auto_manage: true`.
+tropas).
+
+**Simulação em campo, 19/10 (processo de 10:49, 12 aldeias até 12:08).** A
+conta foi lida (3 modelos, 56 aldeias nas duas listas) e nenhum grupo precisou
+mudar. Seis decisões, conferidas uma a uma contra o estado:
+- BBM 008 e 012, reserva 0 → 40.000/50.000/50.000 + 100 pop: certo (as duas
+  são recrutadoras do portão; a reserva do nobre também logou na 013);
+- BBM 011, tropas: certo (4.768 lanças e 3.870 espadas para meta 7.000/7.000,
+  meta do jogo zerada); BBM 005, tropas: certo, por 80 exploradores (20 de 100);
+- **BBM 012, construção: o template do bot pede fazenda 30, a aldeia está na
+  29, e o jogo tirou o `ADC - DEFENSIVA` como cumprido.** O modelo do gerente
+  para antes do template do bot. Reaplicar seria um POST desfeito por dia;
+  `reapply_backoff_hours` passou de 24 para **168**, e a trava zera quando o
+  gerente volta de um vencimento (a renovação reaplica tudo na hora).
+  O §8.25 ("níveis finais idênticos") não vale para a fazenda;
+- **BBM 002, tropas: errado.** A aldeia não tem praça de reunião ("Praça de
+  reunião (não construído)"), então a tela de tropas não existe e o bot leu
+  `{}`. Contagem vazia agora é "não sei" (`troops_pending` → None).
+  ⚠️ O mesmo `{}` alimenta o recrutamento do próprio bot nessa aldeia, que a
+  trata como vazia (o "stable recruitment queue out-of-sync" de 18/10): é
+  defeito anterior, registrado à parte.
+
+**Achado do caminho: a cauda da lista não rodava.** `processing_order` era
+a ordem do config, e o ciclo recomeça do início; com o corte das 23h e quatro
+reinícios em 18/10, BBM 032–053 estavam desde 17/10 sem rodar e as três
+últimas conquistas (81571, 74966, 69861) **nunca** rodaram. Por isso seguiam
+com `inherit_on_first_run: true` e papel `purple_predator`, fora do mapa do
+gerente automático, sem construção nem farm do bot. Agora
+`TWB.stale_first_order()`: quem nunca fechou uma rodada vem primeiro, depois a
+mais antiga, pelo mtime de `cache/managed/<vid>.json`, que só
+`Village.set_cache_vars()` grava (fim da rodada). Teste:
+`tests/test_village_order.py`. Suíte 109/109. **⏳ Próximo:** reiniciar com
+essas correções e só então `auto_manage: true`.
 
 ## 8.69 `P-DEFESA-TETO` — teto de apoio, blindagem e "onde estão as tropas" (2026-10-18)
 

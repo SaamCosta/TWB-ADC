@@ -138,6 +138,7 @@ def test_pending_and_mode():
     full = {u: v for u, v in off.items() if u != "id" and not u.startswith("buffer_")}
     check(am_auto.troops_pending(off, full) is False, "meta cheia")
     check(am_auto.troops_pending(off, None) is None, "sem contagem")
+    check(am_auto.troops_pending(off, {}) is None, "contagem vazia (aldeia sem praca, BBM 002) nao e zero")
     check(am_auto.mode({}) == "off" and am_auto.mode({"auto_manage": "dry_run"}) == "dry_run"
           and am_auto.mode({"auto_manage": True}) == "on", "modos")
 
@@ -187,8 +188,10 @@ def test_refresh_account_pages():
     check(ex.account["troop_units"] == ["axe", "catapult", "heavy", "light", "ram", "spear", "spy", "sword"],
           "unidades do formulario = colunas da lista")
     check(not ex.refresh_account(CFG, "41123", True), "dentro da validade nao rele")
+    ex.applied = {"41123": {"construction": {"at": NOW, "template": 2108}}}
     ex.refresh_account(CFG, "41123", False)
     check(ex.refresh_account(CFG, "41123", True), "gerente voltou: rele na hora")
+    check(ex.applied == {}, "renovacao zera a trava de reaplicacao")
 
 
 def test_executor_posts_and_dry_run():

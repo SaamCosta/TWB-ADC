@@ -27,12 +27,16 @@ jogo oferece (widget da aldeia, `<select>` de grupos, `initTroopManagement`).
 - Grupo: a aldeia entra no grupo do papel e sai dos grupos dos OUTROS papéis
   (um papel trocado deixa a aldeia nos dois). Grupo fora do mapa não é tocado.
 - Trava contra laço: o mesmo modelo não é reaplicado na mesma aldeia antes de
-  `reapply_backoff_hours`, mesmo que o jogo o tire de novo.
+  `reapply_backoff_hours` (168 h), mesmo que o jogo o tire de novo. Medido em
+  19/10: o template do bot pede fazenda 30 na BBM 012 e o modelo do gerente
+  para antes (o jogo o tirou como cumprido), então a reaplicação só seria um
+  POST desfeito. Quando o gerente volta de um vencimento, a trava zera
+  (`game/am_auto.py`): a renovação precisa reaplicar tudo na hora.
 """
 
 PHASES = ("construction", "research", "troops")
 BUFFER_KEYS = ("buffer_wood", "buffer_stone", "buffer_iron", "buffer_pop")
-DEFAULT_BACKOFF_HOURS = 24
+DEFAULT_BACKOFF_HOURS = 168
 
 
 def mode(cfg):
@@ -63,8 +67,12 @@ def buffer_from_reserve(reserve):
 
 
 def troops_pending(template, totals):
-    """True se alguma unidade do modelo está abaixo da meta; None sem dado."""
-    if not template or totals is None:
+    """True se alguma unidade do modelo está abaixo da meta; None sem dado.
+
+    Contagem VAZIA também é "sem dado": a aldeia sem praça de reunião não tem a
+    tela de tropas, e o bot lê {} (BBM 002, 19/10). Tratar isso como zero
+    aplicaria o modelo numa aldeia que já o cumpre."""
+    if not template or not totals:
         return None
     for unit, meta in template.items():
         if unit == "id" or unit.startswith("buffer_"):

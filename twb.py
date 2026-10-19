@@ -722,6 +722,25 @@ class TWB:
     # impede o laco de reconferir a rede sem pausa.
     BLIND_SLEEP_FLOOR = 30
 
+    @staticmethod
+    def stale_first_order(villages, last_run=None):
+        """
+        Aldeias na ordem de quem esta ha mais tempo sem fechar uma rodada:
+        nunca rodou (sem `cache/managed/<vid>.json`) primeiro, empate pela
+        ordem do config. `last_run(vid)` -> epoch ou 0; o padrao e o mtime de
+        `cache/managed/<vid>.json`, que so `Village.set_cache_vars()` grava, no
+        fim da rodada da aldeia.
+        """
+        if last_run is None:
+            def last_run(vid):
+                try:
+                    return os.path.getmtime(os.path.join("cache", "managed", "%s.json" % vid))
+                except OSError:
+                    return 0.0
+        indexed = list(enumerate(villages))
+        indexed.sort(key=lambda pair: (last_run(pair[1].village_id), pair[0]))
+        return [village for _, village in indexed]
+
     def run_am_auto_account(self, config, managed_villages_dict):
         """
         Gerente automatico, parte da conta (§8.68, `P-GERENTE-AUTO`): relê
@@ -1507,7 +1526,11 @@ class TWB:
                             config, self.found_villages, service=_base_cb
                         )
 
-                processing_order = list(self.villages)
+                # Mais atrasada primeiro (§8.68, 19/10): com a ordem fixa do
+                # config, o corte das 23h e os reinicios, BBM 032-053 ficaram
+                # dois dias sem rodar e as tres ultimas conquistas nunca
+                # rodaram (sem heranca de papel, sem construir, sem farm).
+                processing_order = self.stale_first_order(self.villages)
                 if config["bot"].get("humanize_village_order", False):
                     random.shuffle(processing_order)
 

@@ -104,6 +104,11 @@ class AccountManagerAuto:
         self._manager_was_active = manager_active
         if not manager_active:
             return False
+        if just_back and self.applied:
+            # Renovação: o jogo zerou os modelos, e a trava contra laço não pode
+            # segurar a reaplicação de quem foi aplicado antes do vencimento.
+            logger.info("GerenteAuto: gerente voltou -- trava de reaplicação zerada")
+            self.applied = {}
         hours = float((cfg or {}).get("account_refresh_hours", DEFAULT_REFRESH_HOURS))
         age = self.clock() - float(self.account.get("read_at", 0))
         if not just_back and age < hours * 3600:
