@@ -8005,7 +8005,12 @@ O reforço só sai com todas estas condições, reconferidas na hora:
 Plano parcial vale: 1 dos 2 que faltam ainda é útil. A decisão é tomada uma
 vez por trem, gravada em `reinforcement` no registro. Falta de dado (praça
 ilegível, nenhuma origem fecha a escolta) tenta de novo no ciclo seguinte; no
-tick, a cada 30 min por alvo.
+tick, a cada 30 min por alvo **ou** quando a tropa em casa de uma aldeia com
+nobre muda (`EventTick.troop_fingerprint`). O segundo gatilho veio da própria
+81800: dos ~7.700 da BBM 008 quase nada estava em casa (o apoio que guarnecia
+a BBM 055 está voltando, há um nobre com escolta voltando da BBM 054 e o resto
+coletando). A tropa volta durante a vez da aldeia no laço, e só o relógio
+podia perder a janela entre a releitura da praça e a coleta sair de novo.
 - A tropa fica reservada em `barb_reforco:<alvo>` até sair. O prefixo é
   próprio porque o `_release_orphan_reserves` solta `barb_train:*` de todo
   alvo fora de `train_scheduled`.

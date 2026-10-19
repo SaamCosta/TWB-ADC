@@ -230,6 +230,28 @@ def test_trem_incompleto_no_ar_avalia_reforco_a_cada_30_min():
     assert calls == ["plan", "plan"], calls
 
 
+def test_escolta_que_volta_para_casa_reavalia_antes_dos_30_min():
+    """
+    A escolta da BBM 008 estava fora (coleta, apoio voltando da BBM 055) e
+    volta na vez dela no laco. A releitura da praca muda a tropa em casa, e o
+    tick reavalia na hora, antes de a coleta sair de novo.
+    """
+    calls = []
+    incomplete = conquest(hits_done=2, hits_needed=4, loyalty_drop_range=[20, 35])
+    bbm008 = SimpleNamespace(units=SimpleNamespace(troops={"snob": "2", "light": "1"}),
+                             area=object())
+    villages = {"41114": bbm008}
+    t = EventTick()
+    now = LANDING - 36 * 3600
+    with Fakes({"81800": incomplete}):
+        t.tick(CONFIG, villages, None, planner_factory=lambda: fake_planner(calls), now=now)
+        t.tick(CONFIG, villages, None, planner_factory=lambda: fake_planner(calls), now=now + 60)
+        assert calls == ["plan"], "nada mudou: espera os 30 min (%s)" % calls
+        bbm008.units.troops = {"snob": "2", "spear": "900", "sword": "900", "heavy": "200"}
+        t.tick(CONFIG, villages, None, planner_factory=lambda: fake_planner(calls), now=now + 120)
+    assert calls == ["plan", "plan"], "a escolta voltou: reavalia ja (%s)" % calls
+
+
 def test_trem_completo_ou_que_conquista_sozinho_nao_pede_reforco():
     calls = []
     t = EventTick()

@@ -156,14 +156,44 @@ class EventTick:
     # centenas de vezes por ciclo.
     REINFORCE_RETRY = 30 * 60
 
-    def reinforcements_due(self, conquests, config, now):
-        """Alvos com trem incompleto no ar que pedem reforco (§8.71)."""
+    @staticmethod
+    def troop_fingerprint(villages):
+        """
+        Foto da tropa em casa das aldeias com nobre. Muda quando alguma delas
+        rele a praca -- e e nesse instante que uma escolta que estava fora
+        (coleta, apoio voltando) pode ter chegado.
+        """
+        out = []
+        for vid, village in sorted((villages or {}).items()):
+            troops = getattr(getattr(village, "units", None), "troops", None) or {}
+            try:
+                if int(troops.get("snob", 0) or 0) <= 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            out.append((str(vid), tuple(sorted((str(k), str(v)) for k, v in troops.items()))))
+        return tuple(out)
+
+    def reinforcements_due(self, conquests, config, now, villages=None):
+        """
+        Alvos com trem incompleto no ar que pedem reforco (§8.71).
+
+        Reavalia no maximo a cada `REINFORCE_RETRY` -- OU quando a tropa em
+        casa de uma aldeia com nobre mudou desde a ultima tentativa. Caso da
+        81800 (19/10): a escolta da BBM 008 estava fora (coleta, apoio
+        voltando da BBM 055) e volta durante a vez dela no laco. So o relogio
+        podia perder a janela entre a releitura da praca e a coleta sair de
+        novo; a mudanca da tropa e o sinal certo.
+        """
         from game.attack import ConquestManager
         from game.conquest_planner import BarbarianTrainPlanner
 
+        fingerprint = self.troop_fingerprint(villages) if villages is not None else None
         out = []
         for target_id, data in sorted(conquests.items()):
-            if now - self._reinforce_tried.get(str(target_id), 0) < self.REINFORCE_RETRY:
+            tried_at, tried_print = self._reinforce_tried.get(str(target_id), (0, None))
+            if (now - tried_at < self.REINFORCE_RETRY
+                    and (fingerprint is None or fingerprint == tried_print)):
                 continue
             drop_max = (data.get("loyalty_drop_range") or [None, None])[1]
             if drop_max is None:
@@ -225,7 +255,7 @@ class EventTick:
             conquests = ConquestCache.active_conquests()
             promote = self.promotions_due(conquests)
             due = self.due_landings(now, conquests)
-            reinforce = self.reinforcements_due(conquests, config, now)
+            reinforce = self.reinforcements_due(conquests, config, now, villages)
         except Exception as exc:
             logger.warning("Eventos: nao consegui ler o estado da conquista (%s)", exc)
             return False
@@ -243,16 +273,19 @@ class EventTick:
                 planner._sync_reinforcement_reserves()
                 # Trem recem-promovido incompleto: o reforco se decide ja.
                 reinforce = self.reinforcements_due(
-                    ConquestCache.active_conquests(), config, now)
+                    ConquestCache.active_conquests(), config, now, villages)
             if reinforce and planner is not None and (not callable(gate) or gate("eventos")):
-                for target_id in reinforce:
-                    self._reinforce_tried[target_id] = now
                 if callable(prime):
                     stale = [vid for vid, v in (villages or {}).items()
                              if (not getattr(v, "units", None) or not getattr(v, "area", None))
                              and self._may_hold_noble(vid, v)]
                     if stale:
                         prime(sorted(stale))
+                # A foto e tirada DEPOIS do prime: a tentativa vale para a
+                # tropa que ela de fato viu.
+                fingerprint = self.troop_fingerprint(villages)
+                for target_id in reinforce:
+                    self._reinforce_tried[target_id] = (now, fingerprint)
                 logger.info("Eventos: trem incompleto no ar contra %s -- avaliando reforco agora",
                             ", ".join(village_label(t) for t in reinforce))
                 planner.plan_reinforcements(now=now)
