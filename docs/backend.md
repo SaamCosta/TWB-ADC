@@ -7274,7 +7274,10 @@ resposta depois dele. Bloco verbatim de 18/10 15:35 (`am_village`):
 - `active(nome)` → `True`/`False`/`None`. `None` = não lido neste processo, e
   `Village.paid_active()` o trata como **inativo**: na dúvida, o bot faz.
 - Troca ao vivo → `WARNING` no log (`PaidFeatures`) e Telegram, uma vez por
-  troca. A primeira leitura do processo só loga (`Gerente de conta: ativo`).
+  troca. A primeira leitura **sem** `cache/paid_features.json` só loga
+  (`Gerente de conta: ativo`); um reinício no mesmo estado do arquivo não loga
+  nada (redação corrigida em 18/10, no primeiro reinício com o arquivo já
+  gravado: a anterior dizia "primeira leitura do processo").
 - `cache/paid_features.json` guarda o último estado e as 50 últimas trocas. No
   restart, o valor do arquivo **não** vale como ativo; ele só serve de
   referência para detectar a troca que aconteceu com o bot parado (o aviso
@@ -7427,9 +7430,32 @@ esperado fica perto de **120–150 req/ciclo**, quase todo no recrutamento.
 
 ### Em aberto
 
-- **⏳ Campo:** efeito só depois de reiniciar o bot. Validar no
-  `session_latest.log` (`grep -a "Gerente:"`) e medir `construcao`/
-  `recrutamento` por tela no primeiro ciclo completo contra os números acima.
+- ✅ **Campo, 18/10 20:25 → 23:02** (processo de 20:25; o ciclo parou na
+  janela das 23h com 31 de 55 aldeias, BBM 001–029 + 2). No log: 26
+  `recrutamento cedida`, 18 `construção cedida` (da BBM 013 em diante, que é
+  onde o modelo de construção ainda não foi cumprido), 0 de pesquisa (o jogo já
+  tirou todos), **0 retomadas e 0 erros**. As aldeias com meta de tropas
+  zerada no jogo (BBM 002, 010, 011) ficaram com o bot, que recrutou nelas: é o
+  caso que "gerente ativo na conta" deixaria sem ninguém. `cache/cycles`, por
+  aldeia, contra os três ciclos de 17/10:
+
+  | Fase | 17/10 | 18/10 |
+  |---|---|---|
+  | construção | 1,39 – 2,25 | 1,00 (só `main`; 0 `upgrade_building`) |
+  | recrutamento | 3,45 – 4,53 | 2,32 |
+  | quartel/estábulo + POST de treino | ~2,2 | 0,32 (6 no ciclo, das aldeias sem modelo) |
+
+  Duas ressalvas de leitura. O recrutamento ainda carrega 1 `smith` por aldeia
+  (31), porque o gate do ferreiro vive em memória e o processo era novo; nos
+  ciclos seguintes ele cai para perto de zero, e o recrutamento para ~1,3. E
+  parte do zero em `upgrade_building` é de BBM 001–012, que não cederam e não
+  tinham o que construir. O total por aldeia (20,7) não serve de comparação:
+  a fase `aldeia` (165 req, 119 de `place`) é o apoio da defesa própria à
+  74966 (§8.69) rodando no meio do ciclo. Projeção para 53 aldeias: ~100–180
+  req/ciclo a menos, dentro da estimativa.
+  Nota de procedimento: um `Start-Process` lançado pelo agente morre junto com
+  a chamada que o lançou. Para subir o bot de fora do painel, usar
+  `Win32_Process.Create` (WMI), que o deixa fora da árvore do processo.
 - **Modelo pausado não foi visto.** `am_village` tem "( Pausar )" por aldeia; o
   que o widget mostra de um modelo pausado é desconhecido (sondar exigiria
   pausar no jogo). Se ele seguir `selected`, a fase fica sem dono naquela
@@ -8055,7 +8081,8 @@ zero; prazo em `premium&mode=feature_log`):
     construção, recrutamento e transporte hoje sob duplo comando); quando
     ativo, o bot pode ceder essas fases e economizar as requisições.
     ✅ *Construção, pesquisa e recrutamento em 2026-10-18 (§8.68), pelo widget
-    do gerente na visão geral de cada aldeia, a custo zero. ⏳ Falta campo.
+    do gerente na visão geral de cada aldeia, a custo zero. ✅ Campo em 18/10:
+    44 cessões em 31 aldeias, 0 retomadas, recrutamento 4,5 → 2,3 req/aldeia.
     O transporte ficou desenhado e não implementado: hoje todo envio é rota
     de cunhagem, que nunca se cede.*
 28. **Assistente de saque:** envio de farm em 1 requisição e dimensionamento
