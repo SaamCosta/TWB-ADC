@@ -7803,6 +7803,70 @@ ignorando desconhecido): os 8 derrubam o teste.
   foi apurado. `cache/managed` grava `available_troops: {}` para ela, embora
   haja 629 em casa.
 
+## 8.71 `P-HUNTER-PREEMPT` — nenhuma tarefa segura o bot além de uma saída; o bot toma consciência na hora (2026-10-19)
+
+**Incidente** (log em `cache/logs/incident_20261019_hunter_furo.log`). Às
+15:16:25 o planejador agendou um trem de 4 nobres contra a Bárbara 81800
+(650|292), chegada comum 21/10 07:11:05: BBM 008 (41114) ×2 saindo às
+15:25:41 e BBM 012 (41140) ×2 às 16:37:38. Às 15:19:39 o gate antes do `init`
+da BBM 002 (38409) viu **362 s** até a saída e previsão de init de **76 s**
+(máximo das últimas amostras da própria 38409 em `cache/cycles`; o maior init
+da conta inteira é 130 s), e liberou: 76 + 90 de `PREP` < 362. O init então
+leu a lista de relatórios (**1 página**, 15:19:51) e abriu **48 relatórios
+`ReportSupportBack`** em sequência, ~15 s cada, até ~15:31:40: **~12 min** num
+laço sem checkpoint. Às 15:20:44 o detector logou `Hunter: FURO` (296 s antes
+da saída), mas só avisava. Às 15:32:22: `refusing late attack ... 401.8s ago`
+duas vezes. Os 2 nobres da BBM 012 saíram no horário e o trem ficou com 2 de 4.
+O mesmo `send_time_missed` aparece em 17/10 12:27:47 (74966, origem 46584).
+Aquele log já não existe, então a causa dele não foi apurada.
+
+**Por que a previsão não cobriu.** A previsão é o histórico da fase, e
+histórico não enxerga rajada. O tamanho da leitura de relatórios depende de
+quantos chegaram desde a última, e 48 de uma vez (apoios voltando depois da
+§8.69) nunca tinham aparecido no init daquela aldeia. A leitura também não era
+interrompível: um laço só, sem checkpoint, com até `MAX_PAGES` (4) × 50
+relatórios. Ela era retomável só em parte: id já lido é pulado, mas se fosse
+interrompida no meio de uma página toda nova, a releitura via a página "só em
+parte nova" e nunca mais paginava (`new == len(ids)`), e as páginas seguintes
+ficavam para trás.
+
+**Fase 1 — fechar o furo:**
+
+- **Preempção no wrapper.** `WebWrapper._check_hunter_silence` continua
+  avisando e, num **GET** dentro da janela de 300 s fora do Hunter, chama
+  `hunter_preempt` **antes** da requisição. O Hunter espera o segundo exato,
+  manda, e a tarefa segue de onde estava. Isso vale para qualquer fase, no
+  início do ciclo, no laço de aldeias ou no sono, sem depender de alguém ter
+  posto checkpoint no laço certo. POST não preempta: é o passo final de um
+  formulário lido logo antes. A preempção acontece uma vez por saída e nunca
+  reentra (nem dentro do Hunter, `hunter_active`, nem dentro dela mesma).
+- **Prazo lido do disco.** `hunter_next_send_reader` lê
+  `Hunter.nearest_send_time(after=agora)` a cada requisição (~0,75 ms medidos
+  com 29 schedules, contra ~15 s de uma requisição). Antes, só o gate
+  publicava o prazo, e um schedule criado no meio de uma fase (PvP, apoio
+  agendado) ficava invisível ao detector até o próximo gate.
+- `TWB._install_hunter_preempt(config)` instala os dois no wrapper a cada
+  ciclo, logo depois do primeiro `Hunter.run`. Com o Hunter desligado, limpa
+  os dois.
+- **Leitura de relatórios.** Agora pagina quando o relatório **mais antigo**
+  da página é novo, decidido antes de processar a página. Com isso uma leitura
+  interrompida retoma e pagina. Cada leitura que abre relatório loga `Reports:
+  leitura com N página(s) da lista e M relatório(s) aberto(s) em T s (tipos)`.
+  Relatório aberto passa a gravar também `list_commands` (os ícones de comando
+  da linha). Os 317 relatórios de apoio do cache (`ReportSupport`,
+  `...Back`, `...AttackMerged`) não têm miniatura, **nenhum consumidor os lê**
+  e cada um custa um GET. Com o ícone gravado, dá para medir se a linha os
+  distingue antes de deixar de abri-los (mesmo caminho da §8.46).
+
+Testes: `tests/test_hunter_preempt.py`. Inclui o replay do incidente: 48
+relatórios a ~15 s, saída a 362 s, e o Hunter recebe o controle dentro da
+janela e antes da saída. Inclui também o controle sem preempção, que prova que
+o cenário reproduz o furo. Cobre ainda POST, uma vez por saída, reentrância,
+leitor de prazo, retomada da leitura e as duas bordas da paginação. 9
+mutantes (sem preempção, preempta POST, sem "uma vez", sem trava de
+reentrância, preempta dentro do Hunter, sem leitor, janela ignorada, paginação
+antiga, paginar com qualquer novo): os 9 derrubam o teste. Suíte: 111/111.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

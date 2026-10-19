@@ -93,11 +93,27 @@ class WebWrapper:
         # `Hunter.gate()` e `hunter_active` fica True enquanto o Hunter roda.
         # Requisicao comum dentro da janela de silencio de uma saida e sinal
         # de que alguma tarefa escapou do gate -- vira WARNING, uma vez por
-        # saida. So observa: nao segura nem desvia nada.
+        # saida.
+        #
+        # §8.71: alem de avisar, o detector PREEMPTA. Em 19/10 15:20 a leitura
+        # de 48 relatorios no init da BBM 002 entrou na janela e seguiu 12 min
+        # sem checkpoint; os 2 nobres da BBM 008 sairam 401 s atrasados e foram
+        # recusados. Agora, num GET dentro da janela fora do Hunter, o
+        # `hunter_preempt` (instalado pelo twb.py) roda ANTES da requisicao: o
+        # Hunter espera o segundo exato, manda, e a tarefa segue. So GET: um
+        # POST e o passo final de um formulario lido logo antes, e o Hunter
+        # no meio poria requisicoes entre o formulario e o envio.
+        # `hunter_next_send_reader` le o prazo do disco a cada requisicao
+        # (~1 ms): schedule criado no meio de uma fase (PvP, apoio agendado)
+        # nao espera o proximo gate para ser visto.
         self.hunter_next_send = None
         self.hunter_active = False
         self.hunter_silence_seconds = 300
         self._silence_warned_for = None
+        self.hunter_preempt = None
+        self.hunter_next_send_reader = None
+        self._preempting = False
+        self._preempted_for = None
 
     def _remember_game_data(self, response):
         """Guarda o recorte do game_data desta resposta, se houver. Nunca
@@ -119,14 +135,28 @@ class WebWrapper:
             pass
 
     def _check_hunter_silence(self, method, url):
-        """WARNING se esta requisicao comum cai na janela de silencio do Hunter.
-        Nunca levanta."""
+        """WARNING se esta requisicao comum cai na janela de silencio do Hunter,
+        e, num GET, entrega o controle ao Hunter antes dela (§8.71). Nunca
+        levanta."""
         try:
+            if getattr(self, "hunter_active", False) or getattr(self, "_preempting", False):
+                return
+            reader = getattr(self, "hunter_next_send_reader", None)
+            if callable(reader):
+                try:
+                    self.hunter_next_send = reader()
+                except Exception:
+                    pass  # fica o ultimo publicado pelo gate
             nxt = getattr(self, "hunter_next_send", None)
-            if not nxt or getattr(self, "hunter_active", False):
+            if not nxt:
                 return
             left = nxt - time.time()
-            if 0 < left <= getattr(self, "hunter_silence_seconds", 300)                     and self._silence_warned_for != nxt:
+            if not 0 < left <= getattr(self, "hunter_silence_seconds", 300):
+                return
+            preempt = getattr(self, "hunter_preempt", None)
+            will_preempt = (method == "GET" and callable(preempt)
+                            and self._preempted_for != nxt)
+            if self._silence_warned_for != nxt:
                 self._silence_warned_for = nxt
                 phase = None
                 try:
@@ -135,9 +165,23 @@ class WebWrapper:
                     pass
                 self.logger.warning(
                     "Hunter: FURO -- %s %s saiu a %.0f s de uma saida agendada, "
-                    "fora do Hunter (fase: %s). Alguma tarefa escapou do gate.",
-                    method, url, left, phase or "?"
+                    "fora do Hunter (fase: %s). Alguma tarefa escapou do gate.%s",
+                    method, url, left, phase or "?",
+                    " Entregando o controle ao Hunter antes desta requisicao."
+                    if will_preempt else ""
                 )
+            if not will_preempt:
+                return
+            # Uma vez por saida: se o Hunter voltou sem resolve-la (schedule
+            # apagado, origem sem dados), repetir a cada GET so gastaria tempo.
+            self._preempted_for = nxt
+            self._preempting = True
+            try:
+                preempt()
+            except Exception as exc:
+                self.logger.warning("Hunter: preempcao falhou (%s)", exc)
+            finally:
+                self._preempting = False
         except Exception:
             pass
 

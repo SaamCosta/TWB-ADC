@@ -45,6 +45,8 @@ class ReportManager:
         self.last_reports = {}
         # time.time() da ultima primeira pagina lida com sucesso (§8.47).
         self.last_list_read = None
+        # Contagem da leitura em curso (§8.71), recriada a cada pagina 0.
+        self._read_stats = None
 
     def has_resources_left(self, vid):
         possible_reports = []
@@ -197,6 +199,14 @@ class ReportManager:
             self.last_reports = ReportCache.cache_grab()
             self.logger.info("Got %d reports from cache", len(self.last_reports))
 
+        if page == 0:
+            # §8.71: medida de cada leitura. O furo de 19/10 foi uma leitura de
+            # 48 relatorios (~12 min) que nenhum log resumia.
+            self._read_stats = {"started": time.time(), "pages": 0, "opened": 0,
+                                "types": {}}
+        stats = getattr(self, "_read_stats", None) or {
+            "started": time.time(), "pages": 0, "opened": 0, "types": {}}
+
         url = f"game.php?village={self.village_id}&screen=report&mode=all"
         if offset > 0:
             url += f"&from={offset}"
@@ -210,12 +220,20 @@ class ReportManager:
 
         if page == 0:
             self.last_list_read = time.time()
+        stats["pages"] += 1
         self.game_state = Extractor.game_state(result)
         new = 0
         from_list = {}
 
         ids = Extractor.report_table(result)
         icons = Extractor.report_list_icons(result)
+        # §8.71: decidido ANTES de processar a pagina. Se o relatorio mais
+        # antigo dela e novo, pode haver novos na pagina seguinte. A regra
+        # antiga ("pagina inteira nova") falhava na retomada: uma leitura
+        # interrompida no meio de uma pagina toda nova (queda, reinicio) deixa
+        # os mais antigos sem abrir, a releitura ve uma pagina so em parte nova
+        # e nunca mais pagina -- as paginas seguintes ficavam para tras.
+        oldest_is_new = bool(ids) and ids[-1] not in self.last_reports
         for report_id in ids:
             if report_id in self.last_reports:
                 continue
@@ -238,16 +256,25 @@ class ReportManager:
                 self.logger.warning("Reports: timed out fetching report %s, skipping", report_id)
                 continue
 
+            stats["opened"] += 1
             get_type = re.search(r'class="report_(\w+)', data.text)
             if get_type:
                 report_type = get_type.group(1)
+                stats["types"][report_type] = stats["types"].get(report_type, 0) + 1
                 if report_type == "ReportAttack":
                     self.attack_report(data.text, report_id)
                     continue
                 else:
                     # A miniatura vai junto para a tabela LIST_ONLY_THUMBS
                     # poder crescer a partir de dado medido, nao de palpite.
+                    # §8.71: os icones de comando da linha tambem. Os 317
+                    # relatorios de apoio do cache (ReportSupport, ...Back,
+                    # ...AttackMerged) nao tem miniatura, nenhum consumidor os
+                    # le, e cada um custa um GET; com o icone gravado da para
+                    # medir se a linha os distingue antes de deixar de abrir.
                     extra = {"list_icon": row["thumb"]} if row.get("thumb") else {}
+                    if row.get("commands"):
+                        extra["list_commands"] = list(row["commands"])
                     res = self.put(report_id, report_type=report_type, data=extra)
                     self.last_reports[report_id] = res
 
@@ -258,18 +285,26 @@ class ReportManager:
                 ", ".join("%s %d" % kv for kv in sorted(from_list.items()))
             )
 
-        # Pagina seguinte so quando a pagina inteira era nova -- senao o resto
-        # ja foi lido antes. A versao anterior pedia `new == 12` e pulava
+        # Pagina seguinte quando o mais antigo desta pagina era novo (ver
+        # `oldest_is_new`). A versao anterior pedia `new == 12` e pulava
         # `from=page*12`, escrita para uma lista de 12 por pagina; com 50, uma
         # pagina inteira nova (50) nunca paginava e o 13o-em-diante sumia, e
         # exatamente 12 novos pediam `from=12`, uma pagina sobreposta.
         max_pages = 20 if full_run else self.MAX_PAGES
-        if ids and (full_run or new == len(ids)) and page + 1 < max_pages:
+        if ids and (full_run or oldest_is_new) and page + 1 < max_pages:
             page += 1
             self.logger.debug(
                 "%d new reports where added, also checking page %d", new, page
             )
             return self.read(page, full_run=full_run, offset=offset + len(ids))
+
+        if stats["opened"]:
+            self.logger.info(
+                "Reports: leitura com %d pagina(s) da lista e %d relatorio(s) "
+                "aberto(s) em %.0f s (%s)",
+                stats["pages"], stats["opened"], time.time() - stats["started"],
+                ", ".join("%s %d" % kv for kv in sorted(stats["types"].items()))
+            )
 
     def re_unit(self, inp):
         output = {}

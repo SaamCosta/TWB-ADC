@@ -144,8 +144,10 @@ rm = manager({0: odd})
 rm.read(full_run=False)
 opened = [u.rsplit("view=", 1)[1] for u in rm.wrapper.urls if "&view=" in u]
 check(TRADE in opened, "comercio com icone de comando deveria ser aberto: %s" % opened)
-check(saved.get(TRADE, {}).get("extra") == {"list_icon": "report_trade"},
-      "o aberto guarda a miniatura para a tabela poder crescer: %s" % saved.get(TRADE))
+check(saved.get(TRADE, {}).get("extra") == {"list_icon": "report_trade",
+                                             "list_commands": ["support"]},
+      "o aberto guarda a miniatura e os icones da linha para a tabela poder "
+      "crescer (§8.71): %s" % saved.get(TRADE))
 
 # §8.49: fim de cunhagem automatica (miniatura report_gold), linha verbatim da
 # pagina from=50. Antes eram ~30 GETs na primeira leitura de cada processo.

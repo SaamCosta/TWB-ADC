@@ -57,7 +57,9 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     duração prevista por `core/phase_forecast.py` a partir de `cache/cycles`.
     Fase nova em `Village.run()`/`twb.py` precisa de `_gate(...)` antes dela,
     senão vira o furo de 2026-10-08 (§8.58). `Hunter: FURO` no log = alguma
-    tarefa escapou do gate.
+    tarefa escapou do gate; desde §8.71 o wrapper **preempta** (GET dentro
+    da janela entrega o controle ao Hunter antes de sair), então o FURO
+    vira aviso de previsão errada, não nobre perdido. POST não preempta.
   - `core/paid_features.py` — **o** interruptor do modo pago (§8.67):
     premium/gerente/assistente lidos ao vivo do `game_data` de toda resposta.
     Fase cedida ao recurso pago consulta `Village.paid_active(nome)` na hora

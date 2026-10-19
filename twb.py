@@ -784,6 +784,37 @@ class TWB:
             ok = self.hunter.gate(config, phase, predicted, skippable, village)
         return ok or not skippable
 
+    def _install_hunter_preempt(self, config):
+        """
+        Seguro de ultima linha do Hunter (§8.71), instalado no wrapper uma vez
+        por ciclo, com o config do ciclo.
+
+        O gate antes de cada fase decide pela PREVISAO da fase, e previsao
+        tirada do historico nao enxerga rajada: em 19/10 o init da BBM 002 tinha
+        previsao de 76 s e levou ~12 min abrindo 48 relatorios de apoio
+        voltando, sem checkpoint nenhum. Com isto, qualquer GET que saia dentro
+        da janela de silencio fora do Hunter entrega o controle a ele antes
+        (`WebWrapper._check_hunter_silence`), em qualquer fase, no inicio do
+        ciclo ou no laco de aldeias. O prazo e lido do disco a cada requisicao.
+        """
+        wrapper = self.wrapper
+        hunter = self.hunter
+        if hunter is None or not config.get("hunter", {}).get("enabled", False):
+            wrapper.hunter_preempt = None
+            wrapper.hunter_next_send_reader = None
+            return
+
+        def reader():
+            return hunter.nearest_send_time(after=time.time())
+
+        def preempt():
+            # village=False: o Hunter e da conta, como no checkpoint comum.
+            with meter_phase(wrapper, "hunter", village=False):
+                hunter.run(config)
+
+        wrapper.hunter_next_send_reader = reader
+        wrapper.hunter_preempt = preempt
+
     def _base_sleep(self, config):
         """O sono normal entre ciclos (active/inactive_delay + jitter)."""
         sleep = 0
@@ -1249,6 +1280,7 @@ class TWB:
                     self.hunter.build_schedules_from_config(config)
                     with meter_phase(self.wrapper, "hunter"):
                         self.hunter.run(config)
+                self._install_hunter_preempt(config)
                 # P2-35: one PvpConquestManager for the whole cycle instead of
                 # one per village. The state machine still runs once per
                 # village (that priority-over-farm behaviour is deliberate --
