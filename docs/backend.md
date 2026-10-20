@@ -8137,8 +8137,14 @@ duration probe (no area)` para a BBM 005 e a BBM 010. Eram três defeitos:
 
 Fora: o **apoio** agendado ainda sai pelo `DefenceManager.support` sem
 pré-armado (o aviso de "1 a 3 s depois" no painel continua valendo para ele).
-O valor de 0,4 s é a conta, não uma medida. **O número que importa ainda não
-foi medido**: o desvio do primeiro envio real, que sai em 21/10.
+**Medido em campo em 2026-10-20**, com um ataque de teste de 25 cavalarias
+leves da BBM 040 (58039) contra a bárbara 75795 (572|254), pedido para chegar
+em 21/10 às 00:02:37. O Hunter acordou 10 s antes, e o POST final saiu às
+20:00:45. A chegada lida no jogo, na tabela de próprios comandos da praça
+da origem (comando 1130590907, uma leitura avulsa), foi **00:02:37,509**:
+dentro do segundo pedido, 0,509 s depois do início dele. O log do bot tinha
+estimado 00:02:37,476 (`desvio +0.476 s`), ou seja, a estimativa pelo
+`time_generated` errou por 33 ms. Uma medida só, não uma distribuição.
 
 Testes: `tests/test_hunter_timed_send.py` (conta do relógio, `time_generated`
 HTML e AJAX, `attack()` segurando só o final, atrasado sem dormir, Hunter
