@@ -70,6 +70,11 @@ class Hunter:
     # prime das origens). Quem dorme "ate a janela" sem essa folga acorda na
     # hora certa e chega atrasado -- foi o que perdeu o 4o nobre da 55647.
     WAKE_MARGIN = 120
+    # Envio cronometrado (§8.72): o ataque comeca (praca + confirmacao) isto
+    # antes do `send_time`, e so o POST final espera o instante. Cobre as duas
+    # requisicoes (~1 s em priority_mode) e um relogio local alguns segundos a
+    # frente do servidor; o `AttackManager` mede o deslocamento e acerta.
+    PREARM_SECONDS = 10
 
     def __init__(self, wrapper=None):
         self.wrapper = wrapper
@@ -647,7 +652,7 @@ class Hunter:
     def _run(self, config, horizon=None):
         window = self.window if horizon is None else max(self.window, float(horizon))
         schedules = self._load_schedules()
-        self.sync_support_reserves(schedules)
+        self.sync_schedule_reserves(schedules)
         if not schedules:
             return
         # Copia do que foi lido: na gravacao, so o que mudou em relacao a ela
@@ -735,11 +740,13 @@ class Hunter:
             if hasattr(self.wrapper, "priority_mode"):
                 self.wrapper.priority_mode = True
             label = self._label(atk)
+            # Apoio sai pelo DefenceManager, que nao tem o envio pre-armado.
+            prearm = 0 if self._kind(atk) == "support" else self.PREARM_SECONDS
             self.logger.info(
                 "Hunter: [%s] %s -> %s — sleeping %.1fs to hit send_time",
                 label, village_label(atk["source_village_id"]), village_label(target_id), time_to_send
             )
-            time.sleep(time_to_send)
+            time.sleep(max(0.0, time_to_send - prearm))
 
             # 6o padrao: reconferir a premissa na hora de agir. O schedule foi
             # lido antes da espera, e o painel pode te-lo apagado nela.
@@ -778,13 +785,25 @@ class Hunter:
             if self._kind(atk) == "support":
                 result = self._send_support(atk, sched, schedules)
             else:
-                result = self._send_attack_batch(batch, target_id)
+                result = self._send_attack_batch(batch, target_id, send_time=send_time)
             sent_at = int(time.time())
+            village = self.villages.get(str(atk["source_village_id"]))
+            estimate = getattr(getattr(village, "attack", None), "last_arrival_estimate", None)
             for batch_atk in batch:
                 batch_atk["status"] = "sent" if result else "failed"
                 batch_atk["sent_at"] = sent_at
+                if result and estimate and self._kind(atk) != "support":
+                    batch_atk["arrival_real"] = estimate
                 if len(batch) > 1:
                     batch_atk["batch_size"] = len(batch)
+            if result and estimate and self._kind(atk) != "support":
+                self.logger.info(
+                    "Hunter: %s -> %s chega %s (pedido %s, desvio %+.3f s)",
+                    village_label(atk["source_village_id"]), village_label(target_id),
+                    datetime.datetime.fromtimestamp(estimate).strftime("%d/%m %H:%M:%S.%f")[:-3],
+                    datetime.datetime.fromtimestamp(sched["arrival_time"]).strftime("%d/%m %H:%M:%S"),
+                    estimate - float(sched["arrival_time"]),
+                )
             changed = True
 
             for batch_atk in batch:
@@ -953,31 +972,54 @@ class Hunter:
         return Extractor.attack_duration(conf)
 
     SUPPORT_RESERVE_PREFIX = "apoio_agendado"
+    # Ataque cadastrado a mao no painel (§8.72): schedule sem `label`. Os de
+    # `label` vem do PvP ("clear"/"nobles") e do planejador barbaro ("barb"),
+    # que reservam a propria tropa -- reservar de novo aqui contaria duas vezes.
+    MANUAL_RESERVE_PREFIX = "hunter_manual"
 
-    def sync_support_reserves(self, schedules):
+    def _reserve_prefix(self, sched, atk):
+        if atk.get("kind") == "support":
+            return self.SUPPORT_RESERVE_PREFIX
+        if not sched.get("label"):
+            return self.MANUAL_RESERVE_PREFIX
+        return None
+
+    def sync_schedule_reserves(self, schedules):
         """
-        Tropa de apoio agendado (§8.61) fica reservada na origem enquanto o
-        comando esta pendente: a coleta e o farm respeitam `conquest_reserve`
-        (o mesmo mecanismo do trem barbaro), e sem isto a pesada estaria
-        coletando na hora da saida. Comando que saiu, falhou ou sumiu solta a
-        reserva.
+        Tropa de comando agendado fica reservada na origem enquanto ele esta
+        pendente: a coleta e o farm respeitam `conquest_reserve` (o mesmo
+        mecanismo do trem barbaro). Vale para o apoio agendado (§8.61), sem o
+        qual a pesada estaria coletando na hora da saida, e para o ataque
+        cadastrado a mao (§8.72), sem o qual o full saia para farm entre o
+        cadastro e a saida e o envio falhava por falta de unidade. Comando que
+        saiu, falhou ou sumiu solta a reserva.
+
+        Tropa fora de casa na hora do cadastro (farm, coleta) fica de fora da
+        conta do farm quando volta, entao a reserva tambem cobre ela. Apoio
+        estacionado em outra aldeia nao volta sozinho.
         """
+        prefixes = (self.SUPPORT_RESERVE_PREFIX, self.MANUAL_RESERVE_PREFIX)
         wanted = {}
         for sched_key, sched in (schedules or {}).items():
             if sched.get("status") != "pending":
                 continue
             for atk in sched.get("attacks", []):
-                if atk.get("kind") != "support" or atk.get("status") != "pending":
+                if atk.get("status") != "pending":
                     continue
-                key = "%s:%s" % (self.SUPPORT_RESERVE_PREFIX, sched_key)
-                wanted.setdefault(str(atk.get("source_village_id")), {})[key] = {
-                    u: int(q) for u, q in (atk.get("troops") or {}).items() if int(q) > 0}
+                prefix = self._reserve_prefix(sched, atk)
+                if prefix is None:
+                    continue
+                key = "%s:%s" % (prefix, sched_key)
+                bucket = wanted.setdefault(str(atk.get("source_village_id")), {}).setdefault(key, {})
+                for unit, qty in (atk.get("troops") or {}).items():
+                    if int(qty) > 0:
+                        bucket[unit] = bucket.get(unit, 0) + int(qty)
         for vid, village in (self.villages or {}).items():
             reserve = getattr(getattr(village, "units", None), "conquest_reserve", None)
             if reserve is None:
                 continue
             mine = wanted.get(str(vid), {})
-            for key in [k for k in reserve if str(k).startswith(self.SUPPORT_RESERVE_PREFIX + ":")]:
+            for key in [k for k in reserve if str(k).split(":", 1)[0] in prefixes]:
                 if key not in mine:
                     reserve.pop(key, None)
             for key, troops in mine.items():
@@ -1063,7 +1105,7 @@ class Hunter:
         """
         return self._send_attack_batch([atk], target_id)
 
-    def _send_attack_batch(self, attacks, target_id):
+    def _send_attack_batch(self, attacks, target_id, send_time=None):
         """
         Fires one or more simultaneous attacks from the same source village.
 
@@ -1071,6 +1113,9 @@ class Hunter:
         items, AttackManager sends the first command normally and the rest as
         the native ``train[2..N]`` fields captured on br143.  Troops are only
         deducted after the server accepts the whole request.
+
+        `send_time` liga o envio cronometrado (§8.72): o AttackManager prepara
+        a confirmacao e segura so o POST final ate o instante.
         """
         if not attacks:
             return False
@@ -1092,16 +1137,20 @@ class Hunter:
 
         primary_troops = attacks[0]["troops"]
         additional = [atk["troops"] for atk in attacks[1:]]
+        # So passa `send_time` quando ha um: os substitutos leves do
+        # AttackManager (integracoes, testes) nao conhecem o argumento.
+        timed = {"send_time": send_time} if send_time is not None else {}
         if additional:
             result = village.attack.attack(
                 target_id,
                 troops=primary_troops,
                 additional_attacks=additional,
+                **timed
             )
         else:
             # Keep the old call shape for ordinary attacks and for lightweight
             # AttackManager substitutes used by integrations/tests.
-            result = village.attack.attack(target_id, troops=primary_troops)
+            result = village.attack.attack(target_id, troops=primary_troops, **timed)
         if result and result != "forced_peace":
             # Keep TroopManager in sync so farming doesn't over-commit
             if village.units:

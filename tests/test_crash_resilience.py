@@ -128,7 +128,7 @@ class FakeAttack:
     def __init__(self):
         self.calls = []
 
-    def attack(self, target_id, troops=None):
+    def attack(self, target_id, troops=None, send_time=None):
         self.calls.append((target_id, troops))
         return True
 

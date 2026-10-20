@@ -165,7 +165,7 @@ def test_hunter_groups_only_same_source_and_send_time():
     saved = []
     hunter._save_schedules = lambda data, *_: saved.append(data)
     calls = []
-    hunter._send_attack_batch = lambda batch, target: calls.append(
+    hunter._send_attack_batch = lambda batch, target, **_kw: calls.append(
         ([atk["source_village_id"] for atk in batch], target)
     ) or True
 
@@ -238,7 +238,7 @@ def test_hunter_never_sends_after_send_time():
     hunter._load_schedules = lambda: schedules
     saved = []
     hunter._save_schedules = lambda data, *_: saved.append(data)
-    hunter._send_attack_batch = lambda *_args: (_ for _ in ()).throw(
+    hunter._send_attack_batch = lambda *_args, **_kw: (_ for _ in ()).throw(
         AssertionError("late attack was sent")
     )
 
@@ -271,7 +271,7 @@ def test_hunter_services_schedules_by_departure_not_file_order():
     hunter._load_schedules = lambda: schedules
     hunter._save_schedules = lambda *_: None
     sent = []
-    hunter._send_attack_batch = lambda _batch, target: sent.append(target) or True
+    hunter._send_attack_batch = lambda _batch, target, **_kw: sent.append(target) or True
 
     hunter.run({"hunter": {"enabled": True}})
 

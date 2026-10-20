@@ -186,13 +186,13 @@ def test_reserva_na_origem():
     village.units.conquest_reserve = {"apoio_agendado:velho": {"heavy": 1}, "outro": {"axe": 9}}
     hunter.villages = {"49709": village}
     schedules = {"apoio": _support_sched(time.time() + 9999, None)}
-    hunter.sync_support_reserves(schedules)
+    hunter.sync_schedule_reserves(schedules)
     _check("reserva do pendente", village.units.conquest_reserve.get("apoio_agendado:apoio"),
            {"heavy": 300})
     _check("reserva de apoio que sumiu solta", "apoio_agendado:velho" in village.units.conquest_reserve, False)
     _check("reserva alheia intacta", village.units.conquest_reserve.get("outro"), {"axe": 9})
     schedules["apoio"]["attacks"][0]["status"] = "sent"
-    hunter.sync_support_reserves(schedules)
+    hunter.sync_schedule_reserves(schedules)
     _check("enviado solta", "apoio_agendado:apoio" in village.units.conquest_reserve, False)
 
 

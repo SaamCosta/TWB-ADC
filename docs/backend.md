@@ -8063,6 +8063,70 @@ perdido/nosso/reservado, promoção, schedule apagado, reserva, trava de voo) e
 | Quadro de reservas da tribo, estatísticas, comandos no ar (`InFlight`) | início do ciclo, com TTL | leitura por TTL; ninguém decide em cima disso no meio do ciclo |
 | Relatórios novos em geral | init de cada aldeia (~8 min) e agora o tick | o `new_report` do `game_data` fica como gatilho futuro para relatório que não é pouso nosso |
 
+## 8.72 `P-HUNTER-SEGUNDO` — ataque do painel reserva a tropa; envio final cronometrado (2026-10-20)
+
+Pedido do usuário: operação da tribo, "3 fulls na 489|284 batendo 23/10 às
+14:04:00". Cadastrada no Hunter (`48451_2026-10-23T14-04-00`, BBM 001, 005 e
+010, cada uma com 6.000 machados, 3.000 cavalarias leves, 250 aríetes, 50
+catapultas e o paladino). Dois furos apareceram antes.
+
+**1. Ataque cadastrado à mão não reservava tropa.** Só o apoio agendado
+(§8.61), o PvP (`pvp:<alvo>`) e o trem bárbaro (`barb_train:<alvo>`) punham
+a tropa em `conquest_reserve`. Um schedule do painel não punha nada: entre o
+cadastro e a saída (dias, nesse caso) o farm e a coleta gastavam o full, e o
+envio falhava com o jogo recusando por falta de unidade. Medido no
+`cache/managed` na hora do cadastro: as três aldeias tinham machado e
+cavalaria leve fora de casa, e a BBM 010 tinha parte do full parada como apoio
+na BBM 035. `Hunter.sync_support_reserves` virou `sync_schedule_reserves`:
+reserva o apoio agendado (`apoio_agendado:<schedule>`, como antes) e todo
+comando pendente de schedule **sem `label`**, que é o que o painel grava
+(`hunter_manual:<schedule>`, somando os comandos da mesma origem). Schedule com
+`label` vem do PvP (`clear`/`nobles`) ou do planejador bárbaro (`barb`), que
+reservam a própria tropa; reservar de novo contaria duas vezes. Tropa que
+estava fora volta e fica; **apoio estacionado em outra aldeia não volta
+sozinho.**
+
+**2. O comando nascia 1 a 3 s depois do `send_time`.** O Hunter dormia até o
+`send_time` e só então fazia as três requisições do envio: GET da praça, POST
+de confirmação e POST final. O jogo carimba a chegada quando processa o
+**final**, com milissegundos, e soma a duração (segundos inteiros). Agora:
+
+- o Hunter acorda `PREARM_SECONDS` (10 s) antes e chama
+  `AttackManager.attack(..., send_time=)`; a praça e a confirmação saem na
+  hora, e só o POST final espera;
+- a espera vem da própria confirmação, sem requisição a mais
+  (`core/send_clock.py`). O deslocamento do relógio local para o do servidor
+  sai do `time_generated` (ms) do `game_data` contra o meio da ida e volta
+  (`response.elapsed`). A ida é estimada em metade do `elapsed`. O POST final
+  sai para o servidor processá-lo em `send_time + 0,4 s` (`AIM_SECONDS`), com
+  folga de 0,4 s para cedo e 0,6 s para tarde;
+- depois do envio, `time_generated` da resposta final + duração é a chegada
+  carimbada. Ela vai para `arrival_real` do comando (o painel mostra "Chega
+  …") e para o log: `Hunter: X -> Y chega dd/mm HH:MM:SS.mmm (pedido …,
+  desvio +0,4xx s)`. Desvio entre 0 e 1 é chegada no segundo pedido;
+- deslocamento acima de 2 s gera aviso para sincronizar o relógio do Windows,
+  porque o Hunter acorda pelo relógio local. Espera acima de 120 s
+  (`MAX_TIMED_WAIT`) solta na hora em vez de segurar o bot. Atrasado, solta
+  sem dormir.
+
+Fonte do `time_generated`: confirmada na confirmação real de ataque capturada
+em 29/09 pelo cliente do bot (`cache/debug/place_confirm_attack_only.html`,
+`time_generated` 1790722527190 = 19:55:27,190, e `#serverTime` 19:55:27 na
+mesma página). O `game_data` da resposta AJAX do `popup_command` vem do
+envelope `TribalWars-Ajax` (sétimo padrão); sem ele, a estimativa fica `None` e
+só o log de chegada some, o envio não muda.
+
+Fora: o **apoio** agendado ainda sai pelo `DefenceManager.support` sem
+pré-armado (o aviso de "1 a 3 s depois" no painel continua valendo para ele).
+O valor de 0,4 s é a conta, não uma medida. **O número que importa ainda não
+foi medido**: o desvio do primeiro envio real, que sai em 21/10.
+
+Testes: `tests/test_hunter_timed_send.py` (conta do relógio, `time_generated`
+HTML e AJAX, `attack()` segurando só o final, atrasado sem dormir, Hunter
+acordando 10 s antes, apoio no `send_time`, reserva manual somada, PvP e
+bárbaro sem reserva dupla, solta ao enviar). Os substitutos de
+`_send_attack_batch` em quatro testes passaram a aceitar `send_time`.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

@@ -49,10 +49,13 @@ def _hunter(clock, schedules):
     wrapper = SimpleNamespace(priority_mode=False)
     h = Hunter(wrapper=wrapper)
     h._load_schedules = lambda: schedules
-    h._save_schedules = lambda *_a: None
+    h._save_schedules = lambda *_a, **_kw: None
     h.sent = []
 
-    def send(batch, target):
+    def send(batch, target, send_time=None):
+        # O AttackManager segura o POST final ate o `send_time` (§8.72).
+        if send_time is not None:
+            clock.sleep(send_time - clock.now)
         h.sent.append((batch[0]["source_village_id"], target, clock.now))
         return True
     h._send_attack_batch = send
@@ -137,7 +140,7 @@ def test_gate_publica_proxima_saida_e_hunter_active():
     assert h.wrapper.hunter_next_send == T0 + 5000
     seen = []
     h2 = _hunter(clock, _schedules(clock.now + 10))
-    h2._send_attack_batch = lambda *_a: seen.append(h2.wrapper.hunter_active) or True
+    h2._send_attack_batch = lambda *_a, **_kw: seen.append(h2.wrapper.hunter_active) or True
     h2.run(CONFIG)
     assert seen == [True] and h2.wrapper.hunter_active is False
 

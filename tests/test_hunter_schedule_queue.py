@@ -90,9 +90,9 @@ def test_comando_de_outro_schedule_no_meio_nao_se_perde():
     }
     hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
     hunter._load_schedules = lambda: schedules
-    hunter._save_schedules = lambda *_a: None
+    hunter._save_schedules = lambda *_a, **_kw: None
     sent = []
-    hunter._send_attack_batch = lambda batch, target: sent.append(
+    hunter._send_attack_batch = lambda batch, target, **_kw: sent.append(
         (batch[0]["source_village_id"], target)) or True
 
     hunter.run({"hunter": {"enabled": True}})
@@ -110,9 +110,9 @@ def test_priority_mode_desliga_no_fim():
     wrapper = SimpleNamespace(priority_mode=False)
     hunter = Hunter(wrapper=wrapper)
     hunter._load_schedules = lambda: schedules
-    hunter._save_schedules = lambda *_a: None
+    hunter._save_schedules = lambda *_a, **_kw: None
     seen = []
-    hunter._send_attack_batch = lambda *_a: seen.append(wrapper.priority_mode) or True
+    hunter._send_attack_batch = lambda *_a, **_kw: seen.append(wrapper.priority_mode) or True
 
     hunter.run({"hunter": {"enabled": True}})
 
@@ -166,7 +166,7 @@ def test_schedule_criado_durante_a_espera_sobrevive():
         root.write({"A": _sched("1", [_atk("41123", now + _FILE_MARGIN)], now + 3600)})
         hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
 
-        def send(batch, target):
+        def send(batch, target, **_kw):
             # O painel grava um schedule novo enquanto o Hunter segura a
             # copia que leu antes de dormir.
             disk = root.read()
@@ -202,7 +202,7 @@ def test_schedule_apagado_durante_a_espera_nao_sai_nem_volta():
 
         hunter._ensure_source_ready = panel_deletes
         sent = []
-        hunter._send_attack_batch = lambda batch, target: sent.append(target) or True
+        hunter._send_attack_batch = lambda batch, target, **_kw: sent.append(target) or True
         hunter.run({"hunter": {"enabled": True}})
 
         assert reached, ("o Hunter recusou o comando como atrasado antes da "
@@ -231,9 +231,9 @@ def test_releitura_ilegivel_na_janela_nao_segura_o_comando():
 
     hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
     hunter._load_schedules = load
-    hunter._save_schedules = lambda *_a: None
+    hunter._save_schedules = lambda *_a, **_kw: None
     sent = []
-    hunter._send_attack_batch = lambda batch, target: sent.append(target) or True
+    hunter._send_attack_batch = lambda batch, target, **_kw: sent.append(target) or True
 
     hunter.run({"hunter": {"enabled": True}})
 

@@ -3,6 +3,7 @@ Attack manager
 Sounds dangerous but it just sends farms
 """
 
+from core import send_clock
 from core.extractors import Extractor
 from core.village_label import village_label
 import logging
@@ -379,6 +380,12 @@ class AttackManager:
         # o que aconteceu" e "o jogo recusou" viram a mesma linha no painel --
         # que e exatamente a confusao que esta feature existe para desfazer.
         self.last_attack_failure = None
+        # Envio cronometrado (§8.72): o que a confirmacao mediu do relogio
+        # ({offset, one_way, wait}) e a chegada que o servidor carimbou no
+        # envio final (epoch, pelo `time_generated` + duracao). None fora do
+        # caminho cronometrado, ou quando a resposta nao trouxe o numero.
+        self.last_send_clock = None
+        self.last_arrival_estimate = None
         # Set by TWB/Village. It gives long farm loops a cooperative checkpoint
         # where Hunter can take priority without a second thread touching the
         # shared HTTP session concurrently.
@@ -1212,9 +1219,50 @@ class AttackManager:
         )
         return None
 
-    def attack(self, vid, troops=None, additional_attacks=None):
+    # Teto da espera do envio cronometrado. O Hunter chama alguns segundos
+    # antes do `send_time`; esperar mais que isto e relogio local muito fora
+    # do servidor, e segurar o bot minutos por causa disso seria pior.
+    MAX_TIMED_WAIT = 120
+
+    def _hold_until_send_time(self, send_time, conf, received_at, vid):
+        """
+        Espera o instante de soltar o POST final (§8.72), medido na resposta
+        da confirmacao que acabou de voltar. Atrasado, solta na hora.
+        """
+        elapsed = send_clock.elapsed_seconds(conf)
+        one_way = (elapsed or 0.0) / 2.0
+        offset = send_clock.server_offset(send_clock.time_generated(conf), received_at, elapsed)
+        fire = send_clock.local_fire_time(send_time, offset, one_way)
+        wait = fire - time.time()
+        self.last_send_clock = {"offset": offset, "one_way": one_way, "wait": wait}
+        if offset is None:
+            self.logger.warning(
+                "[Attack] %s -> %s: confirmacao sem time_generated -- envio "
+                "cronometrado pelo relogio local", village_label(self.village_id), village_label(vid))
+        elif abs(offset) > send_clock.WARN_OFFSET_SECONDS:
+            self.logger.warning(
+                "[Attack] relogio local %.2f s %s do servidor -- sincronize o "
+                "relogio do Windows", abs(offset), "atras" if offset > 0 else "a frente")
+        if wait > self.MAX_TIMED_WAIT:
+            self.logger.warning(
+                "[Attack] %s -> %s: espera de %.1f s passa do teto de %d s -- "
+                "soltando agora", village_label(self.village_id), village_label(vid),
+                wait, self.MAX_TIMED_WAIT)
+            return
+        if wait > 0:
+            time.sleep(wait)
+        else:
+            self.logger.warning(
+                "[Attack] %s -> %s: envio final %.2f s atrasado",
+                village_label(self.village_id), village_label(vid), -wait)
+
+    def attack(self, vid, troops=None, additional_attacks=None, send_time=None):
         """
         Send one TW attack, optionally with more attacks in the same request.
+
+        ``send_time`` (epoch, hora do servidor) liga o envio cronometrado do
+        Hunter (§8.72): praca e confirmacao saem na hora da chamada, e so o
+        POST final espera o servidor processa-lo dentro do segundo pedido.
 
         ``additional_attacks`` is the native rally-point train: the primary
         attack keeps the ordinary unit fields and every extra command is sent
@@ -1237,6 +1285,8 @@ class AttackManager:
         self.last_attack_duration = None
         self.last_refusal = None
         self.last_attack_failure = None
+        self.last_send_clock = None
+        self.last_arrival_estimate = None
         additional_attacks = [dict(atk) for atk in (additional_attacks or [])]
 
         if self.in_forced_peace:
@@ -1272,6 +1322,7 @@ class AttackManager:
 
         confirm_url = f"game.php?village={self.village_id}&screen=place&try=confirm"
         conf = self.wrapper.post_url(url=confirm_url, data=pre_data)
+        conf_received_at = time.time()
         if conf is None:
             self.logger.warning("[Attack] %s -> %s: confirm request timed out, aborting", village_label(self.village_id), village_label(vid))
             self.last_attack_failure = "falha_de_rede"
@@ -1311,6 +1362,9 @@ class AttackManager:
         # The extractor doesn't like the empty cb value, and mistakes its value for x. So I add it here.
         if "x" not in confirm_data:
             confirm_data["x"] = x
+
+        if send_time is not None:
+            self._hold_until_send_time(send_time, conf, conf_received_at, vid)
 
         if additional_attacks:
             primary_troops = troops or self.troopmanager.troops
@@ -1396,6 +1450,12 @@ class AttackManager:
                 )
                 return False
 
+        # O servidor gera a resposta logo depois de criar o comando, entao o
+        # `time_generated` dela + a duracao e a chegada carimbada, a menos do
+        # tempo de processamento. 0 de duracao e falha do parser (sexto padrao).
+        generated = send_clock.time_generated(result)
+        if generated and duration:
+            self.last_arrival_estimate = generated / 1000.0 + duration
         return result
 
 
