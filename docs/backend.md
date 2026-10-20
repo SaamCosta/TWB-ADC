@@ -8116,6 +8116,25 @@ mesma página). O `game_data` da resposta AJAX do `popup_command` vem do
 envelope `TribalWars-Ajax` (sétimo padrão); sem ele, a estimativa fica `None` e
 só o log de chegada some, o envio não muda.
 
+**3. A sonda de duração só funcionava com o full inteiro em casa.** Logo
+depois do reinício, o log mostrou `probe BBM 001 (41123) -> 48451 recusada pelo
+jogo: Não existem unidades suficientes` a cada minuto, e `not ready for
+duration probe (no area)` para a BBM 005 e a BBM 010. Eram três defeitos:
+
+- a sonda punha o comando inteiro na confirmação. Agora (`_probe_troops`) vai
+  só a unidade mais lenta, que é quem define a duração, com o que dela está em
+  casa, sem passar do planejado. Não é 1 unidade porque o br143 tem
+  `fake_limit`. Unidade fora da tabela `SLOWEST_FIRST`, ou nada da mais lenta
+  em casa, cai no comando inteiro, como antes. O apoio continua sondando com a
+  tropa toda;
+- origem que ainda não rodou no processo não tinha `area`, e esperava a vez
+  dela no ciclo (horas). A sonda agora prima a origem
+  (`_prime_for_probe`, o mesmo `prime_for_conquest` somente-leitura, decidido
+  pelo `area` e não pelo `attack`), uma vez por origem por processo;
+- recusa do jogo repetia a cada 60 s, ou seja, 2 requisições por minuto só
+  dessa sonda, no limite que já deu captcha. Agora espera
+  `PROBE_REFUSED_RETRY_SECONDS` (15 min, `next_probe_at` no comando).
+
 Fora: o **apoio** agendado ainda sai pelo `DefenceManager.support` sem
 pré-armado (o aviso de "1 a 3 s depois" no painel continua valendo para ele).
 O valor de 0,4 s é a conta, não uma medida. **O número que importa ainda não

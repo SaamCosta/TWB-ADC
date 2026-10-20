@@ -8,7 +8,9 @@ envio final e estimando a chegada carimbada, o Hunter acordando
 `PREARM_SECONDS` antes da saida (e o apoio, que nao tem pre-armado, no
 `send_time`), e a reserva da tropa de schedule cadastrado a mao no painel
 (`sync_schedule_reserves`), sem reservar de novo o que PvP e planejador
-barbaro ja reservam.
+barbaro ja reservam. E a sonda de duracao: so a unidade mais lenta, com o
+que dela esta em casa (`_probe_troops`), recusa esperando
+`PROBE_REFUSED_RETRY_SECONDS`, e o prime da origem uma vez por processo.
 
 Sem rede, sem relogio real e sem tocar o `cache/hunter/schedules.json`.
 
@@ -265,7 +267,58 @@ def test_reserva_do_ataque_manual():
     _check("enviado solta", "hunter_manual:manual" in reserve, False)
 
 
+def test_sonda_so_com_a_unidade_mais_lenta():
+    print("test_sonda_so_com_a_unidade_mais_lenta")
+    hunter = Hunter(wrapper=None)
+    full = {"axe": 6000, "light": 3000, "ram": 250, "catapult": 50, "knight": 1}
+    # Caso da BBM 010 em 20/10: machado e leve fora, 220 arietes em casa.
+    home = SimpleNamespace(units=SimpleNamespace(troops={"axe": "0", "light": "1", "ram": "220"}))
+    _check("ariete, o que esta em casa", hunter._probe_troops(home, full), {"ram": 220})
+    all_home = SimpleNamespace(units=SimpleNamespace(troops={"ram": "900"}))
+    _check("nao passa do planejado", hunter._probe_troops(all_home, full), {"ram": 250})
+    _check("nobre e o mais lento", hunter._probe_troops(all_home, {"axe": 100, "snob": 1}),
+           {"snob": 1})
+    none_home = SimpleNamespace(units=SimpleNamespace(troops={"ram": "0"}))
+    _check("nada em casa: comando inteiro", hunter._probe_troops(none_home, full), full)
+    _check("sem leitura de tropa: o planejado", hunter._probe_troops(SimpleNamespace(), full),
+           {"ram": 250})
+    _check("unidade desconhecida: comando inteiro",
+           hunter._probe_troops(all_home, {"ram": 1, "militia": 5}), {"ram": 1, "militia": 5})
+
+
+def test_sonda_recusada_espera_e_prime_uma_vez():
+    print("test_sonda_recusada_espera_e_prime_uma_vez")
+    original = hunter_module.time
+    clock = FakeTime(1000.0)
+    hunter_module.time = clock
+    try:
+        schedules = {"manual": _sched(1e12)}
+        schedules["manual"]["attacks"][0]["send_time"] = None
+        hunter = Hunter(wrapper=SimpleNamespace(priority_mode=False))
+        hunter._load_schedules = lambda: schedules
+        hunter._save_schedules = lambda *_a, **_kw: None
+        primed, probes = [], []
+        hunter._prime_for_probe = lambda source, config: primed.append(source)
+
+        def probe(*_a, **_kw):
+            probes.append(clock.now)
+            hunter._probe_refused = True
+            return None
+        hunter._probe_duration = probe
+        hunter._run({})
+        clock.now += 61
+        hunter._run({})
+        clock.now += Hunter.PROBE_REFUSED_RETRY_SECONDS
+        hunter._run({})
+        _check("recusada nao repete em 60 s", probes, [1000.0, 1061.0 + Hunter.PROBE_REFUSED_RETRY_SECONDS])
+        _check("prime da origem uma vez", primed, ["41123"])
+    finally:
+        hunter_module.time = original
+
+
 if __name__ == "__main__":
+    test_sonda_so_com_a_unidade_mais_lenta()
+    test_sonda_recusada_espera_e_prime_uma_vez()
     test_conta_do_relogio()
     test_time_generated_html_e_ajax()
     test_attack_segura_so_o_envio_final()

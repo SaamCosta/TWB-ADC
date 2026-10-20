@@ -64,6 +64,16 @@ class Hunter:
     # nenhum checkpoint precisa servir mais que isso de uma vez.
     GATE_MAX_ROUNDS = 8
     PROBE_RETRY_SECONDS = 60
+    # Sonda recusada pelo jogo (falta de unidade, alvo invalido): a proxima
+    # so depois disto (§8.72).
+    PROBE_REFUSED_RETRY_SECONDS = 900
+    # Unidades da mais lenta para a mais rapida (minutos por campo na base:
+    # nobre 35, ariete e catapulta 30, espada 22, lanca/machado/arqueiro 18,
+    # pesada 11, leve/arqueiro a cavalo/paladino 10, explorador 9). O fator do
+    # mundo multiplica todas igual, entao a ordem vale em qualquer mundo. A
+    # duracao de um comando e a da sua unidade mais lenta.
+    SLOWEST_FIRST = ("snob", "ram", "catapult", "sword", "spear", "axe", "archer",
+                     "heavy", "light", "marcher", "knight", "spy")
     # Quanto antes da janela um processo que acabou de subir precisa acordar.
     # Medido em 2026-09-27: da volta da rede ate o Hunter conseguir agir foram
     # ~100 s (login, visao geral, reservas, estatisticas, comandos no ar e o
@@ -88,6 +98,10 @@ class Hunter:
         # `Notification.send` faz rede e pode levar segundos, e dentro da
         # janela de envio cada segundo e de outro comando do mesmo trem.
         self._notes = []
+        # A ultima `_probe_duration()` foi recusada pelo jogo (error_box).
+        self._probe_refused = False
+        # Origens que a sonda ja tentou primar neste processo.
+        self._probe_primed = set()
 
     # ------------------------------------------------------------------
     # Schedule persistence
@@ -473,6 +487,24 @@ class Hunter:
         )
         prime(config=config)
 
+    def _prime_for_probe(self, source_id, config):
+        """
+        A sonda de duracao precisa do `area` da origem, que so existe depois
+        de a aldeia rodar no ciclo (§8.72). Mesmo prime somente-leitura de
+        `_ensure_source_ready`, mas pelo `area`, e nao pelo `attack`.
+        """
+        village = self.villages.get(str(source_id))
+        if not village or getattr(village, "area", None):
+            return
+        prime = getattr(village, "prime_for_conquest", None)
+        if not callable(prime):
+            return
+        self.logger.info(
+            "Hunter: aldeia %s ainda nao rodou neste processo -- lendo para a sonda",
+            village_label(source_id)
+        )
+        prime(config=config)
+
     def _refuse_late(self, atk, target_id, time_to_send, why=None):
         """A hora de saida passou: o comando vira `failed`, nunca sai atrasado."""
         missed = abs(float(time_to_send))
@@ -682,15 +714,30 @@ class Hunter:
                 last_probe = float(atk.get("last_probe_attempt", 0) or 0)
                 if time.time() - last_probe < self.PROBE_RETRY_SECONDS:
                     continue
+                if time.time() < float(atk.get("next_probe_at", 0) or 0):
+                    continue
                 atk["last_probe_attempt"] = time.time()
                 changed = True
+                # Origem que ainda nao rodou neste processo nao tem `area`, e
+                # ficava sem sonda ate a vez dela no ciclo -- horas (§8.72).
+                # Uma vez por origem: prime que falha nao se repete por minuto.
+                source = str(atk["source_village_id"])
+                if source not in self._probe_primed:
+                    self._probe_primed.add(source)
+                    self._prime_for_probe(source, config)
+                self._probe_refused = False
                 duration = self._probe_duration(
                     atk["source_village_id"], target_id, atk["troops"],
                     kind=self._kind(atk),
                 )
                 if duration is not None:
                     atk["send_time"] = sched["arrival_time"] - duration
+                    atk.pop("next_probe_at", None)
                     changed = True
+                elif self._probe_refused:
+                    # Recusa do jogo nao muda em 60 s; repetir a cada minuto
+                    # eram 2 requisicoes/min so desta sonda.
+                    atk["next_probe_at"] = time.time() + self.PROBE_REFUSED_RETRY_SECONDS
 
         # A26-05: UMA fila com os comandos pendentes de todos os schedules,
         # por send_time. Antes a ordem era por schedule, e cada um era servido
@@ -873,6 +920,34 @@ class Hunter:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _probe_troops(self, village, troops):
+        """
+        Tropa que a sonda de ataque poe na confirmacao (§8.72): so a unidade
+        mais lenta do comando, que e quem define a duracao, com o que dela
+        esta em casa.
+
+        A sonda mandava o comando inteiro, e o jogo recusa a confirmacao
+        ("Não existem unidades suficientes") com o full fora em farm ou
+        coleta: o `send_time` so saia quando o full inteiro estivesse em casa.
+        Nao e 1 unidade porque o br143 tem limite de fake (`fake_limit`): ataque
+        com populacao pequena demais e recusado na mesma confirmacao.
+
+        Unidade fora da tabela de lentidao, ou nada da mais lenta em casa:
+        o comando inteiro, como antes.
+        """
+        planned = {u: int(q) for u, q in (troops or {}).items() if int(q) > 0}
+        if not planned or any(u not in self.SLOWEST_FIRST for u in planned):
+            return dict(troops)
+        slowest = next(u for u in self.SLOWEST_FIRST if u in planned)
+        home = (getattr(getattr(village, "units", None), "troops", None) or {}).get(slowest)
+        try:
+            qty = min(planned[slowest], int(home)) if home is not None else planned[slowest]
+        except (TypeError, ValueError):
+            qty = planned[slowest]
+        if qty <= 0:
+            return dict(troops)
+        return {slowest: qty}
+
     def _probe_duration(self, source_id, target_id, troops, kind="attack"):
         """
         Posts to the confirm page to read the server-computed travel duration.
@@ -930,7 +1005,7 @@ class Hunter:
         pre_data = {}
         for k, v in Extractor.attack_form(pre):
             pre_data[k] = v
-        pre_data.update(troops)
+        pre_data.update(troops if kind == "support" else self._probe_troops(village, troops))
 
         x, y = position
         pre_data.update({"x": x, "y": y, "target_type": "coord"})
@@ -951,6 +1026,7 @@ class Hunter:
             return None
 
         if '<div class="error_box">' in conf.text:
+            self._probe_refused = True
             # Logava que houve error_box, nao o que ele dizia -- e a sonda do
             # Hunter existe justamente para descobrir por que um envio nao
             # sairia. Ver Extractor.error_box_text.
