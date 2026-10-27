@@ -591,8 +591,8 @@ class Hunter:
         - o atraso cabe em `LATE_BARB_MAX_SECONDS`;
         - os OUTROS nobres do trem (enviados ou ainda por sair) nao zeram a
           lealdade sozinhos nem na queda maxima. Se zerassem, este pousaria
-          depois da conquista: autoconquista, moeda queimada e a guarnicao
-          morta pelo proprio nobre (o incidente de 12/08, §6.1).
+          depois da conquista: autoconquista, nobre gasto (a moeda nao: a vaga
+          volta) e a guarnicao morta pelo proprio nobre (o incidente de 12/08, §6.1).
         """
         troops = atk.get("troops") or {}
         if self._kind(atk) != "attack" or atk.get("is_fake"):

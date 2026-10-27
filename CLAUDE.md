@@ -68,7 +68,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     bárbaro sai (`Hunter.late_barbarian_verdict`); PvP/snipe/fake/apoio não.
     Trem que saiu incompleto contra alvo longe ganha **reforço** antes do
     pouso (`plan_reinforcements`, schedule `barb_reforco`), que conta como
-    nobre no ar enquanto agendado.
+    nobre no ar enquanto agendado. Trem que pousou sem fechar e cujo extra
+    avulso não progride ganha **grupo de fechamento** (§8.73, mesmo campo
+    `reinforcement`, `kind: "fechamento"`): o menor grupo que fecha em 85%.
+    Nobre que pousa depois da conquista autoconquista: gasta o nobre e luta
+    contra a própria guarnição, mas **não** queima moeda (a vaga volta).
   - `core/paid_features.py` — **o** interruptor do modo pago (§8.67):
     premium/gerente/assistente lidos ao vivo do `game_data` de toda resposta.
     Fase cedida ao recurso pago consulta `Village.paid_active(nome)` na hora

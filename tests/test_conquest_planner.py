@@ -1029,6 +1029,124 @@ def test_reforco_agendado_conta_como_nobre_no_ar():
     assert RealCache.nobles_in_flight(done, now=T81800) == []
 
 
+# --------------------------------------------------------------------------
+# Grupo de fechamento, depois do pouso (27/10, Barbara #69630)
+# --------------------------------------------------------------------------
+# O trem de 4 pousou as 02:33 deixando lealdade 1, e toda origem com nobre
+# fica a ~30 h: cada extra avulso pousaria com ~41 contra queda maxima 35. O
+# grupo e o MENOR que fecha em 85% (escolha do usuario, 27/10): dois juntos
+# fecham 41 em ~99%; tres fechariam sempre, com o terceiro pousando depois da
+# conquista em quase todo sorteio.
+
+NOW69630 = 1793115867            # 27/10 12:44, o aviso real
+READ69630 = NOW69630 - 10 * 3600  # relatorio do pouso: lealdade 1
+
+
+def _closing_planner(travel_h=30.0, probe_h=None, villages=None, cfg=None):
+    store = {"69630": {"status": "train_sent", "reserved_by": "41140",
+                       "hits_done": 4, "hits_needed": 4,
+                       "noble_arrivals": [READ69630] * 4,
+                       "target_location": [531, 263], "target_name": "Bárbara #69630"}}
+    p, calls = _planner(villages=villages, store=store, active=store, cfg=cfg)
+
+    def add(t, a, plan, label="barb"):
+        calls["schedules"].append({"target_id": t, "arrival_str": a, "label": label,
+                                   "attacks": [dict(x) for x in plan]})
+        return True
+    p._add_hunter_schedule = add
+    p._travel_seconds = lambda vid, loc: travel_h * 3600
+    _FakeHunter.duration = (travel_h if probe_h is None else probe_h) * 3600.0
+    return p, calls, store
+
+
+def _close(p, store, loyalty=1.0, at=READ69630, flight_block=None):
+    return p.plan_closing_group("69630", dict(store["69630"]), loyalty, at, 1, 20, 35,
+                                flight_block=flight_block, now=NOW69630)
+
+
+def test_fechamento_chance_pela_faixa_de_queda():
+    chance = attack_mod.closing_chance
+    assert chance(2, 40, 20, 35) == 1.0 and chance(2, 71, 20, 35) == 0.0
+    assert abs(chance(4, 100, 20, 35) - 0.867) < 0.001, "o trem de 4 fecha em 86,7%"
+    assert abs(chance(2, 60, 20, 35) - 0.258) < 0.001
+    assert chance(0, 10, 20, 35) == 0.0
+
+
+def test_fechamento_tamanho_e_o_menor_grupo_que_fecha_em_85():
+    size = attack_mod.closing_group_size
+    table = {20: 1, 36: 2, 41.2: 2, 48: 2, 49: 3, 60: 3, 74: 3, 75: 4, 100: 4}
+    for loyalty, k in table.items():
+        assert size(loyalty, 20, 35) == k, (loyalty, size(loyalty, 20, 35), k)
+    assert size(0, 20, 35) == 0 and size(-7, 20, 35) == 0 and size(None, 20, 35) == 0
+    chance = attack_mod.closing_chance
+    for tenth in range(1, 1001):
+        loyalty = tenth / 10.0
+        k = size(loyalty, 20, 35)
+        assert chance(k, loyalty, 20, 35) >= 0.85, (loyalty, k)
+        assert k == 1 or chance(k - 1, loyalty, 20, 35) < 0.85,             "nenhum nobre a mais do que o 85%% pede: %s -> %d" % (loyalty, k)
+
+
+def test_fechamento_69630_agenda_dois_juntos():
+    p, calls, store = _closing_planner()
+    scans = []
+    ok, why = _close(p, store, flight_block=lambda: scans.append(1) or False)
+    assert ok is True and why is None, why
+    assert scans == [1], "a praca e lida uma vez, so quando o grupo vai sair"
+    sched = calls["schedules"][-1]
+    assert sched["label"] == "barb_reforco" and len(sched["attacks"]) == 2, sched
+    assert all(a["troops"]["snob"] == 1 for a in sched["attacks"])
+    rec = store["69630"]["reinforcement"]
+    assert rec["status"] == "scheduled" and rec["kind"] == "fechamento", rec
+    assert rec["nobles"] == 2 and 41 < rec["loyalty_at_arrival"] < 42, rec
+    assert rec["close_chance"] > 0.98, rec
+    assert rec["arrival"] == int(NOW69630 + 30 * 3600 + p.ARRIVAL_MARGIN_SECONDS), rec
+    reserved = [v.units.conquest_reserve.get("barb_reforco:69630") for v in p.villages.values()]
+    assert any(reserved), "a tropa do grupo fica reservada ate o Hunter mandar"
+    assert store["69630"]["status"] == "train_sent", "status do trem nao muda"
+
+    from game.attack import ConquestCache as RealCache
+    assert RealCache.nobles_in_flight(store["69630"], now=NOW69630 + 60) == [rec["arrival"]], \
+        "agendado conta como nobre no ar: nenhum extra avulso sai por cima"
+
+
+def test_fechamento_com_lealdade_60_manda_tres_e_75_manda_quatro():
+    p, calls, store = _closing_planner(travel_h=35.0)
+    ok, _ = _close(p, store, loyalty=25.0, at=NOW69630)  # 25 + 35 h = 60
+    assert ok and len(calls["schedules"][-1]["attacks"]) == 3, calls["schedules"]
+    p, calls, store = _closing_planner(travel_h=35.0)
+    ok, _ = _close(p, store, loyalty=40.0, at=NOW69630)  # 75
+    assert ok and len(calls["schedules"][-1]["attacks"]) == 4, calls["schedules"]
+
+
+def test_fechamento_sem_nobres_suficientes_nao_agenda():
+    one = {"41123": _Village("41123", {"snob": 1, "axe": 4000, "light": 800}, [577, 306])}
+    p, calls, store = _closing_planner(villages=one)
+    ok, why = _close(p, store)
+    assert ok is False and calls["schedules"] == [] and "pede 2" in why, why
+    assert "reinforcement" not in store["69630"]
+
+
+def test_fechamento_duracao_do_servidor_muda_o_tamanho_e_nao_agenda():
+    # Estimativa 30 h (2 nobres); o servidor diz 50 h: lealdade ~61, pede 3.
+    p, calls, store = _closing_planner(travel_h=30.0, probe_h=50.0)
+    ok, why = _close(p, store)
+    assert ok is False and calls["schedules"] == [] and "pede 3" in why, why
+
+
+def test_fechamento_nobre_nosso_no_ar_nao_agenda():
+    p, calls, store = _closing_planner()
+    ok, why = _close(p, store, flight_block=lambda: True)
+    assert (ok, why) == (False, None) and calls["schedules"] == []
+    assert "reinforcement" not in store["69630"]
+
+
+def test_fechamento_sem_hunter_nao_agenda():
+    p, calls, store = _closing_planner(cfg={"conquest": {"enabled": True},
+                                            "hunter": {"enabled": False}})
+    ok, why = _close(p, store)
+    assert ok is False and "Hunter" in why and calls["schedules"] == []
+
+
 if __name__ == "__main__":
     falhas = 0
     for nome, fn in sorted(globals().items()):

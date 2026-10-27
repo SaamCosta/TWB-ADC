@@ -3135,7 +3135,7 @@ as outras 29 aldeias que chamavam o método dentro do laço sempre saíam no
 primeiro `return False`. Manter a chamada dentro de `run()` *além* da nova
 daria, para a âncora, um segundo passe de `_handle_existing()` no mesmo ciclo —
 um segundo caminho capaz de comprometer nobre pelo mesmo alvo, que é a classe
-de bug que custou 527 tropas e uma moeda em 2026-08-12.
+de bug que custou 527 tropas e um nobre em 2026-08-12.
 
 ### Estado
 
@@ -6763,7 +6763,7 @@ confirmação da praça continua válida, para preparar o envio antes e disparar
 só o POST final no segundo (precisão); (2) opção E — tolerância de atraso só
 para trem bárbaro. ⚠️ O incidente de 12/08 (§6.1) já responde metade da
 sondagem do E: nobre que pousa **depois** da conquista autoconquista a aldeia,
-queima moeda e mata a guarnição. Logo, mandar atrasado só é seguro se os
+gasta o nobre e mata a guarnição (a moeda não se perde, ver §8.73). Logo, mandar atrasado só é seguro se os
 nobres anteriores não puderem fechar a conquista sozinhos.
 
 ## 8.59 ✅ Alvo de conquista sem coordenada: o `village.txt` não chegava ao envio (2026-10-10)
@@ -7940,8 +7940,8 @@ envio:
 - o atraso é de no máximo 4 h (`LATE_BARB_MAX_SECONDS`);
 - os **outros** nobres do trem, enviados ou por sair, não zeram a lealdade
   sozinhos nem na queda máxima: `outros × 35 < 100`. Se zerassem, este
-  pousaria depois da conquista: autoconquista, moeda queimada e a guarnição
-  morta pelo próprio nobre (§6.1, a ressalva da §8.58).
+  pousaria depois da conquista: autoconquista, nobre gasto e a guarnição
+  morta pelo próprio nobre (a moeda não se perde, ver §8.73) (§6.1, a ressalva da §8.58).
 
 No caso real, 2 × 35 = 70 e o par da BBM 008 sairia, 401 s atrasado. PvP,
 snipe, manual, fake e apoio continuam recusados. Recusa atrasada agora grava
@@ -8151,6 +8151,104 @@ HTML e AJAX, `attack()` segurando só o final, atrasado sem dormir, Hunter
 acordando 10 s antes, apoio no `send_time`, reserva manual somada, PvP e
 bárbaro sem reserva dupla, solta ao enviar). Os substitutos de
 `_send_attack_batch` em quatro testes passaram a aceitar `send_time`.
+
+## 8.73 Grupo de fechamento: nobres juntos depois do pouso, quando um por vez não fecha (2026-10-27)
+
+**Caso real, Bárbara #69630 (531|263).** O trem de 4 nobres (3 da BBM 029, 1
+da BBM 025) pousou em 27/10 às 02:33, e o relatório deu lealdade **1**: azar
+no sorteio, porque 4 × 20 deixa até 20 no pior caso. Às 12:44, com a lealdade
+em 11, o extra mais rápido saía da BBM 028 e voava 30,2 h. Com regen de 1/h,
+pousaria com ~41 contra a queda máxima de 35. A regra da §8.41 recusou
+corretamente (`sem_progresso`), e o bot só avisou "mande dois juntos a mão".
+O reforço da §8.71 já mandava nobres juntos, mas só para trem que **saiu
+incompleto** e ainda está no ar. Trem completo que pousou sem fechar não tinha
+caminho nenhum.
+
+**O que mudou.** Quando o primeiro extra viável não progride,
+`ConquestManager._close_with_group` passa a pedir a
+`BarbarianTrainPlanner.plan_closing_group` os nobres que fecham, **juntos**,
+sincronizados pelo Hunter. O registro mora em `reinforcement` com
+`kind: "fechamento"` (schedule `label: "barb_reforco"`, reserva
+`barb_reforco:<alvo>`). Por estar ali, herda o resto sem código novo: a trava
+de voo (`ConquestCache.nobles_in_flight` conta o agendado), o pouso no tick
+(`EventTick.landing_of`), a reserva entre reinícios
+(`_sync_reinforcement_reserves`) e a promoção para `noble_arrivals`
+(`promote_reinforcements`). Grupo que pousa sem fechar é um pouso novo: o
+acompanhamento lê o relatório e decide de novo.
+
+**O tamanho: o menor grupo que fecha em pelo menos 85%** (`closing_group_size`,
+`CLOSING_MIN_CHANCE`). O usuário escolheu esse limiar em 27/10 por ser o mesmo
+risco que o trem de 4 já aceita: 4 nobres com queda de 20 a 35 somam 100 ou
+mais em 86,7% dos sorteios. A chance (`closing_chance`) supõe queda inteira e
+uniforme de 20 a 35 por nobre. Os relatórios são inteiros nessa faixa, mas a
+uniformidade é premissa, não medida.
+
+| Lealdade na chegada | Nobres | Chance de fechar | Chance de o último sobrar |
+|---|---|---|---|
+| 36 a 48 | 2 | 86% a 100% | — (1 não fecha) |
+| 49 a 74 | 3 | 86% a 100% | até 82% (49) |
+| 75 a 100 | 4 | 87% a 100% | até 83% (75) |
+
+"Sobrar" é pousar depois da conquista, porque os anteriores já zeraram. Isso
+**autoconquista** a aldeia: o nobre é gasto e a escolta dele luta contra a
+guarnição, que é tropa nossa (§6.1: 421 defensores e 106 atacantes mortos).
+⚠️ **A moeda não se perde.** As notas anteriores diziam "moeda queimada", e o
+usuário corrigiu em 27/10. Conferido na academia da BBM 001 nesse dia: limite
+87 = 23 nobres existentes + 63 aldeias conquistadas + 1 que ainda pode ser
+formado, e o `config.json` tem 64 aldeias, ou seja, 63 conquistadas além da
+inicial. Reconquistar aldeia própria não sobe a contagem de aldeias, então a
+vaga volta. O custo é recrutar o nobre de novo (38.000/47.500/47.500 e 3h08
+nessa aldeia) e a luta. As 7 menções a moeda queimada em autoconquista
+(código e esta documentação) foram corrigidas. As que falam de nobrar
+reserva alheia ficaram: lá é conquista de verdade, que ocupa a vaga.
+
+A primeira versão desta mudança usava `ceil(L / 35)` (nunca sobrar nobre).
+Ela fecha pouco no meio da faixa: com a lealdade em 50, 2 nobres fecham em
+78%; em 60, em 26%; em 65, em 8%. Cada falha custa outra viagem de ~30 h ou
+mais.
+
+**Conferências, na ordem:**
+- Hunter ligado;
+- a estimativa (`_closing_size`, pela viagem do mais lento dos `k` que pousam
+  primeiro) pede `k`, e há `k` nobres livres no alcance com escolta;
+- com a duração **sondada** no servidor, o tamanho continua `k`. Se mudar,
+  não agenda e replaneja no próximo ciclo: um a mais tende a autoconquistar,
+  um a menos fecha pouco;
+- a praça das aldeias com nobre não mostra nobre nosso no ar
+  (`_nobles_in_flight_block`, §8.71 fase 3). Roda só quando o grupo vai mesmo
+  ser agendado, porque são até ~13 GETs.
+
+Sem grupo possível, o aviso de antes continua saindo uma vez por pouso. Agora
+ele diz por que o grupo não saiu, quantos nobres mandar à mão e que não é para
+mandar mais que isso.
+
+**Trem de 5 para alvo longe: decidido não fazer (usuário, 27/10).** Eu tinha
+proposto o trem sair com `ceil(100 / 20) = 5` nobres quando o extra avulso não
+progride. Com queda de 20 a 35, quatro nobres já fecham em 86,7% dos sorteios,
+e nesses casos o quinto pousaria depois da conquista. O usuário comparou com o
+caminho de agora e escolheu ficar com 4. Com 4, os ~13% de trens que não fecham
+ganham o grupo de fechamento sozinhos (~30 h a mais), e o 4º nobre só sobra
+quando os 3 primeiros zeram sozinhos (1,4%).
+
+**Ainda aberto (já existia para o reforço):** grupo agendado e o alvo perdido
+ou reservado pela tribo antes de os nobres saírem. `_handle_existing` encerra o
+registro, mas não apaga o schedule `barb_reforco`. A janela é curta, porque
+as origens a ~30 h saem quase juntas, mas existe.
+
+Testes: `tests/test_conquest_planner.py` (`test_fechamento_*`: a chance pela
+faixa, incluindo os 86,7% do trem de 4; a tabela acima e, para toda lealdade
+de 0,1 a 100, que o grupo fecha em pelo menos 85% e que um nobre a menos não
+fecharia; o caso 69630 agenda 2; lealdade 60 agenda 3 e 75 agenda 4; nobre
+faltando; duração do servidor mudando o tamanho; nobre no ar; Hunter
+desligado) e os casos 6 e 6b de `tests/test_conquest_extra_origin.py`. Prova
+por mutação: 7 mutantes, todos derrubam teste. São eles: a regra antiga
+`ceil(L/35)`, limiar 80%, `>` no lugar de `>=` na chance, sem conferência
+pós-sonda, sem leitura da praça, tamanho pela queda mínima e volta só a
+avisar. Suíte: 115 arquivos. Falham 3 testes que **já
+falhavam antes desta mudança** (conferido com `git stash`):
+`test_reforco_81800_*`, `test_reforco_decidido_uma_vez_so` e
+`test_promocao_so_quando_o_hunter_encerrou`. São datas fixas de 19 a 21/10
+comparadas com o relógio real.
 
 ## 9. Próximos passos
 

@@ -431,8 +431,33 @@ vs = {"74689": village("74689", BBM010[1], {"snob": 0}), "77777": far_v}
 with Env(REPORT_WHEN) as env:
     sent = send(anchor(vs, REPORT_WHEN), loyalty=30.0, now=REPORT_WHEN)
 check(sent is False and not far_v.attack.calls, "nao manda sem progresso")
-check(len(env.notes.messages) == 1 and "dois nobres juntos" in env.notes.messages[0],
+# Lealdade 30 + 21 h de voo = 51: dois fecham em 74%, tres em 100% (85%).
+check(len(env.notes.messages) == 1 and "tres nobres juntos" in env.notes.messages[0],
       "avisa o que fazer: %r" % env.notes.messages)
+check("nao mais" in env.notes.messages[0] and "Hunter" in env.notes.messages[0],
+      "diz por que o grupo nao saiu e que nobre a mais autoconquista: %r"
+      % env.notes.messages)
+
+# 6b. Sem progresso, com o grupo de fechamento possivel (27/10, 69630): o
+# planejador agenda os nobres juntos e nenhum extra avulso sai.
+import game.conquest_planner as planner_module
+
+asked = []
+saved_plan = planner_module.BarbarianTrainPlanner.plan_closing_group
+planner_module.BarbarianTrainPlanner.plan_closing_group = (
+    lambda self, *a, **k: asked.append((a, k)) or (True, None))
+try:
+    far_v = village("77777", (583, 321), {"axe": 800, "light": 400, "snob": 2})
+    vs = {"74689": village("74689", BBM010[1], {"snob": 0}), "77777": far_v}
+    with Env(REPORT_WHEN) as env:
+        sent = send(anchor(vs, REPORT_WHEN), loyalty=30.0, now=REPORT_WHEN)
+finally:
+    planner_module.BarbarianTrainPlanner.plan_closing_group = saved_plan
+check(sent is True and not far_v.attack.calls and not env.notes.messages,
+      "grupo agendado: nenhum avulso, nenhum aviso de 'mande a mao'")
+check(len(asked) == 1 and asked[0][0][:6] == (TARGET, asked[0][0][1], 30.0, REPORT_WHEN, 1, DROP[0])
+      and callable(asked[0][1].get("flight_block")),
+      "o planejador recebe a lealdade do relatorio e a leitura da praca: %r" % asked)
 
 # 7. Sem o dict de aldeias (testes e chamadas antigas): so a dona, sem portao.
 with Env(MANUAL_DEPARTURE) as env:

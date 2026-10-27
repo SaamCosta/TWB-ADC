@@ -56,8 +56,8 @@ from core.village_label import village_label
 from core.notification import Notification
 from core.world_config import WorldConfig
 from game.attack import (
-    ConquestCache, ConquestManager, conquest_label, conquest_origin_block_reason,
-    field_distance, village_location,
+    ConquestCache, ConquestManager, closing_chance, closing_group_size, conquest_label,
+    conquest_origin_block_reason, field_distance, loyalty_at_time, village_location,
 )
 from game.hunter import Hunter
 from game.reservations import manual_exclusion
@@ -1238,7 +1238,11 @@ class BarbarianTrainPlanner:
                 scheduled.append(target_id)
         return scheduled
 
-    def _schedule_reinforcement(self, target_id, data, plan, train_landing, drop_min, regen):
+    def _probe_plan(self, target_id, plan, what="reforco"):
+        """
+        Grava em cada comando do plano a duracao sondada no servidor (uma
+        sonda por origem e composicao). False se alguma faltar.
+        """
         hunter = self._get_hunter()
         durations = {}
         for atk in plan:
@@ -1247,11 +1251,16 @@ class BarbarianTrainPlanner:
                 durations[key] = hunter._probe_duration(atk["source_village_id"], target_id,
                                                         atk["troops"])
             if not durations[key]:
-                self.logger.warning("Conquest: reforco contra %s sem duracao de %s pelo "
-                                    "servidor -- tento depois", village_label(target_id),
+                self.logger.warning("Conquest: %s contra %s sem duracao de %s pelo "
+                                    "servidor -- tento depois", what, village_label(target_id),
                                     village_label(atk["source_village_id"]))
                 return False
             atk["duration_seconds"] = float(durations[key])
+        return True
+
+    def _schedule_reinforcement(self, target_id, data, plan, train_landing, drop_min, regen):
+        if not self._probe_plan(target_id, plan):
+            return False
 
         longest = max(atk["duration_seconds"] for atk in plan)
         arrival_ts = max(time.time() + longest + self.ARRIVAL_MARGIN_SECONDS,
@@ -1287,6 +1296,131 @@ class BarbarianTrainPlanner:
             "do trem (%s). O extra avulso nao fecharia: voa demais e a lealdade regenera."
             % (len(plan), conquest_label(target_id, data), arrival_str, landing))
         return True
+
+    # ------------------------------------------------------------------
+    # Grupo de fechamento, depois do pouso
+    # ------------------------------------------------------------------
+
+    CLOSING_KIND = "fechamento"
+
+    def _closing_size(self, ordered, location, loyalty, loyalty_at, regen, drop_min,
+                      drop_max, now):
+        """
+        `(k, motivo)`: tamanho do grupo pela ESTIMATIVA de viagem dos `k`
+        nobres que pousam primeiro. `k` depende da lealdade na chegada, que
+        depende da viagem do mais lento dos `k` -- dai o laco. `k` so cresce
+        (mais nobres, viagem igual ou maior, lealdade igual ou maior) e para em
+        ceil(100 / queda minima) = 5 no br143.
+        """
+        nobles = [vid for vid, n in ordered for _ in range(int(n))]
+        k = 2
+        for _ in range(6):
+            if len(nobles) < k:
+                return None, ("so %d nobre(s) livre(s) no alcance, e fechar pede %d juntos"
+                              % (len(nobles), k))
+            travels = [self._travel_seconds(vid, location) for vid in set(nobles[:k])]
+            if any(t is None for t in travels):
+                return None, "sem coordenada ou velocidade para estimar a viagem"
+            at_arrival = loyalty_at_time(loyalty, loyalty_at, regen,
+                                         now + max(travels) + self.ARRIVAL_MARGIN_SECONDS)
+            need = closing_group_size(at_arrival, drop_min, drop_max)
+            if need == k:
+                return k, None
+            if need < 2:
+                return None, "um nobre so ja pode fechar (caminho do extra avulso)"
+            k = need
+        return None, "o tamanho do grupo nao convergiu"
+
+    def plan_closing_group(self, target_id, data, loyalty, loyalty_at, regen,
+                           drop_min, drop_max, flight_block=None, now=None):
+        """
+        Agenda no Hunter os nobres que fecham uma conquista JUNTOS, quando o
+        extra avulso nao progride. Devolve `(agendado, motivo)`; motivo None
+        com agendado False = `flight_block` achou nobre nosso no ar (e ja
+        avisou).
+
+        Chamado por `ConquestManager._close_with_group` depois do pouso, com a
+        lealdade lida do relatorio (`loyalty` em `loyalty_at`). Diferencas para
+        o reforco de trem incompleto (`plan_reinforcements`):
+
+          - o tamanho nao e "o que falta ao trem", e `closing_group_size` da
+            lealdade NA CHEGADA do grupo: o menor grupo que fecha em 85%
+            (`CLOSING_MIN_CHANCE`, escolha do usuario em 27/10);
+          - a conferencia final usa a duracao SONDADA no servidor: se com ela
+            o tamanho certo mudar, nao agenda (o proximo ciclo replaneja com a
+            conta nova) -- um nobre a mais tende a autoconquistar, um a menos
+            fecha pouco;
+          - `flight_block` (a praca de cada aldeia com nobre) roda so quando o
+            grupo vai mesmo ser agendado: sao ate ~13 GETs.
+
+        O registro mora em `reinforcement` (`kind: "fechamento"`), o mesmo
+        campo do reforco, e por isso herda a trava de voo
+        (`ConquestCache.nobles_in_flight`), o pouso no tick
+        (`EventTick.landing_of`), a reserva de tropa entre reinicios
+        (`_sync_reinforcement_reserves`) e a promocao para `noble_arrivals`
+        (`promote_reinforcements`). Grupo que pousa sem fechar e um pouso novo:
+        o acompanhamento le o relatorio e decide de novo.
+        """
+        cfg = self.config.get("conquest", {})
+        if not self.config.get("hunter", {}).get("enabled"):
+            return False, "o Hunter esta desligado (hunter.enabled), e e ele que sincroniza a chegada"
+        now = time.time() if now is None else now
+        location = data.get("target_location") or self._known_location(target_id)
+        noble_range = self._noble_range()
+        ordered = [(vid, n) for vid, n in self._order_by_arrival(self._noble_sources(), location)
+                   if self._source_reaches(vid, location, noble_range)]
+        size, why = self._closing_size(ordered, location, loyalty, loyalty_at, regen,
+                                       drop_min, drop_max, now)
+        if not size:
+            return False, why
+        plan = self._build_plan(target_id, ordered, cfg, target_location=location, size=size)
+        if not plan:
+            return False, "as aldeias com nobre nao fecham escolta para %d comandos" % size
+        if not self._probe_plan(target_id, plan, what="grupo de fechamento"):
+            return False, "o servidor nao devolveu a duracao da viagem"
+
+        longest = max(atk["duration_seconds"] for atk in plan)
+        # `now` e o de antes das sondas; a margem de 10 min cobre o tempo
+        # delas, como no `_schedule`.
+        arrival_ts = now + longest + self.ARRIVAL_MARGIN_SECONDS
+        at_arrival = loyalty_at_time(loyalty, loyalty_at, regen, arrival_ts)
+        need = closing_group_size(at_arrival, drop_min, drop_max)
+        if need != len(plan):
+            return False, ("com a duracao do servidor (%.1f h) a lealdade na chegada seria "
+                           "%.0f, que pede %d nobres e nao %d -- replaneja no proximo ciclo"
+                           % (longest / 3600.0, at_arrival, need, len(plan)))
+        if callable(flight_block) and flight_block():
+            return False, None
+        chance = closing_chance(len(plan), at_arrival, drop_min, drop_max)
+
+        arrival_str = datetime.datetime.fromtimestamp(arrival_ts).strftime(DATETIME_FMT)
+        if not self._add_hunter_schedule(target_id, arrival_str, plan, label=self.REINFORCE_LABEL):
+            return False, "o Hunter nao aceitou o agendamento"
+        sched_key = self._sched_key(target_id, arrival_str, label=self.REINFORCE_LABEL)
+        per_source = {}
+        for atk in plan:
+            per_source[atk["source_village_id"]] = per_source.get(atk["source_village_id"], 0) + 1
+        self._reserve(target_id, plan, prefix=self.REINFORCE_PREFIX)
+        self._decide_reinforcement(target_id, data, {
+            "status": "scheduled", "kind": self.CLOSING_KIND, "sched_key": sched_key,
+            "arrival": int(arrival_ts), "nobles": len(plan), "sources": per_source,
+            "loyalty_read": loyalty, "loyalty_read_at": int(loyalty_at or 0),
+            "loyalty_at_arrival": round(at_arrival, 1),
+            "close_chance": round(chance, 3),
+        })
+        origins = ", ".join("%s x%d" % (village_label(v), n) for v, n in sorted(per_source.items()))
+        self.logger.info(
+            "Conquest: grupo de fechamento de %d nobres agendado contra %s, pouso %s, "
+            "lealdade prevista na chegada %.0f, fecham em %.0f%% (origens: %s)",
+            len(plan), village_label(target_id), arrival_str, at_arrival, chance * 100, origins)
+        Notification.send(
+            "Conquista: %d nobres agendados JUNTOS contra %s -- pousam %s com a lealdade "
+            "em ~%.0f, derrubam de %d a %d e fecham em ~%.0f%%. Um por vez nao fecharia: "
+            "voa demais e a lealdade regenera. Nao mande nobre a mais: tende a pousar "
+            "depois da conquista."
+            % (len(plan), conquest_label(target_id, data), arrival_str, at_arrival,
+               len(plan) * int(drop_min), len(plan) * int(drop_max), chance * 100))
+        return True, None
 
     def promote_reinforcements(self):
         """
@@ -1327,11 +1461,13 @@ class BarbarianTrainPlanner:
                                          sent=len(sent))
             ConquestCache.set(target_id, data)
             self._release(target_id, prefix=self.REINFORCE_PREFIX)
-            self.logger.info("Conquest: reforco contra %s -- %d de %d nobre(s) sairam",
-                             village_label(target_id), len(sent), len(attacks))
+            what = ("grupo de fechamento" if info.get("kind") == self.CLOSING_KIND
+                    else "reforco")
+            self.logger.info("Conquest: %s contra %s -- %d de %d nobre(s) sairam",
+                             what, village_label(target_id), len(sent), len(attacks))
             Notification.send(
-                "Conquista: reforco contra %s -- %d de %d nobre(s) sairam%s."
-                % (conquest_label(target_id, data), len(sent), len(attacks),
+                "Conquista: %s contra %s -- %d de %d nobre(s) sairam%s."
+                % (what, conquest_label(target_id, data), len(sent), len(attacks),
                    "" if sent else "; o bot volta ao extra depois do pouso"))
 
     def _sync_reinforcement_reserves(self):

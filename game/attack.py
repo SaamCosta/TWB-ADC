@@ -292,6 +292,61 @@ def extra_noble_worth_sending(entry):
     return bool(entry.get("progress"))
 
 
+# Chance minima de o grupo de fechamento fechar, escolhida pelo usuario em
+# 27/10: o mesmo nivel que o trem de 4 ja aceita (4 nobres com queda 20..35
+# somam 100 ou mais em 86,7% dos sorteios).
+CLOSING_MIN_CHANCE = 0.85
+
+
+def closing_chance(nobles, loyalty, drop_min, drop_max):
+    """
+    Probabilidade de `nobles` nobres somarem `loyalty` ou mais de queda.
+
+    Modelo: cada nobre derruba um inteiro uniforme de `drop_min` a `drop_max`
+    (20 a 35 no br143, `<mood>` do mundo). Os relatorios reais sao inteiros
+    nessa faixa ("Descida 18 para -7" = 25); a uniformidade e premissa, nao
+    medida.
+    """
+    drop_min, drop_max = int(drop_min), int(drop_max)
+    if nobles <= 0 or drop_max < drop_min:
+        return 0.0
+    width = drop_max - drop_min + 1
+    dist = {0: 1.0}
+    for _ in range(int(nobles)):
+        nxt = {}
+        for total, p in dist.items():
+            for drop in range(drop_min, drop_max + 1):
+                nxt[total + drop] = nxt.get(total + drop, 0.0) + p / width
+        dist = nxt
+    return sum(p for total, p in dist.items() if total >= loyalty)
+
+
+def closing_group_size(loyalty_at_arrival, drop_min, drop_max,
+                       min_chance=CLOSING_MIN_CHANCE):
+    """
+    Quantos nobres JUNTOS fecham uma conquista cujo extra avulso nao
+    progride: o MENOR grupo que fecha com chance >= `min_chance`, ou 0 sem
+    lealdade a derrubar. Com queda 20..35 e 85%: lealdade ate 48 -> 2,
+    49 a 74 -> 3, 75 ou mais -> 4.
+
+    Por que o menor, e nao o que fecha sempre: nobre que pousa depois da
+    conquista autoconquista a aldeia. O nobre e gasto (a moeda nao: a vaga
+    volta, porque o numero de aldeias conquistadas nao sobe -- conferido na
+    academia em 27/10) e a escolta dele luta contra a guarnicao, que e tropa
+    nossa (incidente de 12/08, §6.1). Cada nobre a mais aumenta essa chance.
+    O outro lado: com a regra anterior (`ceil(L / queda maxima)`, nunca
+    sobrar nobre) a lealdade 60 recebia 2 nobres, que fecham em 26%, e cada
+    falha custa outra viagem de ~30 h.
+    """
+    if loyalty_at_arrival is None or loyalty_at_arrival <= 0 or not drop_min:
+        return 0
+    limit = int(math.ceil(float(loyalty_at_arrival) / float(drop_min)))  # fecha sempre
+    for nobles in range(1, limit + 1):
+        if closing_chance(nobles, loyalty_at_arrival, drop_min, drop_max) >= min_chance:
+            return nobles
+    return limit
+
+
 class AttackManager:
     """
     Attackmanager class
@@ -1564,7 +1619,8 @@ class ConquestCache:
         nocao de que ainda havia nobre a caminho, mandou um segundo trem e um
         nobre extra. Resultado: o nobre das 23:28 conquistou a aldeia e sua
         escolta virou guarnicao dela; o nobre das 00:00 chegou 32 minutos
-        depois, autoconquistou a aldeia (queimando uma moeda) e matou os 421
+        depois, autoconquistou a aldeia (o nobre e gasto; a moeda nao: a vaga volta, porque
+        o numero de aldeias conquistadas nao sobe -- academia, 27/10) e matou os 421
         homens da propria guarnicao, perdendo mais 106 no combate.
 
         Repare que isto NAO olha `status`. A trava anterior dependia de o
@@ -1785,7 +1841,7 @@ class ConquestManager:
         entre o planejador agendar (`train_scheduled`) e o Hunter disparar dura
         horas, que e tempo de sobra para uma aldeia com 4 nobres proprios
         montar um segundo trem contra o mesmo alvo sem saber do primeiro.
-        Nobre e a unidade mais cara do jogo e ja custou 527 tropas e uma moeda
+        Nobre e a unidade mais cara do jogo e ja custou 527 tropas e um nobre
         neste projeto (2026-08-12).
         """
         cfg = self.config.get("conquest", {})
@@ -2554,7 +2610,7 @@ class ConquestManager:
         existe depois do pouso. Se deu certo, a escolta do nobre vencedor vira
         guarnicao da aldeia nova, e o nobre seguinte entra matando os
         proprios companheiros (2026-08-12: 421 defensores e 106 atacantes
-        mortos, todos nossos, alem da moeda da autoconquista).
+        mortos, todos nossos, alem do nobre gasto na autoconquista).
         """
         if conquest_data is None:
             conquest_data = ConquestCache.get(target_id)
@@ -3463,17 +3519,9 @@ class ConquestManager:
             # So a PRIMEIRA viavel e julgada: as seguintes pousam depois, entao
             # se esta nao progride nenhuma progride.
             if viable == 1 and not extra_noble_worth_sending(entry):
-                self._alert_extra_once(
-                    target_id, conquest_data, "sem_progresso", loyalty_at,
-                    "Conquista: o nobre extra mais rapido para %s sai da %s e voa "
-                    "%.1f h -- regenera %.0f de lealdade no caminho, mais que a "
-                    "queda minima (%d). Nao mando: cada extra pousaria numa "
-                    "lealdade maior que a anterior. Para fechar, mande dois "
-                    "nobres juntos a mao."
-                    % (label, self._village_name(vid), entry["travel_seconds"] / 3600.0,
-                       regen * entry["travel_seconds"] / 3600.0, drop_min)
-                )
-                return False
+                return self._close_with_group(
+                    target_id, conquest_data, cfg, entry, loyalty, loyalty_at,
+                    regen, target_location)
 
             # §8.71 fase 3: reconferir no jogo, na hora de agir, que nao ha
             # nobre nosso a caminho -- o jogador pode ter completado o trem a
@@ -3619,6 +3667,63 @@ class ConquestManager:
             % (target_id, landing, self.village_id)
         )
         return True
+
+    NUMBER_WORDS = {2: "dois", 3: "tres"}
+
+    def _close_with_group(self, target_id, conquest_data, cfg, entry, loyalty,
+                          loyalty_at, regen, target_location):
+        """
+        O extra avulso nao progride: agenda os nobres que fecham, JUNTOS.
+
+        Caso real, Barbara #69630 em 27/10: o trem de 4 pousou deixando
+        lealdade 1, e toda origem com nobre fica a ~30 h. Cada extra avulso
+        pousaria com ~41 de lealdade (regen 1/h) contra queda maxima 35 --
+        nunca fecha, e o bot so avisava "mande dois juntos a mao". O grupo e
+        esse "dois juntos", sincronizado pelo Hunter e no tamanho de
+        `closing_group_size` (o menor grupo que fecha em 85%: cada nobre a mais
+        e mais chance de um pousar depois da conquista). Quem monta e agenda e `BarbarianTrainPlanner`, pelo mesmo
+        caminho do reforco do trem incompleto (§8.71): o registro vai em
+        `reinforcement` com `kind: "fechamento"`, e por isso conta como nobre
+        no ar para a trava de voo e para o tick enquanto estiver agendado.
+
+        Sem o grupo (Hunter desligado, nobres ou escolta faltando), avisa uma
+        vez por pouso dizendo quantos mandar a mao -- e que nao e para mandar
+        mais.
+        """
+        drop_min, drop_max = self._drop_min, self._drop_max
+        travel_h = (entry.get("travel_seconds") or 0) / 3600.0
+        size = closing_group_size(entry.get("loyalty_at_arrival"), drop_min, drop_max)
+        scheduled, why = False, "sem a lista de aldeias do imperio"
+        if self.villages:
+            from game.conquest_planner import BarbarianTrainPlanner
+
+            planner = BarbarianTrainPlanner(
+                wrapper=self.wrapper, villages=self.villages, config=self.config,
+                reservation_board=getattr(self, "reservation_board", None),
+                world_villages=getattr(self, "world_villages", None),
+            )
+            scheduled, why = planner.plan_closing_group(
+                target_id, conquest_data, loyalty, loyalty_at, regen, drop_min, drop_max,
+                flight_block=lambda: self._nobles_in_flight_block(
+                    target_id, conquest_data, target_location, loyalty_at),
+            )
+        if scheduled:
+            return True
+        if why is None:
+            return False  # nobre nosso no ar: o aviso ja saiu
+        count = self.NUMBER_WORDS.get(size, str(size))
+        self._alert_extra_once(
+            target_id, conquest_data, "sem_progresso", loyalty_at,
+            "Conquista: o nobre extra mais rapido para %s sai da %s e voa %.1f h -- "
+            "regenera %.0f de lealdade no caminho, mais que a queda minima (%d), "
+            "entao um por vez nunca fecha. O bot fecharia com %s nobres juntos, mas "
+            "nao agendou: %s. Para fechar, mande %s nobres juntos a mao, e nao mais: "
+            "um a mais tende a pousar depois da conquista (autoconquista: gasta o "
+            "nobre e a escolta dele luta contra a guarnicao)."
+            % (conquest_label(target_id, conquest_data), self._village_name(entry["vid"]),
+               travel_h, regen * travel_h, drop_min, count, why, count)
+        )
+        return False
 
     @staticmethod
     def _discount_sent_troops(troopmanager, troops):
