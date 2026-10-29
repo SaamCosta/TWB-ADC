@@ -720,7 +720,8 @@ def get_relics():
     config = DataReader.config_grab()
     enabled = config.get("relics", {}).get("enabled", True)
     return render_template('relics.html', enabled=enabled,
-                           v=RelicReader.view(managed_cache=DataReader.cache_grab("managed")))
+                           v=RelicReader.view(managed_cache=DataReader.cache_grab("managed"),
+                                              config=config))
 
 
 def _render_pvp_conquest(error=None):

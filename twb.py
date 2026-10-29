@@ -775,6 +775,22 @@ class TWB:
                          if (data or {}).get("managed")}
                 self.am_auto.sync_groups(cfg, roles, any_vid)
 
+    def _relic_act(self, config):
+        """
+        §8.78: um passo do plano de reliquias, logo depois da leitura que o
+        fez. Fase propria atras do gate do Hunter (§8.58): sao ate 1 GET + 2
+        POSTs, e um POST nao preempta. Sem candidato (o caso comum, e sempre
+        com relics.manage desligado), nem o gate roda.
+        """
+        manager = self.relic_manager
+        if manager is None or not manager.manage or manager.candidate() is None:
+            if manager is not None and manager.manage:
+                manager.act()  # so loga por que nada sai (0 requisicao)
+            return
+        if self._hunter_gate(config, "reliquias_acao"):
+            with meter_phase(self.wrapper, "reliquias_acao"):
+                manager.act()
+
     def _hunter_gate(self, config, phase, skippable=True, village=None):
         """
         `Hunter.gate()` com a previsao da fase: True roda, False adia. Fase
@@ -1455,6 +1471,7 @@ class TWB:
                         self.relic_manager.run(sorted(managed_villages_dict)[0],
                                                own_ids=self.found_villages,
                                                reason="inicio do ciclo")
+                    self._relic_act(config)
 
                 # §8.68 gerente automatico: listas da conta (no maximo 1x/dia,
                 # e de novo quando o gerente volta) e o grupo de cada aldeia
@@ -1715,6 +1732,10 @@ class TWB:
                     # §8.75: relatorio de reliquia aberto ou quadro de bonus que
                     # divergiu na aldeia anterior -- relido entre aldeias, que e
                     # ponto seguro (fora de checkpoint e de fase).
+                    # §8.78: com relics.manage, um passo visto numa leitura so
+                    # pede a segunda depois de `confirm_after_min` (1 GET).
+                    if self.relic_manager is not None:
+                        self.relic_manager.confirm_due()
                     if (self.relic_manager is not None and self.relic_manager.pending
                             and self.relic_manager.enabled
                             and self._hunter_gate(config, "reliquias")):
@@ -1722,6 +1743,7 @@ class TWB:
                             self.relic_manager.run(village.village_id,
                                                    own_ids=self.found_villages,
                                                    reason=self.relic_manager.pending)
+                        self._relic_act(config)
 
                     # "aldeia" so recebe o que village.run() faz fora das
                     # fases que ele mesmo marca (init, farm, ...).

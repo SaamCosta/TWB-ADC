@@ -110,6 +110,43 @@ def test_formula_da_mina():
     check(abs(P.mine_production(30, 1.0) - 2400.0) < 1.0, "nível 30, velocidade 1: ~2400/h")
     check(abs(P.mine_production(30, 2.0) - 2 * P.mine_production(30, 1.0)) < 1e-6,
           "a velocidade do mundo multiplica")
+    # §8.78: o br143 publica <base_production>60</base_production>. A BBM 001
+    # (mina 30, +48% de madeira: itens 30 + paladino 15 + modificação 3) lê
+    # 7.104/h no widget de produção e no `game_data`.
+    check(abs(P.mine_production(30, 1.0, 60) * 1.48 - 7104.0) < 1.0,
+          "base 60: mina 30 x 1,48 = 7.104/h, o número da tela")
+    check(P.mine_production(30, 1.0, None) == P.mine_production(30, 1.0), "base ausente = 30")
+
+
+def test_base_production_do_mundo():
+    xml = ("<config>\n<speed>1</speed>\n<game>\n  <hauls_max>100000</hauls_max>\n"
+           "  <base_production>60</base_production>\n  <event>19</event>\n</game>\n</config>")
+    check(WorldConfig._parse_base_production(xml) == 60.0, "lê <base_production> (recorte do br143)")
+    check(WorldConfig._parse_base_production("<config/>") is None, "sem tag: None")
+    check(P.world_base_production({"base_production": 60.0}) == 60.0
+          and P.world_base_production({}) is None, "world_base_production do cache")
+    inputs = P.village_inputs(["1"], {"1": {"buidling_levels": {"wood": 30}, "storage": 1000}},
+                              {"pre": [], "recruit": [], "build": []}, {}, now=1e9, speed=1.0,
+                              base_production=60.0,
+                              village_prod={"1": {"prod_h": {"wood": 7104.0, "stone": 5, "iron": 5}}})
+    check(abs(inputs["1"]["base_prod_h"]["wood"] - 4800.0) < 1.0, "base 60 entra na produção")
+    check(inputs["1"]["prod_ratio"]["wood"] == 1.48, "razão lida/fórmula da BBM 001 (%r)" % inputs["1"]["prod_ratio"])
+
+
+def test_ganho_de_cada_passo_sozinho():
+    fx = fixture()
+    out = run(fx)
+    check(out["moves"], "o plano tem passos")
+    first = out["moves"][0]
+    check(first["gain_alone_h"] == first["gain_h"], "o 1º passo sozinho vale o mesmo que no plano")
+    current = {r["id"]: r.get("village_id") for r in fx["state"]["relics"]}
+    for m in out["moves"]:
+        occupied = any(h and h in current.values() and current.get(i) != h
+                       for i, h in m["to"].items())
+        if occupied:
+            check(m["gain_alone_h"] is None,
+                  "passo para anfitriã ocupada hoje depende do anterior: %s" % m["text"])
+        check(m["value_before_h"] >= 0, "valor atual da relíquia publicado")
 
 
 # -- teto e saturação --------------------------------------------------------------

@@ -19,9 +19,10 @@ Responde três perguntas, a partir do estado que a Fase 1 grava
 Fonte de cada número (5º padrão). Todas em disco, 0 GET:
 
 - Produção: base sem bônus = fórmula do jogo pelo nível da mina
-  (`cache/managed/<vid>.json` -> `buidling_levels`, medido a cada ciclo) vezes
-  a velocidade do mundo (`<speed>` de `get_config`, em
-  `cache/world/config_<server>.json`). A relíquia soma ao percentual, então
+  (`cache/managed/<vid>.json` -> `buidling_levels`, medido a cada ciclo), com
+  a base do nível 1 do mundo (`<base_production>`, br143 = 60, §8.78) e a
+  velocidade (`<speed>`), ambas de `get_config`, em
+  `cache/world/config_<server>.json`. A relíquia soma ao percentual, então
   +x% vale `base * x / 100` (leitura aditiva: o quadro da BBM 001 mostra +55%
   de ferro = itens 30 + paladino 15 + relíquia 10). Não usei a produção lida
   dividida pelo total do quadro porque o quadro não traz tudo: os "Efeitos
@@ -141,11 +142,22 @@ def classify(key):
     return {"kind": "unknown"}
 
 
-def mine_production(level, speed):
-    """Produção/h sem bônus de uma mina no nível `level` (0 = 5/h no jogo)."""
+# Produção da mina no nível 1 quando o mundo não publica `<base_production>`:
+# 30 é o valor dos mundos br de 29/10 que não são o br143 (§8.78).
+DEFAULT_BASE_PRODUCTION = 30.0
+
+
+def mine_production(level, speed, base=DEFAULT_BASE_PRODUCTION):
+    """
+    Produção/h sem bônus de uma mina no nível `level`:
+    `base × 1,163118^(nível−1) × speed`, com `base` = `<base_production>` do
+    mundo (br143 = 60, §8.78). Nível 0 = 5/h num mundo de base 30, escalado
+    pela mesma razão (não medido: nenhuma aldeia da conta tem mina 0).
+    """
+    base = float(base or DEFAULT_BASE_PRODUCTION)
     if not level:
-        return 5.0 * speed
-    return 30.0 * (1.163118 ** (int(level) - 1)) * speed
+        return 5.0 * speed * base / DEFAULT_BASE_PRODUCTION
+    return base * (1.163118 ** (int(level) - 1)) * speed
 
 
 def attribute_rate(spec, inputs):
@@ -284,7 +296,7 @@ def unit_cost(unit, measured):
 
 
 def village_inputs(vids, managed, reporter, nobles, now, speed=None, unit_costs=None,
-                   village_prod=None):
+                   village_prod=None, base_production=None):
     """
     {vid: inputs} do que se sabe de cada aldeia, com `missing` dizendo o que
     falta (aldeia sem `cache/managed`, como a recém-conquistada, entra só com
@@ -312,8 +324,11 @@ def village_inputs(vids, managed, reporter, nobles, now, speed=None, unit_costs=
                                     "nível de mina, armazém e leituras de recurso")
         levels = (data or {}).get("buidling_levels") or {}
         if data and speed:
-            entry["base_prod_h"] = {r: mine_production(levels.get(r, 0), speed) for r in RESOURCES}
-            entry["base_source"] = "fórmula do nível da mina x velocidade %g" % speed
+            base = base_production or DEFAULT_BASE_PRODUCTION
+            entry["base_prod_h"] = {r: mine_production(levels.get(r, 0), speed, base)
+                                    for r in RESOURCES}
+            entry["base_source"] = "fórmula do nível da mina, base %g%s x velocidade %g" % (
+                base, "" if base_production else " (padrão, <base_production> não lido)", speed)
             entry["mine_levels"] = {r: levels.get(r, 0) for r in RESOURCES}
         elif data:
             entry["base_source"] = "velocidade do mundo não lida"
@@ -543,6 +558,23 @@ def plan(state, coords, inputs, now=None, low_loyalty=None, labels=None,
         alloc, value_now = trial, value_now + gain
         touched.update(ids)
 
+    # §8.78: o ganho de cada passo SOZINHO, sobre a alocação atual. O do plano
+    # é encadeado (o passo 2 parte do que o passo 1 fez) e é o executor quem
+    # escolhe a ordem: "equipar a parada" primeiro, mesmo que o plano a ponha
+    # depois de um "mover". None = o passo não é possível sem outro antes
+    # (a anfitriã só fica livre depois de um mover, ou não há vaga).
+    for move in moves:
+        trial = dict(current)
+        trial.update(move["to"])
+        taken = [h for h in trial.values() if h]
+        fits = len(taken) == len(set(taken)) and equipped(trial) <= slot_total
+        fits = fits and all(h is None or h in host_set for h in move["to"].values())
+        move["gain_alone_h"] = (round(model.value(trial, relics) - base_value, 1)
+                                if fits else None)
+        move["value_before_h"] = round(sum(
+            model.value(current, relics) - model.value(dict(current, **{i: None}), relics)
+            for i in move["relic_ids"] if current.get(i)), 1)
+
     report = []
     for rid, r in sorted(relics.items(), key=lambda kv: (kv[1]["host"] is None, kv[1]["name"] or "")):
         without = dict(current)
@@ -649,7 +681,17 @@ def world_speed(world_config):
     return speed if speed > 0 else None
 
 
-def plan_from_disk(state, coords, root=".", now=None, speed=None, regen=1.0, labels=None):
+def world_base_production(world_config):
+    """`<base_production>` do cache do mundo (§8.78), ou None."""
+    try:
+        base = float((world_config or {}).get("base_production"))
+    except (TypeError, ValueError):
+        return None
+    return base if base > 0 else None
+
+
+def plan_from_disk(state, coords, root=".", now=None, speed=None, regen=1.0, labels=None,
+                   base_production=None):
     """O plano a partir dos arquivos de `root` (cache/...). 0 GET."""
     now = now or time.time()
     managed = load_managed(os.path.join(root, "cache", "managed"))
@@ -666,7 +708,8 @@ def plan_from_disk(state, coords, root=".", now=None, speed=None, regen=1.0, lab
     nobles = noble_departures(schedules, now)
     inputs = village_inputs(coords, managed, reporter, nobles, now, speed=speed,
                             unit_costs=(state or {}).get("unit_costs"),
-                            village_prod=(state or {}).get("village_prod"))
+                            village_prod=(state or {}).get("village_prod"),
+                            base_production=base_production)
     conquests = load_conquests(os.path.join(root, "cache", "conquest"))
     low = low_loyalty_hosts(state, conquests, now, regen=regen)
     if labels is None:
@@ -678,6 +721,7 @@ def plan_from_disk(state, coords, root=".", now=None, speed=None, regen=1.0, lab
         "nobles_sent": sum(nobles.values()),
         "schedules_read": schedules_read,
         "world_speed": speed,
+        "base_production": base_production,
         "unit_costs": "tela de recrutamento" if (state or {}).get("unit_costs") else
                       "tabela padrão (não medida)",
     }

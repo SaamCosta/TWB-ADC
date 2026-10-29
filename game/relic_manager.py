@@ -27,6 +27,15 @@ a mais. Nada é equipado nem removido (Fase 3). Duas medições alimentam o plan
 de graça, com respostas que o bot já tinha: a produção/h de cada aldeia
 (`village_prod`, do `game_data` do `village_init`) e o custo nominal de cada
 unidade (`unit_costs`, da tela de recrutamento de aldeia sem desconto).
+
+Fase 3 (§8.78): com `relics.manage` ligado, `act()` executa UM passo do plano
+por leitura, com os freios de `core/relic_executor.py` (histerese, mesmo plano
+em leituras seguidas, teto por dia do servidor, nada se desfaz em 24 h).
+Custo de uma ação: 1 GET de `screen=relic_system` NA anfitriã (reconferência:
+o `loyalty_locked` é da aldeia da URL) + 1 POST (equipar) ou 2 (mover =
+`remove_relic` na origem + `equip_relic` no destino). A resposta do POST é o
+estado novo quando traz `relics`; senão, a confirmação é 1 GET. Toda resposta
+passa por `Extractor.ajax_error()` (A26-09).
 """
 import glob
 import json
@@ -34,10 +43,12 @@ import logging
 import os
 import time
 
+from core import relic_executor as E
 from core import relic_planner as P
 from core import relics as R
 from core.extractors import Extractor
 from core.filemanager import FileManager
+from core.notification import Notification
 from core.village_label import village_label
 
 CACHE_PATH = "cache/relics.json"
@@ -46,6 +57,9 @@ FOUND_MAX_AGE = 6 * 3600
 # Quadro que diverge pede releitura, mas no máximo uma a cada meia hora: o
 # jogador pode estar trocando relíquias agora, e cada troca dele diverge.
 BOARD_REREAD_MIN_INTERVAL = 1800
+# A ação só sai sobre um plano feito de uma leitura deste instante (6º padrão):
+# `act()` roda logo depois de `run()`, e plano mais velho que isto não age.
+ACT_MAX_STATE_AGE = 600
 
 
 def _coords_from_disk(own_ids):
@@ -87,10 +101,17 @@ class RelicManager:
         self._last_board_reread = 0.0
         self._last_plan_summary = None
         self.state = FileManager.load_json_file(CACHE_PATH) or None
+        self._coords = None
+        self._last_exec_summary = None
 
     @property
     def enabled(self):
         return (self.config.get("relics") or {}).get("enabled", True)
+
+    @property
+    def manage(self):
+        """Fase 3: o bot equipa/move de verdade. Sem a leitura (`enabled`), nada."""
+        return self.enabled and E.settings(self.config)["manage"]
 
     # -- gatilhos -------------------------------------------------------------
 
@@ -243,13 +264,16 @@ class RelicManager:
                      boards=prev.get("boards") or {},
                      found=prev.get("found") or {}, found_at=prev.get("found_at") or 0,
                      village_prod=prev.get("village_prod") or {},
-                     unit_costs=prev.get("unit_costs") or {})
+                     unit_costs=prev.get("unit_costs") or {},
+                     exec=prev.get("exec") or {})
         if self._found_needed(prev, server_now, now):
             gets += self._read_found(village_id, state, now)
         state["gets"] = gets
         self.state = state
         self._recheck_boards()
         self._plan(coords, now)
+        E.update_streaks(self.state["exec"], self.state.get("plan"), self.state["fetched_at"])
+        self._coords = coords
         self._save()
         self._log_summary(state)
         self._log_plan(state.get("plan"))
@@ -265,7 +289,9 @@ class RelicManager:
             self.state["plan"] = P.plan_from_disk(
                 self.state, coords, root=FileManager.get_root(), now=now,
                 speed=P.world_speed(world), regen=float(regen),
+                base_production=P.world_base_production(world),
                 labels={vid: village_label(vid) for vid in coords})
+            self.state["plan"]["dry_run"] = not self.manage
         except Exception as exc:  # o plano é dry-run: nunca derruba a leitura
             self.logger.warning("Relics: o planejador falhou: %r", exc)
             self.state["plan"] = {"error": repr(exc), "computed_at": int(now)}
@@ -273,8 +299,9 @@ class RelicManager:
     def _log_plan(self, plan):
         if not plan or plan.get("error"):
             return
-        self.logger.info("Relics: plano (dry-run, nada é equipado nesta fase): %s; "
+        self.logger.info("Relics: plano (%s): %s; "
                          "valor das relíquias hoje %.0f/h, depois %.0f/h",
+                         "relics.manage ligado" if self.manage else "dry-run, relics.manage desligado",
                          plan.get("summary"), plan.get("value_now", 0), plan.get("value_after", 0))
         # O detalhe só quando o plano muda: a leitura roda todo ciclo.
         if plan.get("summary") == self._last_plan_summary:
@@ -293,6 +320,205 @@ class RelicManager:
             self.logger.info("Relics: plano sem dado de %d aldeia(s): %s", len(plan["missing"]),
                              "; ".join("%s: %s" % (village_label(v), ", ".join(m))
                                        for v, m in sorted(plan["missing"].items())))
+
+    # -- Fase 3: ação ---------------------------------------------------------
+
+    def _exec_view(self, now=None):
+        """(plano, estado de execução, config da Fase 3, agora, dia do servidor)."""
+        now = now or time.time()
+        state = self.state or {}
+        ex = self.state.setdefault("exec", {}) if self.state is not None else {}
+        return (state.get("plan") or {}, ex, E.settings(self.config), now,
+                E.server_day(state, now))
+
+    def candidate(self, now=None):
+        """O passo que `act()` executaria agora, ou None. Puro: 0 GET."""
+        if not self.manage or not self.state:
+            return None
+        plan, ex, cfg, now, day = self._exec_view(now)
+        if (plan.get("error") or plan.get("stale")
+                or now - (self.state.get("fetched_at") or 0) > ACT_MAX_STATE_AGE):
+            return None
+        return E.choose(plan, ex, cfg, now, day)
+
+    def confirm_due(self, now=None):
+        """
+        Pede a releitura que confirma um passo visto só uma vez, quando a
+        leitura tem mais de `confirm_after_min`: sem isto, a 2ª leitura só
+        viria no ciclo seguinte (horas). 1 GET, entre aldeias.
+        """
+        if not self.manage or not self.state or self.pending:
+            return False
+        plan, ex, cfg, now, day = self._exec_view(now)
+        if now - (self.state.get("fetched_at") or 0) < cfg["confirm_after_min"] * 60:
+            return False
+        if plan.get("stale"):
+            self.pending = "replanejar depois de uma ação"
+            return True
+        waiting = E.awaiting_confirmation(plan, ex, cfg, now, day)
+        if not waiting:
+            return False
+        self.pending = "confirmar o plano (%s)" % waiting[0].get("text")
+        return True
+
+    def act(self):
+        """
+        Executa no máximo UM passo do plano (equipar parada antes de mover).
+        Devolve True quando o bot mudou alguma relíquia de lugar.
+        """
+        if not self.manage or self.wrapper is None or not self.state:
+            return False
+        plan, ex, cfg, now, day = self._exec_view()
+        self._log_exec(plan, ex, cfg, now, day)
+        move = self.candidate(now)
+        if move is None:
+            return False
+        rid = str(move["relic_ids"][0])
+        host = str(move["to"][rid])
+        origin = move["from"].get(rid)
+        page = self.wrapper.get_url("game.php?village=%s&screen=relic_system" % host)
+        fresh = Extractor.relic_inventory(page) if page is not None else None
+        why, kind = E.precheck(move, fresh, low_loyalty=plan.get("low_loyalty"))
+        if why:
+            E.note_skip(ex, move, why, kind, now)
+            if kind == "diverge":
+                # O jogador pode ter mexido (9º padrão): não age, relê.
+                self.pending = "estado diverge do plano"
+            self.logger.info("Relics: não vou %s: %s%s", move.get("text"), why,
+                             "; relendo o inventário" if kind == "diverge" else "")
+            self._save()
+            return False
+        self._apply_inventory(fresh)
+
+        if move["action"] == "move":
+            res = self._post("remove_relic", origin, {})
+            err = Extractor.ajax_error(res)
+            after = None if err else self._confirmed(res, origin)
+            if err or after is None or self._relic_host(after, rid) is not None:
+                detail = ("o jogo recusou remover: %s" % err if err else
+                          "a remoção não se confirmou (resposta: %.200s)" % (res,))
+                return self._fail(move, detail, now, day, changed=False)
+            self._apply_inventory(after)
+            if not after.get("can_equip"):
+                detail = ("removida de %s, mas o jogo diz que não há vaga para equipar; "
+                          "ela ficou no inventário" % village_label(origin))
+                return self._fail(move, detail, now, day, changed=True)
+
+        res = self._post("equip_relic", host, {"relic_id": rid})
+        err = Extractor.ajax_error(res)
+        after = None if err else self._confirmed(res, host)
+        if err or after is None or self._relic_host(after, rid) != host:
+            detail = ("o jogo recusou equipar: %s" % err if err else
+                      "o equipar não se confirmou (resposta: %.200s)" % (res,))
+            if move["action"] == "move":
+                detail = "removida de %s, mas %s; ela ficou no inventário" % (
+                    village_label(origin), detail)
+            return self._fail(move, detail, now, day, changed=move["action"] == "move")
+        self._apply_inventory(after)
+        # A hora gravada é a do resultado, não a da decisão (o GET e os POSTs
+        # levam ~20 s com o atraso do wrapper).
+        E.record(ex, move, True, "feito", time.time(), day)
+        self._save()
+        self.logger.info("Relics: %s (+%.0f/h; hoje %s)", self._done_text(move),
+                         move.get("gain_alone_h") or 0, self._today_text(ex, cfg, day))
+        Notification.send("Relíquias: %s (+%.0f/h)" % (
+            self._done_text(move), move.get("gain_alone_h") or 0))
+        return True
+
+    def _post(self, action, vid, data):
+        """`TribalWars.post("relic_system", {ajaxaction}, data)` na aldeia `vid`."""
+        return self.wrapper.get_api_action(
+            vid, action=action,
+            params={"screen": "relic_system", "h": self.wrapper.last_h}, data=data)
+
+    def _confirmed(self, res, vid):
+        """
+        O inventário depois da ação: o da própria resposta, quando ela traz
+        `relics` (sem GET); senão 1 GET de `relic_system` na aldeia `vid`.
+        """
+        ex = self.state.setdefault("exec", {})
+        parsed = Extractor.relic_action_response(res)
+        if parsed is not None:
+            ex["response_has_relics"] = True
+            return parsed
+        ex["response_has_relics"] = False
+        self.logger.info("Relics: a resposta da ação não trouxe o inventário (%.200s); "
+                         "confirmando com 1 GET", (res,))
+        page = self.wrapper.get_url("game.php?village=%s&screen=relic_system" % vid)
+        return Extractor.relic_inventory(page) if page is not None else None
+
+    @staticmethod
+    def _relic_host(inventory, rid):
+        """Onde a relíquia `rid` está no inventário (None = parada; "?" = não está lá)."""
+        for relic in (inventory or {}).get("relics") or []:
+            if str(relic.get("id")) == str(rid):
+                return str(relic["village_id"]) if relic.get("village_id") else None
+        return "?"
+
+    def _apply_inventory(self, inventory):
+        """
+        Estado novo a partir de um inventário (relido na anfitriã ou vindo na
+        resposta da ação), sem GET: a visão geral, o contador de achados e o
+        resto ficam da leitura anterior. O plano NÃO é refeito aqui: a próxima
+        ação espera a próxima leitura (uma ação por leitura).
+        """
+        prev = self.state or {}
+        merged = dict(inventory)
+        for key in ("loyalty_locked", "is_new_system", "materials", "premium_enabled"):
+            merged.setdefault(key, prev.get(key))
+        now = time.time()
+        server_time = prev.get("server_time")
+        if server_time and prev.get("fetched_at"):
+            server_time = int(server_time + (now - prev["fetched_at"]))
+        state = R.build_state(merged, prev.get("overview"), self._coords or {}, now,
+                              server_time=server_time)
+        for key in ("overview", "overview_at", "signature", "own_villages", "reason", "boards",
+                    "found", "found_at", "village_prod", "unit_costs", "exec", "plan", "gets"):
+            if key in prev:
+                state[key] = prev[key]
+        # O plano foi feito sobre o estado anterior: nenhuma ação sai dele até a
+        # próxima leitura (`candidate`), que `confirm_due` pede.
+        if state.get("plan"):
+            state["plan"] = dict(state["plan"], stale=True)
+        # A vaga ocupada/livre da visão geral fica velha depois de uma ação;
+        # `can_equip` (da resposta) é a verdade sobre haver vaga.
+        self.state = state
+
+    def _fail(self, move, detail, now, day, changed):
+        """Ação que não fechou. `changed`: o bot já tinha mudado algo (remoção feita)."""
+        ex = self.state.setdefault("exec", {})
+        E.record(ex, move, changed, detail, time.time(), day)
+        E.note_skip(ex, move, detail, "recusa", now)
+        self.pending = "depois de uma ação que não fechou"
+        self._save()
+        self.logger.warning("Relics: %s não fechou: %s", move.get("text"), detail)
+        if changed:
+            Notification.send("Relíquias: %s não fechou: %s" % (move.get("text"), detail))
+        return changed
+
+    @staticmethod
+    def _done_text(move):
+        rid = str(move["relic_ids"][0])
+        name = (move.get("names") or [rid])[0]
+        if move["action"] == "move":
+            return "movida %s de %s para %s" % (name, village_label(move["from"][rid]),
+                                               village_label(move["to"][rid]))
+        return "equipada %s em %s" % (name, village_label(move["to"][rid]))
+
+    @staticmethod
+    def _today_text(ex, cfg, day):
+        moves, equips = E.day_counts(ex, day) if day else (0, 0)
+        return "%d/%d mover, %d/%d equipar" % (moves, cfg["max_moves_per_day"],
+                                               equips, cfg["max_equips_per_day"])
+
+    def _log_exec(self, plan, ex, cfg, now, day):
+        """Por que cada passo do plano sai ou não sai; o detalhe só quando muda."""
+        rows = E.evaluate(plan, ex, cfg, now, day)
+        summary = "; ".join("%s: %s" % (m.get("text"), why or "sai agora") for m, why in rows)
+        if not rows or summary == self._last_exec_summary:
+            return
+        self._last_exec_summary = summary
+        self.logger.info("Relics: execução (hoje %s): %s", self._today_text(ex, cfg, day), summary)
 
     def _found_needed(self, prev, server_now, now):
         if self._found_dirty or not prev.get("found"):

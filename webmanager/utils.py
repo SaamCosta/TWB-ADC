@@ -10,6 +10,7 @@ import time
 import psutil
 
 from core.file_lock import file_lock
+from core import relic_executor
 from core.filemanager import FileManager
 
 
@@ -4942,8 +4943,10 @@ class MintReader:
 class RelicReader:
     """
     Le cache/relics.json (game/relic_manager.py, §8.75) e o `relic_board` de
-    cada cache/managed para o painel /relics. Somente leitura: nenhuma
-    reliquia e movida nesta fase.
+    cada cache/managed para o painel /relics. Somente leitura: quem equipa e
+    move (§8.78, `relics.manage`) e o bot; o painel mostra o que ele fez e por
+    que cada passo do plano sai ou nao sai, com a mesma regra
+    (`core/relic_executor.evaluate`).
     """
 
     QUALITY_LABELS = {"shoddy": "De má qualidade", "polished": "Resistente",
@@ -4968,7 +4971,7 @@ class RelicReader:
             return None
 
     @staticmethod
-    def view(managed_cache=None):
+    def view(managed_cache=None, config=None):
         """dict para o template, ou None sem cache (feature desligada ou bot sem ciclo)."""
         try:
             with open(RelicReader._path(), "r", encoding="utf-8") as fh:
@@ -5012,6 +5015,7 @@ class RelicReader:
         found = [dict(day=d, **e) for d, e in sorted((state.get("found") or {}).items(), reverse=True)]
         mismatched = sorted(v for v, c in boards.items() if c.get("ok") is False)
         plan = RelicReader._plan_view(state.get("plan"))
+        execution = RelicReader._exec_view(state, config, now)
         return {
             "fetched_fmt": RelicReader._fmt(state.get("fetched_at"), "%d/%m/%Y %H:%M:%S"),
             "overview_fmt": RelicReader._fmt(state.get("overview_at")),
@@ -5029,7 +5033,25 @@ class RelicReader:
             "boards_checked": len(boards),
             "boards_mismatched": mismatched,
             "plan": plan,
+            "exec": execution,
         }
+
+    @staticmethod
+    def _exec_view(state, config, now):
+        """§8.78: liga/desliga, contador do dia do servidor, motivo de cada passo, historico."""
+        cfg = relic_executor.settings(config or {})
+        ex = state.get("exec") or {}
+        day = relic_executor.server_day(state, now)
+        moves, equips = relic_executor.day_counts(ex, day) if day else (0, 0)
+        steps = [{"text": m.get("text"), "action": m.get("action"),
+                  "gain_alone_h": m.get("gain_alone_h"), "why": why}
+                 for m, why in relic_executor.evaluate(state.get("plan") or {}, ex, cfg, now, day)]
+        history = [dict(h, at_fmt=RelicReader._fmt(h.get("at"), "%d/%m %H:%M:%S"))
+                   for h in reversed(ex.get("history") or [])][:20]
+        enabled = ((config or {}).get("relics") or {}).get("enabled", True)
+        return {"manage": bool(enabled) and cfg["manage"], "cfg": cfg, "day": day,
+                "moves_today": moves, "equips_today": equips, "steps": steps,
+                "history": history, "stale": bool((state.get("plan") or {}).get("stale"))}
 
     KIND_LABELS = {"production": "produção", "recruit_cost": "custo de recrutamento",
                    "noble_cost": "custo de nobre", "recruit_speed": "velocidade de recrutamento",

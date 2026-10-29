@@ -8368,10 +8368,10 @@ relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
    "encontrada" por dia; quadro `benefit` por aldeia; `cache/relics.json`;
    painel. Fixtures verbatim anonimizadas.
 2. ✅ **Planejador puro** (§8.77): `core/relic_planner.py`, valor/h por
-   atributo e aldeia, teto de 20%, anfitriã elegível. Em dry-run. ⏳ Falta
-   ler o plano num ciclo real: o bot rodando em 29/10 é o processo de 02:05,
-   com o código antigo.
-3. **Equipar e mover**, com histerese e um teto de trocas por dia.
+   atributo e aldeia, teto de 20%, anfitriã elegível. Em dry-run. Validado
+   em ciclo real na §8.78 (que achou a base de produção 60 do mundo).
+3. ✅ **Equipar e mover** (§8.78), com histerese e um teto de trocas por dia.
+   `relics.manage` ligado em 29/10; primeira ação real às 17:40:59.
 4. **Fundir**, pela mesma conta de valor. Nunca PP.
 5. **Efeitos no cálculo do bot**, só se uma medição mostrar diferença.
 
@@ -8592,8 +8592,8 @@ uma "Picareta de má qualidade" foi achada depois das 02:45):
   má qualidade ficam: só têm combate, velocidade sem fila cheia e mercador, e
   valem 0 em toda aldeia.
 - **Duas das equipadas mudam de lugar.** A Picareta Reconhecida vai para a
-  BBM 008: o ferro do aglomerado vive no teto, e da BBM 008 ela alcança a
-  BBM 012, que manda mais nobre que qualquer outra. A Mochila sai do
+  BBM 008: o ferro do aglomerado vive no teto. (A redação original dizia
+  que da BBM 008 ela alcança a BBM 012; não alcança, ver §8.78.) A Mochila sai do
   aglomerado, que não recruta.
 
 Os Bonecos Reconhecidos ficam: valem 0 onde estão e em qualquer lugar.
@@ -8632,9 +8632,9 @@ config nova: nada em `config.example.json`/`helpfile.py`/`build.version`.
 Mutante conferido: sem o teto (`CAP = 1000`), o teste do aglomerado falha.
 Suíte inteira: 117 arquivos, 0 falhas.
 
-⏳ **Validação em ciclo real pendente.** O bot em campo é o processo de 02:05,
-que não tem este código. O usuário saiu sem que eu reiniciasse, e reiniciar
-fica para quando ele voltar. Ao reiniciar, conferir:
+✅ **Validação em ciclo real feita na §8.78** (processo de 16:16 de 29/10).
+Ela achou um fator 2 na produção: a base do nível 1 é `<base_production>` do
+mundo, 60 no br143, e não 30. A lista que estava aqui:
 - a linha `Relics: plano (dry-run…)` no `session_latest.log`;
 - o `plan` em `cache/relics.json` e o painel;
 - `unit_costs` e `village_prod` aparecendo (o lanceiro: 10 ou 20 de ferro?);
@@ -8660,6 +8660,187 @@ padrão).
   na escolha de alvo do planejador. Na escolha, conferir antes se ela já
   existe para o caminho automático, além do manual (12º padrão).
 
+## 8.78 `P-RELIQUIA` — Fase 3: o bot equipa e move (2026-10-29)
+
+Fase 3 de 5 do plano da §8.74. Com `relics.manage` ligado, o bot executa o
+plano da Fase 2, um passo por leitura, com freios. Desligado (padrão), segue
+o dry-run.
+
+### 1. A pendência da Fase 2, fechada num ciclo real
+
+O processo das 16:16:45 de 29/10 já rodava o código da Fase 2 (alguém o
+reiniciou depois do commit de 10:54). O que ele mostrou:
+
+- **`Relics: plano` no log e `plan` em `cache/relics.json`:** saíram às
+  16:17:46, mas com "velocidade do mundo não lida" em todas as aldeias — o
+  `cache/world/config_br143.json` ganhou `speed` às 16:18, um minuto **depois**
+  do plano (quem relê o cache do mundo é outro componente, mais adiante no
+  ciclo). Produção valeu 0 naquele plano: 91/h no total, contra 1.147/h do
+  plano da manhã. Não é bug do planejador: é ordem de leitura, e se resolve na
+  leitura seguinte.
+- **`prod_ratio` da BBM 001: 2,96, não 1,48.** E 2,60 no mínimo em quase todas
+  as aldeias. A razão é **2 × 1,48** (madeira) e 2 × 1,58 (argila e ferro =
+  30 + 15 + 10 + 3): a leitura aditiva se confirma, mas a fórmula estava
+  errada por um fator 2. O widget de produção do jogo (capturas de 04, 06 e
+  08/10) mostra 7.104/h; a fórmula chumbava `30 × 1,163118^29` = 2.400/h na
+  mina 30. **A base do nível 1 é parâmetro do mundo:**
+  `<game><base_production>60</base_production>` no `get_config` do br143, e 30
+  no br139, br140, br141, br142 e br144 (sondados em 29/10, interface pública).
+  Como br140 e br144 têm `<speed>2` com base 30, a base **não** embute a
+  velocidade (17º padrão). Com 60: mina 30 = 4.800/h, × 1,48 = 7.104/h, o
+  número da tela. Corrigido: `WorldConfig._parse_base_production`, chave
+  `base_production` no cache (ausente = cache velho, como `speed`), e
+  `mine_production(nível, speed, base)`. A produção estava subvalorizada pela
+  metade frente a nobre e recrutamento.
+- **O lanceiro custa 10 de ferro.** Duas fontes: a tela de recrutamento da
+  BBM 001 capturada em 04, 06 e 08/10 (`unit_managers.units`) mostra 45/27/9,
+  espada 27/27/63 — é 50/30/10 e 30/30/70 com os −10% da Mochila; o estábulo
+  (sem desconto) mostra 50/50/20 e 125/100/250, a tabela padrão. E o próprio
+  bot gravou `unit_costs` às 16:59:59, da 40808: lanceiro 50/30/10, espada
+  30/30/70, machado 60/30/40. A tabela padrão do planejador estava certa; o
+  `Simulator` (20 de ferro) é que diverge. ⚠️ O `cost_listener` só dispara
+  onde o bot recruta: nas aldeias com recrutamento cedido ao gerente (§8.68)
+  ele nunca roda.
+- **`speed` no cache:** `1.0` desde 16:18; `base_production: 60.0` desde
+  17:10:21.
+- **Painel `/relics`:** mostra o plano, e agora também a execução (abaixo).
+
+### 2. O que entrou
+
+**`core/relic_executor.py`** (puro). Decide SE e QUANDO um passo do plano sai:
+
+| freio | regra | config (padrão) |
+|---|---|---|
+| liga/desliga | sem ele, o plano só é simulado | `relics.manage` (false) |
+| histerese | ganho do passo **sozinho** ≥ piso; num mover, também ≥ N% do que a relíquia já rende onde está | `min_gain_h` (50), `min_gain_pct` (10) |
+| estabilidade | o mesmo passo (relíquia, origem e destino) em N leituras seguidas | `stable_reads` (2) |
+| 2ª leitura | o passo visto uma vez pede releitura depois de N min, entre aldeias (1 GET) | `confirm_after_min` (30) |
+| teto por dia do servidor | mover e equipar contados à parte, em `cache/relics.json` → `exec.days` | `max_moves_per_day` (2), `max_equips_per_day` (3) |
+| não desfazer | relíquia que o bot equipou ou moveu fica parada | `undo_block_h` (24) |
+
+Uma ação por leitura, **equipar parada antes de mover** (sem remove, risco
+menor). `replace` e `swap` do plano não saem nesta fase. Recusa que não muda
+sozinha (lealdade, vaga, trava) congela o passo por 6 h; divergência, por 30
+min (a chave muda se o jogador mexeu de fato).
+
+**O ganho que a histerese olha é o do passo sozinho.** Os ganhos do plano são
+encadeados: no plano da manhã, "equipar a Picareta de má qualidade na BBM 010"
+só existia depois de "mover a Picareta Reconhecida da BBM 010". O planejador
+passa a publicar, por passo, `gain_alone_h` (o passo aplicado à alocação
+atual; `None` se ele depende de outro antes) e `value_before_h` (o que as
+relíquias do passo rendem onde estão).
+
+**`RelicManager.act()`**, fase própria `reliquias_acao` atrás do
+`_hunter_gate` (§8.58), logo depois de cada `run()`:
+1. **Reconferência na hora de agir (6º padrão):** 1 GET de
+   `screen=relic_system` **na anfitriã**. O `loyalty_locked` do
+   `Inventory.init` é da aldeia da URL, então a mesma leitura confere a
+   lealdade dela, a vaga (`can_equip`) e onde cada relíquia está. Se a relíquia
+   não está onde o plano a viu, ou a anfitriã já tem relíquia, o jogador mexeu
+   (9º padrão): não age e pede releitura.
+2. **Equipar:** `get_api_action(host, "equip_relic", params={"screen":
+   "relic_system", "h"}, data={"relic_id"})` — o `TribalWars.post("relic_system",
+   {ajaxaction}, {relic_id})` do JS. **Mover:** `remove_relic` na origem
+   (corpo vazio) e `equip_relic` no destino.
+3. Toda resposta passa por `Extractor.ajax_error()` (A26-09). O estado novo
+   vem da resposta quando ela traz `relics` (`Extractor.relic_action_response`,
+   envelope `response`); senão, 1 GET de confirmação. ⚠️ O JS do jogo **não lê
+   a resposta do `equip_relic`** (`partialReload()`); só a do `remove_relic`
+   usa `e.relics, e.village_id, e.can_equip`. Por isso o formato do equipar
+   se mede (abaixo), e o bot registra qual veio (`exec.response_has_relics`).
+4. Sucesso só com a relíquia **na anfitriã** no inventário depois. JSON sem
+   erro com a relíquia ainda parada não conta. Mover que remove e não equipa
+   conta como mexida (a relíquia fica parada 24 h) e avisa no Telegram.
+5. Log com `village_label` e Telegram em cada troca. O plano fica `stale`
+   depois da ação: nada mais sai dele antes da próxima leitura.
+
+**Painel `/relics`:** seção Execução (ligada/desligada, contador do dia,
+cada passo do plano com o motivo de sair ou não, pela mesma
+`relic_executor.evaluate`, e o histórico).
+
+**Config:** `relics.manage` e os sete freios em `config.example.json` e
+`helpfile.py`, `build.version` 5.7 só no example. Conferido antes com
+`cache/_check_merge_loss.py` (e lido o `merge_configs()`): nada do
+`config.json` vivo se perde.
+
+### 3. Testes
+
+`tests/test_relic_executor.py` (17 casos), com o inventário verbatim de 29/10
+(`relic_system_br143.html`, anonimizado) e respostas montadas com o JSON
+verbatim dessa fixture no envelope `{"response", "game_data"}`; a recusa é o
+`{"error": [...]}` do §8.63:
+- histerese (piso, % do que já rende, passo dependente), leituras seguidas
+  (a mesma leitura não conta duas vezes; destino novo recomeça), teto por dia
+  do servidor (virada às 00:00 do servidor; recusa não conta; sem relógio do
+  servidor, não age), 24 h, ordem equipar → mover;
+- reconferência: lida em outra aldeia, relíquia em outro lugar, anfitriã
+  ocupada, `loyalty_locked`, lealdade estimada, sem vaga, trava de 24 h da
+  Sela, inativa;
+- `act()`: equipar (1 GET + 1 POST, na aldeia da URL), recusa AJAX, resposta
+  sem inventário (GET de confirmação), JSON sem efeito, mover (GET, remove na
+  origem, equip no destino), mover que para no meio, estado que diverge
+  (nenhum POST), desligado e leitura velha (0 requisição), 2ª leitura.
+
+Mutantes conferidos, um por freio: sem 24 h, sem `ajax_error`, sem teto, sem
+leituras seguidas, sem reconferência — todos pegos. `test_relic_planner.py`
+ganhou `base_production` (7.104/h) e o ganho de passo sozinho. Suíte inteira
+no checkout principal: **118 arquivos, 0 falhas**.
+
+### 4. Campo
+
+Bot reiniciado às 17:09 de 29/10 (WMI, sem nobre agendado no Hunter) com
+`relics.manage: true` no `config.json`. O merge da 5.7 não muda o valor:
+`manage` existe nos dois arquivos, então o do `config.json` fica.
+
+**Entre 16:17 e 17:10, as relíquias mudaram sem o bot:** as 5 paradas viraram
+uma Mochila Aprimorada (id 1105799, o da Alabarda Resistente: o
+`upgrade_relic` mantém o id da posição 0). Foi o usuário que fundiu
+(confirmado por ele no chat). Como os passos do plano mudaram, a contagem de
+leituras recomeçou do zero e nada saiu sobre o estado antigo.
+
+| hora | o que o bot fez | requisições |
+|---|---|---|
+| 17:10:21 | 1ª leitura (início do ciclo). Plano: equipar Mochila Aprimorada em BBM 013, mover Picareta Reconhecida BBM 010 → BBM 008, mover Mochila Reconhecida BBM 001 → BBM 018. Todos "visto em 1 de 2". | 3 GET |
+| 17:40:39 | 2ª leitura, pedida pelo `confirm_due` 30 min depois, entre aldeias. Base 60 já no cache: valor de hoje 2.144/h. A Mochila Reconhecida (+46/h) para no piso de 50/h. | 1 GET |
+| 17:40:59 | **equipada Mochila Aprimorada em BBM 013 (44620), +473/h.** A resposta do `equip_relic` **trouxe** o inventário (`response_has_relics: true`): sem GET de confirmação. | 1 GET na anfitriã + 1 POST |
+| 18:14:02 | releitura "replanejar depois de uma ação" (o plano ficou `stale`). | 2 GET (a visão geral mudou) |
+| 18:14:51 | **movida Picareta Reconhecida de BBM 010 (74689) para BBM 008 (41114), +429/h** (19% do que ela rendia). `remove_relic` na 74689 e `equip_relic` na 41114, as duas respostas com inventário. | 1 GET + 2 POST |
+
+Conferido na tela do jogo com o cliente do bot (`cache/_probe_relics.py`, 2
+GETs a 90 s, sem `bot_protect`), depois de cada ação:
+- **`screen=relic_system&mode=overview`**: vagas 6 de 8; Mochila Aprimorada na
+  BBM 013 afetando BBM 018, 008 e 014; Picareta Reconhecida na BBM 008
+  afetando BBM 005, 018, 009, 013 e 014. **As duas listas são as que o bot
+  calculou** (`covers` em `cache/relics.json`, com a anfitriã).
+- **Quadro de bônus da BBM 013** (`screen=overview`): ferro +33% (itens 30 +
+  Mochila 3), Quartel −7% nos custos e +3% na velocidade, todos da Mochila
+  Aprimorada. **Da BBM 008:** as duas relíquias no quadro, ferro +43% (30 + 10
+  + 3), nobres −5% (secundário da Picareta).
+- Painel `/relics`: hoje 1 de 2 mover e 1 de 3 equipar; a Picareta aparece
+  presa por "o bot mexeu nela há 0,1 h"; o histórico mostra as duas ações.
+
+A Sela Superior (BBM 003) sai da trava do jogo às 00:53 de 30/10; a Picareta
+e a Mochila Aprimorada, só 24 h depois de equipadas.
+
+**Correção da §8.77:** lá está escrito que, da BBM 008, a Picareta "alcança a
+BBM 012, que manda mais nobre que qualquer outra". Não alcança: BBM 008
+(584|309) e BBM 012 (585|304) ficam a 5,1 campos, e o alcance é 4. O jogo e o
+cálculo concordam. A frase foi minha, ao ler o plano, e não do planejador; o
+ganho da BBM 008 vem do ferro das BBM 005, 009, 013, 014 e 018 (fora do teto
+do armazém) e do desconto de nobre.
+
+**Também neste passo:** o histórico passou a gravar a hora do resultado, e
+não a do início da decisão (no campo apareceram 17:40:39 e 18:14:02 para POSTs
+de 17:40:59 e 18:14:51). Só muda o registro; o processo em campo segue com a
+versão anterior até o próximo reinício.
+
+**Em aberto para as próximas fases** (fila na §9): o planejador lê o cache do
+mundo antes de o ciclo relê-lo; `replace`/`swap` não saem; `unit_costs` só se
+lê onde o bot recruta. A resposta exata do `remove_relic`/`equip_relic` não foi
+salva crua: o bot só registrou que ela traz `relics`. A fixture dos testes
+usa o JSON verbatim de relíquia da tela no envelope `response`; se um dia a
+confirmação falhar, o log mostra os primeiros 200 caracteres da resposta.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -8669,8 +8850,8 @@ segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
 sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
 **Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fases 0, 1
-(§8.75) e 2 (§8.77, validação em ciclo real pendente) feitas; seguem as Fases
-3 a 5, uma por chat. **Logo depois das relíquias** (decisão do usuário em
+(§8.75), 2 (§8.77) e 3 (§8.78, equipar e mover, ligada em campo) feitas;
+seguem as Fases 4 e 5, uma por chat. **Logo depois das relíquias** (decisão do usuário em
 29/10, antes das bandeiras): o furo do trem contra aldeia nossa (fim da
 §8.77) — checagem "o alvo já é nosso" no envio no horário do Hunter e na
 escolha de alvo do planejador bárbaro, automática e manual. **Depois delas: bandeiras por valor.** A
@@ -8679,6 +8860,20 @@ ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
 mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
 servidor o que cada tipo de bandeira afeta de fato. A validação das "3 trocas"
 (§8.11) continua aberta e entra nessa conta.
+
+Pendências pequenas das relíquias, achadas na Fase 3 (§8.78), para a Fase 4
+ou depois:
+- **O planejador lê o cache do mundo antes de o ciclo relê-lo.** Num processo
+  novo, o primeiro plano pode sair com o mundo velho: às 16:17 sem `speed`, às
+  17:10 sem `base_production` (os dois chegaram ao cache segundos depois). O
+  `stable_reads` impede ação sobre uma leitura só, e a seguinte corrige.
+  Correção barata: chamar `WorldConfig.get()` no `_plan` em vez de abrir o
+  arquivo.
+- **`replace` e `swap` do plano não saem** (§8.78). Só fazem falta com as
+  vagas cheias (hoje 6 de 8).
+- **`unit_costs` só é lido onde o bot recruta**: nas aldeias com recrutamento
+  cedido ao gerente (§8.68) o `cost_listener` nunca roda. A tabela padrão bate
+  com o medido (lanceiro 50/30/10), então não muda o plano.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

@@ -2208,43 +2208,80 @@ class Extractor:
         out["village_id"] = str(out["village_id"]) if out["village_id"] is not None else None
         out["relics"] = []
         for relic in relics:
-            if not isinstance(relic, dict) or relic.get("id") is None:
+            entry = Extractor._relic_entry(relic)
+            if entry is None:
                 return None
-            main = relic.get("main_stat") or {}
-            main_stat = Extractor.relic_stat(main.get("name"))
-            if main_stat is not None:
-                main_stat["effect_type"] = main.get("effect_type")
-            subs = []
-            for sub in relic.get("sub_stats") or []:
-                stat = Extractor.relic_stat(sub.get("name"))
-                if stat is None:
-                    continue
-                stat.update(effect_type=sub.get("effect_type"), id=sub.get("id"),
-                            perfect=bool(sub.get("perfect")))
-                subs.append(stat)
-            host = relic.get("village_id")
-            out["relics"].append({
-                "id": str(relic["id"]),
-                "name": relic.get("name"),
-                "type": relic.get("type"),
-                "type_name": relic.get("type_name"),
-                "quality": relic.get("quality"),
-                "quality_rank": relic.get("quality_rank"),
-                "range": relic.get("range"),
-                "village_id": str(host) if host is not None else None,
-                "main": main_stat,
-                "subs": subs,
-                "equipped_at": relic.get("equipped_at"),
-                "acquired_at": relic.get("acquired_at"),
-                "removal_cooldown_sec": Extractor.relic_duration(
-                    relic.get("remaining_removal_cooldown")),
-                "inactive_sec": Extractor.relic_duration(relic.get("inactive_until")),
-                "inactive_raw": relic.get("inactive_until"),
-                "locked_state": relic.get("locked_state"),
-                "trade_offer_id": relic.get("trade_offer_id"),
-                "stack_key": relic.get("stack_key"),
-                "image": relic.get("image46_path"),
-            })
+            out["relics"].append(entry)
+        return out
+
+    @staticmethod
+    def _relic_entry(relic):
+        """Uma relíquia do JSON do jogo, normalizada (ver `relic_inventory`); None se não for uma."""
+        if not isinstance(relic, dict) or relic.get("id") is None:
+            return None
+        main = relic.get("main_stat") or {}
+        main_stat = Extractor.relic_stat(main.get("name"))
+        if main_stat is not None:
+            main_stat["effect_type"] = main.get("effect_type")
+        subs = []
+        for sub in relic.get("sub_stats") or []:
+            stat = Extractor.relic_stat(sub.get("name"))
+            if stat is None:
+                continue
+            stat.update(effect_type=sub.get("effect_type"), id=sub.get("id"),
+                        perfect=bool(sub.get("perfect")))
+            subs.append(stat)
+        host = relic.get("village_id")
+        return {
+            "id": str(relic["id"]),
+            "name": relic.get("name"),
+            "type": relic.get("type"),
+            "type_name": relic.get("type_name"),
+            "quality": relic.get("quality"),
+            "quality_rank": relic.get("quality_rank"),
+            "range": relic.get("range"),
+            "village_id": str(host) if host is not None else None,
+            "main": main_stat,
+            "subs": subs,
+            "equipped_at": relic.get("equipped_at"),
+            "acquired_at": relic.get("acquired_at"),
+            "removal_cooldown_sec": Extractor.relic_duration(
+                relic.get("remaining_removal_cooldown")),
+            "inactive_sec": Extractor.relic_duration(relic.get("inactive_until")),
+            "inactive_raw": relic.get("inactive_until"),
+            "locked_state": relic.get("locked_state"),
+            "trade_offer_id": relic.get("trade_offer_id"),
+            "stack_key": relic.get("stack_key"),
+            "image": relic.get("image46_path"),
+        }
+
+    @staticmethod
+    def relic_action_response(res):
+        """
+        Estado novo que vem na resposta de uma ação de relíquia
+        (`get_api_action` em `screen=relic_system`, §8.78). O JS do jogo usa
+        `e.relics, e.village_id, e.can_equip` no retorno de `remove_relic`,
+        `reroll_relic`, `upgrade_relic` e `reduce_cooldown`; o de `equip_relic`
+        não lê a resposta (`partialReload()`), então ali o formato é medido,
+        não suposto. Com `TribalWars-Ajax: 1` o corpo vem em `response`.
+
+        Devolve {"relics": [...normalizadas...], "village_id", "can_equip"}
+        ou None (recusa, outro formato, HTML). Recusa se lê antes com
+        `ajax_error()`: um `{"error": [...]}` também é dict.
+        """
+        if not isinstance(res, dict):
+            return None
+        body = res.get("response") if isinstance(res.get("response"), dict) else res
+        relics = body.get("relics")
+        if not isinstance(relics, list):
+            return None
+        out = {"village_id": str(body["village_id"]) if body.get("village_id") is not None else None,
+               "can_equip": body.get("can_equip"), "relics": []}
+        for relic in relics:
+            entry = Extractor._relic_entry(relic)
+            if entry is None:
+                return None
+            out["relics"].append(entry)
         return out
 
     # Âncora de aldeia nas telas de relíquia: `data-id` + rótulo "BBM 003 (579|304) K35".

@@ -254,6 +254,23 @@ class WorldConfig:
             return None
 
     @staticmethod
+    def _parse_base_production(xml_text):
+        """
+        <base_production>: producao/h da mina no nivel 1, sem bonus e antes da
+        velocidade (§8.78). Nao e constante do jogo: o br143 publica 60 e os
+        outros mundos br de 29/10 (br139-br142, br144), 30 -- inclusive os de
+        <speed> 1,4/1,5/2, entao ela NAO embute a velocidade (17º padrao).
+        Conferido contra o widget de producao da BBM 001: mina 30 = 60 x
+        1,163118^29 = 4.800/h, x 1,48 de bonus = 7.104/h, o numero da tela.
+        None quando a tag falta.
+        """
+        m = re.search(r"<base_production>\s*([\d.]+)\s*</base_production>", xml_text)
+        try:
+            return float(m.group(1)) if m else None
+        except ValueError:
+            return None
+
+    @staticmethod
     def _parse_features(xml_text):
         """
         Mecanicas ligadas/desligadas por mundo, que o bot vinha lendo de flags
@@ -514,8 +531,10 @@ class WorldConfig:
                     # limita a escolha de alvo. Presenca da chave basta; valor
                     # None dentro dela e legitimo ("o mundo nao publicou").
                     and isinstance(cached.get("snob"), dict)
-                    # Idem para `speed` (§8.77): presenca da chave basta.
+                    # Idem para `speed` (§8.77) e `base_production` (§8.78):
+                    # presenca da chave basta.
                     and "speed" in cached
+                    and "base_production" in cached
             ):
                 return cached
 
@@ -534,6 +553,7 @@ class WorldConfig:
             "features": cls._parse_features(xml_text),
             "snob": cls._parse_snob(xml_text),
             "speed": cls._parse_speed(xml_text),
+            "base_production": cls._parse_base_production(xml_text),
             "_fetched_at": int(time.time()),
         }
         FileManager.create_directory(FileManager.get_path("cache/world"))

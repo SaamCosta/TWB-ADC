@@ -5,7 +5,7 @@
 
 {% block content %}
 <header class="twb-page-header">
-  <div><p class="twb-eyebrow">Economia · relíquias</p><h1 class="twb-page-title">Relíquias</h1><p class="twb-page-summary">O que o bot sabe das relíquias da conta: vagas, onde cada uma está, quais aldeias ela alcança (distância até o alcance, contando a anfitriã) e quanto do bônus o teto de {{ pct(v.cap if v else 20) }} por atributo descarta, mais o plano de onde elas valeriam mais. Simulação: nesta fase o bot não equipa nem move nada.</p></div>
+  <div><p class="twb-eyebrow">Economia · relíquias</p><h1 class="twb-page-title">Relíquias</h1><p class="twb-page-summary">O que o bot sabe das relíquias da conta: vagas, onde cada uma está, quais aldeias ela alcança (distância até o alcance, contando a anfitriã) e quanto do bônus o teto de {{ pct(v.cap if v else 20) }} por atributo descarta, mais o plano de onde elas valeriam mais e, com <code>relics.manage</code> ligado, o que o bot equipou ou moveu.</p></div>
 </header>
 
 {% if not enabled %}
@@ -29,14 +29,45 @@
   <ul class="mb-0">{% for d in v.check.divergences %}<li>{{ d.text }}{% if d.host_id %} — relíquia na {{ d.host_id | vlabel }}{% endif %}{% if d.vid %}: {{ d.vid | vlabel }}{% endif %}</li>{% endfor %}</ul></div>
 {% endif %}
 
+{% set x = v.exec %}
+<section class="twb-panel" aria-labelledby="titulo-execucao">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-execucao">Execução</h2></div>
+  <div class="twb-panel-body">
+    <p>{% if x.manage %}<span class="twb-status twb-status--success">ligada</span> — o bot executa um passo do plano por leitura, equipar antes de mover, e reconfere o inventário na aldeia de destino antes de cada ação.{% else %}<span class="twb-status twb-status--warning">desligada</span> — o plano só é simulado. Ligue <code>relics.manage</code> em <a href="/config">/config</a>.{% endif %}</p>
+    <p class="small">Hoje{% if x.day %} ({{ x.day }}, dia do servidor){% endif %}: <span class="twb-number">{{ x.moves_today }}</span> de {{ x.cfg.max_moves_per_day }} mover · <span class="twb-number">{{ x.equips_today }}</span> de {{ x.cfg.max_equips_per_day }} equipar. Freios: ganho de pelo menos {{ '%g' % x.cfg.min_gain_h }}/h (e {{ '%g' % x.cfg.min_gain_pct }}% do que a relíquia já rende, ao mover), o mesmo passo em {{ x.cfg.stable_reads }} leituras seguidas, nada se desfaz antes de {{ x.cfg.undo_block_h }} h.{% if x.stale %} O plano abaixo é anterior à última ação: nenhuma ação sai dele antes da próxima leitura.{% endif %}</p>
+    {% if x.steps %}
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Passos do plano e se saem">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th>Passo (na ordem de execução)</th><th class="text-right">Ganho sozinho</th><th>Sai?</th></tr></thead>
+        <tbody>{% for st in x.steps %}<tr><td>{{ st.text }}</td><td class="text-right twb-number">{% if st.gain_alone_h is not none %}+{{ '%.0f' % st.gain_alone_h }}/h{% else %}—{% endif %}</td><td class="small">{% if st.why %}{{ st.why }}{% elif x.manage %}<span class="twb-status twb-status--success">sai na próxima leitura</span>{% else %}sairia (execução desligada){% endif %}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if x.history %}
+    <h3 class="h6 mt-3">O que o bot fez</h3>
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Ações do bot nas relíquias">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th>Quando</th><th>Ação</th><th>Relíquia</th><th>De → para</th><th class="text-right">Ganho</th><th>Resultado</th></tr></thead>
+        <tbody>{% for h in x.history %}{% set rid = h.relic_ids[0] %}{% set src = h['from'] or {} %}{% set dst = h['to'] or {} %}<tr>
+          <td class="twb-number">{{ h.at_fmt }}</td><td>{{ 'mover' if h.action == 'move' else 'equipar' }}</td><td>{{ (h.names or [rid])[0] }}</td>
+          <td>{% if src[rid] %}{{ src[rid] | vlabel }}{% else %}inventário{% endif %} → {{ dst[rid] | vlabel }}</td>
+          <td class="text-right twb-number">{% if h.gain_h is not none %}+{{ '%.0f' % h.gain_h }}/h{% endif %}</td>
+          <td class="small">{% if h.detail == 'feito' %}<span class="twb-status twb-status--success">feito</span>{% else %}<span class="twb-status twb-status--{{ 'warning' if h.ok else 'danger' }}">{{ h.detail }}</span>{% endif %}</td>
+        </tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
 {% set p = v.plan %}
 <section class="twb-panel" aria-labelledby="titulo-plano">
-  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-plano">Plano (simulação)</h2></div>
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-plano">Plano</h2></div>
   <div class="twb-panel-body">
     {% if not p %}<p class="mb-0">O plano aparece no próximo ciclo do bot.</p>
     {% elif p.error %}<div class="twb-inline-alert twb-inline-alert--danger" role="alert"><strong>O planejador falhou</strong> em {{ p.computed_fmt }}: <code>{{ p.error }}</code></div>
     {% else %}
-    <p class="small text-muted">Onde as relíquias valeriam mais, em recurso por hora, com o que o bot já mede: produção pelo nível da mina (só onde o armazém não enche), gasto do bot em recrutamento, nobres que o Hunter mandou. Atributo sem conversão defensável (combate, mercador, velocidade sem fila cheia) vale 0. <strong>Simulação:</strong> nesta fase o bot não equipa nem move nada. Calculado em {{ p.computed_fmt }}.</p>
+    <p class="small text-muted">Onde as relíquias valeriam mais, em recurso por hora, com o que o bot já mede: produção pelo nível da mina (só onde o armazém não enche), gasto do bot em recrutamento, nobres que o Hunter mandou. Atributo sem conversão defensável (combate, mercador, velocidade sem fila cheia) vale 0. Quem decide se um passo sai é a seção Execução acima. Calculado em {{ p.computed_fmt }}.</p>
     <p><strong>{{ p.summary }}</strong></p>
     <p class="small">Valor das relíquias hoje: <span class="twb-number">{{ '%.0f' % (p.value_now or 0) }}</span>/h · depois do plano: <span class="twb-number">{{ '%.0f' % (p.value_after or 0) }}</span>/h · vagas {{ p.plan_slots.used_now }} → {{ p.plan_slots.used_after }} de {{ p.plan_slots.total }}</p>
     {% if p.moves %}
@@ -66,7 +97,7 @@
         <tbody>{% for a in p.attributes %}<tr><td>{{ a.key }}</td><td>{{ a.kind }}</td><td class="text-right twb-number">{{ a.villages_valued }}</td><td class="text-right twb-number">{{ '%.1f' % (a.max_per_pct or 0) }}/h</td><td class="small">{% for why, n in a.zero %}{{ why }} ({{ n }}){% if not loop.last %}<br>{% endif %}{% endfor %}</td></tr>{% endfor %}</tbody>
       </table>
     </div>
-    <p class="small text-muted mb-0">Fontes: {{ p.sources.nobles_sent }} nobres do Hunter em 14 dias; custo de unidade: {{ p.sources.unit_costs }}; velocidade do mundo: {{ p.sources.world_speed or 'não lida' }}.
+    <p class="small text-muted mb-0">Fontes: {{ p.sources.nobles_sent }} nobres do Hunter em 14 dias; custo de unidade: {{ p.sources.unit_costs }}; velocidade do mundo: {{ p.sources.world_speed or 'não lida' }}; produção da mina no nível 1: {{ p.sources.base_production or 'não lida (30, padrão)' }}.
       {% if p.low_loyalty %} Não recebem relíquia (lealdade &lt; 100): {% for vid, why in p.low_loyalty %}{{ vid | vlabel }}{% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}
       {% if p.missing %} Sem dado: {% for vid, what in p.missing %}{{ vid | vlabel }} ({{ what | join('; ') }}){% if not loop.last %}, {% endif %}{% endfor %}.{% endif %}</p>
     {% endif %}

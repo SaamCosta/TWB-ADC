@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "5.6",
+    "version": "5.7",
     "author": "stefan2200"
   },
   "server": {
@@ -283,7 +283,15 @@
     "enabled": false
   },
   "relics": {
-    "enabled": true
+    "enabled": true,
+    "manage": false,
+    "min_gain_h": 50,
+    "min_gain_pct": 10,
+    "stable_reads": 2,
+    "confirm_after_min": 30,
+    "max_moves_per_day": 2,
+    "max_equips_per_day": 3,
+    "undo_block_h": 24
   },
   "minting": {
     "hub_village": null,
