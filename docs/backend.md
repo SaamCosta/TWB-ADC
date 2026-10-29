@@ -8654,7 +8654,8 @@ padrão).
 - **Onde está o furo:** o Hunter só reconfere "o alvo já é nosso" no caminho
   do nobre **atrasado** (`late_barbarian_verdict`), não no envio no horário.
   Tentei apagar o schedule às 03:2x e o modo automático da sessão bloqueou.
-- **Correção a fazer, em tarefa própria:** a mesma checagem
+- **Correção a fazer depois das relíquias** (pendência registrada na §9, por
+  decisão do usuário): a mesma checagem
   (`config["villages"]` e `found_villages`) no envio no horário do Hunter e
   na escolha de alvo do planejador. Na escolha, conferir antes se ela já
   existe para o caminho automático, além do manual (12º padrão).
@@ -8669,8 +8670,10 @@ sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da �
 
 **Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fases 0, 1
 (§8.75) e 2 (§8.77, validação em ciclo real pendente) feitas; seguem as Fases
-3 a 5, uma por chat. ⚠️ Antes: o furo do trem contra aldeia nossa (fim da
-§8.77). **Depois delas: bandeiras por valor.** A
+3 a 5, uma por chat. **Logo depois das relíquias** (decisão do usuário em
+29/10, antes das bandeiras): o furo do trem contra aldeia nossa (fim da
+§8.77) — checagem "o alvo já é nosso" no envio no horário do Hunter e na
+escolha de alvo do planejador bárbaro, automática e manual. **Depois delas: bandeiras por valor.** A
 escolha de bandeira do `DefenceManager` é uma ordem fixa (§4.6, §8.11), e a
 ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
 mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
