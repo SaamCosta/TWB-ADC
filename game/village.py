@@ -259,6 +259,10 @@ class Village:
             self.relic_board_at = int(time.time()) if self.relic_board is not None else None
             if self.relic_manager is not None and self.relic_board is not None:
                 try:
+                    # §8.77: a produção/h lida aqui confere a fórmula do
+                    # planejador; o check_board logo abaixo grava as duas.
+                    self.relic_manager.note_village_prod(self.village_id, self.game_data,
+                                                         self.relic_board_at)
                     self.relic_manager.check_board(self.village_id, self.relic_board,
                                                    self.relic_board_at)
                 except Exception as exc:
@@ -640,6 +644,12 @@ class Village:
         if not self.units:
             self.units = TroopManager(wrapper=self.wrapper, village_id=self.village_id)
             self.units.resman = self.resman
+        # §8.77: o custo de unidade que o recrutamento já lê vai para o
+        # planejador de relíquias (0 GET).
+        if self.relic_manager is not None:
+            relic_manager, vid = self.relic_manager, self.village_id
+            self.units.cost_listener = (
+                lambda building, data: relic_manager.note_unit_costs(vid, building, data))
         self.units.max_batch_size = self.get_config(
             section="units", parameter="batch_size", default=25
         )

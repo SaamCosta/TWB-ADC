@@ -5011,6 +5011,7 @@ class RelicReader:
             })
         found = [dict(day=d, **e) for d, e in sorted((state.get("found") or {}).items(), reverse=True)]
         mismatched = sorted(v for v, c in boards.items() if c.get("ok") is False)
+        plan = RelicReader._plan_view(state.get("plan"))
         return {
             "fetched_fmt": RelicReader._fmt(state.get("fetched_at"), "%d/%m/%Y %H:%M:%S"),
             "overview_fmt": RelicReader._fmt(state.get("overview_at")),
@@ -5027,4 +5028,38 @@ class RelicReader:
             "cap": RelicReader.CAP,
             "boards_checked": len(boards),
             "boards_mismatched": mismatched,
+            "plan": plan,
+        }
+
+    KIND_LABELS = {"production": "produção", "recruit_cost": "custo de recrutamento",
+                   "noble_cost": "custo de nobre", "recruit_speed": "velocidade de recrutamento",
+                   "build_speed": "velocidade de construção", "merchant_speed": "mercador",
+                   "combat": "combate", "unknown": "não reconhecido"}
+
+    @staticmethod
+    def _plan_view(plan):
+        """O plano do planejador (§8.77, dry-run) para o template, ou None."""
+        if not plan:
+            return None
+        if plan.get("error"):
+            return {"error": plan["error"], "computed_fmt": RelicReader._fmt(plan.get("computed_at"))}
+        attributes = []
+        for key, a in sorted((plan.get("attributes") or {}).items(),
+                             key=lambda kv: (-(kv[1].get("max_per_pct") or 0), kv[0])):
+            attributes.append({
+                "key": key, "kind": RelicReader.KIND_LABELS.get(a.get("kind"), a.get("kind")),
+                "villages_valued": a.get("villages_valued"), "max_per_pct": a.get("max_per_pct"),
+                # Nome `zero`, e nao `reasons`/`items`: chave de dict com nome de
+                # metodo perde para o metodo no Jinja (8o padrao).
+                "zero": sorted((a.get("zero_reasons") or {}).items(), key=lambda kv: -kv[1])[:3],
+            })
+        return {
+            "computed_fmt": RelicReader._fmt(plan.get("computed_at"), "%d/%m %H:%M:%S"),
+            "summary": plan.get("summary"), "moves": plan.get("moves") or [],
+            "value_now": plan.get("value_now"), "value_after": plan.get("value_after"),
+            "gain": plan.get("gain"), "plan_slots": plan.get("slots") or {},
+            "relics": plan.get("relics") or [], "attributes": attributes,
+            "low_loyalty": sorted((plan.get("low_loyalty") or {}).items()),
+            "missing": sorted((plan.get("missing") or {}).items()),
+            "sources": plan.get("sources") or {},
         }

@@ -1,0 +1,2156 @@
+{
+ "_doc": "Estado real das reliquias do br143 em 29/10/2026 (cache/relics.json, so as reliquias, vagas e can_equip), coordenadas das 67 aldeias da conta, entradas medidas do planejador (core/relic_planner.village_inputs com velocidade 1: reporter 7 dias, nobres do Hunter 14 dias) e aldeias com lealdade < 100. Sem dado de jogador. Gerado para tests/test_relic_planner.py.",
+ "coords": {
+  "125781": [
+   586,
+   276
+  ],
+  "32056": [
+   574,
+   317
+  ],
+  "34597": [
+   576,
+   316
+  ],
+  "35059": [
+   579,
+   318
+  ],
+  "36294": [
+   569,
+   312
+  ],
+  "37318": [
+   577,
+   315
+  ],
+  "38363": [
+   586,
+   313
+  ],
+  "38409": [
+   578,
+   305
+  ],
+  "38412": [
+   553,
+   300
+  ],
+  "38997": [
+   580,
+   309
+  ],
+  "39292": [
+   579,
+   308
+  ],
+  "39449": [
+   565,
+   302
+  ],
+  "39472": [
+   588,
+   309
+  ],
+  "39975": [
+   583,
+   312
+  ],
+  "40314": [
+   571,
+   308
+  ],
+  "40374": [
+   588,
+   314
+  ],
+  "40618": [
+   569,
+   304
+  ],
+  "40808": [
+   531,
+   289
+  ],
+  "41114": [
+   584,
+   309
+  ],
+  "41123": [
+   577,
+   306
+  ],
+  "41140": [
+   585,
+   304
+  ],
+  "41283": [
+   576,
+   309
+  ],
+  "42134": [
+   571,
+   299
+  ],
+  "44167": [
+   557,
+   293
+  ],
+  "44620": [
+   586,
+   308
+  ],
+  "44674": [
+   587,
+   307
+  ],
+  "44683": [
+   579,
+   304
+  ],
+  "45215": [
+   532,
+   282
+  ],
+  "46584": [
+   571,
+   296
+  ],
+  "46676": [
+   569,
+   299
+  ],
+  "49709": [
+   572,
+   295
+  ],
+  "50833": [
+   575,
+   291
+  ],
+  "51540": [
+   582,
+   289
+  ],
+  "52755": [
+   572,
+   289
+  ],
+  "52876": [
+   568,
+   291
+  ],
+  "53691": [
+   565,
+   278
+  ],
+  "54895": [
+   583,
+   290
+  ],
+  "55553": [
+   572,
+   287
+  ],
+  "55647": [
+   583,
+   288
+  ],
+  "56822": [
+   545,
+   272
+  ],
+  "57033": [
+   561,
+   274
+  ],
+  "57580": [
+   531,
+   272
+  ],
+  "57689": [
+   575,
+   287
+  ],
+  "58039": [
+   569,
+   278
+  ],
+  "61947": [
+   583,
+   285
+  ],
+  "61990": [
+   570,
+   279
+  ],
+  "62742": [
+   528,
+   270
+  ],
+  "66317": [
+   574,
+   271
+  ],
+  "68082": [
+   585,
+   278
+  ],
+  "69630": [
+   531,
+   263
+  ],
+  "69861": [
+   548,
+   262
+  ],
+  "71768": [
+   577,
+   270
+  ],
+  "73010": [
+   647,
+   294
+  ],
+  "74689": [
+   578,
+   306
+  ],
+  "74690": [
+   582,
+   304
+  ],
+  "74966": [
+   579,
+   257
+  ],
+  "78755": [
+   620,
+   271
+  ],
+  "78779": [
+   592,
+   255
+  ],
+  "81571": [
+   649,
+   289
+  ],
+  "81800": [
+   650,
+   292
+  ],
+  "82671": [
+   600,
+   255
+  ],
+  "84186": [
+   616,
+   264
+  ],
+  "84243": [
+   594,
+   256
+  ],
+  "84391": [
+   598,
+   257
+  ],
+  "84620": [
+   594,
+   258
+  ],
+  "88035": [
+   596,
+   250
+  ],
+  "88755": [
+   605,
+   253
+  ]
+ },
+ "inputs": {
+  "125781": {
+   "base_prod_h": {
+    "iron": 336.5903672954009,
+    "stone": 529.6305320252163,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.07784060846560846,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.10526315789473684
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "32056": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.1
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.16778273809523808
+   },
+   "recruit_h": {
+    "barracks": 254.46428571428572
+   }
+  },
+  "34597": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.45,
+    "stone": 0.35,
+    "wood": 0.25
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "35059": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 2063.4169994702957,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.09836065573770492,
+    "wood": 0.08196721311475409
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "36294": {
+   "base_prod_h": {
+    "iron": 1525.2444403514626,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.11666666666666667,
+    "stone": 0.1,
+    "wood": 0.25
+   },
+   "missing": [],
+   "nobles": 2,
+   "nobles_h": 0.005952380952380952,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "37318": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.6,
+    "stone": 0.5,
+    "wood": 0.45
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "38363": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.3,
+    "stone": 0.15,
+    "wood": 0.15
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.16137566137566137,
+    "stable": 0.010512566137566138
+   },
+   "recruit_h": {
+    "barracks": 248.51190476190476,
+    "stable": 24.285714285714285
+   }
+  },
+  "38409": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.05263157894736842,
+    "stone": 0.10526315789473684,
+    "wood": 0.10526315789473684
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "38412": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "stable": 0.015459656084656085
+   },
+   "recruit_h": {
+    "stable": 35.714285714285715
+   }
+  },
+  "38997": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.10526315789473684,
+    "stone": 0.0,
+    "wood": 0.2631578947368421
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "39292": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.7894736842105263,
+    "stone": 0.15789473684210525,
+    "wood": 0.5789473684210527
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "39449": {
+   "base_prod_h": {
+    "iron": 1311.3411024087516,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.15,
+    "wood": 0.2
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "39472": {
+   "base_prod_h": {
+    "iron": 1311.3411024087516,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.05
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.16989087301587302,
+    "stable": 0.21643518518518517
+   },
+   "recruit_h": {
+    "barracks": 290.17857142857144,
+    "stable": 989.5833333333334
+   }
+  },
+  "39975": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.034482758620689655,
+    "stone": 0.0,
+    "wood": 0.2413793103448276
+   },
+   "missing": [],
+   "nobles": 1,
+   "nobles_h": 0.002976190476190476,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "40314": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.6779661016949152,
+    "stone": 0.1864406779661017,
+    "wood": 0.4915254237288136
+   },
+   "missing": [],
+   "nobles": 2,
+   "nobles_h": 0.005952380952380952,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "40374": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1311.3411024087516,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.016666666666666666
+   },
+   "missing": [],
+   "nobles": 2,
+   "nobles_h": 0.005952380952380952,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "40618": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 1,
+   "nobles_h": 0.002976190476190476,
+   "recruit_busy": {
+    "barracks": 0.16988921957671957,
+    "stable": 0.21643353174603175
+   },
+   "recruit_h": {
+    "barracks": 290.17857142857144,
+    "stable": 989.5833333333334
+   }
+  },
+  "40808": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.05263157894736842,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.09751157407407407,
+    "stable": 0.05652281746031746
+   },
+   "recruit_h": {
+    "barracks": 113.0952380952381,
+    "stable": 180.95238095238096
+   }
+  },
+  "41114": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.2619047619047619,
+    "stone": 0.07142857142857142,
+    "wood": 0.47619047619047616
+   },
+   "missing": [],
+   "nobles": 6,
+   "nobles_h": 0.017857142857142856,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "41123": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.06779661016949153
+   },
+   "missing": [],
+   "nobles": 4,
+   "nobles_h": 0.011904761904761904,
+   "recruit_busy": {
+    "barracks": 0.006489748677248677,
+    "garage": 0.10449735449735449,
+    "stable": 0.014715608465608465
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095,
+    "garage": 122.02380952380952,
+    "stable": 70.68452380952381
+   }
+  },
+  "41140": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.4,
+    "stone": 0.4166666666666667,
+    "wood": 0.43333333333333335
+   },
+   "missing": [],
+   "nobles": 13,
+   "nobles_h": 0.03869047619047619,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "41283": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.6842105263157895,
+    "stone": 0.21052631578947367,
+    "wood": 0.5789473684210527
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "42134": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1774.0392629727125,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.21666666666666667
+   },
+   "missing": [],
+   "nobles": 10,
+   "nobles_h": 0.02976190476190476,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "44167": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 1127.4359973869819
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.1,
+    "stone": 0.1,
+    "wood": 0.2
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.012855489417989419,
+    "stable": 0.003091931216931217
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095,
+    "stable": 7.142857142857143
+   }
+  },
+  "44620": {
+   "base_prod_h": {
+    "iron": 1525.2444403514626,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.11475409836065574
+   },
+   "missing": [],
+   "nobles": 4,
+   "nobles_h": 0.011904761904761904,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "44674": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.18121693121693122
+   },
+   "recruit_h": {
+    "barracks": 309.5238095238095
+   }
+  },
+  "44683": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.6842105263157895,
+    "stone": 0.15789473684210525,
+    "wood": 0.6842105263157895
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "45215": {
+   "base_prod_h": {
+    "iron": 716.5072130782544,
+    "stone": 529.6305320252163,
+    "wood": 529.6305320252163
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "46584": {
+   "base_prod_h": {
+    "iron": 1127.4359973869819,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.02702702702702703
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "46676": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 2063.4169994702957
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.03333333333333333,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 5,
+   "nobles_h": 0.01488095238095238,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "49709": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 1127.4359973869819
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.11475409836065574
+   },
+   "missing": [],
+   "nobles": 8,
+   "nobles_h": 0.023809523809523808,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "50833": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 1127.4359973869819
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "51540": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 1127.4359973869819
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 1,
+   "nobles_h": 0.002976190476190476,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "52755": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 1774.0392629727125,
+    "wood": 1774.0392629727125
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "stable": 0.10705357142857143
+   },
+   "recruit_h": {
+    "stable": 233.57142857142858
+   }
+  },
+  "52876": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 1127.4359973869819
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.05
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "53691": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.2631578947368421,
+    "wood": 0.42105263157894735
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "54895": {
+   "base_prod_h": {
+    "iron": 833.3824366611531,
+    "stone": 1127.4359973869819,
+    "wood": 1127.4359973869819
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "55553": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.1,
+    "wood": 0.2
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "55647": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.15,
+    "wood": 0.15
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "56822": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.09025506513577605,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.05263157894736842
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.05720899470899471,
+    "garage": 0.03166666666666667,
+    "stable": 0.05539021164021164
+   },
+   "recruit_h": {
+    "barracks": 71.42857142857143,
+    "garage": 37.5,
+    "stable": 141.36904761904762
+   }
+  },
+  "57033": {
+   "base_prod_h": {
+    "iron": 969.3221129644471,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.3684210526315789,
+    "stone": 0.05263157894736842,
+    "wood": 0.21052631578947367
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "57580": {
+   "base_prod_h": {
+    "iron": 391.49431482789214,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.06822751322751323,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.21052631578947367
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "57689": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.20709656084656083,
+    "stable": 0.2215327380952381
+   },
+   "recruit_h": {
+    "barracks": 280.1190476190476,
+    "stable": 599.4047619047619
+   }
+  },
+  "58039": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.05263157894736842
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.13324404761904762,
+    "stable": 0.15620039682539683
+   },
+   "recruit_h": {
+    "barracks": 187.26190476190476,
+    "stable": 398.6607142857143
+   }
+  },
+  "61947": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 833.3824366611531,
+    "wood": 833.3824366611531
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.10526315789473684,
+    "wood": 0.10526315789473684
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "61990": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.10526315789473684,
+    "stone": 0.10526315789473684,
+    "wood": 0.3684210526315789
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.09015376984126984
+   },
+   "recruit_h": {
+    "barracks": 86.30952380952381
+   }
+  },
+  "62742": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.47368421052631576,
+    "wood": 0.47368421052631576
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "66317": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.10526315789473684,
+    "wood": 0.05263157894736842
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.015170304232804233,
+    "stable": 0.01384755291005291
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095,
+    "stable": 17.857142857142858
+   }
+  },
+  "68082": {
+   "base_prod_h": {
+    "iron": 969.3221129644471,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.15789473684210525,
+    "stone": 0.10526315789473684,
+    "wood": 0.05263157894736842
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "69630": {
+   "base_prod_h": {
+    "iron": 213.9096379561797,
+    "stone": 135.94368008275768,
+    "wood": 248.80215028031589
+   },
+   "build_busy": 0.009672619047619048,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.016617063492063492,
+    "stable": 0.001044973544973545
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095,
+    "stable": 2.8273809523809526
+   }
+  },
+  "69861": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.09266203703703704,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.05263157894736842,
+    "wood": 0.05263157894736842
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "71768": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.05263157894736842,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "73010": {
+   "base_prod_h": {
+    "iron": 455.3540844739882,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.10962797619047619,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.017609126984126984,
+    "stable": 0.009895833333333333
+   },
+   "recruit_h": {
+    "barracks": 13.392857142857142,
+    "stable": 10.714285714285714
+   }
+  },
+  "74689": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.25,
+    "stone": 0.05,
+    "wood": 0.3
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "74690": {
+   "base_prod_h": {
+    "iron": 2399.997453589892,
+    "stone": 2399.997453589892,
+    "wood": 2399.997453589892
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.4666666666666667,
+    "stone": 0.36666666666666664,
+    "wood": 0.38333333333333336
+   },
+   "missing": [],
+   "nobles": 3,
+   "nobles_h": 0.008928571428571428,
+   "recruit_busy": {
+    "barracks": 0.0024421296296296296
+   },
+   "recruit_h": {
+    "barracks": 5.416666666666667
+   }
+  },
+  "74966": {
+   "base_prod_h": {
+    "iron": 529.6305320252163,
+    "stone": 716.5072130782544,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.1700545634920635,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "78755": {
+   "base_prod_h": {
+    "iron": 336.5903672954009,
+    "stone": 391.49431482789214,
+    "wood": 616.0228051481056
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.05263157894736842,
+    "stone": 0.0,
+    "wood": 0.15789473684210525
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "78779": {
+   "base_prod_h": {
+    "iron": 455.3540844739882,
+    "stone": 391.49431482789214,
+    "wood": 391.49431482789214
+   },
+   "build_busy": 0.026160714285714287,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "81571": {
+   "base_prod_h": {
+    "iron": 336.5903672954009,
+    "stone": 391.49431482789214,
+    "wood": 391.49431482789214
+   },
+   "build_busy": 0.07913359788359789,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.15789473684210525,
+    "wood": 0.05263157894736842
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "81800": {
+   "base_prod_h": {
+    "iron": 616.0228051481056,
+    "stone": 529.6305320252163,
+    "wood": 529.6305320252163
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.3,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  },
+  "82671": {
+   "base_prod_h": {
+    "iron": 336.5903672954009,
+    "stone": 455.3540844739882,
+    "wood": 391.49431482789214
+   },
+   "build_busy": 0.06670304232804233,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.015873015873015872
+   },
+   "recruit_h": {
+    "barracks": 10.714285714285714
+   }
+  },
+  "84186": {
+   "base_prod_h": {
+    "iron": 455.3540844739882,
+    "stone": 183.91052150872028,
+    "wood": 213.9096379561797
+   },
+   "build_busy": 0.021736111111111112,
+   "cap_frac": {
+    "iron": 0.6666666666666666,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.00433531746031746
+   },
+   "recruit_h": {
+    "barracks": 4.642857142857143
+   }
+  },
+  "84243": {
+   "base_prod_h": {
+    "iron": 391.49431482789214,
+    "stone": 391.49431482789214,
+    "wood": 716.5072130782544
+   },
+   "build_busy": 0.07855654761904762,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.0205026455026455
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095
+   }
+  },
+  "84391": {
+   "base_prod_h": {
+    "iron": 100.48736745910914,
+    "stone": 158.11854129049695,
+    "wood": 183.91052150872028
+   },
+   "build_busy": 0.08285383597883599,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.09090909090909091
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.004239417989417989
+   },
+   "recruit_h": {
+    "barracks": 2.142857142857143
+   }
+  },
+  "84620": {
+   "base_prod_h": {
+    "iron": 336.5903672954009,
+    "stone": 391.49431482789214,
+    "wood": 391.49431482789214
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.025917658730158732
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095
+   }
+  },
+  "88035": {
+   "base_prod_h": {
+    "iron": 336.5903672954009,
+    "stone": 391.49431482789214,
+    "wood": 391.49431482789214
+   },
+   "build_busy": 0.0,
+   "cap_frac": {
+    "iron": 0.0,
+    "stone": 0.0,
+    "wood": 0.0
+   },
+   "missing": [],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {
+    "barracks": 0.026455026455026454
+   },
+   "recruit_h": {
+    "barracks": 19.345238095238095
+   }
+  },
+  "88755": {
+   "base_prod_h": null,
+   "build_busy": 0.0,
+   "cap_frac": {},
+   "missing": [
+    "sem cache/managed (aldeia ainda não rodou): nível de mina, armazém e leituras de recurso"
+   ],
+   "nobles": 0,
+   "nobles_h": 0.0,
+   "recruit_busy": {},
+   "recruit_h": {}
+  }
+ },
+ "labels": {
+  "125781": "BBM 044",
+  "32056": "BBM 020",
+  "34597": "BBM 016",
+  "35059": "BBM 019",
+  "36294": "BBM 021",
+  "37318": "BBM 015",
+  "38363": "BBM 017",
+  "38409": "BBM 002",
+  "38412": "BBM 023",
+  "38997": "BBM 005",
+  "39292": "BBM 004",
+  "39449": "BBM 026",
+  "39472": "BBM 018",
+  "39975": "BBM 009",
+  "40314": "BBM 007",
+  "40374": "BBM 024",
+  "40618": "BBM 022",
+  "40808": "BBM 048",
+  "41114": "BBM 008",
+  "41123": "BBM 001",
+  "41140": "BBM 012",
+  "41283": "BBM 006",
+  "42134": "BBM 025",
+  "44167": "BBM 031",
+  "44620": "BBM 013",
+  "44674": "BBM 014",
+  "44683": "BBM 003",
+  "45215": "BBM 049",
+  "46584": "BBM 028",
+  "46676": "BBM 027",
+  "49709": "BBM 029",
+  "50833": "BBM 033",
+  "51540": "BBM 032",
+  "52755": "BBM 030",
+  "52876": "BBM 035",
+  "53691": "BBM 041",
+  "54895": "BBM 034",
+  "55553": "BBM 038",
+  "55647": "BBM 037",
+  "56822": "BBM 050",
+  "57033": "BBM 045",
+  "57580": "BBM 051",
+  "57689": "BBM 036",
+  "58039": "BBM 040",
+  "61947": "BBM 039",
+  "61990": "BBM 042",
+  "62742": "BBM 052",
+  "66317": "BBM 046",
+  "68082": "BBM 043",
+  "69630": "BBM 066",
+  "69861": "BBM 056",
+  "71768": "BBM 047",
+  "73010": "BBM 058",
+  "74689": "BBM 010",
+  "74690": "BBM 011",
+  "74966": "BBM 055",
+  "78755": "BBM 053",
+  "78779": "BBM 060",
+  "81571": "BBM 054",
+  "81800": "BBM 057",
+  "82671": "BBM 063",
+  "84186": "BBM 065",
+  "84243": "BBM 059",
+  "84391": "BBM 061",
+  "84620": "BBM 062",
+  "88035": "BBM 064"
+ },
+ "low_loyalty": {
+  "69630": "Bloqueado, a lealdade está abaixo de 100.",
+  "84186": "lealdade estimada 57 (conquistada há 32 h)",
+  "88035": "lealdade estimada 88 (conquistada há 63 h)",
+  "88755": "Bloqueado, a lealdade está abaixo de 100."
+ },
+ "now": 1793255210,
+ "state": {
+  "can_equip": true,
+  "fetched_at": 1793255098,
+  "relics": [
+   {
+    "covers": [
+     "38409",
+     "41123",
+     "44683",
+     "74689",
+     "74690"
+    ],
+    "id": "310487",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Estábulo nos custos de recrutamento",
+     "sign": "-",
+     "text": "-8% Estábulo nos custos de recrutamento",
+     "value": 8.0
+    },
+    "name": "Sela Superior",
+    "quality": "superior",
+    "range": 3,
+    "removable_at": 1793332387,
+    "state": "equipped",
+    "subs": [
+     {
+      "key": "Aríete: poder de ataque",
+      "perfect": false,
+      "sign": "+",
+      "text": "Aríete: +4% poder de ataque",
+      "value": 4.0
+     },
+     {
+      "key": "Cavalaria leve: poder de defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Cavalaria leve: +4% poder de defesa",
+      "value": 4.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "saddle",
+    "village_id": "44683"
+   },
+   {
+    "covers": [
+     "38409",
+     "38997",
+     "39292",
+     "41123",
+     "41283",
+     "44683",
+     "74689"
+    ],
+    "id": "1126953",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "na produção de ferro",
+     "sign": "+",
+     "text": "+10% na produção de ferro",
+     "value": 10.0
+    },
+    "name": "Picareta Reconhecida",
+    "quality": "renowned",
+    "range": 4,
+    "removable_at": null,
+    "state": "equipped",
+    "subs": [
+     {
+      "key": "Quartel na velocidade de recrutamento",
+      "perfect": false,
+      "sign": "+",
+      "text": "+5% Quartel na velocidade de recrutamento",
+      "value": 5.0
+     },
+     {
+      "key": "nos custos de recrutamento dos nobres",
+      "perfect": false,
+      "sign": "-",
+      "text": "-5% nos custos de recrutamento dos nobres",
+      "value": 5.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "pickaxe",
+    "village_id": "74689"
+   },
+   {
+    "covers": [
+     "38409",
+     "39292",
+     "41123",
+     "44683",
+     "74689"
+    ],
+    "id": "863230",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Quartel na velocidade de recrutamento",
+     "sign": "+",
+     "text": "+10% Quartel na velocidade de recrutamento",
+     "value": 10.0
+    },
+    "name": "Boneco Reconhecido",
+    "quality": "renowned",
+    "range": 4,
+    "removable_at": null,
+    "state": "equipped",
+    "subs": [
+     {
+      "key": "Cavalaria pesada: poder de ataque",
+      "perfect": false,
+      "sign": "+",
+      "text": "Cavalaria pesada: +5% poder de ataque",
+      "value": 5.0
+     },
+     {
+      "key": "na velocidade de construção",
+      "perfect": false,
+      "sign": "+",
+      "text": "+5% na velocidade de construção",
+      "value": 5.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "dummy",
+    "village_id": "38409"
+   },
+   {
+    "covers": [
+     "38409",
+     "38997",
+     "39292",
+     "41123",
+     "41283",
+     "44683",
+     "74689"
+    ],
+    "id": "573838",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Quartel na velocidade de recrutamento",
+     "sign": "+",
+     "text": "+10% Quartel na velocidade de recrutamento",
+     "value": 10.0
+    },
+    "name": "Boneco Reconhecido",
+    "quality": "renowned",
+    "range": 4,
+    "removable_at": null,
+    "state": "equipped",
+    "subs": [
+     {
+      "key": "Estábulo na velocidade de recrutamento",
+      "perfect": false,
+      "sign": "+",
+      "text": "+5% Estábulo na velocidade de recrutamento",
+      "value": 5.0
+     },
+     {
+      "key": "Cavalaria pesada: poder de defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Cavalaria pesada: +5% poder de defesa",
+      "value": 5.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "dummy",
+    "village_id": "39292"
+   },
+   {
+    "covers": [
+     "38409",
+     "39292",
+     "41123",
+     "41283",
+     "44683",
+     "74689"
+    ],
+    "id": "297445",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Quartel nos custos de recrutamento",
+     "sign": "-",
+     "text": "-10% Quartel nos custos de recrutamento",
+     "value": 10.0
+    },
+    "name": "Mochila Reconhecida",
+    "quality": "renowned",
+    "range": 4,
+    "removable_at": null,
+    "state": "equipped",
+    "subs": [
+     {
+      "key": "Lanceiro: poder de ataque",
+      "perfect": false,
+      "sign": "+",
+      "text": "Lanceiro: +5% poder de ataque",
+      "value": 5.0
+     },
+     {
+      "key": "Aríete: poder de ataque",
+      "perfect": false,
+      "sign": "+",
+      "text": "Aríete: +5% poder de ataque",
+      "value": 5.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "backpack",
+    "village_id": "41123"
+   },
+   {
+    "covers": [],
+    "id": "157444",
+    "inactive_until_at": 1793312484,
+    "locked_state": "Bloqueado, a lealdade está abaixo de 100.",
+    "main": {
+     "key": "Lanceiro: poder de ataque e defesa",
+     "sign": "+",
+     "text": "Lanceiro: +7% poder de ataque e defesa",
+     "value": 7.0
+    },
+    "name": "Alabarba Aprimorada",
+    "quality": "refined",
+    "range": 3,
+    "removable_at": null,
+    "state": "inactive",
+    "subs": [
+     {
+      "key": "Quartel na velocidade de recrutamento",
+      "perfect": false,
+      "sign": "+",
+      "text": "+3% Quartel na velocidade de recrutamento",
+      "value": 3.0
+     },
+     {
+      "key": "Oficina nos custos de recrutamento",
+      "perfect": false,
+      "sign": "-",
+      "text": "-3% Oficina nos custos de recrutamento",
+      "value": 3.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "halberd",
+    "village_id": "69630"
+   },
+   {
+    "covers": [],
+    "id": "238187",
+    "inactive_until_at": 1793331472,
+    "locked_state": "Bloqueado, a lealdade está abaixo de 100.",
+    "main": {
+     "key": "Catapulta: dano contra edifícios",
+     "sign": "+",
+     "text": "Catapulta: +5% dano contra edifícios",
+     "value": 5.0
+    },
+    "name": "Fogueira de má qualidade",
+    "quality": "shoddy",
+    "range": 2,
+    "removable_at": null,
+    "state": "inactive",
+    "subs": [
+     {
+      "key": "Bárbaro: poder de ataque e defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Bárbaro: +1% poder de ataque e defesa",
+      "value": 1.0
+     },
+     {
+      "key": "Explorador: escondido",
+      "perfect": false,
+      "sign": "+",
+      "text": "Explorador: +1% escondido",
+      "value": 1.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "bonfire",
+    "village_id": "88755"
+   },
+   {
+    "covers": [],
+    "id": "377483",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Aríete: dano contra edifícios",
+     "sign": "+",
+     "text": "Aríete: +5% dano contra edifícios",
+     "value": 5.0
+    },
+    "name": "Estrela d'alva de má qualidade",
+    "quality": "shoddy",
+    "range": 2,
+    "removable_at": null,
+    "state": "inventory",
+    "subs": [
+     {
+      "key": "Bárbaro: poder de ataque e defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Bárbaro: +1% poder de ataque e defesa",
+      "value": 1.0
+     },
+     {
+      "key": "Cavalaria leve: poder de ataque e defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Cavalaria leve: +1% poder de ataque e defesa",
+      "value": 1.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "morningstar",
+    "village_id": null
+   },
+   {
+    "covers": [],
+    "id": "1105799",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Lanceiro: poder de ataque e defesa",
+     "sign": "+",
+     "text": "Lanceiro: +6% poder de ataque e defesa",
+     "value": 6.0
+    },
+    "name": "Alabarba Resistente",
+    "quality": "polished",
+    "range": 2,
+    "removable_at": null,
+    "state": "inventory",
+    "subs": [
+     {
+      "key": "na produção de madeira",
+      "perfect": false,
+      "sign": "+",
+      "text": "+2% na produção de madeira",
+      "value": 2.0
+     },
+     {
+      "key": "Lanceiro: poder de defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Lanceiro: +2% poder de defesa",
+      "value": 2.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "halberd",
+    "village_id": null
+   },
+   {
+    "covers": [],
+    "id": "1193326",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Quartel na velocidade de recrutamento",
+     "sign": "+",
+     "text": "+5% Quartel na velocidade de recrutamento",
+     "value": 5.0
+    },
+    "name": "Boneco de má qualidade",
+    "quality": "shoddy",
+    "range": 2,
+    "removable_at": null,
+    "state": "inventory",
+    "subs": [
+     {
+      "key": "Lanceiro: poder de ataque e defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Lanceiro: +1% poder de ataque e defesa",
+      "value": 1.0
+     },
+     {
+      "key": "na velocidade de viagem do mercador",
+      "perfect": false,
+      "sign": "+",
+      "text": "+1% na velocidade de viagem do mercador",
+      "value": 1.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "dummy",
+    "village_id": null
+   },
+   {
+    "covers": [],
+    "id": "1199783",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "Estábulo na velocidade de recrutamento",
+     "sign": "+",
+     "text": "+6% Estábulo na velocidade de recrutamento",
+     "value": 6.0
+    },
+    "name": "Ferradura Resistente",
+    "quality": "polished",
+    "range": 2,
+    "removable_at": null,
+    "state": "inventory",
+    "subs": [
+     {
+      "key": "na produção de madeira",
+      "perfect": false,
+      "sign": "+",
+      "text": "+2% na produção de madeira",
+      "value": 2.0
+     },
+     {
+      "key": "Quartel nos custos de recrutamento",
+      "perfect": false,
+      "sign": "-",
+      "text": "-2% Quartel nos custos de recrutamento",
+      "value": 2.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "horseshoe",
+    "village_id": null
+   },
+   {
+    "covers": [],
+    "id": "1200439",
+    "inactive_until_at": null,
+    "locked_state": null,
+    "main": {
+     "key": "na produção de ferro",
+     "sign": "+",
+     "text": "+5% na produção de ferro",
+     "value": 5.0
+    },
+    "name": "Picareta de má qualidade",
+    "quality": "shoddy",
+    "range": 2,
+    "removable_at": null,
+    "state": "inventory",
+    "subs": [
+     {
+      "key": "Cavalaria leve: poder de ataque e defesa",
+      "perfect": false,
+      "sign": "+",
+      "text": "Cavalaria leve: +1% poder de ataque e defesa",
+      "value": 1.0
+     },
+     {
+      "key": "Quartel nos custos de recrutamento",
+      "perfect": false,
+      "sign": "-",
+      "text": "-1% Quartel nos custos de recrutamento",
+      "value": 1.0
+     }
+    ],
+    "trade_offer_id": null,
+    "type": "pickaxe",
+    "village_id": null
+   }
+  ],
+  "slots": {
+   "free": 3,
+   "next_thresholds": [
+    70,
+    90
+   ],
+   "total": 8,
+   "used": 5
+  }
+ }
+}

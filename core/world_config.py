@@ -240,6 +240,20 @@ class WorldConfig:
         return int(m.group(1)) if m else None
 
     @staticmethod
+    def _parse_speed(xml_text):
+        """
+        <speed> de topo: a velocidade do mundo (br143 = 1, em
+        cache/_get_config.xml de 21/09). Multiplica a producao das minas, que o
+        planejador de reliquias calcula pelo nivel (§8.77). `<unit_speed>` nao
+        casa: o literal e `<speed>`. None quando a tag falta.
+        """
+        m = re.search(r"<speed>\s*([\d.]+)\s*</speed>", xml_text)
+        try:
+            return float(m.group(1)) if m else None
+        except ValueError:
+            return None
+
+    @staticmethod
     def _parse_features(xml_text):
         """
         Mecanicas ligadas/desligadas por mundo, que o bot vinha lendo de flags
@@ -500,6 +514,8 @@ class WorldConfig:
                     # limita a escolha de alvo. Presenca da chave basta; valor
                     # None dentro dela e legitimo ("o mundo nao publicou").
                     and isinstance(cached.get("snob"), dict)
+                    # Idem para `speed` (§8.77): presenca da chave basta.
+                    and "speed" in cached
             ):
                 return cached
 
@@ -517,6 +533,7 @@ class WorldConfig:
             "mood": cls._parse_mood(xml_text),
             "features": cls._parse_features(xml_text),
             "snob": cls._parse_snob(xml_text),
+            "speed": cls._parse_speed(xml_text),
             "_fetched_at": int(time.time()),
         }
         FileManager.create_directory(FileManager.get_path("cache/world"))

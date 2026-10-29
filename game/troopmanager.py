@@ -81,6 +81,8 @@ class TroopManager:
 
     resman = None
     template = None
+    # §8.77: callable(building, recruit_data) do planejador de relíquias, ou None.
+    cost_listener = None
 
     def __init__(self, wrapper=None, village_id=None):
         """
@@ -1269,6 +1271,13 @@ class TroopManager:
                 village_label(self.village_id), building
             )
             return False
+        if self.cost_listener is not None:
+            # §8.77: custo lido para o planejador de relíquias. Observação
+            # pura: falha aqui nunca impede o recrutamento.
+            try:
+                self.cost_listener(building, self.recruit_data)
+            except Exception as exc:
+                self.logger.debug("cost_listener falhou: %r", exc)
         self.game_data = Extractor.game_state(data)
         self.logger.info("Attempting recruitment of %d %s" % (amount, unit_type))
 

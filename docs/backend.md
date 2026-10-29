@@ -8367,8 +8367,10 @@ relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
 1. ✅ **Leitura** (§8.75). Parser do inventário e da visão geral; contador de
    "encontrada" por dia; quadro `benefit` por aldeia; `cache/relics.json`;
    painel. Fixtures verbatim anonimizadas.
-2. **Planejador puro** (`core/relic_planner.py`): valor/h por atributo e
-   aldeia, teto de 20%, anfitriã elegível. Em dry-run.
+2. ✅ **Planejador puro** (§8.77): `core/relic_planner.py`, valor/h por
+   atributo e aldeia, teto de 20%, anfitriã elegível. Em dry-run. ⏳ Falta
+   ler o plano num ciclo real: o bot rodando em 29/10 é o processo de 02:05,
+   com o código antigo.
 3. **Equipar e mover**, com histerese e um teto de trocas por dia.
 4. **Fundir**, pela mesma conta de valor. Nunca PP.
 5. **Efeitos no cálculo do bot**, só se uma medição mostrar diferença.
@@ -8500,6 +8502,163 @@ esta correção). Com uma cópia do `cache/`, 114 de 116 passam; os dois que
 sobram (`test_conquest_area_of_interest`, `test_panel_field_audit`) leem o
 `config.json` real.
 
+## 8.77 `P-RELIQUIA` — Fase 2: o planejador (2026-10-29)
+
+Fase 2 de 5 do plano da §8.74. **Dry-run**: nenhum `equip_relic` ou
+`remove_relic`. O planejador roda no fim de cada `RelicManager.run()`, com 0
+GET a mais (o `test_relics` conta os GETs da leitura e continua igual), grava
+`plan` em `cache/relics.json`, loga o resumo ("faria: …" ou "nada a fazer") e
+aparece no painel `/relics` (seção "Plano (simulação)").
+
+**1. Quanto vale cada atributo em cada aldeia.** O texto do jogo é a chave
+(`classify`), não o `effect_type`. Cada atributo vira recurso/h **por ponto
+percentual** (`attribute_rate`), sem ordem fixa e sem peso inventado. A função
+não conhece relíquia: recebe atributo e aldeia, e serve à bandeira por valor
+depois. A fonte de cada número (5º padrão):
+
+| atributo | conta | fonte |
+|---|---|---|
+| produção de madeira/argila/ferro | base sem bônus × fração das leituras com o recurso abaixo de 99% do armazém ÷ 100 | base: fórmula `30 × 1,163118^(nível−1) × speed` com o nível da mina do `cache/managed` (`buidling_levels`) e `<speed>` do `get_config`; teto: `TWB_PRE_RESOURCE` do reporter (7 dias) contra `storage` do `cache/managed` |
+| Quartel/Estábulo/Oficina nos custos | gasto/h do bot no prédio ÷ 100 | unidades das linhas `TWB_RECRUIT` (7 dias) × custo nominal: `unit_costs` lido pelo bot na tela de recrutamento de aldeia sem desconto de relíquia; até lá, tabela padrão marcada "não medida" |
+| custos dos nobres | nobres/h × 140.000 ÷ 100 | ataques `sent` com `snob` do `cache/hunter/schedules.json` (14 dias, por origem) × `next_snob` 40.000/50.000/50.000 (§8.52). A tela diz "recursos": moeda não entra |
+| velocidade de recrutamento | só com a fila do prédio como gargalo (ocupada ≥ 90% do tempo) | intervalos `[envio, idle till]` das linhas `TWB_RECRUIT` |
+| velocidade de construção | 0 | ocupação pelos `TWB_BUILD`; mesmo com gargalo não há conversão: o bot não registra o custo das obras |
+| combate (poder de unidade, dano de catapulta/aríete, explorador escondido, bárbaro), mercador | 0, com o motivo escrito | — |
+
+O que foi medido em 29/10 e decide a tabela:
+- **Nenhuma fila é gargalo.** A fila de recrutamento mais ocupada da conta
+  ficou ocupada 22% do tempo em 7 dias (estábulo da BBM 018/022/036), e o
+  aglomerado BBM 001–010, ≤ 1%. A de construção chega a 17% no máximo (BBM
+  055). Logo os três Bonecos e todos os "+N% velocidade" valem 0 hoje. No
+  aglomerado ainda há o teto: a velocidade de quartel das relíquias soma 25%
+  e 5% já são descartados.
+- **Produção no teto do armazém é censurada (11º padrão).** O ferro esteve no
+  teto em 68–79% das leituras nas BBM 003, 004, 006 e 007, e a madeira em
+  58–68%. A produção a mais ali transborda; o valor cai na mesma proporção.
+- **Nobre pesa.** 62 nobres saíram pelo Hunter em 14 dias, 13 deles da BBM
+  012. A taxa ali é 54/h por ponto, o dobro da de produção (24/h por ponto,
+  mina 30).
+- **Recrutamento pesa pouco.** O bot recruta no quartel em 22 aldeias, a
+  ~3/h por ponto no máximo. O aglomerado quase não recruta: a Mochila (−10%
+  quartel) vale 1,9/h onde está.
+
+**Por que a base da produção é a fórmula e não a produção lida.** Primeiro
+desenho: `produção lida ÷ (1 + total do quadro)`. Não fecha, porque o quadro
+"Efeitos ativos" tem uma terceira família de linha, a modificação de aldeia
+("Tijolos maciços +10% argila", "Trabalhadores eficientes +3%"), que não entra
+nos totais `benefit` (fixture da BBM 001). A leitura aditiva (+x% = base × x)
+vem do próprio quadro (+55% de ferro = 30 + 15 + 10). Para conferir a conta
+(19º padrão), o bot passa a gravar a produção lida (`village_prod`, do
+`game_data` do `village_init`, 0 GET), e o plano publica a razão lida/fórmula
+por aldeia (`inputs[vid].prod_ratio`). ⏳ Ainda não há leitura, porque o
+processo em campo é o antigo. Com ela: na madeira da BBM 001, 1,48 (itens 30 +
+paladino 15 + modificação 3) confirma a aditiva; o produto daria 1,54.
+
+**2. Quanto vale pôr R em H.** `Model.value` da alocação com e sem R:
+cobertura euclidiana ≤ `range` com a anfitriã inclusa (a mesma de
+`core/relics.py`), soma por atributo e aldeia, `taxa × min(20, soma)`.
+O teto vale só sobre a parte das relíquias. O valor marginal sai da
+diferença, então uma relíquia de quartel a mais no aglomerado vale 0 duas
+vezes: pela fila e pelo teto (o teste prova o teto com uma taxa sintética).
+
+**3. A alocação.** Busca local a partir da alocação atual, um passo por vez,
+o de maior ganho primeiro: equipar (com vaga), mover, tirar-e-equipar (sem
+vaga) e trocar duas de lugar. Cada relíquia mexe no máximo uma vez no plano;
+abaixo de 1/h é empate (a histerese de verdade é da Fase 3). Elegibilidade:
+- **Fica onde está:** inativa (não conta como disponível nem ocupa vaga);
+  `removable_at` no futuro (Sela, até 30/10 00:53); `locked_state` (lealdade);
+  oferta de troca.
+- **Não recebe relíquia:** anfitriã ocupada por relíquia que fica; aldeia com
+  lealdade < 100, lida do `locked_state` ou estimada de `cache/conquest`
+  `conquered` (25 + `loyalty_regen_per_hour` × horas desde o pouso). Em 29/10:
+  BBM 066 e 067 (travadas pelo jogo), BBM 065 (~57) e BBM 064 (~88).
+- **Vagas:** `slots.total` da visão geral das relíquias; `can_equip` falso
+  congela no número de ativas.
+- **Aldeia sem `cache/managed`** (a 88755, BBM 067): entra só com a
+  coordenada (`cache/villages`) e o plano lista o que falta (nível de mina,
+  armazém, leituras).
+
+**O plano de 29/10** (estado das 10:xx, velocidade 1; 12 relíquias, porque
+uma "Picareta de má qualidade" foi achada depois das 02:45):
+
+> faria: mover Picareta Reconhecida de BBM 010 para BBM 008 (+268/h); equipar
+> Picareta de má qualidade em BBM 010 (+324/h); equipar Ferradura Resistente
+> em BBM 013 (+97/h); equipar Alabarba Resistente em BBM 014 (+91/h); mover
+> Mochila Reconhecida de BBM 001 para BBM 018 (+54/h) — total +834/h (1.147
+> → 1.981/h)
+
+É o "equipar as paradas" esperado, com duas ressalvas:
+- **Das 5 paradas, 3 vão para as 3 vagas.** A Estrela d'alva e o Boneco de
+  má qualidade ficam: só têm combate, velocidade sem fila cheia e mercador, e
+  valem 0 em toda aldeia.
+- **Duas das equipadas mudam de lugar.** A Picareta Reconhecida vai para a
+  BBM 008: o ferro do aglomerado vive no teto, e da BBM 008 ela alcança a
+  BBM 012, que manda mais nobre que qualquer outra. A Mochila sai do
+  aglomerado, que não recruta.
+
+Os Bonecos Reconhecidos ficam: valem 0 onde estão e em qualquer lugar.
+
+**Conferido à mão** (fontes cruas, não o plano):
+- **BBM 001 (coberta):** ferro, mina 30 com 0 de 63 leituras no teto, dá
+  24,0/h por ponto. Nobre: 4 em 14 dias dão 16,67. Recrutamento em 7 dias:
+  quartel 25 machados × 130 ÷ 168 h = 19/h, estábulo 25 leves × 475 = 71/h,
+  oficina 25 catapultas × 820 = 122/h. Tudo bate com `rates`/`inputs`.
+- **BBM 013 (não coberta):** ferro 1.774/h = mina 28. A Ferradura (alcance 2)
+  alcança só ela e a BBM 014: madeira 2 × (21,4 + 24,0) mais quartel 2 × 3,1
+  da BBM 014 dá 96,9/h, contra 96,6/h no plano (arredondamento).
+
+**Pendências da §8.75, decididas aqui.**
+- Atributo combinado "ataque e defesa": a Alabarda da BBM 066 só ativa às
+  19:21 de 29/10, e não deu para conferir no quadro. Não muda o plano: todo
+  atributo de combate vale 0, inteiro ou dividido em duas linhas.
+- Secundário `perfect`: nenhum visto; o valor segue do texto.
+
+**Também entrou.** `WorldConfig` passa a guardar `speed` (`<speed>` do
+`get_config`); o cache sem a chave conta como velho, então a próxima leitura
+refaz 1 GET no `interface.php` público. Sem velocidade, a produção vale 0 e o
+plano diz "velocidade do mundo não lida". `TroopManager.cost_listener` é a
+costura do custo de unidade, com `try` (nunca impede o recrutamento). Sem
+config nova: nada em `config.example.json`/`helpfile.py`/`build.version`.
+
+**Testes.** `tests/test_relic_planner.py` (19 casos) com a fixture
+`relic_planner_state_br143.json` (estado real de 29/10, sem dado de jogador):
+- classificação dos textos; zero com motivo; produção censurada; fórmula;
+- teto/saturação no aglomerado e valor marginal;
+- anfitriã inelegível (cooldown, inativa, lealdade, já tem relíquia) e vaga
+  cheia (inclusive `can_equip` falso);
+- atributo de combate que não muda nem valor nem plano, e equipar as paradas;
+- leitor do reporter, nobres do Hunter, lealdade estimada e `_parse_speed`.
+
+Mutante conferido: sem o teto (`CAP = 1000`), o teste do aglomerado falha.
+Suíte inteira: 117 arquivos, 0 falhas.
+
+⏳ **Validação em ciclo real pendente.** O bot em campo é o processo de 02:05,
+que não tem este código. O usuário saiu sem que eu reiniciasse, e reiniciar
+fica para quando ele voltar. Ao reiniciar, conferir:
+- a linha `Relics: plano (dry-run…)` no `session_latest.log`;
+- o `plan` em `cache/relics.json` e o painel;
+- `unit_costs` e `village_prod` aparecendo (o lanceiro: 10 ou 20 de ferro?);
+- `prod_ratio` da BBM 001 perto de 1,48;
+- `speed` no `cache/world/config_br143.json`.
+
+**⚠️ Achado fora do escopo, durante esta sessão: trem de nobres contra aldeia
+nossa.** A 88755 virou nossa (BBM 067) às 00:37 de 29/10 (relíquia
+"adquirida" no mesmo minuto). Às 01:40 o planejador bárbaro agendou contra ela
+um trem de 4 nobres (`88755_2026-10-30T11-47-26_barb`), porque o
+`cache/villages/88755.json` era de 23/10 e ainda dizia `owner: '0'` (27º
+padrão).
+- **O que aconteceu:** o primeiro nobre (BBM 013) saiu às 01:50:49, e o jogo
+  mostra "Ataque a BBM 067" com ~2.300 de escolta, pouso em **30/10 11:47:26**.
+  Os outros três (BBM 012 às 03:49, BBM 029 às 04:37) o jogo recusou. O
+  `_handle_existing` marcou `conquered` às 05:20, quando a BBM 012 rodou.
+- **Onde está o furo:** o Hunter só reconfere "o alvo já é nosso" no caminho
+  do nobre **atrasado** (`late_barbarian_verdict`), não no envio no horário.
+  Tentei apagar o schedule às 03:2x e o modo automático da sessão bloqueou.
+- **Correção a fazer, em tarefa própria:** a mesma checagem
+  (`config["villages"]` e `found_villages`) no envio no horário do Hunter e
+  na escolha de alvo do planejador. Na escolha, conferir antes se ela já
+  existe para o caminho automático, além do manual (12º padrão).
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -8508,8 +8667,10 @@ segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
 (§8.36). O A26-09 fechou em 2026-10-18 (§8.65). Sobra o A26-11, que pede
 sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
-**Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fase 0 feita;
-seguem as Fases 1 a 5, uma por chat. **Depois delas: bandeiras por valor.** A
+**Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fases 0, 1
+(§8.75) e 2 (§8.77, validação em ciclo real pendente) feitas; seguem as Fases
+3 a 5, uma por chat. ⚠️ Antes: o furo do trem contra aldeia nossa (fim da
+§8.77). **Depois delas: bandeiras por valor.** A
 escolha de bandeira do `DefenceManager` é uma ordem fixa (§4.6, §8.11), e a
 ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
 mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no

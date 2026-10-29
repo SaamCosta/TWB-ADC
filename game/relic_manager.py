@@ -20,6 +20,13 @@ Custo por execução (taxa da conta, memória nunca-usar-priority-mode):
 Ciclo normal: 1 GET. Relíquia achada: 2.
 
 Estado em `cache/relics.json` (só o bot escreve; o painel lê).
+
+Fase 2 (§8.77): no fim de cada leitura, o planejador (`core/relic_planner.py`)
+calcula em dry-run onde as relíquias valeriam mais e grava em `plan`, com 0 GET
+a mais. Nada é equipado nem removido (Fase 3). Duas medições alimentam o plano
+de graça, com respostas que o bot já tinha: a produção/h de cada aldeia
+(`village_prod`, do `game_data` do `village_init`) e o custo nominal de cada
+unidade (`unit_costs`, da tela de recrutamento de aldeia sem desconto).
 """
 import glob
 import json
@@ -27,6 +34,7 @@ import logging
 import os
 import time
 
+from core import relic_planner as P
 from core import relics as R
 from core.extractors import Extractor
 from core.filemanager import FileManager
@@ -77,6 +85,7 @@ class RelicManager:
         self._found_dirty = True
         self._board_mismatch = {}
         self._last_board_reread = 0.0
+        self._last_plan_summary = None
         self.state = FileManager.load_json_file(CACHE_PATH) or None
 
     @property
@@ -127,6 +136,51 @@ class RelicManager:
                 "%.0f min): %s", village_label(vid), state_age / 60.0, "; ".join(msgs))
         self._save()
         return msgs
+
+    def note_village_prod(self, vid, game_data, read_at=None):
+        """
+        Produção/h da aldeia (`*_prod` do `game_data`, por segundo e já com
+        todos os bônus), da resposta que o `village_init` já tinha. Só
+        conferência: o planejador valora produção pela fórmula do nível da
+        mina, e a razão lida/fórmula mostra se a conta aditiva fecha (§8.77).
+        """
+        if not self.state or not self.enabled:
+            return
+        village = (game_data or {}).get("village") or {}
+        try:
+            prod = {r: round(float(village["%s_prod" % r]) * 3600.0, 1) for r in P.RESOURCES}
+        except (KeyError, TypeError, ValueError):
+            return
+        self.state.setdefault("village_prod", {})[str(vid)] = {
+            "prod_h": prod, "read_at": int(read_at or time.time())}
+
+    def note_unit_costs(self, vid, building, recruit_data):
+        """
+        Custo das unidades lido na tela de recrutamento (`unit_managers.units`),
+        guardado como custo NOMINAL só quando a aldeia não tem desconto de
+        relíquia naquele prédio: o planejador valora desconto sobre o preço
+        cheio. Chamado pelo `TroopManager.recruit` (0 GET).
+        """
+        if not self.state or not self.enabled or not recruit_data:
+            return
+        key = "%s nos custos de recrutamento" % P.BUILDING_NAMES.get(building, "?")
+        if ((self.state.get("villages") or {}).get(str(vid)) or {}).get(key):
+            return
+        costs = self.state.setdefault("unit_costs", {})
+        changed = False
+        for unit, entry in recruit_data.items():
+            try:
+                cost = {r: int(entry[r]) for r in P.RESOURCES}
+            except (KeyError, TypeError, ValueError):
+                continue
+            if {r: (costs.get(unit) or {}).get(r) for r in P.RESOURCES} != cost:
+                changed = True
+            costs[unit] = dict(cost, vid=str(vid), at=int(time.time()))
+        if changed:
+            self._save()
+            self.logger.info("Relics: custo de unidade lido em %s (%s): %s", village_label(vid),
+                             building, ", ".join("%s %s" % (u, "/".join(str(costs[u][r]) for r in P.RESOURCES))
+                                                 for u in sorted(recruit_data) if u in costs))
 
     def _board_msgs(self, vid, board):
         relics = [r for r in self.state.get("relics") or [] if r.get("state") == "equipped"]
@@ -187,15 +241,58 @@ class RelicManager:
         state.update(overview=overview, overview_at=int(overview_at), signature=signature,
                      own_villages=own_count, reason=reason,
                      boards=prev.get("boards") or {},
-                     found=prev.get("found") or {}, found_at=prev.get("found_at") or 0)
+                     found=prev.get("found") or {}, found_at=prev.get("found_at") or 0,
+                     village_prod=prev.get("village_prod") or {},
+                     unit_costs=prev.get("unit_costs") or {})
         if self._found_needed(prev, server_now, now):
             gets += self._read_found(village_id, state, now)
         state["gets"] = gets
         self.state = state
         self._recheck_boards()
+        self._plan(coords, now)
         self._save()
         self._log_summary(state)
+        self._log_plan(state.get("plan"))
         return True
+
+    def _plan(self, coords, now):
+        """Fase 2: o plano em dry-run, só de disco. Falha aqui não perde a leitura."""
+        try:
+            server = (self.config.get("server") or {}).get("server")
+            # load_json_file levanta com JSON corrompido: dentro do try.
+            world = FileManager.load_json_file("cache/world/config_%s.json" % server) if server else None
+            regen = (self.config.get("conquest") or {}).get("loyalty_regen_per_hour", 1) or 1
+            self.state["plan"] = P.plan_from_disk(
+                self.state, coords, root=FileManager.get_root(), now=now,
+                speed=P.world_speed(world), regen=float(regen),
+                labels={vid: village_label(vid) for vid in coords})
+        except Exception as exc:  # o plano é dry-run: nunca derruba a leitura
+            self.logger.warning("Relics: o planejador falhou: %r", exc)
+            self.state["plan"] = {"error": repr(exc), "computed_at": int(now)}
+
+    def _log_plan(self, plan):
+        if not plan or plan.get("error"):
+            return
+        self.logger.info("Relics: plano (dry-run, nada é equipado nesta fase): %s; "
+                         "valor das relíquias hoje %.0f/h, depois %.0f/h",
+                         plan.get("summary"), plan.get("value_now", 0), plan.get("value_after", 0))
+        # O detalhe só quando o plano muda: a leitura roda todo ciclo.
+        if plan.get("summary") == self._last_plan_summary:
+            return
+        self._last_plan_summary = plan.get("summary")
+        sources = plan.get("sources") or {}
+        if not sources.get("schedules_read", True):
+            self.logger.warning("Relics: cache/hunter/schedules.json ilegível: o plano conta 0 nobre "
+                                "por falta de leitura, não por medição")
+        for relic in plan.get("relics") or []:
+            if relic.get("state") == "inventory" and not relic.get("target_host"):
+                best = (relic.get("best_hosts") or [{}])[0]
+                self.logger.info("Relics: %s fica parada: melhor anfitriã %s vale %.0f/h",
+                                 relic["name"], best.get("label", "nenhuma"), best.get("value", 0))
+        if plan.get("missing"):
+            self.logger.info("Relics: plano sem dado de %d aldeia(s): %s", len(plan["missing"]),
+                             "; ".join("%s: %s" % (village_label(v), ", ".join(m))
+                                       for v, m in sorted(plan["missing"].items())))
 
     def _found_needed(self, prev, server_now, now):
         if self._found_dirty or not prev.get("found"):
