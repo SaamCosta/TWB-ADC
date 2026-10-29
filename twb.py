@@ -163,6 +163,7 @@ from game.world_villages import WorldVillages
 from game.noble_recruit_gate import NobleRecruitGate
 from game.player_stats import PlayerStats
 from game.in_flight import InFlight
+from game.relic_manager import RelicManager
 from game.am_auto import AccountManagerAuto
 from manager import VillageManager
 from pages.overview import OverviewPage
@@ -230,6 +231,9 @@ class TWB:
     # Feature 38: idem -- sobrevive entre ciclos para o TTL de
     # `in_flight.cache_seconds` valer.
     in_flight = None
+    # §8.75 reliquias: idem -- o estado lido e os gatilhos (relatorio de
+    # reliquia, quadro que diverge) atravessam o laco de aldeias.
+    relic_manager = None
 
     def __init__(self):
         # Precisam ser criados por instância, não como atributo de classe:
@@ -1437,6 +1441,21 @@ class TWB:
                     with meter_phase(self.wrapper, "em_voo"):
                         self.in_flight.refresh(sorted(managed_villages_dict)[0])
 
+                # §8.75: o estado das reliquias, lido antes de qualquer aldeia
+                # rodar -- o `village_init` de cada uma confere o quadro de
+                # bonus dela contra ele. 1 GET por ciclo; 2-3 quando algo mudou.
+                if self.relic_manager is None:
+                    self.relic_manager = RelicManager(wrapper=self.wrapper, config=config)
+                self.relic_manager.config = config
+                if self.report_manager is not None:
+                    self.report_manager.relic_listener = self.relic_manager.note_report
+                if (managed_villages_dict and self.relic_manager.enabled
+                        and self._hunter_gate(config, "reliquias")):
+                    with meter_phase(self.wrapper, "reliquias"):
+                        self.relic_manager.run(sorted(managed_villages_dict)[0],
+                                               own_ids=self.found_villages,
+                                               reason="inicio do ciclo")
+
                 # §8.68 gerente automatico: listas da conta (no maximo 1x/dia,
                 # e de novo quando o gerente volta) e o grupo de cada aldeia
                 # pelo papel. Os modelos ficam por aldeia, na fase "gerente".
@@ -1520,6 +1539,7 @@ class TWB:
                     _v.mint_manager = self.mint_manager
                     _v.am_auto = self.am_auto
                     _v.reservation_board = reservation_board
+                    _v.relic_manager = self.relic_manager
 
                 # Defesa propria (§8.60) antes de qualquer fase gastar tropa:
                 # ataque detectado no sono ou no ciclo anterior e decidido
@@ -1691,6 +1711,17 @@ class TWB:
                     overview_village = overview_page.villages_data.get(village.village_id)
                     if overview_village:
                         village.points = overview_village.points
+
+                    # §8.75: relatorio de reliquia aberto ou quadro de bonus que
+                    # divergiu na aldeia anterior -- relido entre aldeias, que e
+                    # ponto seguro (fora de checkpoint e de fase).
+                    if (self.relic_manager is not None and self.relic_manager.pending
+                            and self.relic_manager.enabled
+                            and self._hunter_gate(config, "reliquias")):
+                        with meter_phase(self.wrapper, "reliquias"):
+                            self.relic_manager.run(village.village_id,
+                                                   own_ids=self.found_villages,
+                                                   reason=self.relic_manager.pending)
 
                     # "aldeia" so recebe o que village.run() faz fora das
                     # fases que ele mesmo marca (init, farm, ...).

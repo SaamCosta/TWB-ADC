@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "5.5",
+    "version": "5.6",
     "author": "stefan2200"
   },
   "server": {
@@ -281,6 +281,9 @@
   },
   "inventory": {
     "enabled": false
+  },
+  "relics": {
+    "enabled": true
   },
   "minting": {
     "hub_village": null,

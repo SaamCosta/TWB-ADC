@@ -47,6 +47,9 @@ class ReportManager:
         self.last_list_read = None
         # Contagem da leitura em curso (§8.71), recriada a cada pagina 0.
         self._read_stats = None
+        # §8.75: `RelicManager.note_report`, instalado pelo twb.py. Recebe
+        # (tipo, id) de todo relatório aberto que não é ataque.
+        self.relic_listener = None
 
     def has_resources_left(self, vid):
         possible_reports = []
@@ -277,6 +280,10 @@ class ReportManager:
                         extra["list_commands"] = list(row["commands"])
                     res = self.put(report_id, report_type=report_type, data=extra)
                     self.last_reports[report_id] = res
+                    # §8.75: relatório de relíquia pede releitura do estado.
+                    listener = getattr(self, "relic_listener", None)
+                    if listener is not None:
+                        listener(report_type, report_id)
 
         if from_list:
             self.logger.info(

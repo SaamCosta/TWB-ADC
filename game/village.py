@@ -106,6 +106,9 @@ class Village:
     # injetada pelo twb.py como o mint_manager.
     am_auto = None
     am_widget_options = None
+    # §8.75: o RelicManager da conta, injetado pelo twb.py como os de cima.
+    # None (testes, smoke) = o quadro de bonus e lido e gravado, sem conferir.
+    relic_manager = None
 
     # Feature 35: quadro de reservas da tribo para este ciclo, instalado por
     # twb.py junto dos dois acima. Mesma nota de seguranca: sempre reatribuido,
@@ -132,6 +135,9 @@ class Village:
         # mutável: instância, não classe (1º padrão).
         self.am_widget = None
         self.am_widget_options = None
+        # §8.75: quadro "Efeitos ativos" da visao geral deste ciclo.
+        self.relic_board = None
+        self.relic_board_at = None
         self._am_cession = {}
         self._am_cession_at = {}
         # Última reserva de nobre logada (§8.68). {} = "sem reserva", o estado
@@ -204,6 +210,8 @@ class Village:
         # Widget de um ciclo anterior não vale: sem leitura nova, o bot faz.
         self.am_widget = None
         self.am_widget_options = None
+        self.relic_board = None
+        self.relic_board_at = None
         if not self.village_id:
             data = self.wrapper.get_url("game.php?screen=overview&intro")
             if data:
@@ -245,6 +253,17 @@ class Village:
             # §8.68: modelos do gerente nesta aldeia, da mesma resposta.
             self.am_widget = Extractor.account_manager_widget(data)
             self.am_widget_options = Extractor.account_manager_widget_options(data)
+            # §8.75: bonus por atributo e reliquias que alcancam a aldeia, da
+            # mesma resposta. Sem o widget (None) nao se confere nada.
+            self.relic_board = Extractor.village_bonus_board(data)
+            self.relic_board_at = int(time.time()) if self.relic_board is not None else None
+            if self.relic_manager is not None and self.relic_board is not None:
+                try:
+                    self.relic_manager.check_board(self.village_id, self.relic_board,
+                                                   self.relic_board_at)
+                except Exception as exc:
+                    (self.logger or logging.getLogger("Village")).warning(
+                        "Relics: conferencia do quadro falhou: %r", exc)
         if (
                 self.village_set_name
                 and self.game_data
@@ -2479,5 +2498,8 @@ class Village:
             "zone": current_zone,
             "points": self.points,
             "flags": flag_state,
+            # §8.75: quadro de bonus lido no init deste ciclo (painel /relics).
+            "relic_board": dict(self.relic_board, read_at=self.relic_board_at)
+            if self.relic_board is not None else None,
         }
         FileManager.save_json_file(village_entry, f"cache/managed/{self.village_id}.json")

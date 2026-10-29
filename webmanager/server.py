@@ -11,10 +11,10 @@ from core.village_label import village_label
 
 try:
     from webmanager.helpfile import help_file, buildings, nested_sections
-    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, TroopLocationReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
+    from webmanager.utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, TroopLocationReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader, RelicReader
 except ImportError:
     from helpfile import help_file, buildings, nested_sections
-    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, TroopLocationReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader
+    from utils import DataReader, BotManager, MapBuilder, DiplomacyReader, TribeSupportReader, TroopLocationReader, DefenseReader, BuildingTemplateManager, UnitTemplateManager, LogReader, FarmScoreReader, ConquestReader, HunterReader, ZoneReader, PvpConquestReader, FlagReader, ResourceSharingReader, ReportReader, StatueReader, InventoryReader, EmpireReader, FarmExclusionReader, PlayerStatsReader, InFlightReader, CycleReader, MintReader, RelicReader
 
 bm = BotManager()
 app = Flask(__name__)
@@ -713,6 +713,14 @@ def get_inventory():
         enabled=enabled,
         data=data,
     )
+
+
+@app.route('/relics', methods=['GET'])
+def get_relics():
+    config = DataReader.config_grab()
+    enabled = config.get("relics", {}).get("enabled", True)
+    return render_template('relics.html', enabled=enabled,
+                           v=RelicReader.view(managed_cache=DataReader.cache_grab("managed")))
 
 
 def _render_pvp_conquest(error=None):

@@ -1,0 +1,93 @@
+{% extends "main.html" %}
+{% block title %}Relíquias{% endblock %}
+
+{% macro pct(n) %}{{ '%g' % (n or 0) }}%{% endmacro %}
+
+{% block content %}
+<header class="twb-page-header">
+  <div><p class="twb-eyebrow">Economia · relíquias</p><h1 class="twb-page-title">Relíquias</h1><p class="twb-page-summary">O que o bot sabe das relíquias da conta: vagas, onde cada uma está, quais aldeias ela alcança (distância até o alcance, contando a anfitriã) e quanto do bônus o teto de {{ pct(v.cap if v else 20) }} por atributo descarta. Só leitura: nesta fase o bot não equipa nem move nada.</p></div>
+</header>
+
+{% if not enabled %}
+<div class="twb-inline-alert twb-inline-alert--warning mb-3" role="alert"><strong>Leitura desligada.</strong> Ative <code>relics.enabled</code> em <a href="/config">/config</a>.</div>
+{% endif %}
+
+{% if not v %}
+<div class="twb-inline-alert mb-3" role="status"><strong>Nenhum dado ainda.</strong> O bot lê as relíquias no início de cada ciclo; veja <a href="/logs">/logs</a> se a leitura falhou.</div>
+{% else %}
+{% set s = v.slots or {} %}
+<section class="twb-health-strip" aria-label="Resumo das relíquias">
+  <div class="twb-health-item"><span class="twb-health-label">Vagas</span><span class="twb-health-value">{{ s.used if s else '?' }} de {{ s.total if s else '?' }} ocupadas</span><span class="twb-health-meta">{% if s and s.next_thresholds %}próximas com {{ s.next_thresholds | join(', ') }} aldeias{% endif %}{% if v.overview_fmt %} · visão geral lida em {{ v.overview_fmt }}{% endif %}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Relíquias</span><span class="twb-health-value">{{ v.counts.equipped or 0 }} equipadas · {{ v.counts.inactive or 0 }} inativas · {{ v.counts.inventory or 0 }} paradas</span><span class="twb-health-meta">lido em {{ v.fetched_fmt }} ({{ v.reason }}, {{ v.gets }} requisição(ões))</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Cobertura</span><span class="twb-health-value">{{ v.totals.covered_villages or 0 }} aldeias</span><span class="twb-health-meta">{% if v.check.divergences %}<span class="twb-status twb-status--danger">{{ v.check.divergences | length }} divergência(s) com o jogo</span>{% else %}<span class="twb-status twb-status--success">bate com o jogo</span>{% endif %}{% if v.check.unplaced %} · {{ v.check.unplaced | length }} sem coordenada{% endif %}</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Descartado pelo teto</span><span class="twb-health-value">{{ '%.1f' % (100 * (v.totals.discarded_share or 0)) }}%</span><span class="twb-health-meta">{{ '%g' % (v.totals.discarded_pct or 0) }} de {{ '%g' % (v.totals.relic_pct or 0) }} pontos percentuais somados nas aldeias cobertas</span></div>
+  <div class="twb-health-item"><span class="twb-health-label">Quadros das aldeias</span><span class="twb-health-value">{% if v.boards_mismatched %}<span class="twb-status twb-status--warning">{{ v.boards_mismatched | length }} sem bater</span>{% else %}{{ v.boards_checked }} conferido(s){% endif %}</span><span class="twb-health-meta">o quadro "Efeitos ativos" de cada aldeia, lido quando ela roda</span></div>
+</section>
+
+{% if v.check.divergences %}
+<div class="twb-inline-alert twb-inline-alert--danger mb-3" role="alert"><strong>A cobertura calculada não bate com a visão geral do jogo.</strong>
+  <ul class="mb-0">{% for d in v.check.divergences %}<li>{{ d.text }}{% if d.host_id %} — relíquia na {{ d.host_id | vlabel }}{% endif %}{% if d.vid %}: {{ d.vid | vlabel }}{% endif %}</li>{% endfor %}</ul></div>
+{% endif %}
+
+<section class="twb-panel" aria-labelledby="titulo-reliquias">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-reliquias">Relíquias da conta</h2></div>
+  <div class="twb-panel-body">
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Relíquias da conta">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th>Relíquia</th><th>Estado</th><th>Aldeia</th><th class="text-right">Alcance</th><th>Principal</th><th>Secundários</th><th>Alcança</th></tr></thead>
+        <tbody>
+        {% for r in v.relics %}
+          <tr>
+            <td>{% if r.image %}<img src="{{ r.image }}" alt="" width="23" height="23" style="vertical-align:middle"> {% endif %}<strong>{{ r.name }}</strong><div class="small text-muted">{{ r.quality_label }}</div></td>
+            <td><span class="twb-status {% if r.state == 'equipped' %}twb-status--success{% elif r.state == 'inactive' %}twb-status--warning{% else %}twb-status--muted{% endif %}">{{ r.state_label }}</span>
+              {% if r.inactive_until_fmt %}<div class="small text-muted">até {{ r.inactive_until_fmt }}</div>{% endif %}
+              {% if r.removable_fmt %}<div class="small text-muted">removível a partir de {{ r.removable_fmt }}</div>{% endif %}
+              {% if r.locked_state %}<div class="small text-muted">{{ r.locked_state }}</div>{% endif %}</td>
+            <td>{% if r.village_id %}{{ r.village_id | vlabel }}{% else %}—{% endif %}</td>
+            <td class="text-right twb-number">{{ r.range }}</td>
+            <td>{{ r.main.text if r.main else '—' }}</td>
+            <td>{% for sub in r.subs %}<div>{{ sub.text }}{% if sub.perfect %} <span class="twb-status twb-status--success">perfeito</span>{% endif %}</div>{% endfor %}</td>
+            <td>{% if r.state == 'equipped' %}{{ r.covers | length }}: <span class="small">{% for vid in r.covers %}{{ vid | vlabel }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-aldeias">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-aldeias">Bônus das relíquias por aldeia</h2></div>
+  <div class="twb-panel-body">
+    <p class="small text-muted">"Cálculo" é a soma das relíquias que alcançam a aldeia, com o teto de {{ pct(v.cap) }} por atributo. "Jogo" é o total que o quadro da visão geral mostrou na última vez que a aldeia rodou — inclui itens e paladino, que não entram no teto.</p>
+    {% if not v.villages %}<p class="mb-0">Nenhuma aldeia coberta.</p>{% endif %}
+    {% for vg in v.villages %}
+    <h3 class="h6 mt-3">{{ vg.vid | vlabel }}
+      {% if vg.discarded %}<span class="twb-status twb-status--warning">{{ pct(vg.discarded) }} descartado</span>{% endif %}
+      {% if vg.check_ok is sameas true %}<span class="twb-status twb-status--success">quadro bate</span>{% elif vg.check_ok is sameas false %}<span class="twb-status twb-status--danger">quadro não bate</span>{% endif %}
+      <small class="text-muted">{% if vg.board_fmt %}quadro lido em {{ vg.board_fmt }}{% else %}quadro ainda não lido{% endif %}</small></h3>
+    {% for m in vg.check_msgs %}<div class="small text-danger">{{ m }}</div>{% endfor %}
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Bônus de {{ vg.vid | vlabel }}">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th>Atributo</th><th class="text-right">Relíquias</th><th class="text-right">Aplicado</th><th class="text-right">Descartado</th><th class="text-right">Jogo (total)</th></tr></thead>
+        <tbody>{% for row in vg.rows %}<tr><td>{{ row.key }}</td><td class="text-right twb-number">{{ pct(row.sum) }}</td><td class="text-right twb-number">{{ pct(row.applied) }}</td><td class="text-right twb-number">{% if row.discarded %}{{ pct(row.discarded) }}{% else %}—{% endif %}</td><td class="text-right twb-number">{% if row.game_total is not none %}{{ pct(row.game_total) }}{% if row.game_discarded %} ({{ pct(row.game_discarded) }} desc.){% endif %}{% else %}—{% endif %}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="twb-panel" aria-labelledby="titulo-achados">
+  <div class="twb-panel-header"><h2 class="twb-panel-title" id="titulo-achados">Relíquias por dia do servidor</h2></div>
+  <div class="twb-panel-body">
+    <p class="small text-muted">Contadas pelo título dos relatórios em Relatórios › Outros{% if v.found_fmt %}, lidos em {{ v.found_fmt }}{% endif %}. O jogo permite 2 achados por dia (em batalha ou coleta). Dia incompleto: a página lida não o continha inteiro.</p>
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Relíquias por dia">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th>Dia</th><th class="text-right">Encontradas</th><th class="text-right">Adquiridas (conquista)</th><th class="text-right">Ao inventário</th><th class="text-right">Renomeadas</th><th></th></tr></thead>
+        <tbody>{% for d in v.found %}<tr><td>{{ d.day }}</td><td class="text-right twb-number">{{ d.found }}/2</td><td class="text-right twb-number">{{ d.acquired }}</td><td class="text-right twb-number">{{ d.unlocked }}</td><td class="text-right twb-number">{{ d.renamed }}</td><td>{% if not d.complete %}<span class="twb-status twb-status--muted">incompleto</span>{% endif %}</td></tr>{% else %}<tr><td colspan="6">Ainda não lido.</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

@@ -2074,6 +2074,357 @@ class Extractor:
             "warnings": warnings,
         }
 
+    # §8.74/§8.75 relíquias. Os argumentos que seguem o array em
+    # `RelicSystem.Inventory.init(relics, ...)`, na ordem do JS do jogo
+    # (`RelicSystem.0ba79d.js`, lido em 29/10/2026).
+    RELIC_INIT_ARGS = ("village_id", "premium_enabled", "pp_reroll_cost",
+                       "pp_reroll_feature", "can_equip", "loyalty_locked",
+                       "is_new_system", "materials")
+    # "-8% Estábulo nos custos de recrutamento", "Lanceiro: +7% poder de
+    # ataque e defesa": o número sai do texto, e o resto é a CHAVE do atributo.
+    # O `effect_type` do JSON não serve de chave: `b_recruitment_cost` cobre
+    # quartel, estábulo, oficina e nobre, e `b_unitstat` cobre toda unidade.
+    RELIC_STAT_RE = re.compile(r"([+-])\s*(\d+(?:[.,]\d+)?)\s*%\s*")
+    # Duração relativa à hora da página ("23:40:33"). `remaining_removal_cooldown`
+    # e `inactive_until` vêm assim, e não como data (medido em 29/10).
+    RELIC_DURATION_RE = re.compile(r"^\s*(\d+):(\d{2}):(\d{2})\s*$")
+
+    @staticmethod
+    def relic_stat(text):
+        """
+        {"text", "key", "value", "sign"} de uma linha de atributo de relíquia,
+        ou do título de uma linha de bônus da visão geral. `key` é o texto sem
+        o número ("Estábulo nos custos de recrutamento", "Aríete: poder de
+        ataque"), e é ela que casa a relíquia com a linha `benefit` da aldeia.
+        `value` é sempre positivo: o jogo escreve custo como "-8%" no título e
+        "+8%" na contribuição. None sem número (markup novo).
+        """
+        text = " ".join(html.unescape(text or "").split())
+        match = Extractor.RELIC_STAT_RE.search(text)
+        if not match:
+            return None
+        key = (text[:match.start()] + text[match.end():]).strip()
+        return {"text": text, "key": " ".join(key.split()),
+                "value": float(match.group(2).replace(",", ".")),
+                "sign": match.group(1)}
+
+    @staticmethod
+    def relic_duration(value):
+        """Segundos de um "HH:MM:SS" do JSON das relíquias; None se vazio ou outro formato."""
+        match = Extractor.RELIC_DURATION_RE.match(str(value or ""))
+        if not match:
+            return None
+        h, m, s = (int(g) for g in match.groups())
+        return h * 3600 + m * 60 + s
+
+    @staticmethod
+    def _js_call_args(text, pos, count):
+        """
+        Lê até `count` argumentos literais de JS a partir de `pos` (logo
+        depois do primeiro argumento de uma chamada): número, true/false/null,
+        string entre aspas simples ou duplas, array/objeto JSON. Devolve a
+        lista lida, que fica curta se a chamada fechar antes ou se aparecer
+        algo que não é literal.
+        """
+        out = []
+        n = len(text)
+        while len(out) < count and pos < n:
+            while pos < n and text[pos] in " \t\r\n,":
+                pos += 1
+            if pos >= n or text[pos] == ")":
+                break
+            ch = text[pos]
+            if ch in "[{":
+                raw = Extractor.balanced_slice(text, pos)
+                if raw is None:
+                    break
+                try:
+                    out.append(json.loads(raw, strict=False))
+                except ValueError:
+                    break
+                pos += len(raw)
+            elif ch in "'\"":
+                end = pos + 1
+                while end < n and text[end] != ch:
+                    end += 2 if text[end] == "\\" else 1
+                out.append(text[pos + 1:end])
+                pos = end + 1
+            else:
+                token = re.match(r"[^,)\s]+", text[pos:])
+                if not token:
+                    break
+                word = token.group(0)
+                pos += len(word)
+                if word in ("true", "false"):
+                    out.append(word == "true")
+                elif word == "null":
+                    out.append(None)
+                elif re.fullmatch(r"-?\d+", word):
+                    out.append(int(word))
+                else:
+                    break
+        return out
+
+    @staticmethod
+    def relic_inventory(res):
+        """
+        Inventário de relíquias da conta, de `screen=relic_system` (§8.74).
+        Verbatim do br143 de 29/10/2026 em tests/fixtures/relic_system_br143.html.
+
+        A tela traz tudo num `<script>`:
+
+            RelicSystem.Inventory.init([{...}, ...], 44683, true, 100,
+                '\\\\Ig\\\\...\\\\RelicReroll', true, false, true, [], );
+
+        Devolve {"relics": [...], "village_id", "premium_enabled",
+        "pp_reroll_cost", "pp_reroll_feature", "can_equip", "loyalty_locked",
+        "is_new_system", "materials"}, ou None sem a chamada ou com menos
+        argumentos que os 9 do JS (login, captcha, markup novo).
+
+        Cada relíquia sai normalizada: atributos com `key`/`value` lidos do
+        texto (`relic_stat`), durações em segundos, `village_id` como str ou
+        None (inventário). `discovered_by_*` fica de fora: é nome de jogador e
+        nada no bot o usa. ⚠️ `inactive_until` e `remaining_removal_cooldown`
+        são DURAÇÕES relativas à hora da página ("18:08:50"), não datas.
+        """
+        res = _page_text(res)
+        match = re.search(r"RelicSystem\.Inventory\.init\(\s*", res or "")
+        if not match:
+            return None
+        raw = Extractor.balanced_slice(res, match.end())
+        if raw is None:
+            return None
+        try:
+            relics = json.loads(raw, strict=False)
+        except ValueError:
+            return None
+        if not isinstance(relics, list):
+            return None
+        names = Extractor.RELIC_INIT_ARGS
+        args = Extractor._js_call_args(res, match.end() + len(raw), len(names))
+        if len(args) < len(names):
+            return None
+        out = dict(zip(names, args))
+        out["village_id"] = str(out["village_id"]) if out["village_id"] is not None else None
+        out["relics"] = []
+        for relic in relics:
+            if not isinstance(relic, dict) or relic.get("id") is None:
+                return None
+            main = relic.get("main_stat") or {}
+            main_stat = Extractor.relic_stat(main.get("name"))
+            if main_stat is not None:
+                main_stat["effect_type"] = main.get("effect_type")
+            subs = []
+            for sub in relic.get("sub_stats") or []:
+                stat = Extractor.relic_stat(sub.get("name"))
+                if stat is None:
+                    continue
+                stat.update(effect_type=sub.get("effect_type"), id=sub.get("id"),
+                            perfect=bool(sub.get("perfect")))
+                subs.append(stat)
+            host = relic.get("village_id")
+            out["relics"].append({
+                "id": str(relic["id"]),
+                "name": relic.get("name"),
+                "type": relic.get("type"),
+                "type_name": relic.get("type_name"),
+                "quality": relic.get("quality"),
+                "quality_rank": relic.get("quality_rank"),
+                "range": relic.get("range"),
+                "village_id": str(host) if host is not None else None,
+                "main": main_stat,
+                "subs": subs,
+                "equipped_at": relic.get("equipped_at"),
+                "acquired_at": relic.get("acquired_at"),
+                "removal_cooldown_sec": Extractor.relic_duration(
+                    relic.get("remaining_removal_cooldown")),
+                "inactive_sec": Extractor.relic_duration(relic.get("inactive_until")),
+                "inactive_raw": relic.get("inactive_until"),
+                "locked_state": relic.get("locked_state"),
+                "trade_offer_id": relic.get("trade_offer_id"),
+                "stack_key": relic.get("stack_key"),
+                "image": relic.get("image46_path"),
+            })
+        return out
+
+    # Âncora de aldeia nas telas de relíquia: `data-id` + rótulo "BBM 003 (579|304) K35".
+    RELIC_ANCHOR_RE = re.compile(
+        r'<span class="village_anchor"[^>]*data-id="(\d+)"[^>]*>\s*<a [^>]*>([^<]*?)\((\d+)\|(\d+)\)')
+
+    @staticmethod
+    def relic_overview(res):
+        """
+        `screen=relic_system&mode=overview` (§8.74), verbatim do br143 de
+        29/10/2026 em tests/fixtures/relic_overview_br143.html.
+
+        Devolve None sem `id="relic_slots"`; senão:
+          - `slots_used`/`slots_free`: `relic-slot used` / `relic-slot unlocked`;
+          - `next_thresholds`: [70, 90] de "Obtenha N aldeias" (`relic-slot locked`);
+          - `equipped`: [{relic_id, name, quality, host_id, affected}] — `affected`
+            é a lista "Outras aldeias afetadas", que NÃO inclui a anfitriã;
+          - `inactive`: [{name, quality, host_id, remaining_sec}] da tabela
+            "Relíquias Inativas";
+          - `coords`: {vid: (x, y)} de toda âncora de aldeia da tela.
+
+        `relic_id` sai do `data-relic-id` do link da lista; relíquia sem outra
+        aldeia afetada pode não ter o link (não visto), então quem casa com o
+        inventário usa a anfitriã, que é única por aldeia.
+        """
+        res = _page_text(res)
+        start = (res or "").find('id="relic_slots"')
+        if start == -1:
+            return None
+        inactive_at = res.find("inactive-relics-table", start)
+        end = res.find("RelicSystem.Overview.init", start)
+        slots_end = inactive_at if inactive_at != -1 else end
+        slots_html = res[start:slots_end if slots_end != -1 else len(res)]
+        out = {"slots_used": 0, "slots_free": 0, "next_thresholds": [],
+               "equipped": [], "inactive": [], "coords": {}}
+        for anchor in Extractor.RELIC_ANCHOR_RE.finditer(
+                res[start:end if end != -1 else len(res)]):
+            out["coords"][anchor.group(1)] = (int(anchor.group(3)), int(anchor.group(4)))
+        parts = re.split(r'<div class="relic-slot (\w+)">', slots_html)
+        # Toda conta tem vaga (ocupada, livre ou trancada com limiar): sem
+        # nenhuma, o markup mudou, e 0/0 seria lido como "conta sem vaga".
+        if len(parts) < 2:
+            return None
+        for kind, body in zip(parts[1::2], parts[2::2]):
+            if kind == "used":
+                out["slots_used"] += 1
+                name = re.search(r'<strong class="relic-quality-(\w+)">([^<]*)</strong>', body)
+                location = re.search(r'class="location">.*?data-id="(\d+)"', body, re.S)
+                relic_id = re.search(r'data-relic-id="(\d+)"', body)
+                lst = re.search(r'effected-other-villages-list">(.*?)</ul>', body, re.S)
+                out["equipped"].append({
+                    "relic_id": relic_id.group(1) if relic_id else None,
+                    "name": html.unescape(name.group(2)).strip() if name else None,
+                    "quality": name.group(1) if name else None,
+                    "host_id": location.group(1) if location else None,
+                    "affected": re.findall(r'data-id="(\d+)"', lst.group(1)) if lst else [],
+                })
+            elif kind == "unlocked":
+                out["slots_free"] += 1
+            elif kind == "locked":
+                need = re.search(r"(\d+)\s+aldeias", body)
+                if need:
+                    out["next_thresholds"].append(int(need.group(1)))
+        if inactive_at != -1:
+            table = res[inactive_at:res.find("</table>", inactive_at)]
+            for row in re.findall(r"<tr>(.*?)</tr>", table, re.S):
+                name = re.search(r'<strong class="relic-quality-(\w+)">([^<]*)</strong>', row)
+                if not name:
+                    continue
+                host = re.search(r'data-id="(\d+)"', row)
+                timer = re.search(r'<span class="timer">([^<]*)</span>', row)
+                out["inactive"].append({
+                    "name": html.unescape(name.group(2)).strip(),
+                    "quality": name.group(1),
+                    "host_id": host.group(1) if host else None,
+                    "remaining_sec": Extractor.relic_duration(timer.group(1)) if timer else None,
+                })
+        return out
+
+    @staticmethod
+    def village_bonus_board(res):
+        """
+        Quadro de bônus da aldeia no widget "Efeitos ativos" (`show_effects`)
+        de `screen=overview`, que o bot já lê em todo `village_init`.
+        Verbatim do br143 de 29/10/2026 (BBM 001) em
+        tests/fixtures/overview_effects_relics_br143.html.
+
+        Duas famílias de linha, separadas por comentário no próprio markup:
+          - `<!-- relic -->`: uma por relíquia que ALCANÇA a aldeia, com
+            "Localizado em" (a anfitriã) no `title`;
+          - `<!-- benefit -->`: uma por atributo, com o total no `<h3>` e a
+            contribuição de cada fonte em `<li>`. Contribuição de relíquia tem
+            `class=` (`''` ou `contribute-partial warn`); item ("de itens") e
+            paladino ("do seu paladino") vêm sem classe. Quando o teto de 20%
+            corta, uma `<li class='contribute-breakdown'>` diz "+5% aplicado,
+            +5% descartado".
+
+        Devolve None sem o widget (o jogador pode tirá-lo da visão geral, ou a
+        página não é a visão geral); senão {"relics": [{name, quality,
+        host_id, stats}], "benefits": [{key, title, total, sources, applied,
+        discarded}]}. `applied`/`discarded` ficam None sem o detalhamento.
+        Aldeia sem relíquia por perto tem `relics` vazio, o que é legítimo:
+        a âncora é o widget, não as linhas.
+        """
+        res = _page_text(res)
+        start = (res or "").find('id="show_effects"')
+        if start == -1:
+            return None
+        end = res.find("</table>", start)
+        block = res[start:end if end != -1 else len(res)]
+        out = {"relics": [], "benefits": []}
+        for kind, body in re.findall(
+                r"<!-- (relic|benefit) -->(.*?)(?=<!-- (?:relic|benefit|night) -->|$)",
+                block, re.S):
+            body = body.split("</tr>", 1)[0]
+            if kind == "relic":
+                name = re.search(r'<a class="relic-quality-(\w+)"[^>]*>([^<]*)</a>', body)
+                host = re.search(r"Localizado em:.*?data-id=&quot;(\d+)&quot;", body, re.S)
+                stats = re.findall(r"<li>(.*?)</li>", body.split("Localizado em", 1)[0])
+                out["relics"].append({
+                    "name": html.unescape(name.group(2)).strip() if name else None,
+                    "quality": name.group(1) if name else None,
+                    "host_id": host.group(1) if host else None,
+                    "stats": [" ".join(html.unescape(s).split()) for s in stats],
+                })
+                continue
+            title = re.search(r"<h3>.*?&gt;\s*(.*?)</h3>", body, re.S)
+            stat = Extractor.relic_stat(title.group(1)) if title else None
+            if stat is None:
+                continue
+            sources = []
+            # `finditer`, não `findall`: só ele separa `<li>` sem classe
+            # (grupo None: item/paladino) de `<li class=''>` (grupo "": relíquia).
+            for li in re.finditer(
+                    r"<li(?:\s+class='([^']*)')?>\s*<b>\s*[+-]?(\d+(?:[.,]\d+)?)%\s*</b>\s*(.*?)</li>",
+                    body, re.S):
+                cls, value, rest = li.groups()
+                rest = " ".join(html.unescape(rest).split())
+                is_relic = cls is not None
+                if is_relic and rest.startswith("de "):
+                    rest = rest[3:]
+                sources.append({"value": float(value.replace(",", ".")), "name": rest,
+                                "relic": is_relic, "partial": "contribute-partial" in (cls or "")})
+            applied = re.search(r"\+?(\d+(?:[.,]\d+)?)%\s*aplicado", body)
+            discarded = re.search(r"\+?(\d+(?:[.,]\d+)?)%\s*descartado", body)
+            out["benefits"].append({
+                "key": stat["key"], "title": stat["text"], "total": stat["value"],
+                "sources": sources,
+                "applied": float(applied.group(1).replace(",", ".")) if applied else None,
+                "discarded": float(discarded.group(1).replace(",", ".")) if discarded else None,
+            })
+        return out
+
+    @staticmethod
+    def report_list_rows(res):
+        """
+        Linhas da lista de relatórios (`screen=report&mode=...`), na ordem da
+        tela (mais novo primeiro): [{id, title, received, thumb}].
+
+        `title` é o rótulo da linha (`quickedit-label`), que o jogador pode
+        renomear; `received` é o texto cru da coluna "Recebido em"
+        ("out. 29, 01:14"); `thumb` é o caminho da miniatura depois de
+        `graphic/` ("relic_system/relic_icon.webp"), ou None. Verbatim do br143
+        de 29/10/2026 em tests/fixtures/report_list_other_br143.html.
+        """
+        res = _page_text(res)
+        out = []
+        for rid, row in re.findall(
+                r'(?s)<tr class="[^"]*\breport-(\d+)"[^>]*>(.*?)</tr>', res or ""):
+            label = re.search(r'class="quickedit-label">(.*?)</span>', row, re.S)
+            received = re.search(r'<td class="nowrap">([^<]*)</td>', row)
+            thumb = re.search(r'graphic/([\w/.-]+)"[^>]*class="report-thumb"', row)
+            out.append({
+                "id": rid,
+                "title": " ".join(html.unescape(label.group(1)).split()) if label else None,
+                "received": received.group(1).strip() if received else None,
+                "thumb": thumb.group(1) if thumb else None,
+            })
+        return out
+
     @staticmethod
     def get_daily_reward(res):
         """

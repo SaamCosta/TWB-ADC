@@ -8364,7 +8364,7 @@ relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
   imposta esqueceu que o saque afeta a coleta.
 
 **Plano, uma fase por chat.**
-1. **Leitura.** Parser do inventário e da visão geral; contador de
+1. ✅ **Leitura** (§8.75). Parser do inventário e da visão geral; contador de
    "encontrada" por dia; quadro `benefit` por aldeia; `cache/relics.json`;
    painel. Fixtures verbatim anonimizadas.
 2. **Planejador puro** (`core/relic_planner.py`): valor/h por atributo e
@@ -8372,6 +8372,100 @@ relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
 3. **Equipar e mover**, com histerese e um teto de trocas por dia.
 4. **Fundir**, pela mesma conta de valor. Nunca PP.
 5. **Efeitos no cálculo do bot**, só se uma medição mostrar diferença.
+
+## 8.75 `P-RELIQUIA` — Fase 1: o bot sabe o estado das relíquias (2026-10-29)
+
+Fase 1 de 5 do plano da §8.74. **Só leitura**: nenhum POST, nenhuma relíquia
+é movida. O que entrou:
+
+**Parsers no `Extractor`**, com fixtures verbatim do br143 de 29/10
+(anonimizadas: jogador, id do jogador, paladino, `h`, nomes de terceiros) e
+`tests/test_relics.py`:
+- `relic_inventory` — o array e os 8 argumentos seguintes de
+  `RelicSystem.Inventory.init`. Cada atributo vira `{key, value, sign}` lido
+  do **texto** ("-8% Estábulo nos custos de recrutamento" → chave "Estábulo nos
+  custos de recrutamento", 8). O `effect_type` do JSON não serve de chave:
+  `b_recruitment_cost` cobre quartel, estábulo, oficina e nobre. ⚠️
+  `remaining_removal_cooldown` e `inactive_until` são **durações** relativas à
+  hora da página ("18:08:50"), não datas; o estado guarda o instante absoluto
+  (`removable_at`, `inactive_until_at`).
+- `relic_overview` — vagas ocupadas/livres, limiares ("Obtenha N aldeias"),
+  listas "Outras aldeias afetadas" (que **não** incluem a anfitriã) e a
+  tabela de inativas.
+- `village_bonus_board` — o widget `show_effects` de `screen=overview`, lido
+  no `village_init` com a resposta que o bot já tinha (0 GET novo). Linha
+  `<!-- relic -->` = relíquia que alcança a aldeia, com a anfitriã; linha
+  `<!-- benefit -->` = total por atributo, contribuições por fonte e "aplicado/
+  descartado". Contribuição de relíquia é a `<li>` **com** `class=`; item e
+  paladino vêm sem classe.
+- `report_list_rows` — linhas de qualquer lista de relatórios (título,
+  "Recebido em", miniatura).
+
+**Conta pura em `core/relics.py`:** cobertura (euclidiana ≤ `range`, anfitriã
+inclusa), conferência contra a lista do jogo, soma por atributo e aldeia com o
+teto de 20% só sobre a parte das relíquias, conferência do quadro da aldeia e
+contador por dia. Divergência de cobertura é WARNING; aldeia que o jogo lista e
+que não tem coordenada aqui é `unplaced`, não divergência.
+
+**Leitor `game/relic_manager.py`**, uma instância por processo, atrás do
+`_hunter_gate(config, "reliquias")`:
+- no início do ciclo, depois de "em voo" e antes da conquista (o prime da
+  conquista já roda `village_init` e confere quadros contra o estado novo);
+- entre aldeias, quando o `ReportManager` abriu um `ReportRelic*`
+  (`relic_listener`) ou quando o quadro de uma aldeia divergiu de um estado
+  com mais de 30 min.
+- Custo: `screen=relic_system` sempre (1 GET); `mode=overview` só quando as
+  relíquias **ativas** mudaram, o número de aldeias mudou (vaga nova) ou a
+  leitura tem mais de 6 h; `report&mode=other` só com relatório de relíquia,
+  virada do dia, dia incompleto ou 6 h. Ciclo normal: 1 GET; achado: 2. O
+  teste conta os GETs.
+- Quadro que diverge de estado velho pede **uma** releitura (no máximo a cada
+  30 min); se segue divergindo, WARNING, e a mesma divergência repetida não
+  vira um WARNING por ciclo. A releitura que resolve loga "as relíquias tinham
+  mudado; o bot não mexeu" (o usuário mexe nelas, 9º padrão).
+
+**Contador de achados.** Pelo título em `screen=report&mode=other`, por dia
+do servidor. Um dia só é `complete` se a página o contém inteiro: página com
+menos de 50 linhas (categoria inteira) ou com linha de dia anterior. Linha de
+relíquia renomeada conta como `renamed`, nunca como achado. Só o mês `out.`
+foi visto na tela; os outros são as abreviações pt-BR, e mês que não casa
+deixa os dias incompletos em vez de chutar. ⚠️ Os títulos "encontrada" e
+"adquirida" podem ser renomeados pelo jogador; a classe do relatório não os
+separa (§8.74).
+
+**Saída.** `cache/relics.json` (só o bot escreve), `relic_board` em cada
+`cache/managed/<vid>.json`, log de resumo e o painel `/relics` (Economia ›
+Relíquias). Config nova `relics.enabled` (padrão `true`), `build.version` 5.6
+só no example; conferido antes com `cache/_check_merge_loss.py`: o merge não
+descarta nada do `config.json` vivo.
+
+**Validação.**
+- Fixtures: cobertura calculada bate com o jogo nas 5 equipadas, 8 aldeias
+  cobertas, quartel 25% (5% descartado) em BBM 001, 002, 003, 004 e 010, e o
+  quadro da BBM 001 bate com o cálculo atributo por atributo.
+- Smoke contra o servidor (`tests/smoke_relics.py`, 3 GETs a 90 s, 01:53 de
+  29/10, estado gravado fora do `cache/`): vagas 5/8, próximas com 70 e 90,
+  5 equipadas, 2 inativas, **4** paradas (a Ferradura Resistente achada às
+  01:14 já está no inventário), cobertura bate, 4,3% descartado (25 de 580
+  pontos), achados 27/10 = 2, 28/10 = 2, 29/10 = 1, todos completos.
+- Ciclo real: bot reiniciado às 02:05 de 29/10 (depois de uma rajada de apoio
+  da defesa própria para a BBM 067 terminar). Às 02:06:35 o log trouxe o
+  resumo do início do ciclo (3 GETs: era a primeira leitura), igual ao smoke,
+  com "cobertura calculada bate com a visão geral do jogo". Nos primeiros
+  minutos, 9 quadros de aldeia conferidos, todos batendo (aldeias fora da
+  cobertura). `cache/relics.json` e o painel `/relics` mostram o mesmo. Os
+  quadros das 8 aldeias cobertas só são conferidos quando cada uma roda neste
+  ciclo; a BBM 001 já bate na fixture. O merge da config (5.6) foi feito às
+  01:50 pelo bot antigo, que relê a config a cada ciclo, com `config.bak`.
+
+**O que fica em aberto para as próximas fases.**
+- Atributo combinado ("Lanceiro: +7% poder de ataque e defesa") nunca foi
+  visto num quadro de aldeia: a Alabarda Aprimorada está inativa. Se o jogo o
+  divide em duas linhas, a conferência do quadro acusa na BBM 066 quando ela
+  ativar (~17 h depois de 01:53 de 29/10); é medição, não bug.
+- Secundário `perfect` não é dobrado no cálculo: o valor sai do texto, e
+  nenhum perfeito foi visto ainda.
+- A 88755 (BBM 067) aparece só pelo id: recém-conquistada, sem `cache/managed`.
 
 ## 9. Próximos passos
 

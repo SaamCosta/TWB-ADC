@@ -4937,3 +4937,94 @@ class MintReader:
         if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
             raise ValueError("horário precisa estar no formato HH:MM")
         return "%02d:%02d" % (int(m.group(1)), int(m.group(2)))
+
+
+class RelicReader:
+    """
+    Le cache/relics.json (game/relic_manager.py, §8.75) e o `relic_board` de
+    cada cache/managed para o painel /relics. Somente leitura: nenhuma
+    reliquia e movida nesta fase.
+    """
+
+    QUALITY_LABELS = {"shoddy": "De má qualidade", "polished": "Resistente",
+                      "refined": "Aprimorada", "superior": "Superior",
+                      "renowned": "Reconhecida"}
+    STATE_LABELS = {"equipped": "Equipada", "inactive": "Inativa",
+                    "inventory": "No inventário"}
+    # Mesmo teto de core/relics.py (nao importado: o webmanager roda sem o bot).
+    CAP = 20.0
+
+    @staticmethod
+    def _path():
+        return os.path.join(os.path.dirname(__file__), "..", "cache", "relics.json")
+
+    @staticmethod
+    def _fmt(ts, fmt="%d/%m %H:%M"):
+        if not ts:
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(ts).strftime(fmt)
+        except (TypeError, ValueError, OSError):
+            return None
+
+    @staticmethod
+    def view(managed_cache=None):
+        """dict para o template, ou None sem cache (feature desligada ou bot sem ciclo)."""
+        try:
+            with open(RelicReader._path(), "r", encoding="utf-8") as fh:
+                state = json.load(fh)
+        except (OSError, ValueError):
+            return None
+        managed = managed_cache or {}
+        now = time.time()
+        relics = []
+        order = {"equipped": 0, "inactive": 1, "inventory": 2}
+        for relic in sorted(state.get("relics") or [],
+                            key=lambda r: (order.get(r.get("state"), 3),
+                                           -(r.get("quality_rank") or 0), r.get("name") or "")):
+            removable = relic.get("removable_at")
+            relics.append(dict(
+                relic,
+                quality_label=RelicReader.QUALITY_LABELS.get(relic.get("quality"), relic.get("quality")),
+                state_label=RelicReader.STATE_LABELS.get(relic.get("state"), relic.get("state")),
+                removable_fmt=RelicReader._fmt(removable) if removable and removable > now else None,
+                inactive_until_fmt=RelicReader._fmt(relic.get("inactive_until_at")),
+            ))
+        boards = state.get("boards") or {}
+        villages = []
+        for vid, attrs in sorted((state.get("villages") or {}).items()):
+            board = (managed.get(vid) or {}).get("relic_board") or {}
+            shown = {b.get("key"): b for b in board.get("benefits") or []}
+            rows = []
+            for key, entry in sorted(attrs.items(), key=lambda kv: (-kv[1].get("sum", 0), kv[0])):
+                game = shown.get(key) or {}
+                rows.append({"key": key, "sum": entry.get("sum"), "applied": entry.get("applied"),
+                             "discarded": entry.get("discarded"),
+                             "game_total": game.get("total"), "game_discarded": game.get("discarded")})
+            check = boards.get(vid) or {}
+            villages.append({
+                "vid": vid, "rows": rows,
+                "discarded": sum(r["discarded"] or 0 for r in rows),
+                "board_fmt": RelicReader._fmt(board.get("read_at")),
+                "check_ok": check.get("ok"), "check_msgs": check.get("msgs") or [],
+                "check_fmt": RelicReader._fmt(check.get("read_at")),
+            })
+        found = [dict(day=d, **e) for d, e in sorted((state.get("found") or {}).items(), reverse=True)]
+        mismatched = sorted(v for v, c in boards.items() if c.get("ok") is False)
+        return {
+            "fetched_fmt": RelicReader._fmt(state.get("fetched_at"), "%d/%m/%Y %H:%M:%S"),
+            "overview_fmt": RelicReader._fmt(state.get("overview_at")),
+            "found_fmt": RelicReader._fmt(state.get("found_at")),
+            "reason": state.get("reason"),
+            "gets": state.get("gets"),
+            "slots": state.get("slots"),
+            "counts": state.get("counts") or {},
+            "totals": state.get("totals") or {},
+            "check": state.get("coverage_check") or {},
+            "relics": relics,
+            "villages": villages,
+            "found": found,
+            "cap": RelicReader.CAP,
+            "boards_checked": len(boards),
+            "boards_mismatched": mismatched,
+        }
