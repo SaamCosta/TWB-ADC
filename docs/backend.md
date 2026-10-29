@@ -895,8 +895,9 @@ Descartado com justificativa, não por falta de tempo:
   dano político alto e nenhuma demanda medida;
 - **replicar o Assistente de Saque nativo** — o motor próprio é diferenciador;
 - **mensagens automáticas em nome do jogador**;
-- **automações de evento, recompensas, renomeação, notas, relíquias** — sem
-  gargalo medido;
+- **automações de evento, recompensas, renomeação, notas** — sem gargalo
+  medido. (As **relíquias** saíram desta lista em 2026-10-29: medido em §8.74,
+  8 vagas com 3 vazias e 5 relíquias cobrindo 8 de 66 aldeias.);
 - **muitos provedores de notificação antes do barramento** (`NT-01/02`);
 - **aprendizado por reforço (RL) sobre a política do bot** — descartado em
   2026-09-16 após a pergunta "isso se beneficiaria de uma instância de RL?".
@@ -8250,6 +8251,128 @@ falhavam antes desta mudança** (conferido com `git stash`):
 `test_promocao_so_quando_o_hunter_encerrou`. São datas fixas de 19 a 21/10
 comparadas com o relógio real.
 
+## 8.74 `P-RELIQUIA` — Fase 0: sondagem das relíquias (2026-10-29)
+
+Pedido do usuário em 29/10: integrar as relíquias ao bot. Isso reverte a linha
+"relíquias — sem gargalo medido" da §7.5: o gargalo foi medido (abaixo). O
+trabalho é em fases, **uma por chat**. Esta é a Fase 0, só leitura.
+
+**Fontes.** As capturas do `tools/feature_map.py` de 08/10
+(`cache/feature_map/free_20261008_2315/pages/relic_*`) e uma sondagem em 29/10,
+de 01:12 a 01:22, com 7 GETs pelo `WebWrapper` do bot (`cache/_probe_relics.py`,
+90 s entre GETs, sem `priority_mode`, nenhum `data-bot-protect`). O bot rodava
+a ~4 req/min. O JS das ações veio do CDN, sem sessão:
+`js/game/RelicSystem.0ba79d.js_` e `lang.pt_BR.82fe86.js`. Os hashes de 08/10
+já davam 404, então o hash se lê de uma página atual. HTML cru e JS ficam em
+`cache/debug/relics/`, fora do git: as páginas têm token e nome de jogador.
+
+**Estado da conta em 29/10 01:12.**
+- 67 aldeias e **8 vagas**: 5 ocupadas e 3 livres. As próximas abrem com 70
+  e 90 aldeias. Em 08/10 eram 44 aldeias e 6 vagas, então 45 e 55 também abrem
+  vaga.
+- 10 relíquias: 5 equipadas, 2 inativas em aldeia recém-conquistada e 3
+  paradas no inventário (morningstar shoddy, halberd polished, dummy shoddy).
+- As 5 equipadas estão no aglomerado BBM 001–011 (K35) e **cobrem 8 das 66
+  aldeias**. Em 5 delas a velocidade de quartel das relíquias soma 25%, e o
+  jogo mostra "+5% aplicado, +5% descartado".
+- O usuário mexe nelas: a sela superior foi equipada na BBM 003 às 00:53 de
+  29/10, e relíquias shoddy de 08/10 sumiram, provavelmente fundidas.
+
+**Mecânica, com a fonte de cada dado.**
+- **Qualidades** (`quality` no JSON): `shoddy` < `polished` < `refined` <
+  `superior` < `renowned`. Raio medido: 2, 2, 3, 3, 4. Valores medidos
+  (principal/secundário): shoddy 5/1, polished 6/2, refined 7/3, superior 8/4,
+  renowned 10/5. Secundário "perfeito" dobra (`perfect: true`).
+- **Cobertura = distância euclidiana ≤ `range`, contando a aldeia anfitriã.**
+  Recalculada com as coordenadas de `cache/villages/`, a regra reproduz
+  exatamente as listas "Outras aldeias afetadas" das 5 relíquias de 29/10 e
+  das 3 de 08/10.
+- **Teto de 20% por atributo, só sobre a parte das relíquias.** Na visão geral
+  da BBM 001 (`screen=overview`), a produção de ferro mostra +55% (itens 30% +
+  paladino 15% + relíquia 10%), e a velocidade de quartel soma 10+5+10 e mostra
+  "+20% … +5% aplicado, +5% descartado". Itens e paladino não entram no teto.
+- **Quadro de bônus por aldeia, sem custo.** A mesma tela tem uma linha
+  `<!-- benefit -->` por atributo, com o total e a contribuição de cada fonte, e
+  uma linha `<!-- relic -->` por relíquia que alcança a aldeia, com "Localizado
+  em". O bot já lê `screen=overview` de toda aldeia a cada ciclo
+  (`game/village.py:220`), então é a fonte para conferir o planejador.
+- **Custo de nobre:** "Recrutar nobres custa 5% menos **recursos**". Se desconta
+  moeda não se sabe: a tela só fala em recursos.
+- **Vagas são da conta**, não da aldeia: "Espaços de relíquias gratuitos
+  disponíveis" (`can_equip`).
+- **Travas:** depois de equipar não se remove por 24 h
+  (`RelicSystem.removal_cooldown = 86400 * 1000`, `remaining_removal_cooldown`
+  no JSON). Não se remove com lealdade < 100 (`locked_state`: "Bloqueado, a
+  lealdade está abaixo de 100."). Relíquia de conquista fica inativa 24 h na
+  aldeia (`inactive_until`) e depois vai sozinha para o inventário.
+- **Renowned é o teto**: o JS não oferece "Atualização" para `renowned`.
+
+**Leitura: 1 GET.** `screen=relic_system` traz o inventário inteiro em
+`RelicSystem.Inventory.init(relics, village_id, premium_enabled, pp_reroll_cost,
+pp_reroll_feature, can_equip, loyalty_locked, is_new_system, materials)`. Em
+29/10: `44683, true, 100, '…RelicReroll', true, false, true, []`. Cada relíquia
+tem `id, type, quality, range, main_stat, sub_stats[{name, perfect}], village_id,
+equipped_at, remaining_removal_cooldown, inactive_until, locked_state,
+trade_offer_id`. `screen=relic_system&mode=overview` lista, por relíquia
+equipada, as aldeias afetadas, e ainda as vagas livres, os limiares das
+próximas e as inativas com "Inativo até".
+
+**Ações** (`TribalWars.post("relic_system", {ajaxaction}, body)`, todas na aldeia
+da URL):
+
+| ação | corpo | regra lida no JS | custo |
+|---|---|---|---|
+| `equip_relic` | `relic_id` | botão só aparece com a aldeia **sem** relíquia e `can_equip` | grátis |
+| `remove_relic` | `{}` | remove a da aldeia atual, sem cooldown nem trava de lealdade | grátis |
+| `upgrade_relic` | `relic_ids[]`, `material_qualities[]` | posição 0 = principal; 3 do mesmo tipo mantêm os atributos, tipos diferentes = "Aprimoramento Aleatório" | grátis |
+| `premium_upgrade_relic` | idem, com 2 relíquias | só `shoddy`/`polished` | **100 PP** |
+| `reroll_relic` | `relic_id` | `Premium.checkElement` | **100 PP** (`pp_reroll_cost`) |
+| `reduce_cooldown` | `{}` | encurta a trava de 24 h | **30 PP** |
+| `relic_trade`: `create_offer`, `accept_offer`, `delete_offer` | — | troca com a tribo | fora do escopo |
+
+Mover uma relíquia é, portanto, **dois POSTs**: `remove_relic` na aldeia de
+origem e depois `equip_relic` na de destino. As respostas trazem
+`{relics, village_id, can_equip}`. `materials` (componentes por qualidade) veio
+vazio, e de onde eles saem não foi visto.
+
+**Relatórios.** Os três tipos ficam em `screen=report&mode=other`:
+- "Relíquia **encontrada**": achado em batalha ou coleta. O texto não diz qual.
+- "Relíquia **adquirida**": conquista, no mesmo minuto que "A aldeia reservada
+  foi conquistada".
+- "Relíquia transferida para o inventário": fim das 24 h de inativa.
+
+As duas primeiras têm a **mesma classe** `report_ReportRelicAcquired`; só o
+título as separa. A terceira é `ReportRelicUnlocked`. As três usam a miniatura
+`relic_system/relic_icon.webp`.
+
+**A caça de relíquia por batalha foi descartada, com número.** O teto de 2
+achados por dia **já é batido todo dia, de madrugada**: 27/10 às 00:43 e 02:07,
+28/10 às 00:01 e 01:29, e 29/10 às 01:14 (1 até a sondagem). O dia vira à
+meia-noite do servidor. Mandar ataque grande de propósito não acrescenta
+nada. Se um dia fechar com menos de 2, a conta muda; o contador entra na Fase 1.
+
+**Achado colateral, fora do escopo:** `cache/reports` não tem as "encontradas"
+de 27 e 28/10. A leitura do bot para em `ReportManager.MAX_PAGES = 4` (200
+linhas), e entre 23 e 29/10 foram 807 relatórios de comércio. O relatório de
+relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
+
+**Decisões do usuário em 29/10.**
+- O bot pode mover as relíquias que o usuário equipou.
+- Os pesos são meus. Não é uma ordem fixa: cada atributo vira valor em
+  recurso/h por aldeia, com dados que o bot já mede (memória
+  `pesos-calculados-nao-perguntados`). A lição é a das bandeiras: a ordem
+  imposta esqueceu que o saque afeta a coleta.
+
+**Plano, uma fase por chat.**
+1. **Leitura.** Parser do inventário e da visão geral; contador de
+   "encontrada" por dia; quadro `benefit` por aldeia; `cache/relics.json`;
+   painel. Fixtures verbatim anonimizadas.
+2. **Planejador puro** (`core/relic_planner.py`): valor/h por atributo e
+   aldeia, teto de 20%, anfitriã elegível. Em dry-run.
+3. **Equipar e mover**, com histerese e um teto de trocas por dia.
+4. **Fundir**, pela mesma conta de valor. Nunca PP.
+5. **Efeitos no cálculo do bot**, só se uma medição mostrar diferença.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -8257,6 +8380,14 @@ comparadas com o relógio real.
 segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
 (§8.36). O A26-09 fechou em 2026-10-18 (§8.65). Sobra o A26-11, que pede
 sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
+
+**Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fase 0 feita;
+seguem as Fases 1 a 5, uma por chat. **Depois delas: bandeiras por valor.** A
+escolha de bandeira do `DefenceManager` é uma ordem fixa (§4.6, §8.11), e a
+ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
+mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
+servidor o que cada tipo de bandeira afeta de fato. A validação das "3 trocas"
+(§8.11) continua aberta e entra nessa conta.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 
