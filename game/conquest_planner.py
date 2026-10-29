@@ -1234,7 +1234,7 @@ class BarbarianTrainPlanner:
                 continue
 
             if self._schedule_reinforcement(target_id, data, plan, train_landing,
-                                             drop_min, regen):
+                                             drop_min, regen, now):
                 scheduled.append(target_id)
         return scheduled
 
@@ -1258,12 +1258,16 @@ class BarbarianTrainPlanner:
             atk["duration_seconds"] = float(durations[key])
         return True
 
-    def _schedule_reinforcement(self, target_id, data, plan, train_landing, drop_min, regen):
+    def _schedule_reinforcement(self, target_id, data, plan, train_landing, drop_min, regen,
+                                now=None):
         if not self._probe_plan(target_id, plan):
             return False
 
+        # O relogio de `plan_reinforcements`, nao o da parede: e com ele que o
+        # chamador decidiu que o trem ainda esta no ar.
+        now = time.time() if now is None else now
         longest = max(atk["duration_seconds"] for atk in plan)
-        arrival_ts = max(time.time() + longest + self.ARRIVAL_MARGIN_SECONDS,
+        arrival_ts = max(now + longest + self.ARRIVAL_MARGIN_SECONDS,
                          float(train_landing) + self.REINFORCE_MIN_GAP)
         gap_hours = (arrival_ts - float(train_landing)) / 3600.0
         if len(plan) * float(drop_min) <= regen * gap_hours:

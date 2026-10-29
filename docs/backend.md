@@ -8467,6 +8467,39 @@ descarta nada do `config.json` vivo.
   nenhum perfeito foi visto ainda.
 - A 88755 (BBM 067) aparece só pelo id: recém-conquistada, sem `cache/managed`.
 
+## 8.76 Testes do trem 81800 expiraram com o relógio (2026-10-29)
+
+Três testes falhavam na master: `test_reforco_81800_agenda_os_dois_que_faltam_logo_depois_do_trem`,
+`test_reforco_decidido_uma_vez_so` (`tests/test_conquest_planner.py`) e
+`test_promocao_so_quando_o_hunter_encerrou` (`tests/test_event_tick.py`).
+**Não foi o §8.73**: rodados em `a0759ff` (§8.71), `5318c12`, `18b194d`,
+`9dd9131` e `461d12a`, os três falham igual em todos. O que mudou foi a data.
+
+Os casos usam o pouso real do trem contra a Bárbara 81800, **21/10 07:11:05**.
+As funções recebem `now` por argumento, mas em um ponto cada uma ainda lia o
+relógio da parede; enquanto 21/10 era futuro, dava na mesma. Depois virou
+passado:
+- `EventTick.promotions_due()` chamava `_schedule_over(sched)` sem `now`, e a
+  regra do A26-04 (chegada passada = o `pending` não sai mais) passou a
+  promover o schedule ainda `pending`. A regra está certa; o teste é que não
+  fixava o relógio.
+- `_schedule_reinforcement()` montava `arrival_ts` com `time.time()`, não com
+  o `now` de `plan_reinforcements()`: o reforço "pousaria" ~8 dias depois do
+  trem e caía em `pousaria tarde demais`.
+
+Correção: o `now` do chamador desce até os dois pontos (`promotions_due(...,
+now=None)`, chamado pelo `tick()` com o próprio `now`; `_schedule_reinforcement(...,
+now=None)`), e o teste do `event_tick` passa o relógio — e ganhou o caso
+"chegada passada promove o `pending`". **Em produção nada muda**: os dois
+relógios são o mesmo instante. `promote_reinforcements()` e a promoção do trem
+continuam no relógio real (ninguém injeta `now` ali).
+
+A suíte inteira, rodada num worktree, precisa de `cache/` e `config.json`:
+sem eles, outros seis arquivos falham por `FileNotFound` (iguais no HEAD sem
+esta correção). Com uma cópia do `cache/`, 114 de 116 passam; os dois que
+sobram (`test_conquest_area_of_interest`, `test_panel_field_audit`) leem o
+`config.json` real.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;

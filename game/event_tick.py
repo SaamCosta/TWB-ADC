@@ -123,7 +123,7 @@ class EventTick:
         return best
 
     @staticmethod
-    def promotions_due(conquests=None, schedules=None):
+    def promotions_due(conquests=None, schedules=None, now=None):
         """Alvos `train_scheduled` cujo schedule do Hunter ja nao manda mais nada."""
         from game.conquest_planner import BarbarianTrainPlanner
         from game.hunter import Hunter
@@ -146,7 +146,7 @@ class EventTick:
                 continue
             attacks = sched.get("attacks", [])
             if (any(atk.get("status") == "pending" for atk in attacks)
-                    and not BarbarianTrainPlanner._schedule_over(sched)):
+                    and not BarbarianTrainPlanner._schedule_over(sched, now)):
                 continue
             due.append(str(target_id))
         return due
@@ -253,7 +253,7 @@ class EventTick:
         now = time.time() if now is None else now
         try:
             conquests = ConquestCache.active_conquests()
-            promote = self.promotions_due(conquests)
+            promote = self.promotions_due(conquests, now=now)
             due = self.due_landings(now, conquests)
             reinforce = self.reinforcements_due(conquests, config, now, villages)
         except Exception as exc:

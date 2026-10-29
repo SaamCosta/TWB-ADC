@@ -115,8 +115,13 @@ def test_promocao_so_quando_o_hunter_encerrou():
                        "attacks": [{"status": "sent"}, {"status": "pending"}]}}
     done = {SCHED: {"status": "failed", "arrival_time": LANDING,
                     "attacks": [{"status": "sent"}, {"status": "failed"}]}}
-    assert EventTick.promotions_due(conquests, pending) == []
-    assert EventTick.promotions_due(conquests, done) == ["81800"]
+    # Relogio fixo: sem ele o teste expirou em 21/10, quando a chegada virou
+    # passado e `_schedule_over` passou a encerrar o `pending` (A26-04).
+    before = LANDING - 3600
+    assert EventTick.promotions_due(conquests, pending, now=before) == []
+    assert EventTick.promotions_due(conquests, done, now=before) == ["81800"]
+    assert EventTick.promotions_due(conquests, pending, now=LANDING + 1) == ["81800"], \
+        "chegada passada: o pending nao sai mais"
 
 
 # --- 2. O tick ------------------------------------------------------------------------
