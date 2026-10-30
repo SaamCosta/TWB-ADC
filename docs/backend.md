@@ -8374,7 +8374,9 @@ relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
    `relics.manage` ligado em 29/10; primeira ação real às 17:40:59.
 4. ✅ **Fundir** (§8.79), pela mesma conta de valor, só pelo método do mesmo
    tipo. Nunca PP. `relics.fuse` fica desligado: em 29/10 nenhuma fusão vale.
-5. **Efeitos no cálculo do bot**, só se uma medição mostrar diferença.
+5. ✅ **Efeitos no cálculo do bot** (§8.80). Medido: todo número que um
+   atributo presente na conta muda, o bot já lê da tela com o bônus. Nenhum
+   cálculo de decisão mudou.
 
 ## 8.75 `P-RELIQUIA` — Fase 1: o bot sabe o estado das relíquias (2026-10-29)
 
@@ -9050,6 +9052,142 @@ GET, velocidade 1 e base 60 já no primeiro plano, "fusões: nenhuma possível",
 - As probabilidades da aleatória: não publicadas; só uma amostra grande de
   fusões aleatórias mediria, e a conta faz poucas.
 
+## 8.80 `P-RELIQUIA` — Fase 5: efeitos no cálculo do bot (2026-10-30)
+
+Fase 5 de 5 do plano da §8.74. A regra era a do item 5: só mudar um cálculo
+onde uma medição mostrasse que a conta atual erra. **Nenhum mudou.** Tudo o que
+um atributo presente na conta afeta, o bot já lê da tela do jogo, com o bônus
+dentro, e a medição abaixo prova isso aldeia coberta contra não coberta.
+
+### 1. O campo antes
+
+- **O processo em campo não foi reiniciado depois do `7358c42`.** O
+  `session_latest.log` começa às 17:09:28 de 29/10 (o processo da Fase 3) e
+  termina às 00:03:33 de 30/10; o usuário fechou o bot nessa hora. A linha
+  "Relics: fusões (dry-run)" e o quadro da BBM 068 (Fogueira ativa ~20:56 de
+  30/10) ficam para o próximo processo (pendência na §9).
+- **Tetos da Fase 3** (`exec.days`): 29/10 com 1 mover e 1 equipar, as ações
+  das 17:40 e 18:14 (§8.78). Nada em 30/10.
+- **Fusões:** o planejador da Fase 4 rodado à mão sobre o `cache/relics.json`
+  de 23:40 (0 GET): "nenhuma possível". A única parada livre é a Alabarda
+  Aprimorada, que o plano quer equipar na BBM 001 (+4/h, abaixo do piso); as
+  duas Fogueiras seguem inativas. `relics.fuse` continua desligado, sem
+  decisão a pedir.
+
+### 2. Fonte: a lista inteira de atributos
+
+A ajuda do jogo (`screen=relic_system&mode=help`, captura de 22:42 de 29/10)
+lista os secundários possíveis: poder de ataque, de defesa, ou dos dois, de
+lanceiro, espadachim, bárbaro, cavalaria leve e pesada (e de catapulta e
+aríete); dano contra edifícios de catapulta e aríete; explorador escondido e
+percepção; velocidade de recrutamento de Quartel, Estábulo, Oficina e
+**Academia**; produção dos três recursos; velocidade de construção;
+velocidade de viagem do mercador; **capacidade de mercadores**; **capacidade
+de saque**; custo de recrutamento de Quartel, Estábulo, Oficina e nobres. Na
+lista, "Bárbaro" é o **machado** (não existe "Machado" nela), e não a aldeia
+bárbara.
+
+### 3. Inventário: cada cálculo, de onde vem o número
+
+| cálculo do bot | onde | número usado hoje | relíquia na conta com o atributo? | veredito |
+|---|---|---|---|---|
+| custo de recrutamento (quanto cabe, reserva) | `TroopManager.recruit` | `unit_managers.units` da tela do prédio | sim (Quartel, Estábulo) | **já com desconto**, medido |
+| tempo de recrutamento (fila "idle till") | idem, `build_time` | mesma tela | sim (Quartel, Estábulo) | **já com bônus**, medido |
+| custo do nobre (portão de recurso, reserva do §8.68) | `SnobManager.attempt_recruit`, `Village.noble_reserve` | `BuildingSnob.Modes.train.next_snob` | sim (Picareta) | **já com desconto**, medido |
+| custo da moeda | `mint_manager`, `mint_planner` | `coin_cost` da academia | a relíquia não tem atributo de moeda | não afeta, medido (abaixo) |
+| tempo de construção (fila) | `BuildingManager.put_wait` | `BuildingMain.buildings` | sim (Boneco na BBM 002) | **já com bônus**, medido; e a fila se ressincroniza pela tela |
+| produção | `game_data_shadow` | `*_prod` do `game_data` | sim (ferro) | já com tudo; ninguém mais projeta produção fora do planejador |
+| carga por mercador | `ResourceSharing._get_carry_budget` | `max_transport / total` da tela do mercado | não | da tela por construção; `MERCHANT_CAPACITY` (1.000) só no fallback e na troca premium parada (§4.5) |
+| tempo do mercador | `_record_pending` | tela de confirmação do envio | não | da tela |
+| pacote de farm e `carry_max` da coleta | `AttackManager._pack_capacity`, `TroopManager` | `UNIT_CARRY` (constante) | **não** (nenhuma relíquia de saque) | não medível hoje; ver §9 |
+| batalha na defesa própria e na conquista PvP | `own_defense`, `PvpConquestManager` | `Simulator` (tabela própria) | sim (combate) | não muda, motivo abaixo |
+| escolta da conquista bárbara | `_build_escort` | contagem e fração, sem `Simulator` | — | relíquia não entra |
+
+### 4. Medição (17º e 19º padrões)
+
+**Fontes.** 11 GETs pelo `get_url` do `WebWrapper` do bot
+(`cache/_probe_relic_effects.py`, novo, 95 s entre GETs, sem `priority_mode`,
+sem POST, nenhum `data-bot-protect`), de 00:07 a 00:24 de 30/10, com o bot
+parado. HTML cru em `cache/debug/relics/effects/`. Pares de mesmo prédio no
+mesmo nível, uma coberta e uma não; o quadro de cada uma lido ao vivo
+(`screen=overview`), porque o `relic_board` gravado da BBM 001 era de antes da
+Picareta sair dela (18:14 de 29/10): **a BBM 001 não tem mais desconto de
+nobre**, e virou o controle da academia.
+
+- **Custo de recrutamento.** Quartel 25: BBM 001 (Mochila −10%) lê lanceiro
+  45/27/9, espada 27/27/63, machado 54/27/36; BBM 012 (sem relíquia) 50/30/10,
+  30/30/70, 60/30/40. Estábulo 20: BBM 001 (Sela −8%) 46/46/18, 115/92/230,
+  184/138/552; BBM 012 50/50/20, 125/100/250, 200/150/600. É **custo × (1 −
+  d)** em todas, com arredondamento (20 × 0,92 = 18,4 → 18).
+- **Tempo de recrutamento.** BBM 012 é a base neutra: lanceiro 158,439 s =
+  1.020 × ⅔ × 1,06⁻²⁵. A BBM 001 lê 116,499 s, razão **1/1,36** em todas as
+  unidades do quartel, e **1/1,11** no estábulo. As fontes, no widget "Efeitos
+  ativos" dela: relíquias 20 (dois Bonecos, no teto), a modificação de aldeia
+  "Mestre de armas: +10% recrutamento mais rápido no Quartel" e a bandeira
+  "+6% na velocidade de recrutamento"; no estábulo, relíquia 5 e a bandeira 6.
+  **Tempo = base ÷ (1 + soma)**, aditiva entre as três famílias: 1 + 0,20 +
+  0,10 + 0,06 = 1,36 e 1 + 0,05 + 0,06 = 1,11, até a 6ª casa. O produto
+  (1,2 × 1,1 × 1,06 = 1,399) e o "× (1 − S)" (0,64) erram. O teto de 20% fica
+  só na parte das relíquias, como a §8.74 já dizia: a soma passa de 20.
+- **Nobre.** BBM 008 (Picareta −5%): `next_snob` 38.000/47.500/47.500. BBM 001
+  e BBM 012, ambas sem desconto hoje: 40.000/50.000/50.000. É × 0,95.
+- **Moeda.** O `coin_cost` da BBM 002 lido às 16:24 de 29/10, quando a
+  Picareta a cobria (o quadro gravado mostra), foi 21.840/23.400/19.500 =
+  28.000/30.000/25.000 × 0,78, só a bandeira de −22%. O desconto de nobre não
+  toca a moeda.
+- **Construção.** Edifício principal 20 → 21: BBM 002 (Boneco +5%) 13.910 s,
+  BBM 022 (sem relíquia, principal 20) 14.606 s. 14.606 ÷ 1,05 = 13.910.
+
+Os números do jogo saem prontos; o bot nunca soma bônus em cima deles. A única
+leitura que dependia disso, `RelicManager.note_unit_costs` (custo **nominal**
+para o planejador), já pulava aldeia com desconto naquele prédio, e a medição
+confirma que estava certo pular.
+
+### 5. O que não muda, e por quê
+
+- **`Simulator` (combate).** Ele ignora toda a defesa do nosso lado: relíquia
+  (na conta: cavalaria leve +4, cavalaria pesada +5 de defesa), paladino (a
+  BBM 001 mostra "Lanceiro: +30% poder de defesa" e "+10% na força de defesa vs
+  cerco", do paladino), bandeira e modificação de aldeia. Ignora também tudo do
+  lado do atacante, cujo jogador pode ter até 20% de relíquia no machado. Contar
+  só o nosso bônus deixaria a defesa própria menos conservadora sem saber o do
+  inimigo. O erro é para o lado seguro (mais apoio, não menos), e a defesa
+  própria já supõe sorte de +25% para o atacante. Medir exigiria relatório de
+  batalha com aldeia coberta e o resto igual, e o efeito das relíquias de
+  defesa da conta (≤ 5% em uma unidade) fica dentro da sorte. Na conquista PvP,
+  ataque subestimado em ≤ 5% também erra para o lado seguro.
+- **`UNIT_CARRY`** (pacote de farm e `carry_max` da coleta) é constante e não
+  conhece "capacidade de saque". Nenhuma relíquia da conta tem o atributo, então
+  não há aldeia coberta para medir. Sem medição, nada muda.
+- **Valor da velocidade de recrutamento no planejador.** Com a conta medida, o
+  ponto a mais rende gasto ÷ (1 + soma), e o planejador usa o gasto inteiro.
+  Só vale com a fila como gargalo (≥ 90% ocupada), e a mais ocupada da conta
+  fica em 22% (§8.77): o valor é 0 de qualquer jeito. Ficou escrito na
+  docstring de `core/relic_planner.py`.
+- **Planejador e os atributos que ele não conhece.** "Capacidade de saque",
+  "capacidade de mercadores" e "Academia na velocidade de recrutamento" caem em
+  "não reconhecido" (valor 0); "Explorador: percepção", em combate. Nenhuma
+  relíquia da conta os tem; a de saque vale algo de verdade (farm e coleta) e
+  fica na §9.
+
+### 6. O que entrou
+
+- `tests/test_relic_effects.py` (5 casos) e a fixture
+  `tests/fixtures/relic_effects_br143.json`: recortes verbatim das capturas de
+  30/10 (as instruções `unit_managers.units`, `next_snob` e
+  `BuildingMain.buildings`, e as duas linhas do widget com a modificação e a
+  bandeira; sem dado de jogador). Os casos: custo da coberta = nominal × (1 −
+  d); tempo aditivo, com as duas leituras rivais recusadas; nobre × 0,95;
+  construção ÷ 1,05; `note_unit_costs` não grava a tela descontada como
+  nominal. Mutante conferido: sem a guarda do `note_unit_costs`, o último caso
+  falha.
+- Docstring de `core/relic_planner.py`: a conta da velocidade medida, o
+  "Bárbaro" = machado e os atributos não reconhecidos.
+- Sem config nova: nada em `config.example.json`/`helpfile.py`/`build.version`.
+
+`twb-review` no diff sem achado (o código de produção não mudou). Suíte
+inteira no checkout principal: **120 arquivos, 0 falhas**.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -9058,12 +9196,16 @@ segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
 (§8.36). O A26-09 fechou em 2026-10-18 (§8.65). Sobra o A26-11, que pede
 sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
-**Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fases 0, 1
-(§8.75), 2 (§8.77), 3 (§8.78, equipar e mover, ligada em campo) e 4 (§8.79,
-fundir, desligada: nada vale ainda) feitas; segue a Fase 5. **Logo depois das relíquias** (decisão do usuário em
-29/10, antes das bandeiras): o furo do trem contra aldeia nossa (fim da
-§8.77) — checagem "o alvo já é nosso" no envio no horário do Hunter e na
-escolha de alvo do planejador bárbaro, automática e manual. **Depois delas: bandeiras por valor.** A
+**Relíquias (`P-RELIQUIA`, §8.74): ✅ fechado em 2026-10-30.** Fases 0, 1
+(§8.75), 2 (§8.77), 3 (§8.78, equipar e mover, ligada em campo), 4 (§8.79,
+fundir, desligada: nada vale ainda) e 5 (§8.80, efeitos no cálculo: nenhum
+muda, o bot já lê tudo da tela com o bônus). Sobram as pendências pequenas
+abaixo.
+
+**Próximo item (decisão do usuário em 29/10, antes das bandeiras): o furo do
+trem contra aldeia nossa** (fim da §8.77) — checagem "o alvo já é nosso" no
+envio no horário do Hunter e na escolha de alvo do planejador bárbaro,
+automática e manual. **Depois dele: bandeiras por valor.** A
 escolha de bandeira do `DefenceManager` é uma ordem fixa (§4.6, §8.11), e a
 ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
 mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
@@ -9086,6 +9228,23 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 - **`unit_costs` só é lido onde o bot recruta**: nas aldeias com recrutamento
   cedido ao gerente (§8.68) o `cost_listener` nunca roda. A tabela padrão bate
   com o medido (lanceiro 50/30/10), então não muda o plano.
+- **Campo da Fase 4, no próximo processo** (§8.80): o bot foi fechado às 00:03
+  de 30/10 sem ter rodado o código do `7358c42`. Ao religar, conferir no
+  `session_latest.log` a linha "Relics: fusões (dry-run)", nenhum WARNING de
+  Relics, e o quadro da BBM 068 (87765) batendo depois que a Fogueira dela
+  ativar (~20:56 de 30/10).
+- **Relíquia de "capacidade de saque"** (§8.80): nenhuma na conta. Se aparecer
+  uma, medir numa aldeia coberta se a coleta e o farm carregam mais que o
+  `UNIT_CARRY` diz (relatório de farm que volta cheio; a coleta mostra o saque
+  previsto na tela) e dar valor a ela no planejador, que hoje a lê como "não
+  reconhecido".
+- **Fora do escopo, achado na Fase 5: a defesa própria ignora o bônus de
+  defesa do nosso lado.** O `Simulator` não conhece o paladino (na BBM 001,
+  "Lanceiro: +30% poder de defesa" e "+10% na força de defesa vs cerco"),
+  bandeira, modificação de aldeia nem relíquia. Erra para o lado seguro (manda
+  mais apoio que o necessário), mas o "basta" da §8.69 pode estar alto onde o
+  paladino alcança. Medir antes de mexer: o mesmo ataque simulado com e sem o
+  +30% contra um relatório real de defesa numa aldeia coberta.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

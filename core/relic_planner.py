@@ -47,13 +47,20 @@ Fonte de cada número (5º padrão). Todas em disco, 0 GET:
   medida pela fração do tempo em que ela esteve ocupada (intervalos
   `[envio, idle till]` das linhas `TWB_RECRUIT`, 7 dias). Abaixo de
   `BOTTLENECK_BUSY` vale 0, com a fração escrita. Com gargalo, vale o gasto do
-  prédio por ponto (leitura "tempo / (1 + S)" não medida, 19º padrão).
+  prédio por ponto. A conta do jogo foi medida na §8.80: tempo = base ÷ (1 +
+  soma), aditiva entre relíquia, modificação de aldeia e bandeira. Com ela, o
+  ponto a mais rende gasto ÷ (1 + soma), e não o gasto inteiro; não mudou
+  porque nenhuma fila da conta chega perto do gargalo (§8.77).
 - Velocidade de construção: a mesma medição sobre `TWB_BUILD` (início e
   "finishes"). Mesmo com gargalo vale 0: o bot não registra o custo das obras,
   e sem ele não há conversão em recurso.
 - Valor 0, com o motivo escrito, nunca peso inventado: poder de ataque/defesa
-  de unidade, dano de catapulta/aríete, explorador escondido, bárbaro
-  (`combat`), velocidade do mercador e atributo não reconhecido.
+  de unidade, dano de catapulta/aríete, explorador escondido (`combat`; o
+  "Bárbaro" do texto é o machado, não a aldeia bárbara), velocidade do
+  mercador e atributo não reconhecido. "Capacidade de saque", "capacidade de
+  mercadores" e "Academia na velocidade de recrutamento" existem na ajuda do
+  jogo e caem em não reconhecido (§8.80); "Explorador: percepção" cai em
+  combate.
 
 Nada aqui equipa ou remove: isso é a Fase 3 (histerese, teto de trocas/dia).
 Fase 4 (§8.79): `plan_from_disk` também avalia as fusões possíveis
