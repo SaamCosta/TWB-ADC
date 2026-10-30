@@ -56,6 +56,8 @@ Fonte de cada número (5º padrão). Todas em disco, 0 GET:
   (`combat`), velocidade do mercador e atributo não reconhecido.
 
 Nada aqui equipa ou remove: isso é a Fase 3 (histerese, teto de trocas/dia).
+Fase 4 (§8.79): `plan_from_disk` também avalia as fusões possíveis
+(`core/relic_fusion.py`), refazendo este plano sobre o estado hipotético.
 """
 import ast
 import glob
@@ -65,6 +67,7 @@ import os
 import re
 import time
 
+from core import relic_fusion as F
 from core import relics as R
 
 CAP = R.RELIC_ATTRIBUTE_CAP
@@ -715,6 +718,16 @@ def plan_from_disk(state, coords, root=".", now=None, speed=None, regen=1.0, lab
     if labels is None:
         labels = {vid: "%s (%s)" % (d.get("name"), vid) for vid, d in managed.items() if d.get("name")}
     result = plan(state, coords, inputs, now=now, low_loyalty=low, labels=labels)
+    # §8.79: a mesma conta, sobre o estado em que a fusão já aconteceu.
+    # Falha aqui não derruba o plano de equipar/mover (Fase 3): fica sem fusão.
+    try:
+        fused = F.fusions(state, result, lambda hyp: plan(hyp, coords, inputs, now=now,
+                                                          low_loyalty=low, labels=labels))
+        result["fusions"] = fused["fusions"]
+        result["fusion_info"] = {k: fused[k] for k in ("excluded", "table", "materials")}
+    except Exception as exc:  # noqa: BLE001 -- dry-run nunca derruba o plano
+        result["fusions"] = []
+        result["fusion_info"] = {"error": repr(exc)}
     result["inputs"] = {vid: _inputs_summary(e) for vid, e in sorted(inputs.items())}
     result["sources"] = {
         "reporter_events": {k: len(v) for k, v in reporter.items()},

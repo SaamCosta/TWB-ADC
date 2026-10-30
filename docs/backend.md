@@ -8372,7 +8372,8 @@ relíquia não se perde no jogo, só no cache. O contador lê `mode=other`.
    em ciclo real na §8.78 (que achou a base de produção 60 do mundo).
 3. ✅ **Equipar e mover** (§8.78), com histerese e um teto de trocas por dia.
    `relics.manage` ligado em 29/10; primeira ação real às 17:40:59.
-4. **Fundir**, pela mesma conta de valor. Nunca PP.
+4. ✅ **Fundir** (§8.79), pela mesma conta de valor, só pelo método do mesmo
+   tipo. Nunca PP. `relics.fuse` fica desligado: em 29/10 nenhuma fusão vale.
 5. **Efeitos no cálculo do bot**, só se uma medição mostrar diferença.
 
 ## 8.75 `P-RELIQUIA` — Fase 1: o bot sabe o estado das relíquias (2026-10-29)
@@ -8840,6 +8841,214 @@ lê onde o bot recruta. A resposta exata do `remove_relic`/`equip_relic` não fo
 salva crua: o bot só registrou que ela traz `relics`. A fixture dos testes
 usa o JSON verbatim de relíquia da tela no envelope `response`; se um dia a
 confirmação falhar, o log mostra os primeiros 200 caracteres da resposta.
+(Fechado na §8.79: a primeira resposta crua de cada ação passa a ser salva.)
+
+## 8.79 `P-RELIQUIA` — Fase 4: fundir (2026-10-29)
+
+Fase 4 de 5 do plano da §8.74. Com `relics.fuse` **e** `relics.manage`
+ligados, o bot funde pelo método do mesmo tipo, pela mesma conta de valor/h
+do planejador. Padrão desligado, e **fica desligado em campo**: hoje nenhuma
+fusão vale (abaixo).
+
+### 1. Antes: a pendência barata e o campo
+
+- **`_plan` usa `WorldConfig.get()`** em vez de abrir
+  `cache/world/config_<server>.json`. Cache sem `speed`/`base_production`
+  conta como velho e é refeito na hora (1 GET no `interface.php` público), e
+  rede fora cai no cache ou no neutro. O smoke abaixo mostra velocidade 1 e
+  base 60 já na primeira leitura.
+- **Processo de 17:09:** zero WARNING de Relics até 22:27. Às 22:27:38 veio
+  **um**: "quadro de bônus de Aldeia de bárbaros (87765) não bate: jogo
+  [Fogueira de má qualidade], cálculo []". Não é bug de cobertura: a 87765 (hoje
+  BBM 068) foi conquistada às 20:56 e a Fogueira dela está **inativa**. O
+  quadro da anfitriã lista a relíquia inativa, mas nenhum atributo dela entra
+  nos totais (o `relic_board` gravado no `cache/managed` da 87765 tem só os
+  +30% de itens, sem o "+1% Quartel na velocidade" da Fogueira). Na BBM 067,
+  às 21:11, foi o mesmo, em DEBUG por ser repetido. Corrigido:
+  `R.board_check(..., inactive=)` espera a inativa na lista da anfitriã, e só
+  dela (nas vizinhas não foi visto). Teste com o quadro da 87765.
+- **Tetos da Fase 3:** o `exec.days` de 29/10 tem 1 mover (de 2) e 1 equipar
+  (de 3), as duas ações das 17:40 e 18:14 (§8.78), e nenhum `skip`. O
+  "mover Mochila Reconhecida" ficou o dia todo abaixo do piso (43–46/h de 50).
+
+### 2. A mecânica, medida
+
+Fontes: o JS do jogo (`RelicSystem.0ba79d.js`; o hash da página de 22:42 é o
+mesmo de 01:12, então o arquivo em `cache/debug/relics/` vale), a ajuda do
+jogo, **`screen=relic_system&mode=help`**, que nenhuma fase tinha aberto, e o
+inventário de 22:42 (2 GETs pelo `cache/_probe_relics.py`, 90 s, sem
+`bot_protect`).
+
+- **Formato** (`UpgradePanel.sendUpgrade`): `TribalWars.post("relic_system",
+  {ajaxaction: "upgrade_relic"}, {relic_ids, material_qualities})`. O botão só
+  habilita com os **3** espaços cheios e a posição 0 sempre relíquia
+  (`isUpgradePossible`). Espaço 1 e 2: relíquia ou componente, e componente
+  só da **mesma qualidade** da principal (`placeMaterialIntoSlot`). A grade
+  só oferece relíquia **parada** (`village_id == null`, sem troca).
+- **O id da posição 0 fica.** O retorno do JS seleciona `relics_to_upgrade[0]`
+  e mostra "Relíquias mescladas com sucesso para: <nome dela>". A fusão do
+  usuário de 29/10 confirma: o 1105799, Alabarba **Resistente** (alabarda,
+  polished) às 01:12, é a Mochila **Aprimorada** (mochila, refined) às 22:42.
+  Mudou de tipo: foi uma fusão aleatória.
+- **Os dois métodos**, pela ajuda do jogo. *Método 1*: principal + 2
+  materiais "do mesmo nível de qualidade e tipo"; a principal sobe uma
+  qualidade, as propriedades ficam, os valores sobem e "o raio de influência
+  muitas vezes aumenta". *Método 2*: "3 relíquias quaisquer com o mesmo nível
+  de qualidade" dão uma relíquia **aleatória**, de tipo qualquer, da qualidade
+  seguinte (e o nome de quem a descobriu passa a ser o do jogador). A
+  página **não publica probabilidade nenhuma**: nem de tipo, nem de
+  secundário (lista 39 possíveis), nem da "pequena chance" de perfeito. O
+  `lang.pt_BR` também não. **Sem fonte, a aleatória nunca sai** (pedido do
+  usuário); ela aparece no plano só para informar.
+- **Qualidade de saída, raio e valores:** a tabela da §8.74 (shoddy 2 5/1,
+  polished 2 6/2, refined 3 7/3, superior 3 8/4, renowned 4 10/5) bate com as
+  10 relíquias de 01:12 e as 9 de 22:42, de 7 tipos. O "muitas vezes" do raio
+  é a tabela: sobe em 2 dos 4 degraus. `renowned` é o teto (o JS não oferece
+  "Atualização" para ela). ⚠️ Nenhuma fusão do método 1 foi vista: a previsão
+  do resultado vem da tabela, e depois da primeira o bot confere
+  (`check_result` grava "fundida, mas diferente da tabela" se não bater).
+- **PP:** com **2** relíquias do mesmo tipo e qualidade (só shoddy/polished) é
+  o `premium_upgrade_relic`, 100 PP ("-1 Relíquia"). Também pagos:
+  `reroll_relic` (100 PP) e `reduce_cooldown` (30 PP).
+- **Componentes** (`materials`, 9º argumento do `Inventory.init`, `[{quality,
+  count, image}]` pelo JS): vazios às 01:12 e às 22:42. A ajuda não diz de onde
+  saem; o único texto é "Material grátis disponível" no `lang`. Não medido: o
+  bot **não os usa**, e se aparecerem o log e o painel mostram.
+
+### 3. O que entrou
+
+**`core/relic_fusion.py`** (puro):
+- `fusions(state, plano, plan_fn)`: candidatas entre as paradas **livres**
+  (fora: equipada, inativa, em troca, e toda relíquia que o plano da Fase 3 vai
+  equipar ou mover). Método 1: para cada tipo com 3 ou mais da mesma
+  qualidade, cada uma como principal e as duas que menos valem como material;
+  fica a de maior ganho. Método 2: as 3 que menos valem, de tipos não todos
+  iguais, só informativa. Principal com secundário perfeito, ou qualidade cuja
+  tabela não bate com as relíquias da conta, fica bloqueada (o resultado seria
+  palpite). Até 8 replanejamentos por leitura.
+- **Valor, pela mesma conta:** o planejador é refeito sobre o estado
+  hipotético (principal na qualidade seguinte, materiais fora) com as mesmas
+  taxas, coordenadas, vagas e elegibilidade, e a fusão vale
+  `gain_h = valor do plano depois − valor do plano hoje`. Além disso, o valor da
+  resultante na melhor anfitriã elegível (`result_best_h`) tem que **superar**
+  a soma do que as três valem, cada uma na sua melhor anfitriã
+  (`consumed_best_h`). As duas condições juntas: a primeira diz que o valor se
+  realiza com as vagas de hoje; a segunda não deixa queimar relíquia que valeria
+  algo sozinha quando abrir vaga (70 e 90 aldeias).
+- Freios (`evaluate`, no idioma do `relic_executor`): só `same_type`; 3 ids
+  distintos; ganho ≥ `relics.min_gain_h`; superar as três; nenhuma das três
+  tocada pelo bot em `undo_block_h` (qualquer ação); recusa anterior; relógio
+  do servidor; `relics.max_fusions_per_day` (1) por dia do servidor, contado em
+  `exec.days[dia].fusions`; o mesmo passo em `stable_reads` leituras seguidas.
+- `precheck`: o inventário relido na hora de agir. Relíquia que sumiu, foi
+  equipada ou não tem mais a mesma assinatura (tipo, qualidade, atributos e
+  valores) = o usuário fundiu ou mexeu (9º padrão): não age e relê.
+  `check_result`: ok (mesmo id, tipo e atributo principal, qualidade seguinte,
+  materiais fora), "changed" (algo foi consumido, mas não como previsto: conta
+  como mexida e avisa) ou nada mudou.
+
+**`RelicManager`**: `fusion_candidate()` e `_act_fuse()`. A fusão só sai
+quando nenhum equipar/mover sai na mesma leitura (uma ação por leitura). Custo:
+1 GET de `screen=relic_system` + 1 POST `upgrade_relic` com
+`relic_ids[] = [principal, material, material]` (o `requests` repete a chave).
+⚠️ Que o `TribalWars.post` mande o array como `relic_ids[]` é suposição (é o
+que o `$.param` do jQuery faz; o `game.js` não foi lido): formato errado vira
+recusa do jogo, não fusão errada.
+Estado novo de `{relics, village_id, can_equip}` da resposta, senão 1 GET.
+Log com `village_label` e Telegram em cada fusão. A fase é a mesma
+`reliquias_acao`, atrás do `_hunter_gate` (§8.58), e o `_relic_act` do
+`twb.py` passa a olhar também a fusão.
+- **Nunca PP, inclusive por engano:** `_post` só deixa sair
+  `equip_relic`, `remove_relic` e `upgrade_relic` (`ALLOWED_POSTS`), e o
+  `upgrade_relic` só com 3 ids distintos e sem `material_qualities`. Qualquer
+  outra coisa vira um `{"error": [...]}` local, sem rede, que o chamador trata
+  como recusa.
+- **A primeira resposta crua de cada ação** (`equip_relic`, `remove_relic`,
+  `upgrade_relic`) vai para `cache/debug/relics/action_<ação>.json`, fora do
+  git, para virar fixture anonimizada.
+- `fuse` exige `manage`: sem equipar a resultante, o valor calculado não se
+  realiza. A trava de 24 h da Fase 3 não conta a fusão (equipar a fundida é o
+  objetivo dela); a da fusão conta tudo.
+
+**Painel `/relics`:** "Fusões" na seção Execução (ligada/desligada, contador
+do dia, cada fusão com o ganho no plano, resultante × as três e o motivo, as
+relíquias fora e por quê, componentes, tabela divergente), e o histórico
+mostra "fundir".
+
+**Config:** `relics.fuse` (false) e `relics.max_fusions_per_day` (1) em
+`config.example.json` e `helpfile.py`; `build.version` 5.8 só no example.
+Conferido antes com `cache/_check_merge_loss.py` e relido o `merge_configs()`
+(o template é a base e só a chave que existe nos dois herda do `config.json`):
+entram as duas chaves novas e nada se perde; `manage: true` fica.
+
+### 4. Testes
+
+`tests/test_relic_fusion.py` (15 casos). Fixture nova
+`relic_system_br143_2242.html`: o `<script>` do inventário de 22:42 verbatim,
+anonimizado (`discovered_by_*`). Paradas = o JSON verbatim com `village_id` e
+`inactive_until` zerados; a terceira Fogueira é cópia de uma com outro id (o
+jogo ainda não deu a terceira).
+- tabela contra as 9 relíquias; resultado do método 1 (id, tipo e atributos
+  mantidos, 6/2/2, raio 2);
+- elegibilidade: equipada, inativa, em troca, a que o plano vai equipar ou
+  mover, e só 2 do mesmo tipo (o caso PP) nunca viram fusão;
+- valor: o caso natural com o **planejador real** (fixture de 29/10): a
+  Fogueira Resistente vale 0 e não sai; ganho que sai depois de 2 leituras;
+  resultante que não supera as três;
+- a aleatória nunca sai, nem com ganho enorme, nem sem o `blocked` gravado;
+- teto por dia, 24 h, relógio do servidor, e a fusão que não trava o equipar;
+- reconferência (fundida pelo usuário, equipada, mudada, em troca) e
+  `check_result`;
+- `act()`: 1 GET + 1 POST com `relic_ids[]`, sem componente; recusa AJAX
+  (não conta, congela, sem GET extra); inventário mudado (nenhum POST);
+  desligada e `fuse` sem `manage` (0 requisição); só a primeira resposta crua;
+- nunca PP: as três pagas, 2 relíquias, componente e id repetido viram recusa
+  local sem tocar a rede, e o `relic_manager.py` não cita as pagas.
+
+Mutantes, um por freio, todos pegos: aleatória, piso, superar, 24 h, teto,
+leituras seguidas, reconferência, relíquia do plano, `ajax_error`, lista
+branca, fusão travando o equipar. O primeiro rodou escapando (a outra trava
+segurava) e ganhou o caso "sem `blocked`". `test_relics.py` ganhou o quadro
+com inativa. Suíte inteira no checkout principal: **119 arquivos, 0 falhas**.
+
+### 5. Dry-run e campo
+
+**Nenhuma fusão vale, e nenhuma é possível.** Inventário de 22:42: 1 parada
+livre (Alabarba Aprimorada, refined, que o plano quer equipar na BBM 001) e
+duas Fogueiras de má qualidade **inativas** (BBM 067 até ~00:37 de 30/10, BBM
+068 até ~20:56 de 30/10). O planejador sobre o `cache/relics.json` real:
+"fusões: nenhuma possível". Hipóteses, com as taxas reais:
+- **3 Fogueiras paradas** (as duas + uma terceira): método 1 com ganho 0/h. A
+  Fogueira só tem combate e velocidade de quartel sem fila cheia; Resistente
+  continua valendo 0. Não sai ("abaixo do piso"). Com uma Estrela d'alva no
+  lugar da terceira, é aleatória: não sai.
+- **3 Picaretas de má qualidade paradas**: o plano prefere equipá-las
+  separadas (+656, +434 e +698/h), então ficam fora da fusão. É a regra
+  "nunca funde o que a Fase 3 vai equipar", e é a resposta certa: três de raio
+  2 cobrem mais do que uma de raio 2 com 1 ponto a mais.
+
+O caso "relíquia parada de valor 0 em toda aldeia" cai quase sempre na
+aleatória (os achados vêm de tipos diferentes), e esta não tem fonte. Pelo
+método 1, três paradas de valor 0 dão uma resultante de valor 0. A fusão que
+vale é a de um tipo de valor sem vaga para os três, e ela ainda não existe na
+conta.
+
+`relics.fuse` fica **desligado** no `config.json`; o processo em campo não
+foi reiniciado (roda o código da Fase 3). Smoke local do caminho novo com as
+telas de 22:42 e um wrapper falso, gravando fora do `cache/`: `run()` com 3
+GET, velocidade 1 e base 60 já no primeiro plano, "fusões: nenhuma possível",
+`act()` com `fuse` ligado, **0 POST**. Na tela do jogo
+(`screen=relic_system`, 22:42), o inventário confere com o `cache/relics.json`:
+6 equipadas, 2 inativas, 1 parada, `materials` vazio.
+
+### 6. Em aberto (fila na §9)
+
+- O formato `relic_ids[]` e a resposta do `upgrade_relic` só se medem na
+  primeira fusão de verdade (a resposta crua fica salva).
+- A previsão do método 1 é a tabela; a primeira fusão a confere.
+- De onde saem os componentes.
+- As probabilidades da aleatória: não publicadas; só uma amostra grande de
+  fusões aleatórias mediria, e a conta faz poucas.
 
 ## 9. Próximos passos
 
@@ -8850,8 +9059,8 @@ segue aberto**. O Lote C (A26-05, 06, 07, 08, 12) foi fechado no mesmo dia
 sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da §8.32.
 
 **Relíquias (`P-RELIQUIA`, §8.74), decidido em 2026-10-29:** Fases 0, 1
-(§8.75), 2 (§8.77) e 3 (§8.78, equipar e mover, ligada em campo) feitas;
-seguem as Fases 4 e 5, uma por chat. **Logo depois das relíquias** (decisão do usuário em
+(§8.75), 2 (§8.77), 3 (§8.78, equipar e mover, ligada em campo) e 4 (§8.79,
+fundir, desligada: nada vale ainda) feitas; segue a Fase 5. **Logo depois das relíquias** (decisão do usuário em
 29/10, antes das bandeiras): o furo do trem contra aldeia nossa (fim da
 §8.77) — checagem "o alvo já é nosso" no envio no horário do Hunter e na
 escolha de alvo do planejador bárbaro, automática e manual. **Depois delas: bandeiras por valor.** A
@@ -8861,14 +9070,17 @@ mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
 servidor o que cada tipo de bandeira afeta de fato. A validação das "3 trocas"
 (§8.11) continua aberta e entra nessa conta.
 
-Pendências pequenas das relíquias, achadas na Fase 3 (§8.78), para a Fase 4
-ou depois:
-- **O planejador lê o cache do mundo antes de o ciclo relê-lo.** Num processo
-  novo, o primeiro plano pode sair com o mundo velho: às 16:17 sem `speed`, às
-  17:10 sem `base_production` (os dois chegaram ao cache segundos depois). O
-  `stable_reads` impede ação sobre uma leitura só, e a seguinte corrige.
-  Correção barata: chamar `WorldConfig.get()` no `_plan` em vez de abrir o
-  arquivo.
+Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
+- ~~**O planejador lê o cache do mundo antes de o ciclo relê-lo.**~~ ✅
+  Fechado na §8.79: o `_plan` usa `WorldConfig.get()`.
+- **A primeira fusão de verdade** mede o que falta: o `relic_ids[]` aceito, a
+  resposta do `upgrade_relic` (crua em `cache/debug/relics/`) e se o resultado
+  do método 1 bate com a tabela. Ligar `relics.fuse` quando o plano mostrar uma
+  fusão com ganho; até lá, dry-run no painel.
+- **Componentes de fusão (`materials`)**: sempre vazios; de onde saem não se
+  sabe. Se aparecerem, o log e o painel mostram, e o bot não os usa.
+- **Relíquia inativa no quadro das vizinhas** não foi vista: a conferência só a
+  espera na anfitriã (§8.79). Se uma vizinha divergir com ela, é medição.
 - **`replace` e `swap` do plano não saem** (§8.78). Só fazem falta com as
   vagas cheias (hoje 6 de 8).
 - **`unit_costs` só é lido onde o bot recruta**: nas aldeias com recrutamento

@@ -11,6 +11,7 @@ import psutil
 
 from core.file_lock import file_lock
 from core import relic_executor
+from core import relic_fusion
 from core.filemanager import FileManager
 
 
@@ -5049,8 +5050,21 @@ class RelicReader:
         history = [dict(h, at_fmt=RelicReader._fmt(h.get("at"), "%d/%m %H:%M:%S"))
                    for h in reversed(ex.get("history") or [])][:20]
         enabled = ((config or {}).get("relics") or {}).get("enabled", True)
+        # §8.79: as fusões possíveis, pela mesma regra do bot (`relic_fusion.evaluate`).
+        fusions = [{"text": f.get("text"), "kind": f.get("kind"), "gain_h": f.get("gain_h"),
+                    "result_best_h": f.get("result_best_h"), "consumed_best_h": f.get("consumed_best_h"),
+                    "result": f.get("result"), "why": why}
+                   for f, why in relic_fusion.evaluate(state.get("plan") or {}, ex, cfg, now, day)]
+        info = (state.get("plan") or {}).get("fusion_info") or {}
+        names = {str(r.get("id")): r.get("name") for r in state.get("relics") or []}
         return {"manage": bool(enabled) and cfg["manage"], "cfg": cfg, "day": day,
                 "moves_today": moves, "equips_today": equips, "steps": steps,
+                "fuse": bool(enabled) and cfg["manage"] and cfg["fuse"],
+                "fusions_today": relic_fusion.fusions_today(ex, day), "fusions": fusions,
+                "fusion_excluded": sorted(
+                    (names.get(str(rid), rid), why) for rid, why in (info.get("excluded") or {}).items()),
+                "fusion_materials": info.get("materials") or [],
+                "fusion_table": sorted((info.get("table") or {}).items()),
                 "history": history, "stale": bool((state.get("plan") or {}).get("stale"))}
 
     KIND_LABELS = {"production": "produção", "recruit_cost": "custo de recrutamento",

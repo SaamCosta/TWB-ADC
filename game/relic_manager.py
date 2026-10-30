@@ -36,6 +36,15 @@ o `loyalty_locked` é da aldeia da URL) + 1 POST (equipar) ou 2 (mover =
 `remove_relic` na origem + `equip_relic` no destino). A resposta do POST é o
 estado novo quando traz `relics`; senão, a confirmação é 1 GET. Toda resposta
 passa por `Extractor.ajax_error()` (A26-09).
+
+Fase 4 (§8.79): com `relics.fuse` (e `manage`) ligados, a fusão do método 1
+(principal + 2 do mesmo tipo e qualidade) sai quando nenhum equipar/mover
+saiu nesta leitura, pelos freios de `core/relic_fusion.py`. Custo: 1 GET de
+`screen=relic_system` (reconferência: o usuário também funde) + 1 POST
+`upgrade_relic`. Nenhum POST sai fora de `relic_fusion.ALLOWED_POSTS`: as ações
+pagas (`premium_upgrade_relic`, `reroll_relic`, `reduce_cooldown`) são recusadas
+antes da rede, e componente (`material_qualities[]`) nunca é mandado. A primeira
+resposta crua de cada ação vai para `cache/debug/relics/` (fora do git).
 """
 import glob
 import json
@@ -44,12 +53,14 @@ import os
 import time
 
 from core import relic_executor as E
+from core import relic_fusion as F
 from core import relic_planner as P
 from core import relics as R
 from core.extractors import Extractor
 from core.filemanager import FileManager
 from core.notification import Notification
 from core.village_label import village_label
+from core.world_config import WorldConfig
 
 CACHE_PATH = "cache/relics.json"
 OVERVIEW_MAX_AGE = 6 * 3600
@@ -60,6 +71,9 @@ BOARD_REREAD_MIN_INTERVAL = 1800
 # A ação só sai sobre um plano feito de uma leitura deste instante (6º padrão):
 # `act()` roda logo depois de `run()`, e plano mais velho que isto não age.
 ACT_MAX_STATE_AGE = 600
+# Primeira resposta crua de cada ação (fixture futura, anonimizada antes de ir
+# para tests/): `cache/` está no .gitignore.
+DEBUG_DIR = "cache/debug/relics"
 
 
 def _coords_from_disk(own_ids):
@@ -103,6 +117,8 @@ class RelicManager:
         self.state = FileManager.load_json_file(CACHE_PATH) or None
         self._coords = None
         self._last_exec_summary = None
+        self._last_fusion_summary = None
+        self._read_village = None
 
     @property
     def enabled(self):
@@ -112,6 +128,11 @@ class RelicManager:
     def manage(self):
         """Fase 3: o bot equipa/move de verdade. Sem a leitura (`enabled`), nada."""
         return self.enabled and E.settings(self.config)["manage"]
+
+    @property
+    def fuse(self):
+        """Fase 4: o bot funde. Exige `manage`: sem equipar a resultante, a fusão não rende."""
+        return self.manage and E.settings(self.config)["fuse"]
 
     # -- gatilhos -------------------------------------------------------------
 
@@ -205,8 +226,10 @@ class RelicManager:
 
     def _board_msgs(self, vid, board):
         relics = [r for r in self.state.get("relics") or [] if r.get("state") == "equipped"]
+        inactive = [r for r in self.state.get("relics") or [] if r.get("state") == "inactive"]
         computed = {r["id"]: r.get("covers") or [] for r in relics}
-        return R.board_check(vid, board, relics, computed, self.state.get("villages") or {})
+        return R.board_check(vid, board, relics, computed, self.state.get("villages") or {},
+                             inactive=inactive)
 
     # -- leitura --------------------------------------------------------------
 
@@ -219,6 +242,7 @@ class RelicManager:
         if not self.enabled or self.wrapper is None or not village_id:
             return False
         self.pending = None
+        self._read_village = str(village_id)
         base = "game.php?village=%s&screen=relic_system" % village_id
         res = self.wrapper.get_url(base)
         if res is None:
@@ -282,9 +306,14 @@ class RelicManager:
     def _plan(self, coords, now):
         """Fase 2: o plano em dry-run, só de disco. Falha aqui não perde a leitura."""
         try:
-            server = (self.config.get("server") or {}).get("server")
-            # load_json_file levanta com JSON corrompido: dentro do try.
-            world = FileManager.load_json_file("cache/world/config_%s.json" % server) if server else None
+            server_cfg = self.config.get("server") or {}
+            # `WorldConfig.get()`, e não o arquivo do cache: num processo novo
+            # o cache pode ser de uma versão sem `speed`/`base_production`, e
+            # quem o relia era outro componente, segundos DEPOIS deste plano
+            # (§8.78/§8.79). `get()` refaz o cache velho na hora (1 GET no
+            # interface.php público, não no jogo) e degrada para o cache ou
+            # para o neutro se a rede falhar.
+            world = WorldConfig.get(server_cfg.get("server"), server_cfg.get("endpoint"))
             regen = (self.config.get("conquest") or {}).get("loyalty_regen_per_hour", 1) or 1
             self.state["plan"] = P.plan_from_disk(
                 self.state, coords, root=FileManager.get_root(), now=now,
@@ -303,6 +332,7 @@ class RelicManager:
                          "valor das relíquias hoje %.0f/h, depois %.0f/h",
                          "relics.manage ligado" if self.manage else "dry-run, relics.manage desligado",
                          plan.get("summary"), plan.get("value_now", 0), plan.get("value_after", 0))
+        self._log_fusions(plan)
         # O detalhe só quando o plano muda: a leitura roda todo ciclo.
         if plan.get("summary") == self._last_plan_summary:
             return
@@ -320,6 +350,30 @@ class RelicManager:
             self.logger.info("Relics: plano sem dado de %d aldeia(s): %s", len(plan["missing"]),
                              "; ".join("%s: %s" % (village_label(v), ", ".join(m))
                                        for v, m in sorted(plan["missing"].items())))
+
+    def _log_fusions(self, plan):
+        """§8.79: as fusões possíveis e por que saem ou não; só quando mudam."""
+        cfg = E.settings(self.config)
+        ex = (self.state or {}).get("exec") or {}
+        now = time.time()
+        rows = F.evaluate(plan, ex, cfg, now, E.server_day(self.state, now))
+        info = plan.get("fusion_info") or {}
+        summary = "; ".join("%s (%s): %s" % (
+            f.get("text"), "+%.0f/h" % f["gain_h"] if f.get("gain_h") is not None else "sem valor",
+            why or ("sai" if self.fuse else "sairia, relics.fuse desligado")) for f, why in rows)
+        if info.get("materials"):
+            summary += "; componentes no inventário (o bot não os usa: formato não medido): %s" % (
+                json.dumps(info["materials"], ensure_ascii=False))
+        if info.get("error"):
+            summary += "; a avaliação das fusões falhou: %s" % info["error"]
+        if info.get("table"):
+            summary += "; tabela de qualidade divergente: %s" % info["table"]
+        if summary == self._last_fusion_summary:
+            return
+        self._last_fusion_summary = summary
+        self.logger.info("Relics: fusões (%s): %s",
+                         "relics.fuse ligado" if self.fuse else "dry-run",
+                         summary or "nenhuma possível (menos de 3 paradas livres da mesma qualidade)")
 
     # -- Fase 3: ação ---------------------------------------------------------
 
@@ -356,15 +410,28 @@ class RelicManager:
             self.pending = "replanejar depois de uma ação"
             return True
         waiting = E.awaiting_confirmation(plan, ex, cfg, now, day)
+        if not waiting and self.fuse:
+            waiting = F.awaiting_confirmation(plan, ex, cfg, now, day)
         if not waiting:
             return False
         self.pending = "confirmar o plano (%s)" % waiting[0].get("text")
         return True
 
+    def fusion_candidate(self, now=None):
+        """A fusão que `act()` faria agora (só quando nenhum equipar/mover sai), ou None. 0 GET."""
+        if not self.fuse or not self.state:
+            return None
+        plan, ex, cfg, now, day = self._exec_view(now)
+        if (plan.get("error") or plan.get("stale")
+                or now - (self.state.get("fetched_at") or 0) > ACT_MAX_STATE_AGE):
+            return None
+        return F.choose(plan, ex, cfg, now, day)
+
     def act(self):
         """
-        Executa no máximo UM passo do plano (equipar parada antes de mover).
-        Devolve True quando o bot mudou alguma relíquia de lugar.
+        Executa no máximo UM passo do plano (equipar parada antes de mover, e
+        fundir só sem nenhum dos dois). Devolve True quando o bot mudou alguma
+        relíquia.
         """
         if not self.manage or self.wrapper is None or not self.state:
             return False
@@ -372,7 +439,7 @@ class RelicManager:
         self._log_exec(plan, ex, cfg, now, day)
         move = self.candidate(now)
         if move is None:
-            return False
+            return self._act_fuse(now, day)
         rid = str(move["relic_ids"][0])
         host = str(move["to"][rid])
         origin = move["from"].get(rid)
@@ -425,11 +492,88 @@ class RelicManager:
             self._done_text(move), move.get("gain_alone_h") or 0))
         return True
 
+    def _act_fuse(self, now, day):
+        """
+        Fase 4 (§8.79): uma fusão do método 1. 1 GET (o inventário relido: o
+        usuário também funde) + 1 POST `upgrade_relic`. Devolve True quando o
+        inventário mudou.
+        """
+        fusion = self.fusion_candidate(now)
+        if fusion is None:
+            return False
+        ex = self.state.setdefault("exec", {})
+        vid = self._read_village
+        page = self.wrapper.get_url("game.php?village=%s&screen=relic_system" % vid) if vid else None
+        fresh = Extractor.relic_inventory(page) if page is not None else None
+        why, kind = F.precheck(fusion, fresh)
+        if why:
+            E.note_skip(ex, fusion, why, kind, now)
+            if kind == "diverge":
+                self.pending = "inventário diverge do plano de fusão"
+            self.logger.info("Relics: não vou %s: %s%s", fusion.get("text"), why,
+                             "; relendo o inventário" if kind == "diverge" else "")
+            self._save()
+            return False
+        self._apply_inventory(fresh)
+        res = self._post("upgrade_relic", vid, {"relic_ids[]": list(fusion["relic_ids"])})
+        err = Extractor.ajax_error(res)
+        after = None if err else self._confirmed(res, vid)
+        if err or after is None:
+            detail = ("o jogo recusou fundir: %s" % err if err else
+                      "a fusão não se confirmou (resposta: %.200s)" % (res,))
+            return self._fail(fusion, detail, now, day, changed=False)
+        verdict, detail = F.check_result(fusion, after)
+        if verdict == "none":
+            return self._fail(fusion, "a fusão não se confirmou: %s" % detail, now, day, changed=False)
+        self._apply_inventory(after)
+        if verdict == "changed":
+            return self._fail(fusion, detail, now, day, changed=True)
+        E.record(ex, fusion, True, "feito" if detail == "como previsto" else detail, time.time(), day)
+        self._save()
+        result = next((r for r in after.get("relics") or []
+                       if str(r.get("id")) == str(fusion["relic_ids"][0])), {})
+        text = "fundidas %s em %s (%s; POST em %s)" % (
+            ", ".join(fusion.get("names") or []), result.get("name"), detail, village_label(vid))
+        self.logger.info("Relics: %s (+%.0f/h; hoje %s)", text, fusion.get("gain_h") or 0,
+                         self._today_text(ex, E.settings(self.config), day))
+        Notification.send("Relíquias: %s (+%.0f/h)" % (text, fusion.get("gain_h") or 0))
+        return True
+
     def _post(self, action, vid, data):
-        """`TribalWars.post("relic_system", {ajaxaction}, data)` na aldeia `vid`."""
-        return self.wrapper.get_api_action(
+        """
+        `TribalWars.post("relic_system", {ajaxaction}, data)` na aldeia `vid`.
+        Só as ações gratuitas de `relic_fusion.ALLOWED_POSTS` saem; qualquer
+        outra (as pagas, inclusive por engano) vira uma recusa local no formato
+        `{"error": [...]}` sem tocar a rede, e o chamador a trata como recusa.
+        """
+        data = dict(data or {})
+        if action not in F.ALLOWED_POSTS or any(k.startswith("material_qualities") for k in data) \
+                or (action == "upgrade_relic"
+                    and len(set(data.get("relic_ids[]") or [])) != F.FUSION_SIZE):
+            self.logger.error("Relics: POST %s recusado pelo próprio bot (%r): só %s, e a fusão só "
+                              "com 3 relíquias e sem componente", action, data,
+                              ", ".join(F.ALLOWED_POSTS))
+            return {"error": ["ação %s recusada pelo bot: nunca PP" % action]}
+        res = self.wrapper.get_api_action(
             vid, action=action,
             params={"screen": "relic_system", "h": self.wrapper.last_h}, data=data)
+        self._save_first_raw(action, res)
+        return res
+
+    def _save_first_raw(self, action, res):
+        """A primeira resposta crua de cada ação, para virar fixture (fora do git)."""
+        path = FileManager.get_path(os.path.join(DEBUG_DIR, "action_%s.json" % action))
+        if res is None or os.path.exists(path):
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                if isinstance(res, (dict, list)):
+                    json.dump(res, fh, ensure_ascii=False, indent=1)
+                else:
+                    fh.write(getattr(res, "text", None) or str(res))
+        except OSError as exc:
+            self.logger.warning("Relics: não gravei a resposta crua de %s: %s", action, exc)
 
     def _confirmed(self, res, vid):
         """
@@ -508,12 +652,15 @@ class RelicManager:
     @staticmethod
     def _today_text(ex, cfg, day):
         moves, equips = E.day_counts(ex, day) if day else (0, 0)
-        return "%d/%d mover, %d/%d equipar" % (moves, cfg["max_moves_per_day"],
-                                               equips, cfg["max_equips_per_day"])
+        return "%d/%d mover, %d/%d equipar, %d/%d fundir" % (
+            moves, cfg["max_moves_per_day"], equips, cfg["max_equips_per_day"],
+            F.fusions_today(ex, day), cfg["max_fusions_per_day"])
 
     def _log_exec(self, plan, ex, cfg, now, day):
         """Por que cada passo do plano sai ou não sai; o detalhe só quando muda."""
         rows = E.evaluate(plan, ex, cfg, now, day)
+        if cfg["fuse"]:
+            rows += F.evaluate(plan, ex, cfg, now, day)
         summary = "; ".join("%s: %s" % (m.get("text"), why or "sai agora") for m, why in rows)
         if not rows or summary == self._last_exec_summary:
             return

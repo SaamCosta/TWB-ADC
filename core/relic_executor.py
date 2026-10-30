@@ -26,6 +26,12 @@ Freios, todos em `relics.*` do config:
   risco menor); mover só depois.
 - `replace` e `swap` do plano não saem nesta fase: ficam registrados.
 
+Fase 4 (§8.79, `core/relic_fusion.py`): `fuse` e `max_fusions_per_day` são
+lidos aqui também, a fusão entra no mesmo histórico, contador do dia e
+contagem de leituras seguidas, e a trava de 24 h dela vale para qualquer ação
+do bot (a de equipar/mover só olha equipar/mover: equipar a relíquia que o bot
+acabou de fundir é o objetivo da fusão, não desfazê-la).
+
 Reconferência na hora de agir (6º padrão): o inventário relido NA anfitriã
 (o `loyalty_locked` do `Inventory.init` é da aldeia da URL), e não o do plano.
 Se a relíquia não está onde o plano a viu, o jogador mexeu (9º padrão): não
@@ -51,6 +57,10 @@ DEFAULTS = {
     "max_moves_per_day": 2,
     "max_equips_per_day": 3,
     "undo_block_h": 24,
+    # Fase 4 (§8.79): fundir. Só age com `manage` também ligado: o valor da
+    # fusão só existe se o bot equipar a resultante.
+    "fuse": False,
+    "max_fusions_per_day": 1,
 }
 
 
@@ -101,7 +111,7 @@ def update_streaks(exec_state, plan, fetched_at):
         return exec_state.get("streak") or {}
     prev = exec_state.get("streak") or {}
     fresh = {}
-    for move in (plan or {}).get("moves") or []:
+    for move in list((plan or {}).get("moves") or []) + list((plan or {}).get("fusions") or []):
         key = move_key(move)
         old = prev.get(key) or {}
         fresh[key] = {"count": int(old.get("count", 0)) + 1,
@@ -116,11 +126,14 @@ def day_counts(exec_state, day):
     return int(counts.get("moves", 0)), int(counts.get("equips", 0))
 
 
-def _touched_recently(exec_state, relic_ids, now, hours):
-    """{id: horas desde a última ação do bot} das relíquias tocadas há menos de `hours`."""
+def touched_recently(exec_state, relic_ids, now, hours, actions=EXECUTED_ACTIONS):
+    """
+    {id: horas desde a última ação do bot} das relíquias tocadas há menos de
+    `hours`, contando só as ações em `actions` (None = todas, inclusive fundir).
+    """
     out = {}
     for entry in exec_state.get("history") or []:
-        if not entry.get("ok"):
+        if not entry.get("ok") or (actions is not None and entry.get("action") not in actions):
             continue
         age = (now - float(entry.get("at") or 0)) / 3600.0
         if age >= hours:
@@ -150,7 +163,7 @@ def evaluate(plan, exec_state, cfg, now, day):
         gain = move.get("gain_alone_h")
         before = float(move.get("value_before_h") or 0.0)
         ids = {str(i) for i in move.get("relic_ids") or []}
-        touched = _touched_recently(exec_state, ids, now, cfg["undo_block_h"])
+        touched = touched_recently(exec_state, ids, now, cfg["undo_block_h"])
         seen = int((streak.get(key) or {}).get("count", 0))
         until = float((skip.get(key) or {}).get("until") or 0)
         if action not in EXECUTED_ACTIONS:
@@ -264,7 +277,8 @@ def record(exec_state, move, ok, detail, now, day):
     if ok and day:
         days = exec_state.setdefault("days", {})
         counts = days.setdefault(day, {"moves": 0, "equips": 0})
-        counts["moves" if move.get("action") == "move" else "equips"] += 1
+        field = {"move": "moves", "fuse": "fusions"}.get(move.get("action"), "equips")
+        counts[field] = counts.get(field, 0) + 1
         for old in sorted(days)[:-14]:
             days.pop(old, None)
     # O passo feito sai da contagem de leituras: o próximo plano é outro.

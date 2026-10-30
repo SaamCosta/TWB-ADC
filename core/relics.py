@@ -167,16 +167,24 @@ def totals(attributes):
             "discarded_share": (discarded / relic_pct) if relic_pct else 0.0}
 
 
-def board_check(vid, board, relics, computed, attributes):
+def board_check(vid, board, relics, computed, attributes, inactive=()):
     """
     Diferenças entre o quadro da visão geral da aldeia `vid` e o cálculo:
     relíquias que a alcançam (nome + anfitriã) e, por atributo, a soma das
     contribuições de relíquia e o descartado. Lista vazia = bate.
+
+    `inactive`: relíquias inativas (conquista, 24 h). O quadro da ANFITRIÃ as
+    lista na linha `<!-- relic -->`, mas nenhum atributo delas entra nos
+    totais `benefit` (§8.79: BBM 067 e a 87765 em 29/10, a da 87765 com um
+    "+1% Quartel na velocidade" que não aparece no quadro). Entram só na lista
+    esperada da anfitriã; nas vizinhas, não visto.
     """
     vid = str(vid)
     msgs = []
-    expected = sorted((r.get("name") or "", r["village_id"]) for r in relics
-                      if vid in (computed.get(r["id"]) or []))
+    expected = sorted([(r.get("name") or "", r["village_id"]) for r in relics
+                       if vid in (computed.get(r["id"]) or [])]
+                      + [(r.get("name") or "", r["village_id"]) for r in inactive or ()
+                         if str(r.get("village_id")) == vid])
     seen = sorted((r.get("name") or "", r.get("host_id")) for r in board.get("relics") or [])
     if expected != seen:
         msgs.append("relíquias que alcançam: jogo %s, cálculo %s" % (seen, expected))

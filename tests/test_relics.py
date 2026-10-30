@@ -176,6 +176,26 @@ def test_quadro_confere_com_o_calculo():
     check(any(m.startswith("Aríete: poder de ataque") for m in msgs), "e a soma do atributo também")
 
 
+def test_quadro_com_reliquia_inativa_na_anfitria():
+    """
+    §8.79: o quadro da anfitriã lista a relíquia inativa (conquista), sem
+    nenhum atributo dela nos totais. Quadro como o `village_bonus_board` gravou
+    no `cache/managed` da 87765 em 29/10 22:27 (o WARNING falso daquela hora).
+    """
+    fog = {"id": "359750", "name": "Fogueira de má qualidade", "village_id": "87765",
+           "inactive_sec": 80000, "state": "inactive"}
+    items = [{"value": 30.0, "name": "de itens expira em 14.11. às 19:59", "relic": False, "partial": False}]
+    board_ = {"relics": [{"name": "Fogueira de má qualidade", "quality": "shoddy", "host_id": "87765",
+                          "stats": ["Catapulta: +5% dano contra edifícios",
+                                    "+1% Quartel na velocidade de recrutamento", "Bárbaro: +1% poder de ataque"]}],
+              "benefits": [{"key": "na produção de %s" % r, "total": 30.0, "sources": items,
+                            "applied": None, "discarded": None} for r in ("madeira", "argila", "ferro")]}
+    check(R.board_check("87765", board_, [], {}, {}, inactive=[fog]) == [], "inativa na anfitriã: bate")
+    check(R.board_check("87765", board_, [], {}, {}) != [], "sem saber da inativa, diverge (o WARNING antigo)")
+    check(R.board_check("87766", {"relics": [], "benefits": []}, [], {}, {}, inactive=[fog]) == [],
+          "a inativa não é esperada no quadro de outra aldeia")
+
+
 def test_achados_por_dia():
     rows = Extractor.report_list_rows(fixture("report_list_other_br143.html"))
     check(len(rows) == 44, "44 linhas, veio %d" % len(rows))

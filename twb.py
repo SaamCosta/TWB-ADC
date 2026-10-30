@@ -780,10 +780,12 @@ class TWB:
         §8.78: um passo do plano de reliquias, logo depois da leitura que o
         fez. Fase propria atras do gate do Hunter (§8.58): sao ate 1 GET + 2
         POSTs, e um POST nao preempta. Sem candidato (o caso comum, e sempre
-        com relics.manage desligado), nem o gate roda.
+        com relics.manage desligado), nem o gate roda. §8.79: a fusao
+        (relics.fuse) passa pelo mesmo gate: 1 GET + 1 POST `upgrade_relic`.
         """
         manager = self.relic_manager
-        if manager is None or not manager.manage or manager.candidate() is None:
+        if manager is None or not manager.manage or (
+                manager.candidate() is None and manager.fusion_candidate() is None):
             if manager is not None and manager.manage:
                 manager.act()  # so loga por que nada sai (0 requisicao)
             return

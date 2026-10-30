@@ -43,14 +43,27 @@
       </table>
     </div>
     {% endif %}
+    <h3 class="h6 mt-3">Fusões</h3>
+    <p class="small">{% if x.fuse %}<span class="twb-status twb-status--success">ligada</span> — o bot funde só pelo método 1 (principal + 2 do mesmo tipo e qualidade), quando nenhum equipar/mover sai na leitura, e reconfere o inventário antes do POST.{% else %}<span class="twb-status twb-status--warning">desligada</span> — as fusões só são simuladas. Ligue <code>relics.fuse</code> (com <code>relics.manage</code>) em <a href="/config">/config</a>.{% endif %} Hoje: <span class="twb-number">{{ x.fusions_today }}</span> de {{ x.cfg.max_fusions_per_day }}. Uma fusão só sai se o plano refeito com a relíquia fundida render pelo menos {{ '%g' % x.cfg.min_gain_h }}/h a mais e se a resultante, na melhor anfitriã, valer mais que as três somadas. A aleatória (tipos diferentes) nunca sai: o jogo não publica as probabilidades. Nunca usa Pontos Premium.</p>
+    {% if x.fusions %}
+    <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Fusões possíveis e se saem">
+      <table class="table table-sm twb-operational-table">
+        <thead><tr><th>Fusão</th><th class="text-right">Ganho no plano</th><th class="text-right">Resultante / as três</th><th>Sai?</th></tr></thead>
+        <tbody>{% for f in x.fusions %}<tr><td>{{ f.text }}{% if f.result %}<div class="small text-muted">raio {{ f.result.range }}, principal {{ f.result.main }}%, secundários {{ f.result.subs | join('% / ') }}%</div>{% endif %}</td><td class="text-right twb-number">{% if f.gain_h is not none %}{{ '%+.0f' % f.gain_h }}/h{% else %}—{% endif %}</td><td class="text-right twb-number">{% if f.result_best_h is not none %}{{ '%.0f' % f.result_best_h }}{% else %}—{% endif %} / {{ '%.0f' % (f.consumed_best_h or 0) }}/h</td><td class="small">{% if f.why %}{{ f.why }}{% elif x.fuse %}<span class="twb-status twb-status--success">sai na próxima leitura</span>{% else %}sairia (fusão desligada){% endif %}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% else %}<p class="small text-muted">Nenhuma fusão possível: são precisas 3 relíquias paradas da mesma qualidade, fora do plano.</p>{% endif %}
+    {% if x.fusion_excluded %}<p class="small text-muted">Fora das fusões: {% for rid, why in x.fusion_excluded %}{{ rid }} ({{ why }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>{% endif %}
+    {% if x.fusion_materials %}<p class="small text-muted">Componentes no inventário (o bot não os usa): {{ x.fusion_materials }}</p>{% endif %}
+    {% for q, msgs in x.fusion_table %}<p class="small text-danger">Qualidade {{ q }} não bate com a tabela: {{ msgs | join('; ') }}</p>{% endfor %}
     {% if x.history %}
     <h3 class="h6 mt-3">O que o bot fez</h3>
     <div class="twb-table-scroll table-responsive" tabindex="0" aria-label="Ações do bot nas relíquias">
       <table class="table table-sm twb-operational-table">
         <thead><tr><th>Quando</th><th>Ação</th><th>Relíquia</th><th>De → para</th><th class="text-right">Ganho</th><th>Resultado</th></tr></thead>
         <tbody>{% for h in x.history %}{% set rid = h.relic_ids[0] %}{% set src = h['from'] or {} %}{% set dst = h['to'] or {} %}<tr>
-          <td class="twb-number">{{ h.at_fmt }}</td><td>{{ 'mover' if h.action == 'move' else 'equipar' }}</td><td>{{ (h.names or [rid])[0] }}</td>
-          <td>{% if src[rid] %}{{ src[rid] | vlabel }}{% else %}inventário{% endif %} → {{ dst[rid] | vlabel }}</td>
+          <td class="twb-number">{{ h.at_fmt }}</td><td>{{ {'move': 'mover', 'fuse': 'fundir'}.get(h.action, 'equipar') }}</td><td>{% if h.action == 'fuse' %}{{ (h.names or h.relic_ids) | join(' + ') }}{% else %}{{ (h.names or [rid])[0] }}{% endif %}</td>
+          <td>{% if h.action == 'fuse' %}inventário{% else %}{% if src[rid] %}{{ src[rid] | vlabel }}{% else %}inventário{% endif %} → {{ dst[rid] | vlabel }}{% endif %}</td>
           <td class="text-right twb-number">{% if h.gain_h is not none %}+{{ '%.0f' % h.gain_h }}/h{% endif %}</td>
           <td class="small">{% if h.detail == 'feito' %}<span class="twb-status twb-status--success">feito</span>{% else %}<span class="twb-status twb-status--{{ 'warning' if h.ok else 'danger' }}">{{ h.detail }}</span>{% endif %}</td>
         </tr>{% endfor %}</tbody>
