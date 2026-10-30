@@ -7,6 +7,7 @@ from codecs import decode
 from datetime import datetime
 
 from core import am_auto, am_cession
+from core import flag_planner
 from core import game_data_shadow
 from core import own_villages
 from core import support_store
@@ -432,6 +433,20 @@ class Village:
         self.def_man.flag_manual_types = self.get_config(
             section="world", parameter="flag_manual_types", default=[3, 5]
         )
+        # Bandeiras por valor (§8.82). Bloco ausente = "dry_run" pelos padrões
+        # de flag_planner.settings: calcula e mostra, a ordem fixa acima age.
+        value_cfg = flag_planner.settings(self.config)
+        self.def_man.value_cfg = value_cfg
+        self.def_man.value_mode = value_cfg["mode"]
+        village_gd = (self.game_data or {}).get("village", {})
+        self.def_man.own_pop = (village_gd.get("pop"), village_gd.get("pop_max"))
+        try:
+            self.def_man.value_world = WorldConfig.get(
+                self.get_config(section="server", parameter="server", default=None),
+                self.get_config(section="server", parameter="endpoint", default=None),
+            )
+        except Exception:  # noqa: BLE001 -- sem mundo a produção fica desconhecida
+            self.def_man.value_world = None
         self.def_man.support_factor = self.get_village_config(
             self.village_id, "support_others_factor", default=0.25
         )
@@ -2448,6 +2463,10 @@ class Village:
             # e nesse caso a política se abstém (preferred_flags devolve []).
             "has_academy": self.def_man.has_academy,
             "preferred_flags": self.def_man.preferred_flags(),
+            # Bandeiras por valor (§8.82): o passo desta aldeia no plano da
+            # conta, se o freio o deixa sair e por quê, e o valor da atual.
+            # None = o plano não rodou neste processo (modo "off").
+            "value_plan": self.def_man.value_result,
             "upgrade_attempts": {
                 f"{flag_type}:{level}": count
                 for (flag_type, level), count in self.def_man._upgrade_attempts.items()
@@ -2495,6 +2514,15 @@ class Village:
             "building_queue": self.builder.queue,
             "troops": self.units.total_troops,
             "under_attack": self.def_man.under_attack,
+            # §8.82: população do game_data deste ciclo. A bandeira de
+            # população só vale com a aldeia no teto, e o plano das OUTRAS
+            # aldeias lê daqui.
+            # Chave `population`, não `pop`: `pop` é método de dict e perde
+            # para ele no Jinja2 (8º padrão).
+            "population": {
+                "used": (self.game_data or {}).get("village", {}).get("pop"),
+                "max": (self.game_data or {}).get("village", {}).get("pop_max"),
+            },
             "incoming_attack": incoming_state,
             # Aceleração do apoio que chega AQUI (item "Sinal da Aflição").
             # Publicado para as outras aldeias: quem calcula a viagem é a

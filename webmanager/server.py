@@ -572,7 +572,7 @@ def get_zones():
 def get_flags():
     sync_data = sync()
     flag_entries = FlagReader.load(sync_data["bot"])
-    return render_template('flags.html', entries=flag_entries)
+    return render_template('flags.html', entries=flag_entries, value_plan=FlagReader.load_plan())
 
 
 @app.route('/resource_sharing', methods=['GET'])

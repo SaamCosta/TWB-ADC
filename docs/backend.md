@@ -488,6 +488,12 @@ Os 8 tipos do jogo, 9 níveis cada (`FLAG_TYPES` em `game/defence_manager.py`):
 | 7 | custo de cunhagem | preferida **com** academia |
 | 8 | capacidade de saque | quarta opção |
 
+⚠️ **Desde 2026-10-30 (§8.82) a escolha pode ser por valor/h**
+(`flag_value.mode`; padrão `dry_run`, em que a ordem abaixo continua agindo e
+o plano por valor só é mostrado). O efeito medido de cada tipo, nível a nível,
+e como ele soma com relíquia e modificação de aldeia, estão na tabela da
+§8.82.2. A ordem abaixo vale com `off` e `dry_run`.
+
 **Política em vigor** (2026-08-31, `DefenceManager.preferred_flags()`):
 
 | Situação | Ordem |
@@ -622,6 +628,12 @@ reaparecer, é aqui que se puxa o fio.**
 | Marcas da torre de vigia na tela de chegadas | a BBM 002 já tem torre nível 8; falta capturar o markup |
 
 ### 6.3 Bandeiras — validação 1 de 18
+
+⛔ **Aposentada em 2026-10-30 (§8.82.4).** As "3 trocas" eram relativas à
+ordem fixa e a um inventário de 31/08. Com bandeira por valor, o critério é:
+cada `Setting flag` fora da defesa é um passo do plano visto em 2 avaliações,
+no máximo 3 por dia, e nenhuma aldeia troca duas vezes em 48 h. O texto abaixo
+fica como histórico.
 
 O Bug 1 (troca constante de bandeira a cada ciclo) e o Bug 2 (loop de upgrade)
 estão **corrigidos no código e não validados**. ⚠️ O Bug 2 **não estava
@@ -9367,6 +9379,177 @@ o registro vazio) rodaram sem achado. Suíte inteira no checkout principal:
 geral relida` quando houver conquista no meio do ciclo. O silêncio não prova
 nada (15º padrão): o caso só se exercita com aldeia recém-conquistada no pool.
 
+## 8.82 `P-BAND-VALOR` — bandeiras por valor/h, em dry-run (2026-10-30)
+
+Item "bandeiras por valor" da §9. A escolha de bandeira fora de combate deixa
+de ser a ordem fixa da §4.6 e passa a ser o valor em recurso/h de cada
+bandeira em cada aldeia, com o modelo do planejador de relíquias
+(`core/relic_planner.py`). **Entra em dry-run**: a ordem fixa continua agindo,
+e o plano por valor é calculado, logado e mostrado no `/flags`.
+
+### 1. O campo pendente, antes
+
+- **Quadro da BBM 068 (Fogueira):** ainda não dá. Conferi às 14:23 de 30/10, e
+  a Fogueira só ativa por volta de 20:33–20:56 de hoje. "Campo da Fase 4" segue
+  na §9.
+- **§8.81:** o processo em campo (pid 8632) subiu às **12:09:58**, e o
+  `5435d6a` é das **13:36**. Ele roda o código do `dd853c2`, então os sinais
+  da §8.81 não podem aparecer e o silêncio não prova nada. Teve conquista no
+  período? A 88481 (BBM 069) entrou no config às 12:10:23 ("added to config
+  mid-run"). O pouso foi **antes** do processo, que já a encontrou na visão
+  geral, e depois disso não houve conquista nova. O campo da §8.81 fica para o
+  próximo processo.
+
+### 2. O que cada bandeira faz, medido (5º, 17º e 19º padrões)
+
+| tipo | efeito por nível 1→9 | como soma | fonte da medição |
+|---|---|---|---|
+| 1 produção | 4, 6, 8, 10, 12, 14, 16, 17, 18% | **aditiva** com item, paladino, relíquia e modificação | `village_prod` × fórmula da mina em **36 aldeias** com a bandeira (níveis 1, 2, 3, 4, 5 e 7), resíduo **0,0**. BBM 030 (+16%): lido 1,46 = 1 + 0,30 + 0,16; o produto daria 1,508 |
+| 2 recrutamento | 6, 8, 10, 12, 14, 16, 18, 19, 20% | aditiva (§8.80) | BBM 001, até a 6ª casa |
+| 6 população | 2, 3, 4, 5, 6, 7, 8, 9, 10% | `pop_max` = ⌊fazenda × (1 + %)⌋ | **1 GET** do `game_data` da BBM 062 (fazenda 17, +6%): 3.227 = ⌊3.045 × 1,06⌋. O 3.045 é a fazenda 17 sem bandeira (BBM 055, sombra de 25/10) |
+| 7 moeda | 10, 12, 14, 16, 18, 20, 22, 23, 24% | custo × (1 − d) (§8.80) | BBM 002. O "Bônus de bandeira" dobra (−44% em log antigo) |
+| 8 saque | 2, 3, 4, 5, 6, 7, 8, 9, 10% | fator na carga | coleta: `unit_carry_factor` **1,08** com a 8/7 (abaixo) |
+| 3, 4, 5 | ataque, defesa e sorte | — | não automáticas (4 só sob ataque) |
+
+A tabela de níveis é o `title` de cada `flag_box_T_L` da tela de bandeiras
+(captura de 08/10). O bot passa a reler essa tabela em toda leitura
+(`parse_flag_effects`), e `FLAG_PCT` fica só como reserva.
+
+**Saque na coleta: a pergunta do usuário, medida em duas etapas.**
+1. *O jogo aplica?* O JS (`Scavenging.dd2ec0.js`) fixa a carga **no envio**
+   por `calcMaxLoot(unidades, village.unit_carry_factor)`. Nenhuma aldeia
+   tinha ou tinha tido bandeira de saque: 0 linhas de log, e nos 94
+   relatórios de farm o saque nunca passou da carga nominal. Por isso o
+   usuário equipou à mão uma 8/7 na BBM 005. 1 GET da tela de coleta dela às
+   14:43 leu **`unit_carry_factor: 1.08`**, contra 1 nas 4 leituras sem
+   bandeira. **Sim, o jogo aplica.** As 4 coletas dela em andamento, enviadas
+   às 12:51:55, antes da troca, seguem com saque nominal (1.441 leves × 80 =
+   115.280, saque 11.528 = × 0,10). É o que o usuário avisou: a bandeira
+   precisa estar equipada antes do envio.
+2. *O bot ganha?* ⏳ Ainda não se sabe. O JS manda `carry_max` = carga × fator,
+   e o bot manda a carga **nominal** (`TroopManager.gather`). Não mudei isso:
+   o `calcMaxLoot` está num bundle que não foi capturado, e um `carry_max` que
+   o servidor recuse custaria a coleta da aldeia. A primeira coleta que o bot
+   mandar da BBM 005 com a bandeira responde. As atuais voltam ~23:20, então
+   isso fica para o primeiro ciclo de 31/10. Saque = nominal × lf × 1,08 quer
+   dizer que o servidor recalcula; = nominal × lf quer dizer que o bot perde a
+   bandeira na coleta, e aí o conserto é mandar o `carry_max` como o JS manda.
+
+**Quanto a bandeira de saque vale na coleta: pouco, por física.** A duração
+da coleta é `(carga² × 100·lf²)^0,45 + 1800` s. Conferido contra as 4 coletas
+reais da BBM 005: 37.740 s calculados, 37.739 s do `return_time` do servidor,
+±1 s. Mais carga também alonga a viagem, e o ganho por hora é a elasticidade
+`1 − 0,9·P/(D + espera)`: **0,14** sem espera e **0,28** com 2 h até o reenvio.
+Então +8% de saque rende **+1,1% a +2,3%** de saque/h. Na BBM 005, uma rodada
+dá 46.108 em 10,5 h (~3,7 a 4,4 mil/h), e a 8/7 vale **~50 a 80/h**. A
+bandeira de produção +16% na mesma aldeia vale **~1.900/h**. O erro da ordem
+fixa não estava em pôr o saque abaixo da produção. Estava em pôr recrutamento
+e população **acima** do saque, quando os dois valem ~0 na conta de hoje:
+nenhuma fila é gargalo (§8.77), e a BBM 062 usa 1.541 de 3.227 de população.
+
+**Exemplo de hoje, da ordem fixa.** Às 13:43 a BBM 064 trocou população +8%
+(6/7) por recrutamento +6% (2/1), só porque o 2 vem antes do 6 na lista. O
+recrutamento dela é cedido ao gerente, então nenhuma das duas tem valor
+medido. Pelo plano novo ela não trocaria.
+
+### 3. O modelo (`core/flag_planner.py`, puro, 0 GET)
+
+Valor por ponto percentual, por aldeia. `None` quer dizer **não sei** (a
+aldeia fica como está); 0 com motivo quer dizer medido e vale zero:
+- **produção:** a `attribute_rate` da relíquia nos três recursos (mina, base
+  60, armazém cheio censura);
+- **recrutamento:** só com a fila como gargalo (≥ 90%). Recrutamento cedido
+  ao gerente dá `None`: as linhas `TWB_RECRUIT` do bot não contam a fila do
+  gerente (12 das 14 aldeias com tipo 2 ou 6 cedem);
+- **saque:** farm (carga `TWB_FARM` × fração dos relatórios que voltaram
+  cheios; 22 de 94 na conta) mais coleta (saque/h × elasticidade, das linhas
+  novas `TWB_GATHER_SQUAD`, com espera medida entre coletas da mesma opção).
+  A coleta só entra quando uma coleta **do bot** pagar acima do nominal
+  (`haul_scavenge_measured`); até lá, o tipo 8 dá `None`;
+- **população:** 0 com folga (< 98%); no teto, o saque por população da aldeia
+  × 1% da fazenda;
+- **moeda:** `None`. O bot não registra quanto cada aldeia cunha (a sessão
+  automática cunha sem contar), então a bandeira de cunhagem fica onde está.
+
+**Plano:** a partir do inventário que **sobra** (§8.11), cada bandeira vai
+para a aldeia onde rende mais, a de maior ganho primeiro, uma por aldeia. A
+que a aldeia larga volta à sobra. Entram só as aldeias da conta (a
+`twb-review` achou que uma aldeia perdida, com `cache/managed` velho, podia
+"reservar" a bandeira; corrigido no mesmo passo), e fica de fora quem está sob
+ataque, com bandeira manual ou com valor atual desconhecido.
+
+**Quem age:** `DefenceManager.flag_value_logic`, só no passo da própria
+aldeia, com `flag_value.mode`:
+- `off`: só a ordem fixa;
+- `dry_run` (padrão): a ordem fixa age, e o plano sai no log como
+  `Bandeiras por valor (dry-run): …`, uma linha por passo novo, no
+  `cache/managed` (`flags.value_plan`), no `cache/flags.json` e no `/flags`;
+- `on`: o plano substitui a ordem fixa.
+
+Freios: piso de 50/h e 10% do valor atual, 2 avaliações seguidas, 3 trocas por
+dia na conta e 48 h sem mexer de novo na mesma aldeia. Antes do POST, as
+mesmas guardas da ordem fixa (gestão ligada, trava da cunhagem, estado
+confirmado, bandeira manual) e o **gate de frescor**. Sem leitura neste ciclo,
+1 GET forçado, e a bandeira relida tem que ser a do plano: se o jogador mexeu,
+o bot não troca. Também confere a sobra e o cooldown. Recusa (`ajax_error`)
+não conta no teto. O caminho de defesa sob ataque não muda.
+
+**Também entrou:** `TWB_GATHER_SQUAD` no reporter, uma linha por coleta em
+andamento a cada leitura da tela de coleta (0 GET, nunca impede a coleta), e
+`population` no `cache/managed`. A chave não se chama `pop` porque esse é
+método de dict no Jinja2 (8º padrão).
+
+**Config:** bloco `flag_value` no `config.example.json` e no `helpfile.py`,
+`build.version` 5.9 só no example. O `cache/_check_merge_loss.py` não mostra
+nada perdido; só entra o bloco novo.
+
+### 4. As "3 trocas" (§6.3): não fazem mais sentido
+
+A previsão era relativa à ordem fixa e a um inventário de 31/08, e já tinha
+vencido (§6.3, 22/09). Com valor, o critério passa a ser outro:
+- cada `Setting flag` fora do caminho de defesa é um passo do plano visto em
+  2 avaliações seguidas;
+- no máximo 3 por dia;
+- nenhuma aldeia troca duas vezes em 48 h, e não há vaivém (A→B e depois B→A).
+
+Em dry-run, o número esperado de trocas pelo plano é **zero**. O que se confere
+são as linhas `Bandeiras por valor (dry-run)` e, no `/flags`, quantas aldeias
+ficam com "não medido".
+
+### 5. Testes
+
+`tests/test_flag_value.py` (18 casos), fixture verbatim
+`tests/fixtures/flag_value_br143.json`: os 72 `flag_box`, o `var village` e
+a tabela de opções da coleta da BBM 005 com a 8/7 (sem nome nem id de
+jogador), a hora do envio, a produção da BBM 030 e a população da BBM 062.
+Cobrem as medições acima (aditiva contra multiplicativa, piso da população,
+fator, duração contra o servidor e elasticidade), o registro de coleta, o
+plano (moeda e manual intocadas, desconhecido não troca, cadeia, aldeia
+perdida fora) e os freios. No `DefenceManager`: dry-run não posta e a ordem
+fixa segue agindo; ligado posta uma vez, lê antes se não estiver fresco, não
+posta se o jogador mexeu, espera as leituras, não conta recusa e deixa manual
+e trava em paz.
+
+Mutantes, numa cópia no scratchpad: sem a leitura forçada, sem a
+reconferência, sem as leituras seguidas, sem o teto do dia, saque não medido
+contado como farm, recusa como sucesso. Todos são pegos. "Cedido conta como
+medido" passava na primeira versão da bateria e ganhou caso próprio. Suíte
+inteira: **122 arquivos, 0 falhas**.
+
+### 6. Campo
+
+⏳ O código entra no próximo processo (o atual é anterior até ao `5435d6a`).
+Ao religar, em dry-run:
+- `Bandeiras por valor (dry-run)` no log;
+- `value_plan` no `cache/managed`, o `cache/flags.json` e o `/flags`;
+- as primeiras `TWB_GATHER_SQUAD` no `twb_*.log`.
+
+O plano de hoje sobre o disco sai **vazio**, e é o esperado. As únicas
+bandeiras que sobram são de saque (10) e de população (8). A coleta ainda não
+pagou acima do nominal numa coleta do bot, e a população das aldeias só entra
+no cache a partir do próximo ciclo. Ligar `mode: "on"` só depois da 2ª etapa
+do saque e de um dia de plano estável no painel.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -9387,12 +9570,28 @@ horário do Hunter (no topo do `_run` e no segundo exato), na seleção
 automática e manual, no farm, e lê as visões gerais além do config. Falta o
 campo no próximo processo (sinais no fim da §8.81).
 
-**Próximo item: bandeiras por valor.** A
-escolha de bandeira do `DefenceManager` é uma ordem fixa (§4.6, §8.11), e a
-ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
-mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
-servidor o que cada tipo de bandeira afeta de fato. A validação das "3 trocas"
-(§8.11) continua aberta e entra nessa conta.
+~~**Bandeiras por valor**~~: ✅ **feito em dry-run em 2026-10-30** (§8.82). O
+que cada tipo afeta foi medido (produção aditiva, população = piso, saque
+entra na carga da coleta com fator 1,08), e o plano usa o modelo das
+relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
+- ⏳ **2ª etapa do saque na coleta, 31/10 de manhã.** A primeira coleta que o
+  bot mandar da BBM 005 (38997) com a 8/7 (as atuais voltam ~23:20 de 30/10)
+  diz se o servidor paga 1,08× com o `carry_max` **nominal** que o bot manda.
+  Ler o `loot_res` dela (linha `TWB_GATHER_SQUAD`, ou 1 GET da tela de
+  coleta) contra unidades × `UNIT_CARRY` × `loot_factor`. Se pagar 1,08×,
+  nada a mudar: o planejador passa a contar a coleta sozinho. Se pagar 1×, o
+  bot perde a bandeira na coleta: capturar o `calcMaxLoot` (bundle do
+  `ScavengeScreen`) e mandar `carry_max` = carga × `unit_carry_factor`, como o
+  JS manda.
+- **Campo do dry-run** no próximo processo (sinais na §8.82.6). Ligar
+  `flag_value.mode: "on"` só depois da etapa acima e de um dia de plano
+  estável no `/flags`.
+- **Cunhagem por aldeia não é medida**, então a bandeira de moeda fica onde
+  está. Para dar valor a ela: contar as moedas da sessão automática (academia
+  antes e depois) ou registrar o que vai para o hub (`run_mint_route`).
+- **Recrutamento cedido ao gerente** dá "não medido" na bandeira 2 em 12 das
+  14 aldeias com tipo 2 ou 6. Para medir a fila do gerente, ver a tela do
+  prédio ou os relatórios `ReportAMemptyQueue`.
 
 Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 - ~~**O planejador lê o cache do mundo antes de o ciclo relê-lo.**~~ ✅

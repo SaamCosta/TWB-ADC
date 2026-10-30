@@ -1,0 +1,211 @@
+{
+ "_source": "br143, 30/10/2026. flag_boxes: game.php?screen=flags (captura de 08/10, tools/feature_map); scavenge_village: 'var village' de screen=place&mode=scavenge da BBM 005 (38997) as 14:43 de 30/10, com a bandeira de saque 8/7 equipada a mao pelo jogador, player_id e nome redigidos; scavenge_options: 1o argumento de new ScavengeScreen( da mesma tela; sent_at: POST send_squads da BBM 005 no session_latest.log (12:51:55); bbm030: village_prod e niveis de mina da BBM 030 (52755), bandeira 1/7; pop: game_data.village da BBM 062 (84620, fazenda 17, bandeira 6/5) e a fazenda 17 da BBM 055 sem bandeira (sombra do game_data, 25/10)",
+ "flag_boxes": [
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_1.webp')\" id=\"flag_box_1_1\" data-level=\"1\" data-name=\"Produção de recursos\" title=\"+4% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_2.webp')\" id=\"flag_box_1_2\" data-level=\"2\" data-name=\"Produção de recursos\" title=\"+6% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_3.webp')\" id=\"flag_box_1_3\" data-level=\"3\" data-name=\"Produção de recursos\" title=\"+8% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_4.webp')\" id=\"flag_box_1_4\" data-level=\"4\" data-name=\"Produção de recursos\" title=\"+10% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_5.webp')\" id=\"flag_box_1_5\" data-level=\"5\" data-name=\"Produção de recursos\" title=\"+12% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_6.webp')\" id=\"flag_box_1_6\" data-level=\"6\" data-name=\"Produção de recursos\" title=\"+14% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_7.webp')\" id=\"flag_box_1_7\" data-level=\"7\" data-name=\"Produção de recursos\" title=\"+16% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_8.webp')\" id=\"flag_box_1_8\" data-level=\"8\" data-name=\"Produção de recursos\" title=\"+17% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/1_9.webp')\" id=\"flag_box_1_9\" data-level=\"9\" data-name=\"Produção de recursos\" title=\"+18% na produção de recursos\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_1.webp')\" id=\"flag_box_2_1\" data-level=\"1\" data-name=\"Velocidade de recrutamento\" title=\"+6% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_2.webp')\" id=\"flag_box_2_2\" data-level=\"2\" data-name=\"Velocidade de recrutamento\" title=\"+8% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_3.webp')\" id=\"flag_box_2_3\" data-level=\"3\" data-name=\"Velocidade de recrutamento\" title=\"+10% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_4.webp')\" id=\"flag_box_2_4\" data-level=\"4\" data-name=\"Velocidade de recrutamento\" title=\"+12% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_5.webp')\" id=\"flag_box_2_5\" data-level=\"5\" data-name=\"Velocidade de recrutamento\" title=\"+14% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_6.webp')\" id=\"flag_box_2_6\" data-level=\"6\" data-name=\"Velocidade de recrutamento\" title=\"+16% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_7.webp')\" id=\"flag_box_2_7\" data-level=\"7\" data-name=\"Velocidade de recrutamento\" title=\"+18% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_8.webp')\" id=\"flag_box_2_8\" data-level=\"8\" data-name=\"Velocidade de recrutamento\" title=\"+19% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/2_9.webp')\" id=\"flag_box_2_9\" data-level=\"9\" data-name=\"Velocidade de recrutamento\" title=\"+20% na velocidade de recrutamento das unidades\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_1.webp')\" id=\"flag_box_3_1\" data-level=\"1\" data-name=\"Força de ataque\" title=\"+2% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_2.webp')\" id=\"flag_box_3_2\" data-level=\"2\" data-name=\"Força de ataque\" title=\"+3% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_3.webp')\" id=\"flag_box_3_3\" data-level=\"3\" data-name=\"Força de ataque\" title=\"+4% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_4.webp')\" id=\"flag_box_3_4\" data-level=\"4\" data-name=\"Força de ataque\" title=\"+5% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_5.webp')\" id=\"flag_box_3_5\" data-level=\"5\" data-name=\"Força de ataque\" title=\"+6% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_6.webp')\" id=\"flag_box_3_6\" data-level=\"6\" data-name=\"Força de ataque\" title=\"+7% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_7.webp')\" id=\"flag_box_3_7\" data-level=\"7\" data-name=\"Força de ataque\" title=\"+8% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_8.webp')\" id=\"flag_box_3_8\" data-level=\"8\" data-name=\"Força de ataque\" title=\"+9% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/3_9.webp')\" id=\"flag_box_3_9\" data-level=\"9\" data-name=\"Força de ataque\" title=\"+10% na força de ataque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_1.webp')\" id=\"flag_box_4_1\" data-level=\"1\" data-name=\"Força de defesa\" title=\"+2% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_2.webp')\" id=\"flag_box_4_2\" data-level=\"2\" data-name=\"Força de defesa\" title=\"+3% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_3.webp')\" id=\"flag_box_4_3\" data-level=\"3\" data-name=\"Força de defesa\" title=\"+4% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_4.webp')\" id=\"flag_box_4_4\" data-level=\"4\" data-name=\"Força de defesa\" title=\"+5% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_5.webp')\" id=\"flag_box_4_5\" data-level=\"5\" data-name=\"Força de defesa\" title=\"+6% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_6.webp')\" id=\"flag_box_4_6\" data-level=\"6\" data-name=\"Força de defesa\" title=\"+7% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_7.webp')\" id=\"flag_box_4_7\" data-level=\"7\" data-name=\"Força de defesa\" title=\"+8% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_8.webp')\" id=\"flag_box_4_8\" data-level=\"8\" data-name=\"Força de defesa\" title=\"+9% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/4_9.webp')\" id=\"flag_box_4_9\" data-level=\"9\" data-name=\"Força de defesa\" title=\"+10% na força de defesa\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_1.webp')\" id=\"flag_box_5_1\" data-level=\"1\" data-name=\"Sorte\" title=\"6% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_2.webp')\" id=\"flag_box_5_2\" data-level=\"2\" data-name=\"Sorte\" title=\"8% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_3.webp')\" id=\"flag_box_5_3\" data-level=\"3\" data-name=\"Sorte\" title=\"10% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_4.webp')\" id=\"flag_box_5_4\" data-level=\"4\" data-name=\"Sorte\" title=\"12% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_5.webp')\" id=\"flag_box_5_5\" data-level=\"5\" data-name=\"Sorte\" title=\"14% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_6.webp')\" id=\"flag_box_5_6\" data-level=\"6\" data-name=\"Sorte\" title=\"16% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_7.webp')\" id=\"flag_box_5_7\" data-level=\"7\" data-name=\"Sorte\" title=\"18% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_8.webp')\" id=\"flag_box_5_8\" data-level=\"8\" data-name=\"Sorte\" title=\"19% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/5_9.webp')\" id=\"flag_box_5_9\" data-level=\"9\" data-name=\"Sorte\" title=\"20% de equilíbrio na sorte do atacante na batalha\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_1.webp')\" id=\"flag_box_6_1\" data-level=\"1\" data-name=\"Capacidade da população\" title=\"+2% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_2.webp')\" id=\"flag_box_6_2\" data-level=\"2\" data-name=\"Capacidade da população\" title=\"+3% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_3.webp')\" id=\"flag_box_6_3\" data-level=\"3\" data-name=\"Capacidade da população\" title=\"+4% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_4.webp')\" id=\"flag_box_6_4\" data-level=\"4\" data-name=\"Capacidade da população\" title=\"+5% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_5.webp')\" id=\"flag_box_6_5\" data-level=\"5\" data-name=\"Capacidade da população\" title=\"+6% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_6.webp')\" id=\"flag_box_6_6\" data-level=\"6\" data-name=\"Capacidade da população\" title=\"+7% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_7.webp')\" id=\"flag_box_6_7\" data-level=\"7\" data-name=\"Capacidade da população\" title=\"+8% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_8.webp')\" id=\"flag_box_6_8\" data-level=\"8\" data-name=\"Capacidade da população\" title=\"+9% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/6_9.webp')\" id=\"flag_box_6_9\" data-level=\"9\" data-name=\"Capacidade da população\" title=\"+10% de população\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_1.webp')\" id=\"flag_box_7_1\" data-level=\"1\" data-name=\"Menores custos de moeda\" title=\"-10% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_2.webp')\" id=\"flag_box_7_2\" data-level=\"2\" data-name=\"Menores custos de moeda\" title=\"-12% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_3.webp')\" id=\"flag_box_7_3\" data-level=\"3\" data-name=\"Menores custos de moeda\" title=\"-14% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_4.webp')\" id=\"flag_box_7_4\" data-level=\"4\" data-name=\"Menores custos de moeda\" title=\"-16% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_5.webp')\" id=\"flag_box_7_5\" data-level=\"5\" data-name=\"Menores custos de moeda\" title=\"-18% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_6.webp')\" id=\"flag_box_7_6\" data-level=\"6\" data-name=\"Menores custos de moeda\" title=\"-20% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_7.webp')\" id=\"flag_box_7_7\" data-level=\"7\" data-name=\"Menores custos de moeda\" title=\"-22% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_8.webp')\" id=\"flag_box_7_8\" data-level=\"8\" data-name=\"Menores custos de moeda\" title=\"-23% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/7_9.webp')\" id=\"flag_box_7_9\" data-level=\"9\" data-name=\"Menores custos de moeda\" title=\"-24% nos custos de moedas\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_1.webp')\" id=\"flag_box_8_1\" data-level=\"1\" data-name=\"Capacidade de saque\" title=\"+2% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_2.webp')\" id=\"flag_box_8_2\" data-level=\"2\" data-name=\"Capacidade de saque\" title=\"+3% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_3.webp')\" id=\"flag_box_8_3\" data-level=\"3\" data-name=\"Capacidade de saque\" title=\"+4% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_4.webp')\" id=\"flag_box_8_4\" data-level=\"4\" data-name=\"Capacidade de saque\" title=\"+5% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_5.webp')\" id=\"flag_box_8_5\" data-level=\"5\" data-name=\"Capacidade de saque\" title=\"+6% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_6.webp')\" id=\"flag_box_8_6\" data-level=\"6\" data-name=\"Capacidade de saque\" title=\"+7% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_7.webp')\" id=\"flag_box_8_7\" data-level=\"7\" data-name=\"Capacidade de saque\" title=\"+8% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_8.webp')\" id=\"flag_box_8_8\" data-level=\"8\" data-name=\"Capacidade de saque\" title=\"+9% na capacidade de saque\">",
+  "<div class=\"flag_box\" style=\"background-image: url('https://dsbr.innogamescdn.com/asset/36ce9b68/graphic/flags/medium/8_9.webp')\" id=\"flag_box_8_9\" data-level=\"9\" data-name=\"Capacidade de saque\" title=\"+10% na capacidade de saque\">"
+ ],
+ "scavenge_village": "{\"village_id\":38997,\"player_id\":0,\"village_name\":\"BBM 005\",\"res\":{\"wood\":361862,\"stone\":395344,\"iron\":361246},\"res_rate\":{\"wood\":\"1.9733333552638\",\"stone\":\"1.9733333552638\",\"iron\":\"1.9733333552638\"},\"storage_max\":400000,\"unit_counts_home\":{\"spear\":0,\"sword\":0,\"axe\":41,\"spy\":45,\"light\":22,\"heavy\":0,\"ram\":250,\"catapult\":50,\"knight\":1,\"snob\":0,\"militia\":0},\"unit_carry_factor\":1.08,\"has_rally_point\":true,\"options\":{\"1\":{\"base_id\":1,\"village_id\":38997,\"is_locked\":false,\"unlock_time\":null,\"scavenging_squad\":{\"unit_id\":598859909,\"unit_counts\":{\"spear\":0,\"sword\":0,\"axe\":0,\"spy\":0,\"light\":1441,\"heavy\":0,\"ram\":0,\"catapult\":0,\"knight\":0,\"snob\":0,\"militia\":0},\"return_time\":1793413254,\"carry_max\":115280,\"loot_res\":{\"wood\":3843,\"stone\":3843,\"iron\":3842},\"is_premium\":false}},\"2\":{\"base_id\":2,\"village_id\":38997,\"is_locked\":false,\"unlock_time\":null,\"scavenging_squad\":{\"unit_id\":834993384,\"unit_counts\":{\"spear\":0,\"sword\":0,\"axe\":601,\"spy\":0,\"light\":501,\"heavy\":0,\"ram\":0,\"catapult\":0,\"knight\":0,\"snob\":0,\"militia\":0},\"return_time\":1793413239,\"carry_max\":46090,\"loot_res\":{\"wood\":3841,\"stone\":3841,\"iron\":3841},\"is_premium\":false}},\"3\":{\"base_id\":3,\"village_id\":38997,\"is_locked\":false,\"unlock_time\":null,\"scavenging_squad\":{\"unit_id\":971939995,\"unit_counts\":{\"spear\":0,\"sword\":0,\"axe\":2306,\"spy\":0,\"light\":0,\"heavy\":0,\"ram\":0,\"catapult\":0,\"knight\":0,\"snob\":0,\"militia\":0},\"return_time\":1793413260,\"carry_max\":23060,\"loot_res\":{\"wood\":3843,\"stone\":3843,\"iron\":3844},\"is_premium\":false}},\"4\":{\"base_id\":4,\"village_id\":38997,\"is_locked\":false,\"unlock_time\":null,\"scavenging_squad\":{\"unit_id\":27458700,\"unit_counts\":{\"spear\":115,\"sword\":0,\"axe\":1249,\"spy\":0,\"light\":0,\"heavy\":0,\"ram\":0,\"catapult\":0,\"knight\":0,\"snob\":0,\"militia\":0},\"return_time\":1793413242,\"carry_max\":15365,\"loot_res\":{\"wood\":3841,\"stone\":3841,\"iron\":3842},\"is_premium\":false}}}}",
+ "scavenge_options": {
+  "1": {
+   "id": 1,
+   "name": "Pequena Coleta",
+   "loot_factor": 0.1,
+   "unlock_cost": {
+    "wood": 25,
+    "stone": 30,
+    "iron": 25
+   },
+   "unlock_duration_seconds": 30,
+   "duration_exponent": 0.45,
+   "duration_initial_seconds": 1800,
+   "duration_factor": 1,
+   "premium_cost_exponent": 0.44,
+   "prerequisite_option_ids": [],
+   "premium_boost": {
+    "feature": "ScavengingSquadLoot",
+    "enabled": true,
+    "loot_factor": 1.2,
+    "cost_exponent": 0.44
+   }
+  },
+  "2": {
+   "id": 2,
+   "name": "Média Coleta",
+   "loot_factor": 0.25,
+   "unlock_cost": {
+    "wood": 250,
+    "stone": 300,
+    "iron": 250
+   },
+   "unlock_duration_seconds": 3600,
+   "duration_exponent": 0.45,
+   "duration_initial_seconds": 1800,
+   "duration_factor": 1,
+   "premium_cost_exponent": 0.44,
+   "prerequisite_option_ids": [
+    1
+   ],
+   "premium_boost": {
+    "feature": "ScavengingSquadLoot",
+    "enabled": true,
+    "loot_factor": 1.2,
+    "cost_exponent": 0.44
+   }
+  },
+  "3": {
+   "id": 3,
+   "name": "Grande Coleta",
+   "loot_factor": 0.5,
+   "unlock_cost": {
+    "wood": 1000,
+    "stone": 1200,
+    "iron": 1000
+   },
+   "unlock_duration_seconds": 10800,
+   "duration_exponent": 0.45,
+   "duration_initial_seconds": 1800,
+   "duration_factor": 1,
+   "premium_cost_exponent": 0.44,
+   "prerequisite_option_ids": [
+    2
+   ],
+   "premium_boost": {
+    "feature": "ScavengingSquadLoot",
+    "enabled": true,
+    "loot_factor": 1.2,
+    "cost_exponent": 0.44
+   }
+  },
+  "4": {
+   "id": 4,
+   "name": "Extrema Coleta",
+   "loot_factor": 0.75,
+   "unlock_cost": {
+    "wood": 10000,
+    "stone": 12000,
+    "iron": 10000
+   },
+   "unlock_duration_seconds": 21600,
+   "duration_exponent": 0.45,
+   "duration_initial_seconds": 1800,
+   "duration_factor": 1,
+   "premium_cost_exponent": 0.44,
+   "prerequisite_option_ids": [
+    3
+   ],
+   "premium_boost": {
+    "feature": "ScavengingSquadLoot",
+    "enabled": true,
+    "loot_factor": 1.2,
+    "cost_exponent": 0.44
+   }
+  }
+ },
+ "sent_at_local": [
+  2026,
+  10,
+  30,
+  12,
+  51,
+  55
+ ],
+ "bbm030": {
+  "prod_h": {
+   "wood": 6025.2,
+   "stone": 5180.2,
+   "iron": 7008.0
+  },
+  "mines": {
+   "wood": 29,
+   "stone": 28,
+   "iron": 30
+  },
+  "flag": [
+   1,
+   7
+  ],
+  "board_pct": 30
+ },
+ "pop": {
+  "bbm062": {
+   "pop": 1541,
+   "pop_max": 3227,
+   "farm": 17,
+   "flag": [
+    6,
+    5
+   ]
+  },
+  "farm17_no_flag": 3045
+ }
+}

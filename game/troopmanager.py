@@ -6,7 +6,7 @@ import math
 import random
 import time
 
-from core import game_data_shadow
+from core import flag_planner, game_data_shadow
 from core.village_label import village_label
 from core.extractors import Extractor
 from core.templates import GATHER_UNITS, UNIT_BUILDING, UNIT_CARRY
@@ -846,6 +846,31 @@ class TroopManager:
                 )
         return True
 
+    def report_scavenge_squads(self, result, village_data):
+        """
+        Bandeiras por valor (§8.82): uma linha `TWB_GATHER_SQUAD` por coleta
+        em andamento na tela que acabou de chegar (0 GET), com o
+        `unit_carry_factor` da aldeia e o saque que o servidor promete. É a
+        medição de saque/h da coleta e, com a bandeira de saque equipada, a
+        prova de que ela entra (ou não) na carga. Nunca impede a coleta.
+        """
+        try:
+            options = (village_data or {}).get("options") or {}
+            if not any((o or {}).get("scavenging_squad") for o in options.values()):
+                return
+            table = Extractor.scavenge_config(result) or {}
+            factor = (village_data or {}).get("unit_carry_factor")
+            for option_id, state in options.items():
+                squad = (state or {}).get("scavenging_squad")
+                opt = table.get(str(option_id)) or table.get(option_id)
+                if not squad or not opt:
+                    continue
+                msg = flag_planner.squad_event(self.village_id, option_id, squad, opt, factor)
+                if msg:
+                    self.wrapper.reporter.report(self.village_id, "TWB_GATHER_SQUAD", msg)
+        except Exception as exc:  # noqa: BLE001 -- instrumento, não pode custar a coleta
+            self.logger.debug("Gather: registro das coletas falhou: %r", exc)
+
     @staticmethod
     def units_home_from_scavenge(village_data):
         """
@@ -899,6 +924,7 @@ class TroopManager:
             return False
         village_data = Extractor.village_data(result)
         options = (village_data or {}).get("options") or {}
+        self.report_scavenge_squads(result, village_data)
         # Camada 2 (§8.64): da propria tela que acabou de chegar, nunca de uma
         # deteccao guardada -- o premium vence e volta.
         try:

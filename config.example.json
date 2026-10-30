@@ -1,7 +1,7 @@
 {
   "build": {
     "name": "tw_bot",
-    "version": "5.8",
+    "version": "5.9",
     "author": "stefan2200"
   },
   "server": {
@@ -294,6 +294,14 @@
     "undo_block_h": 24,
     "fuse": false,
     "max_fusions_per_day": 1
+  },
+  "flag_value": {
+    "mode": "dry_run",
+    "min_gain_h": 50,
+    "min_gain_pct": 10,
+    "stable_reads": 2,
+    "max_changes_per_day": 3,
+    "undo_block_h": 48
   },
   "minting": {
     "hub_village": null,

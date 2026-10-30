@@ -3008,10 +3008,79 @@ class FlagReader:
                 "policy_color": policy_color,
                 "preferred_flags": preferred_fmt,
                 "off_policy": off_policy,
+                "value_plan": FlagReader._value_plan(flags.get("value_plan")),
             })
 
         out.sort(key=lambda v: v["village_name"])
         return out
+
+    @staticmethod
+    def _flag_text(flag):
+        if not flag:
+            return "nenhuma"
+        return "%s nível %s" % (
+            FlagReader.FLAG_TYPE_NAMES.get(int(flag[0]), "Tipo %s" % flag[0]), flag[1])
+
+    @staticmethod
+    def _value_plan(raw):
+        """O passo desta aldeia no plano por valor (§8.82), já em texto, ou None."""
+        if not isinstance(raw, dict):
+            return None
+        own = raw.get("own") or {}
+        step = raw.get("step")
+        value = own.get("value")
+        return {
+            "mode": raw.get("mode"),
+            "value_label": ("%.0f/h" % value) if value is not None else "não medido",
+            "value_why": own.get("why"),
+            "step_label": ("%s -> %s (+%.0f/h)" % (
+                FlagReader._flag_text(step.get("from")), FlagReader._flag_text(step.get("to")),
+                step.get("gain_h") or 0)) if step else None,
+            "ok": bool(raw.get("ok")),
+            "why": raw.get("why"),
+            "seen": raw.get("seen"),
+        }
+
+    @staticmethod
+    def load_plan(path=None):
+        """
+        O plano da conta e o histórico de trocas (`cache/flags.json`, §8.82).
+        {} se o arquivo não existe ou é ilegível.
+        """
+        path = path or os.path.join(os.path.dirname(__file__), "..", "cache", "flags.json")
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        plan = data.get("plan") or {}
+        exec_state = data.get("exec") or {}
+        steps = [{
+            "text": "%s: %s -> %s" % (s.get("label") or s.get("vid"), FlagReader._flag_text(s.get("from")),
+                                      FlagReader._flag_text(s.get("to"))),
+            "gain_h": s.get("gain_h"),
+        } for s in plan.get("steps") or []]
+        def label(ts):
+            return time.strftime("%d/%m %H:%M", time.localtime(ts)) if ts else "?"
+
+        history = [{
+            "at": label(h.get("at")), "vid": h.get("vid"), "ok": h.get("ok"),
+            "text": "%s -> %s (+%s/h)" % (FlagReader._flag_text(h.get("from")),
+                                          FlagReader._flag_text(h.get("to")), h.get("gain_h")),
+            "detail": h.get("detail"),
+        } for h in reversed(exec_state.get("history") or [])][:20]
+        unknown = sum(1 for v in (plan.get("values") or {}).values() if v.get("value") is None)
+        return {
+            "mode": plan.get("mode"), "computed_at": plan.get("computed_at"),
+            "computed_label": label(plan.get("computed_at")),
+            "steps": steps, "history": history,
+            "haul_scavenge": plan.get("haul_scavenge"),
+            "squads_recorded": plan.get("squads_recorded"),
+            "unknown": unknown, "villages": len(plan.get("values") or {}),
+            "days": exec_state.get("days") or {},
+        }
 
 
 class ResourceSharingReader:

@@ -5,10 +5,15 @@ import random
 import re
 import time
 
+from core import flag_planner
 from core.extractors import FRIENDLY_COMMAND_TYPES, INCOMING_ROW_RE, Extractor
+from core.notification import Notification
 from core.village_label import village_label
 from core.filemanager import FileManager
 from core.world_config import WorldConfig
+
+# Plano e freios das bandeiras por valor (§8.82). Um escritor: o bot.
+FLAG_VALUE_PATH = "cache/flags.json"
 
 # Mapeamento dos 8 tipos de bandeira do jogo (ver docs/backend.md).
 # O bot hoje só gerencia ativamente os tipos 1 (produção) e 4 (defesa) via
@@ -140,6 +145,15 @@ class DefenceManager:
     # política cai na lista sem academia, que é a conservadora.
     has_academy = None
 
+    # Bandeiras por valor (§8.82), postos pela Village a cada ciclo. "off" =
+    # só a ordem fixa acima; "dry_run" = a ordem fixa age e o plano por valor
+    # só é calculado; "on" = o plano por valor age no lugar da ordem fixa.
+    value_mode = "off"
+    value_cfg = None
+    value_world = None
+    # (pop, pop_max) do game_data deste ciclo, ou None.
+    own_pop = None
+
     _sf_logged = False
 
     def __init__(self, village_id=None, wrapper=None):
@@ -184,6 +198,12 @@ class DefenceManager:
         # processo em vez de em todo ciclo: alerta que nunca cala é
         # indistinguível de alerta quebrado (15º padrão do CLAUDE.md).
         self._unmet_logged = set()
+        # {tipo: {nível: %}} dos `title` da tela de bandeiras (§8.82).
+        self.flag_effects = {}
+        # Última avaliação do plano por valor desta aldeia, para o cache e o
+        # painel; e a chave do último passo logado (uma linha por passo novo).
+        self.value_result = None
+        self._value_logged = None
         # flag_index, flag_level
         self.current_flag = []
         # list of village_id, attack_state
@@ -435,7 +455,12 @@ class DefenceManager:
                 self.incoming_rows_seen = 0
                 self.incoming_attack_rows_seen = 0
                 self.incoming_support_rows_seen = 0
-            self.flag_logic(self.preferred_flags())
+            if self.value_mode == "on":
+                self.flag_value_logic(act=True)
+            else:
+                self.flag_logic(self.preferred_flags())
+                if self.value_mode == "dry_run":
+                    self.flag_value_logic(act=False)
             if not with_defence:
                 self.under_attack = False
                 return False
@@ -820,6 +845,119 @@ class DefenceManager:
             chosen, chosen_level, equipped,
         )
 
+    def _load_value_state(self):
+        try:
+            data = FileManager.load_json_file(FLAG_VALUE_PATH)
+        except Exception:  # noqa: BLE001 -- ilegível: recomeça, nunca derruba
+            data = None
+        return data if isinstance(data, dict) else {}
+
+    def flag_value_logic(self, act):
+        """
+        Bandeira por valor (§8.82): o plano da conta (`core/flag_planner`) e o
+        passo DESTA aldeia. Com `act=False` (dry-run) só calcula, loga e grava
+        em `cache/flags.json`; com `act=True` age, um passo por vez, depois
+        dos freios (`flag_planner.evaluate`) e das mesmas guardas da ordem
+        fixa: gestão ligada, trava da cunhagem, estado confirmado, bandeira
+        manual intocada, inventário lido NESTE ciclo (o gate de frescor da
+        §8.11) e cooldown do jogo.
+        """
+        if not self.manage_flags_enabled or not self._flag_state_confirmed:
+            return
+        if self.flag_lock_reason:
+            return
+        if self.current_flag and self.current_flag[0] in self.flag_manual_types:
+            return
+        cfg = self.value_cfg or flag_planner.settings({})
+        now = time.time()
+        pop, pop_max = (self.own_pop or (None, None))[:2]
+        own = {"current": list(self.current_flag[:2]) if self.current_flag else None,
+               "can_change": self._can_change_flag, "under_attack": False,
+               "pop": pop, "pop_max": pop_max}
+        try:
+            result = flag_planner.plan_for_village(
+                self.village_id, own, self.flag_supply, self.flag_effects,
+                now=now, world=self.value_world,
+                vids=set(self.my_other_villages or {}) or None)
+        except Exception as exc:  # noqa: BLE001 -- plano nunca derruba o ciclo
+            self.logger.warning("Bandeiras por valor: plano falhou em %s: %r",
+                                village_label(self.village_id), exc)
+            return
+        state = self._load_value_state()
+        exec_state = state.setdefault("exec", {})
+        step = result["step"]
+        seen = flag_planner.note_read(exec_state, self.village_id, step, now)
+        ok, why = flag_planner.evaluate(step, exec_state, cfg, now)
+        state["plan"] = {
+            "computed_at": result["computed_at"], "mode": self.value_mode,
+            "by": str(self.village_id), "steps": result["steps"][:40],
+            "values": result["values"], "haul_scavenge": result["haul_scavenge"],
+            "squads_recorded": result["squads"],
+        }
+        self.value_result = {"step": step, "ok": ok, "why": why, "seen": seen,
+                             "own": result["own"], "computed_at": result["computed_at"],
+                             "mode": self.value_mode}
+
+        def save():
+            try:
+                FileManager.save_json_file(state, FLAG_VALUE_PATH)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.warning("Bandeiras por valor: não gravei %s: %r", FLAG_VALUE_PATH, exc)
+
+        key = (flag_planner.step_key(step) if step else None, why)
+        if step and key != self._value_logged:
+            self.logger.info(
+                "Bandeiras por valor (%s): %s trocaria %s (%.0f/h) por %s (%.0f/h): "
+                "+%.0f/h -- %s", "agindo" if act else "dry-run", village_label(self.village_id),
+                flag_planner._flag_text(step["from"]), step["value_before_h"],
+                flag_planner._flag_text(step["to"]), step["value_after_h"], step["gain_h"], why)
+        self._value_logged = key
+        if not act or not ok:
+            save()
+            return
+
+        # --- Daqui para baixo a bandeira muda de aldeia (ver flag_logic). ---
+        if not self._flags_fresh:
+            # 1 GET, só com um passo que já passou nos freios.
+            self.manage_flags(force=True)
+            if not self._flags_fresh:
+                save()
+                return
+            fresh = list(self.current_flag[:2]) if self.current_flag else None
+            if fresh != step["from"]:
+                self.logger.info(
+                    "Bandeiras por valor: %s mudou de bandeira desde o plano (%s), não troco",
+                    village_label(self.village_id), flag_planner._flag_text(fresh))
+                save()
+                return
+        flag_type, level = step["to"]
+        if int((self.flag_supply.get(flag_type) or {}).get(level, 0)) <= 0:
+            self.logger.info(
+                "Bandeiras por valor: %s não sobra mais no inventário, %s fica como está",
+                flag_planner._flag_text(step["to"]), village_label(self.village_id))
+            save()
+            return
+        if not self._can_change_flag:
+            save()
+            return
+        response = self.flag_set(flag_type, level=level)
+        refusal = Extractor.ajax_error(response)
+        if refusal:
+            self.logger.warning("Flag %d level %d for village %s recusada pelo jogo: %s",
+                                flag_type, level, village_label(self.village_id), refusal)
+            flag_planner.record(exec_state, step, False, refusal, now)
+            save()
+            return
+        self.current_flag = [flag_type, level]
+        detail = "confirmada na próxima leitura" if response is None else "aceita"
+        flag_planner.record(exec_state, step, True, detail, now)
+        save()
+        self.logger.info(
+            "Setting flag %d level %d for village %s (por valor: +%.0f/h, era %s)",
+            flag_type, level, village_label(self.village_id), step["gain_h"],
+            flag_planner._flag_text(step["from"]))
+        Notification.send("Bandeiras: %s (+%.0f/h)" % (step["text"], step["gain_h"]))
+
     def flag_type_supply(self, flag_type):
         """Quantas bandeiras deste tipo estão SOBRANDO no inventário da conta."""
         return sum(int(n) for n in (self.flag_supply.get(int(flag_type)) or {}).values())
@@ -1040,7 +1178,10 @@ class DefenceManager:
                         "Current village flag: %s", get_current_flag.group(3).strip()
                     )
         raw_flags = json.loads(get_flag_data.group(1))
-        required = re.search(r"FlagsScreen\.required_for_upgrade\s*=\s*(\d+)", result.text)
+        effects = flag_planner.parse_flag_effects(result.text)
+        if effects:
+            self.flag_effects = effects
+        required =re.search(r"FlagsScreen\.required_for_upgrade\s*=\s*(\d+)", result.text)
         if required:
             self._flag_upgrade_required = int(required.group(1))
         counts = {}

@@ -17,6 +17,35 @@
   para o histórico de bugs corrigidos neste sistema.
 </div>
 
+<div class="card mb-3" style="border-color:#c8a96e;">
+  <div class="card-body">
+    <h6 class="mb-2">Bandeiras por valor
+      {% if value_plan.mode %}<span class="badge {% if value_plan.mode == 'on' %}badge-success{% else %}badge-secondary{% endif %} ml-1">{{ value_plan.mode }}</span>{% endif %}
+    </h6>
+    {% if not value_plan.computed_at %}
+      <small class="text-muted">O plano ainda não rodou neste processo (<code>flag_value.mode</code> "off", ou nenhuma aldeia leu o inventário de bandeiras ainda).</small>
+    {% else %}
+      <small class="text-muted d-block mb-2">
+        Recalculado a cada aldeia que roda (último: {{ value_plan.computed_label }}).
+        {{ value_plan.villages }} aldeia(s) no plano, {{ value_plan.unknown }} com a bandeira atual de valor não medido (ficam como estão).
+        Saque na coleta:
+        {% if value_plan.haul_scavenge is none %}<strong>não medido</strong>{% elif value_plan.haul_scavenge %}medido, entra{% else %}medido, não entra{% endif %}
+        ({{ value_plan.squads_recorded or 0 }} coleta(s) registrada(s)).
+      </small>
+      {% if value_plan.steps %}
+        <small class="text-muted d-block mb-1">Trocas que o plano faria</small>
+        <ul class="mb-2">{% for s in value_plan.steps %}<li><small>{{ s.text }} <strong>+{{ s.gain_h }}/h</strong></small></li>{% endfor %}</ul>
+      {% else %}
+        <small class="d-block mb-2">Nada a trocar: nenhuma bandeira que sobra rende mais onde falta.</small>
+      {% endif %}
+      {% if value_plan.history %}
+        <small class="text-muted d-block mb-1">Trocas feitas pelo plano</small>
+        <ul class="mb-0">{% for h in value_plan.history %}<li><small>{{ h.at }} {{ h.vid | vlabel }}: {{ h.text }} {% if not h.ok %}<span class="badge badge-danger">recusada</span>{% endif %} {{ h.detail }}</small></li>{% endfor %}</ul>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
 {% if not entries %}
 <div class="alert alert-warning mb-0">
   <strong>Nenhum dado de bandeira disponível ainda.</strong>
@@ -60,6 +89,19 @@
                 {% endif %}
               </td>
             </tr>
+            {% if e.value_plan %}
+            <tr>
+              <td class="text-muted">Valor da atual</td>
+              <td><small title="{{ e.value_plan.value_why or '' }}">{{ e.value_plan.value_label }}{% if e.value_plan.value_why %} <span class="text-muted">({{ e.value_plan.value_why }})</span>{% endif %}</small></td>
+            </tr>
+            {% if e.value_plan.step_label %}
+            <tr>
+              <td class="text-muted">Plano por valor</td>
+              <td><small>{{ e.value_plan.step_label }} —
+                {% if e.value_plan.ok %}<span class="badge badge-success">liberado</span>{% else %}<span class="text-muted">{{ e.value_plan.why }}</span>{% endif %}</small></td>
+            </tr>
+            {% endif %}
+            {% endif %}
             {% if e.preferred_flags %}
             <tr>
               <td class="text-muted">Preferência</td>
