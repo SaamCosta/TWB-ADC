@@ -9447,6 +9447,16 @@ fixa não estava em pôr o saque abaixo da produção. Estava em pôr recrutamen
 e população **acima** do saque, quando os dois valem ~0 na conta de hoje:
 nenhuma fila é gargalo (§8.77), e a BBM 062 usa 1.541 de 3.227 de população.
 
+**O que os fóruns dizem** (lido depois da medição, a pedido do usuário; quatro
+tópicos, todos de jogadores, nenhum da equipe do jogo, de 2018 a 2021, BR e EN):
+a bandeira vale na coleta e alonga o tempo. O exemplo numérico de 2018 (10
+cavalarias leves com +5%: carga 840, pequena coleta 84) é carga × fator ×
+`loot_factor`, a mesma conta do 1,08 medido. Um tutorial de 2020 diz que o
+tempo "sobe pouco" e o saque/h cresce. Isso vale para carga pequena: com a
+fórmula conferida acima, a elasticidade é **0,83** com 840 de carga e **0,14 a
+0,28** com os 115 mil da BBM 005. Nenhum tópico trata de quem manda o
+`carry_max` sem o fator, que é a 2ª etapa.
+
 **Exemplo de hoje, da ordem fixa.** Às 13:43 a BBM 064 trocou população +8%
 (6/7) por recrutamento +6% (2/1), só porque o 2 vem antes do 6 na lista. O
 recrutamento dela é cedido ao gerente, então nenhuma das duas tem valor
