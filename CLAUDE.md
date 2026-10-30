@@ -86,6 +86,11 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
     (§8.68, `P-GERENTE-AUTO`): grupo, modelos e reserva de tropas por papel.
     ⚠️ Nunca ler lista do gerente com `page=-1`: fica gravado como preferência
     do jogador (sondado em 19/10).
+  - `core/own_villages.py` — **a** pergunta "o alvo já é nosso?" (§8.81),
+    para todo caminho que manda ataque ou escolhe alvo. A lista da conta
+    (config + visões gerais) vence fonte de mapa em posse; a recíproca não
+    vale. Um trem saiu contra a nossa BBM 067 porque só o mapa era
+    consultado. Caminho novo que ataca passa por `own_target_reason`.
 - **`webmanager/`** — dashboard Flask separado, lê os mesmos arquivos de `cache/` e
   `config.json`. Rotas em `server.py`, lógica de leitura em `utils.py`.
   `BotManager` (reescrito em 2026-09-14) sobe o bot num **console visível

@@ -8,6 +8,7 @@ from datetime import datetime
 
 from core import am_auto, am_cession
 from core import game_data_shadow
+from core import own_villages
 from core import support_store
 from core.village_label import register as register_village_name, village_label
 from core.cycle_meter import meter_phase
@@ -1558,9 +1559,9 @@ class Village:
                     self.attack.max_farms = self.get_config(
                         section="farms", parameter="max_farms", default=25
                     )
-                    self.attack.own_villages = {
-                        str(v) for v in (self.config.get("villages") or {})
-                    }
+                    # §8.81: config e as visoes gerais (a da defesa propria e a
+                    # do Hunter veem a aldeia recem-conquistada antes do ciclo).
+                    self.attack.own_villages = own_villages.REGISTRY.ids(self.config)
                     self.attack.run()
 
     def do_gather(self):

@@ -45,6 +45,7 @@ from core import own_defense
 from core.extractors import FRIENDLY_COMMAND_TYPES, Extractor
 from core.filemanager import FileManager
 from core.notification import Notification
+from core.own_villages import REGISTRY as OWN_VILLAGES, SOURCE_DEFENSE
 from core.village_label import village_label
 from core.world_config import WorldConfig
 from game.defence_manager import DefenceManager
@@ -269,6 +270,9 @@ class OwnDefenseManager:
             self.logger.warning("OwnDefense: visão geral das aldeias ilegível (rede, sessão "
                                 "ou captcha) -- sem varredura")
             return
+        # §8.81: a lista mais nova da conta serve ao "o alvo já é nosso?" do
+        # Hunter e da conquista -- inclui a aldeia recém-conquistada.
+        OWN_VILLAGES.note(SOURCE_DEFENSE, [v["vid"] for v in villages])
         # Lista curta é indistinguível de lista completa (26º padrão): o
         # `player.villages` do game_data diz quantas aldeias a conta tem.
         expected = ((getattr(getattr(self.wrapper, "account_pulse", None), "last", None)

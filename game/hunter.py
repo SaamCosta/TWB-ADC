@@ -43,6 +43,7 @@ from core.village_label import village_label
 from core.file_lock import file_lock
 from core.filemanager import FileManager
 from core.notification import Notification
+from core import own_villages
 
 
 class Hunter:
@@ -85,6 +86,12 @@ class Hunter:
     # requisicoes (~1 s em priority_mode) e um relogio local alguns segundos a
     # frente do servidor; o `AttackManager` mede o deslocamento e acerta.
     PREARM_SECONDS = 10
+    # §8.81: intervalo minimo entre duas releituras da visao geral pedidas
+    # porque o `player.villages` do jogo passou da lista que o bot conhece.
+    # O Hunter roda em todo checkpoint; sem o teto, uma visao geral que
+    # devolvesse lista curta (26o padrao) viraria 1 GET por alvo de farm.
+    OWN_REFRESH_SECONDS = 600
+    FAIL_TARGET_IS_OURS = own_villages.FAIL_REASON
 
     def __init__(self, wrapper=None):
         self.wrapper = wrapper
@@ -102,6 +109,10 @@ class Hunter:
         self._probe_refused = False
         # Origens que a sonda ja tentou primar neste processo.
         self._probe_primed = set()
+        # §8.81: ultima releitura da visao geral pedida pelo Hunter.
+        self._own_refresh_at = 0.0
+        # None = o registro do processo (`core/own_villages.REGISTRY`).
+        self.own_registry = None
 
     # ------------------------------------------------------------------
     # Schedule persistence
@@ -521,6 +532,112 @@ class Hunter:
         self._note_failure(atk, target_id, "a hora de saida passou ha %.0f s" % missed)
 
     # ------------------------------------------------------------------
+    # Alvo que ja e nosso (§8.81)
+    # ------------------------------------------------------------------
+
+    def _own_registry(self):
+        return self.own_registry or own_villages.REGISTRY
+
+    def _pending_attacks(self, sched):
+        """Comandos de ATAQUE (real ou fake) que ainda nao sairam. Apoio fica
+        de fora: apoio para aldeia nossa e o caso normal (§8.61)."""
+        return [a for a in sched.get("attacks", [])
+                if a.get("status") == "pending" and self._kind(a) == "attack"]
+
+    def _cancel_if_target_ours(self, config, sched_key, sched):
+        """
+        Cancela os ataques pendentes de um schedule cujo alvo ja e nosso.
+        Devolve True se cancelou.
+
+        29/10, 88755: o planejador agendou um trem contra a BBM 067 uma hora
+        depois de ela ser conquistada, e este envio no horario mandava sem
+        perguntar -- so o caminho do nobre ATRASADO reconferia o dono. O
+        primeiro nobre saiu, pousou contra a nossa guarnicao e morreu com os
+        2.264 da escolta (§8.81).
+
+        Vale para todo schedule (trem barbaro, reforco, fechamento, PvP, fake,
+        manual): nenhum ataque contra aldeia nossa e desejado. So memoria
+        (`config` e o registro das visoes gerais), entao roda tambem no
+        segundo exato antes do POST.
+
+        Comando que ja saiu nao se mexe: o bot nao cancela comando no jogo, e
+        o jogo so deixa cancelar nos primeiros minutos. Ele pousa contra a
+        nossa aldeia. A promocao do trem (`_promote_scheduled_trains`) le o
+        `fail_reason` e encerra o registro como "ja era nosso".
+        """
+        attacks = self._pending_attacks(sched)
+        if not attacks:
+            return False
+        target_id = str(sched.get("target_id"))
+        why = own_villages.own_target_reason(target_id, config, self._own_registry())
+        if not why:
+            return False
+        for atk in attacks:
+            atk["status"] = "failed"
+            atk["fail_reason"] = self.FAIL_TARGET_IS_OURS
+            atk["cancelled_because"] = why
+        sched["cancel_reason"] = why
+        nobles = sum(int((a.get("troops") or {}).get("snob", 0) or 0) for a in attacks)
+        in_air = [a for a in sched.get("attacks", [])
+                  if a.get("status") == "sent" and self._kind(a) == "attack"]
+        air_text = (" %d ja no ar nao voltam: pousam contra a nossa aldeia." % len(in_air)
+                    if in_air else "")
+        self.logger.warning(
+            "Hunter: schedule %s cancelado -- %s: %d comando(s) contra %s NAO saem "
+            "(%d nobre(s)).%s", sched_key, why, len(attacks), village_label(target_id),
+            nobles, air_text)
+        self._notes.append(
+            "Hunter: operacao contra %s cancelada -- %s. %d comando(s) (%d nobre(s)) "
+            "nao saem.%s" % (village_label(target_id), why, len(attacks), nobles, air_text))
+        return True
+
+    def _refresh_own_villages(self, config, schedules, now=None):
+        """
+        Rele a visao geral (1 GET) quando o jogo diz que a conta tem mais
+        aldeias do que a lista mais nova conhece -- aldeia conquistada depois
+        da visao geral do ciclo, que roda so no inicio dele (~1 a 4 h). So
+        com ataque pendente, nunca colado numa saida, e no maximo uma vez a
+        cada `OWN_REFRESH_SECONDS`. Devolve True se releu.
+        """
+        if self.wrapper is None:
+            return False
+        pulse = getattr(getattr(self.wrapper, "account_pulse", None), "last", None) or {}
+        expected = pulse.get("villages")
+        registry = self._own_registry()
+        if not registry.stale(expected, config):
+            return False
+        now = time.time() if now is None else now
+        pending = [a for s in schedules.values() if s.get("status") == "pending"
+                   for a in self._pending_attacks(s)]
+        if not pending:
+            return False
+        if any(a.get("send_time") is not None
+               and 0 <= float(a["send_time"]) - now <= 2 * self.PREARM_SECONDS
+               for a in pending):
+            return False  # a saida vem antes; o registro que houver decide
+        if now - self._own_refresh_at < self.OWN_REFRESH_SECONDS:
+            return False
+        self._own_refresh_at = now
+        anchor = next(iter(sorted(((config or {}).get("villages") or {}))), None)
+        if not anchor:
+            return False
+        newest = registry.newest()
+        known = len(newest[1]) if newest else len((config or {}).get("villages") or {})
+        page = self.wrapper.get_url(
+            "game.php?village=%s&screen=overview_villages&mode=prod&page=-1" % anchor)
+        villages = Extractor.own_villages_overview(page) if page is not None else None
+        if not villages:
+            self.logger.warning(
+                "Hunter: o jogo diz %s aldeias e a lista conhece %d, mas a visao geral "
+                "veio ilegivel -- sigo com o que ha", expected, known)
+            return False
+        registry.note(own_villages.SOURCE_HUNTER, [v["vid"] for v in villages], at=now)
+        self.logger.info(
+            "Hunter: o jogo diz %s aldeias e a lista mais nova tinha %d -- visao geral "
+            "relida: %d", expected, known, len(villages))
+        return True
+
+    # ------------------------------------------------------------------
     # Nobre atrasado de trem barbaro (§8.71, fase 4)
     # ------------------------------------------------------------------
 
@@ -609,8 +726,9 @@ class Hunter:
             return False, "o registro da conquista nao aponta para este schedule"
         if record.get("status") != "train_scheduled":
             return False, "conquista em '%s', nao mais agendada" % record.get("status")
-        if target_id in ((config or {}).get("villages") or {}):
-            return False, "o alvo ja e nosso"
+        ours = own_villages.own_target_reason(target_id, config, self._own_registry())
+        if ours:
+            return False, ours
         owners = self._target_owners(target_id)
         if not owners:
             return False, "nao sei se o alvo ainda e barbaro"
@@ -693,6 +811,15 @@ class Hunter:
 
         now = time.time()
         changed = False
+
+        # §8.81: lista da conta fresca antes de decidir (so quando o jogo diz
+        # que ela esta curta), e alvo que ja e nosso cancela antes da sonda --
+        # a sonda tambem e requisicao, e a reserva de tropa solta mais cedo.
+        self._refresh_own_villages(config, schedules, now=now)
+        for sched_key, sched in schedules.items():
+            if sched.get("status") == "pending" and self._cancel_if_target_ours(
+                    config, sched_key, sched):
+                changed = True
 
         # Resolve travel times for every schedule before choosing what to
         # service.
@@ -803,6 +930,12 @@ class Hunter:
                     "comando %s -> %s NAO enviado",
                     sched_key, village_label(atk["source_village_id"]), village_label(target_id)
                 )
+                continue
+            # §8.81, mesmo padrao: a espera pode ter durado ate 5 min, e o
+            # checkpoint da defesa ou a visao geral podem ter visto a aldeia
+            # virar nossa nela. So memoria -- nao atrasa o POST.
+            if self._cancel_if_target_ours(config, sched_key, sched):
+                changed = True
                 continue
 
             # Feature 26: commands with the same source, target and send

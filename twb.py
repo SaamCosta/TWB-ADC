@@ -140,6 +140,8 @@ from core.village_label import village_label
 from core import account_pulse
 from core import paid_features
 from core import am_auto
+from core import own_villages
+from core.own_villages import REGISTRY as OWN_VILLAGES
 from core.updater import check_update
 from core.filemanager import FileManager
 from core.request import WebWrapper
@@ -520,6 +522,9 @@ class TWB:
             return None, config
 
         self.found_villages = Extractor.village_ids_from_overview(overview_page.result_get.text)
+        # §8.81: "o alvo ja e nosso?" do Hunter e da conquista. Lista vazia
+        # nao entra (ver a guarda logo abaixo).
+        OWN_VILLAGES.note(own_villages.SOURCE_CYCLE, self.found_villages)
 
         # ---------------------------------------------------------------
         # Guarda contra a limpeza destrutiva abaixo (2026-08-22).

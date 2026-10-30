@@ -9188,6 +9188,185 @@ confirma que estava certo pular.
 `twb-review` no diff sem achado (o código de produção não mudou). Suíte
 inteira no checkout principal: **120 arquivos, 0 falhas**.
 
+## 8.81 `P-ALVO-NOSSO` — nenhum ataque contra aldeia que já é nossa (2026-10-30)
+
+Pendência do fim da §8.77, feita logo depois das relíquias, como o usuário
+pediu.
+
+### O incidente, com o desfecho
+
+A 88755 virou nossa (BBM 067) às **00:37:51 de 29/10**, pelo nobre da BBM
+027 (relatório 225421435). Às **01:40:48** o planejador agendou contra ela
+`88755_2026-10-30T11-47-26_barb` (4 nobres, BBM 013 + BBM 012 ×2 + BBM 029). O
+Hunter mandou o da BBM 013 às 01:50:48. O jogo recusou os outros três (03:50 e
+04:37), e o motivo não ficou gravado no schedule.
+
+**Desfecho, lido hoje:** o nobre pousou às **11:47:26 de 30/10** contra a
+nossa própria guarnição de apoio (12.885 lanças, 12.643 espadas, 3.473
+machados, 302 exploradores e 1.651 pesadas). Morreram o nobre e a escolta
+inteira: 1.008 lanças, 1.016 espadas, 48 leves e 192 pesadas, 2.264 tropas no
+total. Do lado da defesa caíram 81 lanças, 79 espadas, 22 machados, 2
+exploradores e 10 pesadas (relatório 227831832). O registro ficou
+`conquered` desde as 05:20 de 29/10 e, pelo `nobles_in_flight`, ocupou uma das
+3 vagas de trem (`max_parallel_trains`) até o pouso, por **30 h**.
+
+### Os caminhos, e de onde cada um tira o dono (12º e 24º padrões)
+
+| Caminho | Fonte do dono | Idade possível | Conferia "é nosso"? |
+|---|---|---|---|
+| Planejador automático (`find_target` via `_pick_target`) | pool: scan vivo da âncora > `village.txt` > `cache/villages` | scan: setores do ciclo; `village.txt`: TTL 6 h + geração do jogo; `cache/villages`: sem prazo | **não**: só `owner != "0"` e `vid == self.village_id` |
+| Alvo manual (`_get_manual_target`) | `cache/villages`, depois `village.txt` | idem | **não** |
+| Envio no horário (`Hunter._run`) | nenhuma | — | **não**: só `_schedule_deleted` |
+| Envio atrasado (`late_barbarian_verdict`) | `config["villages"]`, depois `cache/villages` + `village.txt` | config: até 1 ciclo | sim (só o config) |
+| Nobre extra e grupo de fechamento (`_handle_existing`, prioridade 1) | `_target_is_mine`: `config["villages"]`, depois `cache/villages` | idem | sim (só o config) |
+| Reforço (`plan_reinforcements`) | `_target_is_mine` | idem | sim (só o config) |
+| Farm (`AttackManager.get_targets`) | `own_villages` = `config["villages"]` | até 1 ciclo | sim (só o config) |
+
+O furo eram as três primeiras linhas. Medido agora, na fonte que o código lê:
+das 2.198 entradas de `cache/villages`, **60** dizem bárbara para aldeia que o
+`village.txt` dá como de jogador, contra **0** no sentido inverso, com mediana
+de **60,5 dias** de idade. As nossas listas batem com o `village.txt` (69 de
+69, nos dois sentidos).
+
+**Por que o config bastaria para este incidente** (é inferência, porque o
+`session_latest.log` daquela noite foi sobrescrito): no `twb_1793236762.log`, o
+prime das 14 origens do ciclo começa às 00:55:26, depois da conquista. A
+visão geral do ciclo roda antes do prime, e `bot.add_new_villages` está `true`
+no `config.json`. Logo, às 01:40 e às 01:50 a 88755 já estava em
+`config["villages"]` e em `found_villages`, e nenhum dos dois caminhos
+perguntava.
+
+### A precedência, por campo (27º padrão)
+
+São duas famílias de fonte. **As listas da conta** são o `config["villages"]`
+e a visão geral (`overview_villages`), lida pelo ciclo, pela defesa própria e
+agora também pelo Hunter. Elas só ficam *atrasadas*: a aldeia recém-conquistada
+ainda não aparece. Nunca dizem "nossa" de uma aldeia que não é, porque perda
+de aldeia só sai do config confirmada (`confirm_lost_villages`). **As fontes de
+mapa** (scan, `village.txt`, `cache/villages`) apodrecem no sentido oposto: a
+medição de 60×0 mostra isso.
+
+Logo, para a pergunta "é nossa?", **um "sim" de uma lista da conta vence
+qualquer "bárbara" de fonte de mapa**. A recíproca não vale: não estar nas
+listas da conta não prova nada, e por isso o fallback de mapa continua em
+`_target_is_mine`. Para "é de outro jogador" segue a ordem da §8.6: scan vivo >
+`village.txt` > `cache/villages`.
+
+### O que mudou
+
+- **`core/own_villages.py`** (novo): `REGISTRY`, que guarda em memória do
+  processo a última lista de cada fonte (uma leitura nova substitui a anterior;
+  lista vazia não entra, que é a mesma armadilha da guarda do
+  `purge_refusal_reason`). Expõe `own_target_reason(alvo, config)`, que só lê
+  memória e devolve "o alvo ja e nosso (<fonte>)", e `ids(config)` para o farm.
+  Alimentado por `TWB.get_overview` (`found_villages`), por
+  `OwnDefenseManager.scan` e pelo Hunter.
+- **Hunter, envio no horário** (`_cancel_if_target_ours`): roda em dois
+  pontos. Primeiro, no topo de todo `_run`, para todo schedule pendente, antes
+  da sonda: cancela logo que sabe e solta a reserva de tropa. Depois, de novo
+  **no segundo exato**, depois da espera e do `_schedule_deleted` (6º padrão:
+  a espera dura até 5 min, e a lista pode mudar nela). Vale para todo
+  **ataque** (trem bárbaro, reforço, fechamento, PvP, fake, manual). Apoio para
+  aldeia nossa segue saindo, porque é o caso normal (§8.61). O comando
+  cancelado vira `failed` com `fail_reason: "target_is_ours"` e
+  `cancelled_because`, e o schedule ganha `cancel_reason`. Sai um WARNING com
+  `village_label` e um aviso no Telegram, que diz também quantos já estão no
+  ar.
+- **Hunter, lista fresca** (`_refresh_own_villages`): o `game_data` de toda
+  resposta traz `player.villages` (`AccountPulse`). Se esse número passa do
+  tamanho da lista mais nova, existe aldeia nossa que nenhuma lista conhece.
+  Nesse caso o Hunter relê a visão geral (1 GET, mesma URL e mesmo
+  `Extractor.own_villages_overview` da defesa própria, que já roda em campo
+  com o cliente do bot; por isso não houve sondagem). Só faz isso com ataque
+  pendente, nunca a menos de 20 s de uma saída e no máximo uma vez a cada
+  `OWN_REFRESH_SECONDS` (600). A visão geral curta do 26º padrão não vira 1 GET
+  por checkpoint. Isso fecha a janela entre a conquista e a visão geral do
+  ciclo seguinte (1 a 4 h), que o config sozinho não fecharia. É o caso da
+  conquista feita à mão pelo jogador.
+- **Atrasado** (`late_barbarian_verdict`): usa a mesma pergunta, no lugar do
+  `in config["villages"]` próprio. Na prática o cancelamento do topo do `_run`
+  chega antes.
+- **Seleção**: `find_target` pula aldeia nossa que o pool dá como bárbara
+  (INFO "o mapa ainda diz barbara"). `_get_manual_target` tira o alvo da fila
+  como `invalid` antes de qualquer fonte de mapa: alvo nosso não espera
+  reserva nem vira `blocked`. `_target_is_mine` (extra, fechamento, reforço)
+  passa a consultar as visões gerais além do config.
+- **O trem cancelado** (`_promote_scheduled_trains`): quando o schedule tem
+  `fail_reason: "target_is_ours"`, o registro vira `invalid` com
+  `already_ours: true`, `hits_done` e `noble_arrivals` dos que já saíram, sem
+  Telegram de "Conquista FALHOU" (o Hunter já avisou). A decisão é tomada pelo
+  motivo gravado na hora do cancelamento, e não pela posse de agora: depois do
+  pouso o alvo também é nosso quando quem conquistou foi o próprio trem.
+  `train_sent` faria o acompanhamento marcar `conquered` com o pouso do nosso
+  nobre contra a nossa guarnição, e o planejador de relíquias leria "lealdade
+  25" a partir dali (`low_loyalty_hosts`).
+- **Vaga de trem**: `ConquestCache.active_conquests` não conta mais nobre no
+  ar de registro `already_ours`. Reeleger o alvo não é risco, porque
+  `find_target` pula aldeia nossa. A trava de 12/08 (status errado com nobre no
+  ar) segue valendo para todo o resto.
+- **Farm, achado pela `twb-review` no mesmo passo** (12º padrão, varrer a
+  classe): `Village` passava `AttackManager.own_villages` só do config. Agora
+  passa `REGISTRY.ids(config)`. Sem isso, o trem cancelado deixaria de
+  bloquear o farm (ele sai de `active_conquests`), e a aldeia vista só pela
+  defesa ou pelo Hunter seria farmada até a visão geral do ciclo.
+
+### O nobre que já está no ar: decidido, não se mexe
+
+O bot não cancela comando no jogo em nenhum lugar, e o jogo só deixa cancelar
+nos primeiros minutos. Criar esse caminho seria POST novo, que precisaria de
+sondagem antes, para salvar um caso que a checagem no horário passa a impedir
+na origem. Então o nobre segue: pousa contra a nossa aldeia e, com guarnição,
+morre com a escolta, como medido acima. O Hunter diz isso no aviso ("N já no
+ar não voltam: pousam contra a nossa aldeia"), e o registro guarda a chegada
+dele sem ocupar vaga de trem.
+
+### Testes
+
+`tests/test_own_target_guard.py` tem 15 casos sobre o schedule real da 88755
+(horários e tropas do `schedules.json`, relógio injetado, sem relógio de
+parede, com `FileManager` em memória):
+- registro, lista vazia, substituição, `ids` e `stale`;
+- caso real com o config já sabendo: nada sai, o schedule é cancelado e há
+  aviso;
+- **controle**: sem lista dizendo "nossa", o mesmo nobre sai (15º padrão);
+- lista da defesa cobrindo aldeia fora do config;
+- aldeia que vira nossa **durante** a espera;
+- cancelamento antes da hora da saída;
+- nobre já no ar intacto e citado no aviso;
+- apoio continua saindo;
+- motivo do atrasado;
+- releitura da visão geral com a fixture verbatim
+  `own_defense_overview_villages_br143.html`, mais o teto e o veto colado na
+  saída;
+- seleção automática (com controle) e fila manual;
+- promoção `already_ours` e vaga de trem (com controle sem a marca).
+
+`tests/test_hunter_late_barb.py::test_alvo_que_ja_e_nosso` passou a esperar o
+cancelamento do schedule inteiro (`target_is_ours`) em vez da recusa do
+atrasado.
+
+**Mutantes conferidos** (numa cópia no scratchpad, sem tocar o checkout que o
+bot usa). Sem a checagem depois da espera, falha o caso "durante a espera".
+Sem a do `find_target`, falha a seleção. Sem a exclusão da vaga, falha a
+promoção. Sem o cancelamento do topo do `_run`, falha "antes da hora", que foi
+escrito justamente porque esse mutante passava na primeira versão da bateria.
+
+Sem config nova: nada em `config.example.json`, `helpfile.py` ou
+`build.version`. `twb-review` no diff: o farm acima foi o único achado e
+entrou no mesmo commit. Os checks 1 (mutável: campos novos no `__init__`), 2
+(o `get_url` tem guarda), 3 (`own_villages_overview` devolve `None`, nunca
+`[]`), 4 (nenhuma `def` órfã), 5, 6 (`page=-1`, lista curta com teto), 7 (o
+controle prova que a guarda não dispara sempre) e 8 (o corpo do módulo só cria
+o registro vazio) rodaram sem achado. Suíte inteira no checkout principal:
+**121 arquivos, 0 falhas**.
+
+**Campo, ao religar:** o código entra no próximo processo (o atual subiu às
+12:10 de 30/10, com o código do `dd853c2`). Os sinais a procurar são
+`Hunter: schedule ... cancelado` e `alvo ... descartado da selecao automatica
+(o alvo ja e nosso` no `session_latest.log`. Também vale procurar `visao
+geral relida` quando houver conquista no meio do ciclo. O silêncio não prova
+nada (15º padrão): o caso só se exercita com aldeia recém-conquistada no pool.
+
 ## 9. Próximos passos
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
@@ -9202,10 +9381,13 @@ fundir, desligada: nada vale ainda) e 5 (§8.80, efeitos no cálculo: nenhum
 muda, o bot já lê tudo da tela com o bônus). Sobram as pendências pequenas
 abaixo.
 
-**Próximo item (decisão do usuário em 29/10, antes das bandeiras): o furo do
-trem contra aldeia nossa** (fim da §8.77) — checagem "o alvo já é nosso" no
-envio no horário do Hunter e na escolha de alvo do planejador bárbaro,
-automática e manual. **Depois dele: bandeiras por valor.** A
+~~**O furo do trem contra aldeia nossa**~~ (fim da §8.77): ✅ **feito em
+2026-10-30** (§8.81). A pergunta "o alvo já é nosso?" agora é feita no envio no
+horário do Hunter (no topo do `_run` e no segundo exato), na seleção
+automática e manual, no farm, e lê as visões gerais além do config. Falta o
+campo no próximo processo (sinais no fim da §8.81).
+
+**Próximo item: bandeiras por valor.** A
 escolha de bandeira do `DefenceManager` é uma ordem fixa (§4.6, §8.11), e a
 ordem esqueceu que a bandeira de saque afeta a coleta. Ela vai passar a usar o
 mesmo modelo de valor/h por aldeia do planejador de relíquias. Antes, medir no
@@ -9228,11 +9410,15 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 - **`unit_costs` só é lido onde o bot recruta**: nas aldeias com recrutamento
   cedido ao gerente (§8.68) o `cost_listener` nunca roda. A tabela padrão bate
   com o medido (lanceiro 50/30/10), então não muda o plano.
-- **Campo da Fase 4, no próximo processo** (§8.80): o bot foi fechado às 00:03
-  de 30/10 sem ter rodado o código do `7358c42`. Ao religar, conferir no
-  `session_latest.log` a linha "Relics: fusões (dry-run)", nenhum WARNING de
-  Relics, e o quadro da BBM 068 (87765) batendo depois que a Fogueira dela
-  ativar (~20:56 de 30/10).
+- **Campo da Fase 4** (§8.80): ⏳ **2 de 3 conferidos em 30/10** no processo
+  das 12:10, o primeiro a rodar o código do `7358c42`/`dd853c2`. Às 12:10:59
+  saiu `Relics: fusões (dry-run): nenhuma possível (menos de 3 paradas livres
+  da mesma qualidade)`, e até as 13:3x não havia nenhum WARNING de Relics (o
+  `Relics: cobertura calculada bate com a visão geral do jogo` saiu nas três
+  leituras). **Falta** o quadro da BBM 068 (87765) depois que a Fogueira dela
+  ativar: às 12:57 o log dava "inativa por mais 7.6 h", ou seja, ~20:33–20:56
+  de 30/10. Procurar uma leitura de Relics depois disso sem divergência da BBM
+  068, e aí riscar.
 - **Relíquia de "capacidade de saque"** (§8.80): nenhuma na conta. Se aparecer
   uma, medir numa aldeia coberta se a coleta e o farm carregam mais que o
   `UNIT_CARRY` diz (relatório de farm que volta cheio; a coleta mostra o saque
@@ -9245,6 +9431,20 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
   mais apoio que o necessário), mas o "basta" da §8.69 pode estar alto onde o
   paladino alcança. Medir antes de mexer: o mesmo ataque simulado com e sem o
   +30% contra um relatório real de defesa numa aldeia coberta.
+
+Pendências achadas na §8.81 (fora do escopo):
+- **Apoio do `DefenceManager` com "viagem desconhecida".** No processo de
+  30/10, das 12:10 às 13:35, saíram 21 linhas `Support X -> Y liberado: eta
+  …h mas viagem desconhecida, enviando`, 7 delas para a BBM 067 (atacada, eta
+  14,6 h), uma por aldeia que rodou. Nenhuma linha de resultado vem depois, então
+  o log não diz se saiu tropa. Antes de mexer, medir na praça das origens
+  (comandos de apoio para 605|253) e conferir se o "basta" da §8.69, que é da
+  defesa própria, vale também para esse caminho antigo (`support_other`).
+- **O motivo da recusa dos 3 nobres da 88755 não ficou gravado.** No
+  `schedules.json`, os comandos falhos têm `status: failed` e `sent_at`, mas não
+  têm `fail_reason`. O `_send_attack_batch` só grava `fail_reason` quando há
+  `refusal` lido. Ler o caminho de falha do lote e gravar a mensagem do jogo
+  (ou "sem mensagem") no comando.
 
 **Fila definida pelo usuário em 2026-09-17, à frente do que vem abaixo:**
 

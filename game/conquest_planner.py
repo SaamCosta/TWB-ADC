@@ -51,6 +51,7 @@ import datetime
 import logging
 import time
 
+from core import own_villages
 from core.filemanager import FileManager
 from core.village_label import village_label
 from core.notification import Notification
@@ -1551,6 +1552,32 @@ class BarbarianTrainPlanner:
             # nenhum, ou a chegada ja passou e ele nao sai mais.
             sent = [atk for atk in attacks if atk.get("status") == "sent"]
             self._release(target_id)
+
+            # §8.81: o Hunter cancelou porque o alvo ja era nosso. Le-se o
+            # motivo gravado NA HORA do cancelamento, e nao a posse de agora:
+            # depois do pouso o alvo tambem e nosso quando quem conquistou foi
+            # o proprio trem. Nem "train_sent" (o acompanhamento marcaria
+            # "conquered" com o pouso do nosso nobre contra a nossa guarnicao,
+            # e o planejador de reliquias leria lealdade 25 dali) nem "FALHOU".
+            cancelled = [atk for atk in attacks
+                         if atk.get("fail_reason") == own_villages.FAIL_REASON]
+            if cancelled:
+                why = cancelled[0].get("cancelled_because") or "o alvo ja e nosso"
+                arrivals = [atk.get("arrival_real") or sched.get("arrival_time") for atk in sent]
+                ConquestCache.set(target_id, {
+                    **data,
+                    "status": "invalid",
+                    "already_ours": True,
+                    "invalid_reason": "%s%s; o Hunter cancelou %d nobre(s)" % (
+                        why[:1].upper(), why[1:], len(cancelled)),
+                    "hits_done": len(sent),
+                    "noble_arrivals": arrivals,
+                })
+                self.logger.warning(
+                    "Conquest: trem contra %s encerrado -- %s; %d nobre(s) cancelado(s), "
+                    "%d ja no ar (pousam contra a nossa aldeia)",
+                    village_label(target_id), why, len(cancelled), len(sent))
+                continue
 
             if not sent:
                 self.logger.warning(

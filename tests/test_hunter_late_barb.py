@@ -140,9 +140,15 @@ def test_alvo_que_deixou_de_ser_barbaro_em_qualquer_fonte():
 
 
 def test_alvo_que_ja_e_nosso():
+    # §8.81: o schedule inteiro e cancelado ANTES do caminho do atrasado --
+    # os 4 comandos, nao so os 2 atrasados (tests/test_own_target_guard.py).
     config = dict(CONFIG, villages={"41114": {}, "41140": {}, "81800": {}})
     h, sched = run(schedule(), config=config)
-    assert_refused(sched, h, "ja e nosso")
+    assert h.sent == [], h.sent
+    for atk in sched["attacks"]:
+        assert atk["status"] == "failed" and atk["fail_reason"] == "target_is_ours", atk
+    ok, why = h.late_barbarian_verdict(config, KEY, schedule(), schedule()["attacks"][0], 401.8)
+    assert not ok and "ja e nosso" in why, why
 
 
 def test_atraso_acima_do_teto():

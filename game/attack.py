@@ -14,6 +14,7 @@ from datetime import timedelta
 
 from core.filemanager import FileManager
 from core.notification import Notification
+from core.own_villages import own_target_reason
 from core.templates import UNIT_CARRY, UNIT_POP
 from core.world_config import WorldConfig
 from game.farm_exclusions import FarmExclusionLog
@@ -1600,10 +1601,15 @@ class ConquestCache:
             target_id = fname.replace(".json", "")
             if data.get("status") in ConquestCache.ACTIVE_STATUSES:
                 active[target_id] = data
-            elif ConquestCache.nobles_in_flight(data):
+            elif ConquestCache.nobles_in_flight(data) and not data.get("already_ours"):
                 # Status pode estar errado -- foi o que aconteceu em
                 # 2026-08-12 ("complete" com quatro nobres no ar). A chegada
                 # nao mente, entao ela tem a ultima palavra.
+                # §8.81: menos no trem encerrado porque o alvo ja era nosso. O
+                # nobre no ar pousa contra a nossa aldeia e nao conquista
+                # nada; contado aqui, ocupava uma vaga de trem ate o pouso
+                # (30 h na 88755). Reeleger o alvo nao e risco: `find_target`
+                # pula aldeia nossa.
                 active[target_id] = data
         return active
 
@@ -1965,6 +1971,15 @@ class ConquestManager:
         for vid, village in pool.items():
             if str(village.get("owner", "0")) != "0":
                 continue  # not barbarian
+            # §8.81: o dono acima vem de fonte de MAPA, que leva horas (scan,
+            # village.txt) a dias (cache/villages) para saber de uma conquista.
+            # Na 88755 ela era nossa havia uma hora e o pool dizia barbara.
+            ours = own_target_reason(vid, self.config)
+            if ours:
+                self.logger.info(
+                    "Conquest: alvo %s descartado da selecao automatica (%s; o "
+                    "mapa ainda diz barbara)", village_label(vid), ours)
+                continue
             if vid in reserved:
                 continue  # already targeted
             if vid == self.village_id:
@@ -2388,6 +2403,20 @@ class ConquestManager:
         pending.sort(key=lambda item: item[0])
 
         for _, target_id, data in pending:
+            # §8.81: antes de qualquer fonte de mapa. Alvo que ja e nosso nao
+            # espera reserva nem vira "blocked": sai da fila de vez.
+            ours = own_target_reason(target_id, self.config)
+            if ours:
+                self.logger.warning(
+                    "Conquest: alvo manual %s -- %s; tirando da fila sem enviar nada",
+                    village_label(target_id), ours)
+                ConquestCache.set(target_id, {
+                    **data,
+                    "status": "invalid",
+                    "invalid_reason": ours[:1].upper() + ours[1:],
+                })
+                continue
+
             village_data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
 
             # Feature 35: o alvo pode ter sido reservado por outra pessoa
@@ -2895,8 +2924,12 @@ class ConquestManager:
         conquistada em config["villages"]. E a prova de posse mais fresca que o
         bot tem, e sem ela a estimativa de lealdade mandaria nobre extra contra
         a aldeia que acabou de ser conquistada.
+
+        §8.81: as listas da conta sao as de `core/own_villages` -- o config e
+        as visoes gerais (a do ciclo e a da defesa propria, que inclui a aldeia
+        recem-conquistada fora do config).
         """
-        if str(target_id) in ((self.config or {}).get("villages") or {}):
+        if own_target_reason(target_id, self.config):
             return True
         data = FileManager.load_json_file(f"cache/villages/{target_id}.json")
         if not data:
