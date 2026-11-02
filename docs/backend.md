@@ -9560,7 +9560,91 @@ pagou acima do nominal numa coleta do bot, e a população das aldeias só entra
 no cache a partir do próximo ciclo. Ligar `mode: "on"` só depois da 2ª etapa
 do saque e de um dia de plano estável no painel.
 
+## 8.83 `P-PUBLICO` — Fase 1: árvore pública para testadores, sem a conta (2026-11-02)
+
+**Pedido do usuário:** mandar o link do bot para algumas pessoas testarem, com
+instalação limpa para qualquer mundo e sem informação da conta.
+
+**O que a auditoria mediu (2026-11-02):**
+- **Segredo nenhum** no histórico: 437 commits varridos por cookie (`sid=`),
+  token do Telegram, `pl_auth` e `"token"`; o `config.json` só foi commitado
+  pelo upstream em 2020, com placeholders.
+- **Lógica limpa de mundo:** varredura por AST dos literais de `core/`, `game/`,
+  `webmanager/`, `pages/` e da raiz, fora docstring, atrás de mundo, prefixo de
+  aldeia, jogador, id de aldeia própria e coordenada. Só `tools/feature_map.py`
+  tinha ids fixos (ferramenta de dev, fica fora da árvore pública).
+- **Identidade espalhada:** `BBM` 907 vezes em 121 arquivos, `br143` 480 em 126,
+  o nome do jogador em 8 e o id em vários. Isso inclui docstrings, testes,
+  fixtures, docs e 48 capturas. **Mais nomes reais de terceiros** (colegas de
+  tribo, um vizinho, três tribos) em dois testes, contra a regra do CLAUDE.md.
+  Esses foram trocados por pseudônimos **no próprio repo** (`membro_um`,
+  `Tribo Alfa`, ids `7000001`…).
+- O repo é *fork* do `stefan2200/TWB`: fork de repo público não vira privado.
+
+**Decisão do usuário:** repo público **novo, sem histórico**. Este segue como
+repo de desenvolvimento.
+
+**O que foi feito:** `tools/export_public.py` monta a árvore pública:
+- lista de **inclusão**: só arquivo rastreado pelo git e dentro de `INCLUDE`.
+  Ficam fora `docs/`, CLAUDE.md, AGENTS.md, `.claude/`, `tools/`,
+  `tests/smoke_*` e `test_feature_map.py`;
+- anonimização **na exportação**: mundo → `br999`, jogador → `jogador_teste`,
+  id → `9000001`, prefixo `BBM` → `Vila`, e tokens `h`/`csrf` trocados pelo
+  valor, em todo arquivo, para a fixture e a constante do teste continuarem
+  iguais;
+- a identidade vem de `cache/export_identity.json` (fora do git), semeado do
+  `config.json` + `cache/managed` + `game_data` guardado. Termo novo (tribo,
+  apelido) entra em `extra_terms`;
+- uma **trava** procura cada termo original em toda a árvore pronta, conteúdo e
+  caminho, texto e binário, e aborta se encontrar;
+- `--test` roda a suíte **dentro da árvore exportada**, sem `config.json` e sem
+  `cache/`.
+
+**O que a suíte na árvore limpa achou.** Seis testes passavam aqui e falhavam
+lá, todos por depender do estado desta instalação:
+- **Bug real de instalação nova:** `FileManager.save_json_file` não criava a
+  pasta-mãe. `cache/conquest`, `defense`, `shadow`, `debug`, `mint` e `support`
+  não estão na lista do `TWB.start()`, e só existiam aqui por
+  acaso. Corrigido no `save_json_file` com `makedirs`.
+- `test_village_order` e `test_conquest_extra_origin` liam o
+  `cache/managed` real. Passaram para diretório temporário e para
+  `village_label.register`.
+- `test_conquest_area_of_interest` e `test_panel_field_audit` liam o
+  `config.json` real. Usam o template ou uma config mínima quando ele não
+  existe.
+
+Resultado: **trava limpa, 121 de 121 testes na árvore exportada**, 122 de 122
+aqui, e `python twb.py -i` (o que o `installer.bat` roda) passa numa árvore
+recém-exportada.
+
+**Risco residual, de propósito:** coordenadas e ids de aldeia ficam (fixtures
+verbatim, testes medem distância). Sem o nome do mundo, cruzar isso exige
+baixar o `village.txt` de cada mundo br. O e-mail do usuário está como autor
+em 242 commits **deste** repo. O repo novo deve ser commitado com o endereço
+`noreply` do GitHub.
+
+**Achado para a fase do webmanager:** sem `config.json`, `/hunter` e
+`/conquest` (e provavelmente outras rotas que fazem
+`DataReader.config_grab().get(...)`) dão **500**. O testador que abrir o
+painel antes do primeiro run cai nisso.
+
 ## 9. Próximos passos
+
+**`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
+1. ✅ Fase 1 (2026-11-02): auditoria, `tools/export_public.py`, árvore limpa
+   verde.
+2. Fase 2: entrada de cookie sem copiar e colar. O `sid` é HttpOnly, então
+   `document.cookie` não o lê. Candidatos: userscript com `GM_cookie`, extensão
+   mínima com `chrome.cookies` mandando para o painel local, ou leitura do
+   banco de cookies do navegador. Sondar o que de fato lê o `sid` antes de
+   escolher.
+3. Fase 3: webmanager: tirar o texto desnecessário, organizar a tela de
+   configuração e criar o primeiro uso sem `config.json` (os 500 da §8.83).
+4. Fase 4: README novo (instalação, cookie, painel) e o placeholder `nlc1` do
+   `config.example.json`.
+5. Fase 5: criar o repo público (commit `noreply`), apontar o
+   `core/updater.py` para ele, e decidir com o usuário o destino deste fork
+   público (apagar, ou manter com o vínculo já exposto no histórico).
 
 **Auditoria de 2026-09-26 (§8.32):** 21 achados. Os Lotes A (A26-01, 02, 10;
 §8.33) e B (A26-03, 04, 14; §8.35) foram fechados em 2026-09-27, e **nenhum P1

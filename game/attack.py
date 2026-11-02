@@ -2099,7 +2099,7 @@ class ConquestManager:
         mesmo alvo dentro da mesma decisao.
 
         Preferencia, nao restricao, e isso e de proposito. A formulacao no
-        forum da tribo (SQUAD 02, br143) e "nao quero jogador crescendo para
+        forum da tribo (Tribo Gama, br143) e "nao quero jogador crescendo para
         fora da regiao ENQUANTO AINDA TIVERMOS BBs e alvos disponiveis dentro
         da nossa area" -- ou seja, a area esgotada libera o resto, e um filtro
         duro deixaria o bot parado em vez de expandir.

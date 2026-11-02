@@ -77,7 +77,7 @@ MINHA = '''<tr id="reservation_79340">
     <td>1007</td>
     <td>---</td>
     <td>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=5955651"  title="Os Randolinhos">sccj</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=5955651"  title="Tribo Alfa">sccj</a>
     </td>
     <td>em 24.09. às 07:49</td>
     <td style="white-space:nowrap;">
@@ -92,12 +92,12 @@ DE_TERCEIRO_COM_COMENTARIO = '''<tr id="reservation_77075">
     <td>
                 <input type="checkbox" name="ids[]" value="77075"/>
 
-                <span class="village_anchor" data-player="5706293" data-id="47894"><a href="/game.php?village=32056&amp;screen=info_village&amp;id=47894" >C1 bigodeland | 014 (558|305) K35</a></span>
+                <span class="village_anchor" data-player="7000001" data-id="47894"><a href="/game.php?village=32056&amp;screen=info_village&amp;id=47894" >C1 membro_um | 014 (558|305) K35</a></span>
             </td>
     <td>5198</td>
-    <td><a href="/game.php?village=32056&amp;screen=info_player&amp;id=5706293"  title="Os Randolinhos">lukasvictor</a></td>
+    <td><a href="/game.php?village=32056&amp;screen=info_player&amp;id=7000001"  title="Tribo Alfa">membro_um</a></td>
     <td>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=920052056"  title="Os Randolinhos">Haivar O sem osso</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=7000002"  title="Tribo Alfa">Membro Dois</a>
     </td>
     <td>amanhã às 09:15</td>
     <td style="white-space:nowrap;">
@@ -119,7 +119,7 @@ DE_TERCEIRO = '''<tr id="reservation_75920">
                     <a href="/game.php?village=32056&amp;screen=info_ally&amp;&amp;id=16">
                 [RANDOW]
             </a>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=919714218"  title="Os Randola">Conde Strahd von Zarovch</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=7000004"  title="Tribo Alfa">Membro Quatro</a>
     </td>
     <td>hoje às 07:45</td>
     <td style="white-space:nowrap;">

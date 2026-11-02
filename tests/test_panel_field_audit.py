@@ -321,8 +321,11 @@ def test_hunter_expired_pending_is_not_active():
     tmp = tempfile.mkdtemp()
     path = os.path.join(tmp, "schedules.json")
     orig = HunterReader._cache_path
+    orig_cfg = srv.DataReader.__dict__["config_grab"]
     now = time.time()
     try:
+        # Sem config.json (instalacao limpa) /hunter caia em 500.
+        srv.DataReader.config_grab = staticmethod(lambda: {"hunter": {"enabled": True}, "villages": {}})
         HunterReader._cache_path = staticmethod(lambda: path)
         with open(path, "w", encoding="utf-8") as fh:
             json.dump({
@@ -349,6 +352,7 @@ def test_hunter_expired_pending_is_not_active():
               "a tabela de ativos deveria ter so o #2")
     finally:
         HunterReader._cache_path = orig
+        srv.DataReader.config_grab = orig_cfg
         shutil.rmtree(tmp, ignore_errors=True)
 
 

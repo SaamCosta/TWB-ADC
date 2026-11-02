@@ -1559,7 +1559,7 @@ class Extractor:
                 <td>---</td>
                 <td>
                     <a href="...screen=info_ally&amp;&amp;id=16">[RANDOW]</a>
-                    <a href="...screen=info_player&amp;id=919714218">Conde ...</a>
+                    <a href="...screen=info_player&amp;id=7000004">Membro ...</a>
                 </td>
                 <td>hoje as 07:45</td>
                 ...

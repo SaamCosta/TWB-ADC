@@ -6,7 +6,7 @@ Teste da area de interesse da conquista barbara.
 Por que existe: `priority: "fill_gaps"` pontua com 60% de peso na distancia
 MEDIA do alvo a todas as aldeias gerenciadas, ou seja, elege o que esta mais
 ao centro do proprio cluster. Isso adensa o miolo e nunca escolhe a fronteira
--- e o que a tribo pediu no forum do br143 (SQUAD 02, 16/09/2026) e o oposto:
+-- e o que a tribo pediu no forum do br143 (Tribo Gama, 16/09/2026) e o oposto:
 crescer para o norte, para dentro do K25.
 
 Numeros reais da conta em 16/09/2026, que os testes abaixo usam como fixture:
@@ -146,6 +146,8 @@ def test_area_configurada_cobre_as_barbaras_do_squad():
     import json
 
     raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.exists(os.path.join(raiz, "config.json")):
+        return  # instalacao limpa: nao ha caixa gravada para conferir
     with open(os.path.join(raiz, "config.json"), encoding="utf-8") as f:
         area = json.load(f)["conquest"]["area_of_interest"]
     if not area.get("enabled"):
@@ -250,6 +252,21 @@ def test_pagina_de_conquista_mostra_a_area():
 
     srv.app.jinja_env.auto_reload = True
     srv.app.jinja_env.cache = {}
+    # Sem config.json (instalacao limpa) a pagina caia em 500: o teste usa o
+    # template, que e o que todo usuario novo recebe.
+    original = srv.DataReader.__dict__["config_grab"]  # o staticmethod cru
+    if srv.DataReader.config_grab() is None:
+        import json
+        with open(os.path.join(raiz, "config.example.json"), encoding="utf-8") as f:
+            exemplo = json.load(f)
+        srv.DataReader.config_grab = staticmethod(lambda: exemplo)
+    try:
+        _pagina_de_conquista_mostra_a_area(srv)
+    finally:
+        srv.DataReader.config_grab = original
+
+
+def _pagina_de_conquista_mostra_a_area(srv):
     html = srv.app.test_client().get("/conquest").get_data(as_text=True)
     assert 'id="area-de-interesse"' in html
     assert "Área de interesse" in html

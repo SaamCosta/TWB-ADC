@@ -2,7 +2,7 @@
 Feature 35 / Fase 1 -- leitura do quadro OFICIAL de reservas da tribo.
 
 Contexto: docs/backend.md 8.7. Em 2026-09-20 o usuario relatou que o bot nobrou
-uma barbara que outro jogador do SQUAD 02 tinha reservado. O bot nao tinha o
+uma barbara que outro jogador do Tribo Gama tinha reservado. O bot nao tinha o
 conceito de reserva: `find_target()` filtrava por dono, raio, pontuacao e area
 de interesse, e nenhum desses sabe que alguem pediu aquela aldeia.
 
@@ -323,7 +323,7 @@ class ReservationWriter:
     COMMENT_URL = "game.php?village=%s&screen=ally&&ajax=load_comment"
 
     # Texto neutro, escolhido pelo usuario em 2026-09-21. Ele e VISIVEL para a
-    # alianca inteira ("Os Randola, Inquisition"), entao e interface social
+    # alianca inteira ("Tribo Alfa, Tribo Beta"), entao e interface social
     # antes de ser carimbo: diz a um humano por que a aldeia esta reservada,
     # sem anunciar que a conta e automatizada.
     DEFAULT_COMMENT = "Conquista em andamento -- trem a caminho"

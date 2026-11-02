@@ -167,6 +167,10 @@ class FileManager:
         """
         full_path = os.path.join(FileManager.get_root(), path)
         tmp_path = "%s.%d.tmp" % (full_path, os.getpid())
+        # Instalacao nova nao tem as subpastas de cache/ que nao estao na lista
+        # de `TWB.start()` (conquest, defense, shadow...): sem isto
+        # a primeira gravacao ali levantava FileNotFoundException (2026-11-02).
+        os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
 
         try:
             # UTF-8 explicito para fechar o par com load_json_file. Hoje o

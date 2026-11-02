@@ -24,9 +24,9 @@ interrompida. A Fase 2 finalmente a capturou, e a linha inventada errava tres
 coisas, todas do lado que importa:
 
   1. Na reserva PROPRIA nao ha link de tribo na celula do reservante. A
-     derivada tinha `[SQUAD 02]` + player (dois links); a real tem so
-     `info_player`. De quebra a tribo da conta hoje e "Os Randolinhos", nao
-     "SQUAD 02".
+     derivada tinha `[Tribo Gama]` + player (dois links); a real tem so
+     `info_player`. De quebra a tribo da conta hoje e "Tribo Alfa", nao
+     "Tribo Gama".
   2. A linha propria traz um link "Apagar"
      (`action=delete_reservations&id=79340&...&h=...`) que a derivada nao
      tinha, e que existe SO nas reservas desta conta -- 3 linhas em 441,
@@ -75,7 +75,7 @@ ROWS = '''
                     <a href="/game.php?village=32056&amp;screen=info_ally&amp;&amp;id=16">
                 [RANDOW]
             </a>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=919714218"  title="Os Randola">Conde Strahd von Zarovch</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=7000004"  title="Tribo Alfa">Membro Quatro</a>
     </td>
     <td>hoje às 07:45</td>
     <td style="white-space:nowrap;">
@@ -89,12 +89,12 @@ ROWS = '''
     <td>
                 <input type="checkbox" name="ids[]" value="74922"/>
 
-                <span class="village_anchor" data-player="920036122" data-id="36455"><a href="/game.php?village=32056&amp;screen=info_village&amp;id=36455" >GoofyDark de aldeia (516|304) K35</a></span>
+                <span class="village_anchor" data-player="7000005" data-id="36455"><a href="/game.php?village=32056&amp;screen=info_village&amp;id=36455" >vizinho_x de aldeia (516|304) K35</a></span>
             </td>
     <td>9129</td>
-    <td><a href="/game.php?village=32056&amp;screen=info_player&amp;id=920036122"  title="Huntrs">GoofyDark</a></td>
+    <td><a href="/game.php?village=32056&amp;screen=info_player&amp;id=7000005"  title="Tribo Beta">vizinho_x</a></td>
     <td>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=492673"  title="Os Randolinhos">Gedoz</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=7000003"  title="Tribo Alfa">membro_tres</a>
     </td>
     <td>hoje às 08:38</td>
     <td style="white-space:nowrap;">
@@ -113,7 +113,7 @@ ROWS = '''
     <td>1007</td>
     <td>---</td>
     <td>
-                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=5955651"  title="Os Randolinhos">sccj</a>
+                <a href="/game.php?village=32056&amp;screen=info_player&amp;id=5955651"  title="Tribo Alfa">sccj</a>
     </td>
     <td>em 24.09. às 07:49</td>
     <td style="white-space:nowrap;">
@@ -165,7 +165,7 @@ def test_coordenada_e_dono_saem_da_linha():
     assert barbara["location"] == (531, 289)
     assert barbara["owner"] == "0", "barbara tem data-player=0"
     assert jogador["location"] == (516, 304)
-    assert jogador["owner"] == "920036122"
+    assert jogador["owner"] == "7000005"
     assert minha["location"] == (582, 289)
 
 
@@ -176,24 +176,24 @@ def test_reservante_e_o_jogador_e_nao_a_tribo():
     e jogador nenhum.
     """
     barbara, jogador, _ = Extractor.tribe_reservations(PAGE)
-    assert barbara["reserved_by_id"] == "919714218"
-    assert barbara["reserved_by_name"] == "Conde Strahd von Zarovch"
+    assert barbara["reserved_by_id"] == "7000004"
+    assert barbara["reserved_by_name"] == "Membro Quatro"
     assert barbara["reserved_by_tribe"] == "RANDOW"
-    # Sem tribo na celula: nao pode vazar o "Huntrs" do dono (celula anterior).
-    assert jogador["reserved_by_id"] == "492673"
-    assert jogador["reserved_by_name"] == "Gedoz"
+    # Sem tribo na celula: nao pode vazar o "Tribo Beta" do dono (celula anterior).
+    assert jogador["reserved_by_id"] == "7000003"
+    assert jogador["reserved_by_name"] == "membro_tres"
 
 
 def test_nao_confunde_reservante_com_proprietario():
     """
     Na linha da aldeia de jogador, a celula 2 (Proprietario) tambem tem um
     link `info_player`. Um regex solto sobre a linha inteira pegaria o dono
-    (920036122) em vez de quem reservou (492673) -- e o bot acharia que a
+    (7000005) em vez de quem reservou (7000003) -- e o bot acharia que a
     reserva e de quem ja mora la.
     """
     jogador = Extractor.tribe_reservations(PAGE)[1]
-    assert jogador["owner"] == "920036122"
-    assert jogador["reserved_by_id"] == "492673"
+    assert jogador["owner"] == "7000005"
+    assert jogador["reserved_by_id"] == "7000003"
     assert jogador["reserved_by_id"] != jogador["owner"]
 
 
@@ -326,7 +326,7 @@ def test_barra_reserva_de_terceiro_e_nao_a_minha():
     assert board.is_readable()
 
     alheia = board.claimed_by_other("40808")
-    assert alheia and alheia["reserved_by_name"] == "Conde Strahd von Zarovch"
+    assert alheia and alheia["reserved_by_name"] == "Membro Quatro"
 
     assert board.claimed_by_other("51540") is None, (
         "51540 esta reservada por mim (5955651) -- barrar aqui faria o bot "

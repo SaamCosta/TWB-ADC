@@ -124,7 +124,7 @@ help_file = {
     'conquest.priority': 'Target selection priority — "fill_gaps" scores by centrality, distance and points',
     'conquest.min_points': 'Minimum points a target village must have to be considered',
     'conquest.max_points': 'Maximum points a target village can have to be considered',
-    'conquest.area_of_interest': 'Coordinate box the conquest should grow into. It is a PREFERENCE, not a filter: a target inside the box always beats one outside, but when nothing inside is eligible the bot falls back to the full candidate list instead of idling. Needed because "fill_gaps" scores by centrality to your own empire, so it densifies the middle of the cluster and never elects the frontier — the box is what says which way to expand. br143/SQUAD 02: 500-650 | 270-299 (southern K25 plus half of K26)',
+    'conquest.area_of_interest': 'Coordinate box the conquest should grow into. It is a PREFERENCE, not a filter: a target inside the box always beats one outside, but when nothing inside is eligible the bot falls back to the full candidate list instead of idling. Needed because "fill_gaps" scores by centrality to your own empire, so it densifies the middle of the cluster and never elects the frontier — the box is what says which way to expand. br143/Tribo Gama: 500-650 | 270-299 (southern K25 plus half of K26)',
     'conquest.area_of_interest.enabled': 'Enable the area preference — off restores pure "fill_gaps" scoring',
     'conquest.area_of_interest.x_min': 'Left edge of the area, inclusive',
     'conquest.area_of_interest.x_max': 'Right edge of the area, inclusive',

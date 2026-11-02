@@ -15,6 +15,7 @@ Rodar: python tests/test_village_order.py
 """
 import os
 import sys
+import tempfile
 from types import SimpleNamespace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,7 +44,18 @@ check([x.village_id for x in TWB.stale_first_order([], lambda vid: 0)] == [], "l
 check(len(villages) == 6 and villages[0].village_id == "41123", "nao mexe na lista original")
 
 # Padrao: mtime de cache/managed, que nao existe para um id inventado (= nunca rodou).
-default = [x.village_id for x in TWB.stale_first_order([v("41123"), v("999999999")])]
+# Num diretorio temporario: antes o teste dependia do cache/managed/41123.json
+# da instalacao real e falhava numa instalacao limpa (2026-11-02).
+here = os.getcwd()
+with tempfile.TemporaryDirectory() as tmp:
+    os.makedirs(os.path.join(tmp, "cache", "managed"))
+    with open(os.path.join(tmp, "cache", "managed", "41123.json"), "w") as f:
+        f.write("{}")
+    os.chdir(tmp)
+    try:
+        default = [x.village_id for x in TWB.stale_first_order([v("41123"), v("999999999")])]
+    finally:
+        os.chdir(here)
 check(default[0] == "999999999", "sem cache/managed: vem primeiro -> %r" % default)
 
 if failures:

@@ -10,7 +10,7 @@ A exclusao de alvo reservado, nos QUATRO caminhos de conquista.
 O INCIDENTE (docs/backend.md 8.7)
 ---------------------------------
 Em 2026-09-20 o usuario relatou que o bot nobrou uma barbara que outro jogador
-do SQUAD 02 tinha reservado. O bot nao tinha o conceito de reserva.
+do Tribo Gama tinha reservado. O bot nao tinha o conceito de reserva.
 
 O que torna isto diferente de quase todo filtro do projeto e a ASSIMETRIA: um
 falso negativo (pular alvo livre) custa uma barbara entre dezenas; um falso
@@ -59,8 +59,8 @@ class _Board:
     def claimed_by_other(self, target_id, location=None):
         if str(target_id) not in self.claimed:
             return None
-        return {"reserved_by_id": "919714218",
-                "reserved_by_name": "Conde Strahd von Zarovch",
+        return {"reserved_by_id": "7000004",
+                "reserved_by_name": "Membro Quatro",
                 "reserved_by_tribe": "RANDOW",
                 "expires_text": "hoje às 07:45"}
 
@@ -247,7 +247,7 @@ def test_alvo_manual_reservado_nao_e_entregue_e_fica_esperando():
     assert man._get_manual_target() is None
     assert written[ALVO]["status"] == "manual"
     espera = written[ALVO]["waiting_reservation"]
-    assert espera["reserved_by_name"] == "Conde Strahd von Zarovch"
+    assert espera["reserved_by_name"] == "Membro Quatro"
     assert espera["reservation_expires"] == "hoje às 07:45"
 
 
@@ -262,7 +262,7 @@ def test_alvo_manual_esperando_nao_segura_o_proximo_da_fila():
 def test_espera_inalterada_nao_reescreve_o_arquivo_todo_ciclo():
     ja_anotado = {"status": "manual", "queued_at": 1, "target_id": ALVO,
                   "waiting_reservation": {
-                      "reserved_by_name": "Conde Strahd von Zarovch",
+                      "reserved_by_name": "Membro Quatro",
                       "reserved_by_tribe": "RANDOW",
                       "reservation_expires": "hoje às 07:45",
                       "since": 123}}
@@ -290,7 +290,7 @@ def test_reserva_vencida_mas_nobrada_pelo_dono_vira_invalid():
     """
     class _World:
         def rows(self):
-            return {ALVO: (531, 289, "919714218", 10285, "x")}
+            return {ALVO: (531, 289, "7000004", 10285, "x")}
 
     esperando = {"status": "manual", "queued_at": 1, "target_id": ALVO,
                  "waiting_reservation": {"reserved_by_name": "Asshai"}}
@@ -351,7 +351,7 @@ def test_conquista_em_andamento_reservada_e_encerrada():
 
     assert man._handle_existing(_existing(man), CFG) is False
     assert written[ALVO]["status"] == "blocked"
-    assert written[ALVO]["reserved_by_name"] == "Conde Strahd von Zarovch"
+    assert written[ALVO]["reserved_by_name"] == "Membro Quatro"
     assert written[ALVO]["reservation_expires"] == "hoje às 07:45"
 
 

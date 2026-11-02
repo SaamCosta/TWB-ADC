@@ -106,6 +106,21 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `cache/hunter/schedules.json`, `cache/pvp_conquest`, etc). `.gitignore` cobre
   `cache/**`, `config.json`, `config.bak`.
 
+## Repositório público (testadores)
+
+Desde 2026-11-02 (`docs/backend.md` §8.83) os testadores recebem uma árvore
+**exportada**, não este repo: `python tools/export_public.py --test` monta,
+anonimiza (mundo, jogador, prefixo de aldeia, tokens `h`/`csrf`), varre a
+árvore atrás da identidade e roda a suíte lá dentro, sem `config.json` nem
+`cache/`. Aqui se continua escrevendo `BBM 022 (40618)` e `br143` normalmente;
+a troca é da exportação. Duas regras daí:
+- **Teste não pode depender do `cache/` nem do `config.json` desta
+  instalação**: a árvore limpa não tem nenhum dos dois, e o `--test` reprova.
+- **Nome de terceiro (jogador, tribo, aldeia alheia) não entra no repo** nem
+  em fixture: pseudônimo na hora de capturar. A exportação só conhece a
+  identidade da conta (`cache/export_identity.json`, `extra_terms` para o
+  resto).
+
 ## Convenções
 
 - **Existe `tests/`** desde 2026-08-13 (antes não existia; se alguma nota falar

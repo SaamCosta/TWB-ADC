@@ -34,6 +34,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+import core.village_label as village_label_module
 import game.attack as attack_module
 import game.village as village_module
 from game.attack import (
@@ -169,6 +170,10 @@ class FakeAttack:
 
 NAMES = {"74689": "BBM 010", "41123": "BBM 001", "55647": "BBM 037",
          "51540": "BBM 032", "55553": "BBM 038", "57689": "BBM 036"}
+# O aviso usa `village_label`, que le cache/managed da instalacao real; sem o
+# registro o teste so passava onde esse cache existe (2026-11-02).
+for _vid, _name in NAMES.items():
+    village_label_module.register(_vid, _name)
 
 
 class FakeFileManager:
