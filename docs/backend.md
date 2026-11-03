@@ -625,7 +625,7 @@ reaparecer, é aqui que se puxa o fio.**
 | Trem PvP falhado → `status: "failed"` | só no próximo train que realmente falhar |
 | `support_others` | a chave já está `true` em 22 de 30 aldeias; o bloqueio é que ninguém **pede** apoio sem ataque real chegando. Exercitar com ataque mínimo de aldeia própria **distante** contra uma com `request_support_on_attack` (ver `CLAUDE.md`) |
 | ~~Venda na bolsa premium~~ | ⛔ **cancelada em 2026-09-21** — Feature 34 morta, §4.5 |
-| Marcas da torre de vigia na tela de chegadas | a BBM 002 já tem torre nível 8; falta capturar o markup |
+| Marcas da torre de vigia na tela de chegadas | a BBM 002 está no nível 20; ataque com hora de entrada conhecida (08/11 ~22:48) e captura marcada: §9 item 30 |
 
 ### 6.3 Bandeiras — validação 1 de 18
 
@@ -10213,6 +10213,52 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     praça de reunião e cancelamento. F0 (guardar o ms da chegada, que o
     `incoming_commands()` hoje joga fora) e F1 (`ServerClock`) não enviam
     tropa e podem começar sem autorização. Registrado, sem prioridade definida.
+30. **`P-TORRE-MARCA`** (pedido do usuário em 2026-11-03): o bot passa a ler a
+    marca da torre de vigia (tamanho do exército e nobre) e a usá-la. **Grátis:**
+    a torre é prédio, e a marca vem nas telas que o bot já lê. Registrado, sem
+    prioridade definida.
+    **O caso que destrava.** O ataque 1460840129 contra a BBM 064 (88035) sai
+    de (510|571), a 332,3 campos. A conta só fecha com aríete ou catapulta
+    (30 min/campo): saída às 12:52:34 de 03/11, e o `OwnDefense` viu
+    "ataques chegando: 0 -> 1" às 12:53:31. Com nobre, a saída teria sido
+    02/11 09:10, e ele está além do alcance de 70 campos. A rota passa a 3,15
+    campos da BBM 002 (nível 20, alcance 15) e não entra em nenhuma outra
+    torre: **entrada por volta de 08/11 22:48:43**, 36,2 h antes da chegada
+    (10/11 11:02:12). É a primeira vez que se sabe o minuto em que a marca deve
+    aparecer.
+    a. **Capturar o markup** (pendência da §6.2): `tools/capture_watchtower_mark.py`,
+       2 GETs a 90 s (visão geral da aldeia e `info_command`), HTML em
+       `cache/watchtower_mark/<label>/`. **Captura `antes` feita em 03/11
+       13:15–13:18**, e já trouxe um fato: antes da detecção, a linha do widget de
+       comandos (a mesma que o `Extractor.incoming_commands` lê) vem com
+       `<span class="commandicon-wt tooltip" data-command-id="1460840129"
+       title="Ataque (será detectado por uma torre de vigia)">`. O jogo avisa
+       de antemão **que** a torre vai detectar, e não **quando**: a hora sai da
+       conta de rota acima. O `info_command` não tinha marca. A lista de
+       chegadas (`overview_villages&mode=incomings`) é premium: sem premium
+       vem a visão de produção com `mode: incomings` no `game_data`, e saiu da
+       captura. Ainda não visto: a linha de um ataque que **nenhuma** torre vai
+       detectar (deve vir sem o `-wt` e sem o sufixo no título). Falta a
+       `depois`, com
+       `--label depois --at "2026-11-08 23:00"`, e o `--compare antes depois`.
+       O par vira fixture com guarda provada: o parser acha a marca no
+       `depois` e não acha no `antes`. Se o `depois` vier igual, conferir antes
+       de concluir: comando compartilhado com a tribo já vem marcado (§4.4), e
+       a hora de entrada vem de uma conta de reta (hipótese de trajeto).
+    b. **Tamanho no "basta" da defesa própria** (§8.69): hoje o teto é a
+       defesa que mata o maior ataque possível com nobre. Com a marca, ataque
+       pequeno (≤ 1.000) e sem nobre não pede apoio, e a marca de nobre
+       substitui o nome da aldeia de origem como sinal. Sem marca (fora do
+       alcance de toda torre), segue como hoje. O `commandicon-wt` do item a
+       já serve antes disso: ataque que vai ser detectado pode esperar a marca
+       (se a detecção vier antes do prazo do apoio), e o que não vai ser
+       detectado se decide com o que há.
+    c. **Tamanho na evacuação regional (Feature 12)**: com
+       `zone_attack_threshold: 1` e janela de 4 h, este ataque sozinho tira a
+       tropa frágil dos 11 vizinhos da BBM 064 a partir de ~07:02 de 10/11,
+       mesmo sendo fake. Contar só ataque marcado médio/grande, ou sem marca.
+       Ver no log desse dia se a evacuação saiu (`TWB_ZONE_EVACUATE`), para
+       ter o caso real antes de mexer.
 
 **Camada 2 — ativável por detecção** (`game_data.features.*.active`, custo
 zero; prazo em `premium&mode=feature_log`):
