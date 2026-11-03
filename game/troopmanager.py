@@ -123,6 +123,11 @@ class TroopManager:
         # Dict mutavel: instancia, nao classe (1o padrao do CLAUDE.md).
         self._smith_settled = {}
         self._smith_settled_at = 0
+        # Da tela de coleta que `gather()` acabou de ler (§8.84): a tabela das
+        # opções e o `unit_carry_factor`, para o `carry_max` e o registro do
+        # envio. Trocados a cada leitura, nunca mutados.
+        self._scavenge_table = {}
+        self._carry_factor = 1
         # Pesquisa cedida ao gerente de conta nesta aldeia (§8.68). A Village
         # recalcula antes de cada uso; aqui só nasce falso.
         self.research_ceded = False
@@ -871,6 +876,52 @@ class TroopManager:
         except Exception as exc:  # noqa: BLE001 -- instrumento, não pode custar a coleta
             self.logger.debug("Gather: registro das coletas falhou: %r", exc)
 
+    _SQUAD_UNITS = "squad_requests[0][candidate_squad][unit_counts]["
+
+    @staticmethod
+    def squad_units(payload):
+        """{unidade: quantidade} de um payload de `send_squads` (índice 0)."""
+        units = {}
+        for key, value in (payload or {}).items():
+            if key.startswith(TroopManager._SQUAD_UNITS):
+                try:
+                    units[key[len(TroopManager._SQUAD_UNITS):-1]] = int(value)
+                except (TypeError, ValueError):
+                    continue
+        return units
+
+    @staticmethod
+    def squad_carry_max(payload, carry_factor):
+        """
+        O `carry_max` que o JS do jogo manda para estas unidades (§8.84):
+        `calcMaxLoot(unidades, village.unit_carry_factor)`. Antes o bot
+        mandava a meta da divisão (`curr_haul`) ou a carga nominal, sem o
+        fator; o servidor guardou a carga das unidades nas 4 coletas da BBM
+        005 de 03/11, então com fator 1 isto não muda o que ele paga.
+        """
+        return flag_planner.calc_max_loot(TroopManager.squad_units(payload), carry_factor)
+
+    def _report_squad_sent(self, option, payload):
+        """
+        `TWB_GATHER_SQUAD` com `src: "sent"` para uma coleta aceita (§8.84). O
+        registro pela tela (`report_scavenge_squads`) nunca dispara em campo,
+        porque o bot só volta à tela quando as coletas já voltaram. Nunca
+        impede a coleta.
+        """
+        try:
+            table = getattr(self, "_scavenge_table", None) or {}
+            opt = table.get(str(option)) or table.get(option)
+            if not opt:
+                return
+            carry_max = payload.get("squad_requests[0][candidate_squad][carry_max]") or 0
+            msg = flag_planner.sent_squad_event(
+                self.village_id, option, self.squad_units(payload), carry_max, opt,
+                getattr(self, "_carry_factor", 1), time.time())
+            if msg:
+                self.wrapper.reporter.report(self.village_id, "TWB_GATHER_SQUAD", msg)
+        except Exception as exc:  # noqa: BLE001 -- instrumento, não pode custar a coleta
+            self.logger.debug("Gather: registro do envio falhou: %r", exc)
+
     @staticmethod
     def units_home_from_scavenge(village_data):
         """
@@ -925,6 +976,11 @@ class TroopManager:
         village_data = Extractor.village_data(result)
         options = (village_data or {}).get("options") or {}
         self.report_scavenge_squads(result, village_data)
+        try:
+            self._scavenge_table = Extractor.scavenge_config(result) or {}
+        except Exception:  # noqa: BLE001 -- só o registro do envio usa
+            self._scavenge_table = {}
+        self._carry_factor = (village_data or {}).get("unit_carry_factor", 1)
         # Camada 2 (§8.64): da propria tela que acabou de chegar, nunca de uma
         # deteccao guardada -- o premium vence e volta.
         try:
@@ -1049,7 +1105,10 @@ class TroopManager:
                             payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = str(troops_selected)
                         else:
                             payload["squad_requests[0][candidate_squad][unit_counts][%s]" % item] = "0"
-                    payload["squad_requests[0][candidate_squad][carry_max]"] = str(curr_haul)
+                    # A carga das unidades escolhidas, com o fator, como o JS
+                    # (§8.84) -- não a meta `curr_haul`, que o servidor nem guarda.
+                    payload["squad_requests[0][candidate_squad][carry_max]"] = str(
+                        self.squad_carry_max(payload, self._carry_factor))
                     squads.append((available_selection, payload))
                 else:
                     # A higher option being locked or already underway does
@@ -1075,6 +1134,7 @@ class TroopManager:
                     refused = self._squad_refused(sent, available_selection)
                     if sent and not refused:
                         self._deduct_gathered(payload)
+                        self._report_squad_sent(available_selection, payload)
                     sleep += random.randint(1, 5)
                     time.sleep(sleep)
                     if refused:
@@ -1113,7 +1173,8 @@ class TroopManager:
                             payload[
                                 "squad_requests[0][candidate_squad][unit_counts][%s]" % item
                                 ] = "0"
-                    payload["squad_requests[0][candidate_squad][carry_max]"] = str(total_carry)
+                    payload["squad_requests[0][candidate_squad][carry_max]"] = str(
+                        self.squad_carry_max(payload, self._carry_factor))
                     if total_carry > 0:
                         payload["h"] = self.wrapper.last_h
                         sent = self.wrapper.get_api_action(
@@ -1126,6 +1187,7 @@ class TroopManager:
                             continue
                         if sent:
                             self._deduct_gathered(payload)
+                            self._report_squad_sent(selection, payload)
                         self.last_gather = int(time.time())
                         self.logger.info(f"Using troops for gather operation: {selection}")
                         # Basic mode assigns the whole available army to one
@@ -1195,6 +1257,7 @@ class TroopManager:
         )
         for option, payload in squads:
             self._deduct_gathered(payload)
+            self._report_squad_sent(option, payload)
             self.logger.info(f"Using troops for gather operation: {option}")
         self.last_gather = int(time.time())
         return True

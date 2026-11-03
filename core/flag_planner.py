@@ -34,8 +34,9 @@ não lido do texto):
   carregariam mais; os outros não estão limitados pela carga). Coleta: o JS
   do jogo (`Scavenging.dd2ec0.js`) fixa a carga no envio por
   `calcMaxLoot(unidades, village.unit_carry_factor)`. Se a bandeira entra
-  nesse fator é o que `HAUL_SCAVENGE` guarda, e as coletas registradas
-  (`TWB_GATHER_SQUAD`, saque lido / carga nominal) medem sozinhas. E o tempo
+  nesse fator é o que `HAUL_SCAVENGE` guarda; as coletas lidas na tela
+  (`TWB_GATHER_SQUAD`, saque lido / carga nominal) medem sozinhas, e as do
+  envio (`src: "sent"`) dão o saque/h da aldeia. E o tempo
   da coleta cresce com a carga (expoente 0,45 sobre carga², ver
   `scavenge_elasticity`): +8% de carga rende bem menos que +8% por hora.
 - **3 e 5** (ataque, sorte): manuais, o bot nunca põe nem tira.
@@ -81,11 +82,13 @@ COIN_TYPE = 7
 # A bandeira de saque aumenta a coleta QUE O BOT MANDA? Metade medida em
 # 30/10: com a 8/7 equipada à mão na BBM 005, a tela de coleta leu
 # `unit_carry_factor` 1,08 (1 em todas as leituras sem a bandeira), então o
-# jogo aplica a bandeira à carga da coleta. A outra metade não: o JS manda
-# `carry_max` = carga x fator, e o bot manda a carga nominal
-# (`TroopManager.gather`). Se o servidor recalcula, o bot ganha os 8%; se
-# confia no `carry_max` do cliente, não. Fica None até uma coleta do bot pagar
-# a mais (`haul_scavenge_measured`, sobre as linhas `TWB_GATHER_SQUAD`).
+# jogo aplica a bandeira à carga da coleta. Em 03/11 (§8.84): o servidor NÃO
+# guarda o `carry_max` postado (o bot mandou 149.145 para 1.864 leves e ele
+# guardou 149.120 = 1.864 x 80, com fator 1), e o bot passou a mandar
+# `calc_max_loot(unidades, fator)` como o JS. Falta ver uma coleta do bot com
+# fator > 1 pagar a mais na tela; até lá, None. As linhas do envio (`src:
+# "sent"`) não servem de prova, só as da tela (`squad_event`) ou este valor
+# posto à mão depois de uma leitura (`tools/probe_scavenge_carry.py`).
 HAUL_SCAVENGE = None
 
 POP_CAPPED = 0.98
@@ -132,6 +135,31 @@ def scavenge_duration(carry, opt):
     return (math.pow(carry * 100 * lf * carry * lf, exp) + initial) * factor
 
 
+def calc_max_loot(unit_counts, carry_factor=1):
+    """
+    Carga da coleta como o JS do jogo calcula o `carry_max` que manda:
+    `LootCalculator.calcMaxLoot` (bundle `Farming.ec8d44.js`, capturado em
+    03/11) soma carga x quantidade das unidades que atacam, multiplica pelo
+    `unit_carry_factor` da aldeia e arredonda com `~~(t + .50000000001)`.
+    A carga por unidade da própria tela (3º argumento de `ScavengeScreen`)
+    bate com `UNIT_CARRY`. Fator ilegível vale 1, como o `village ? ... : 1`
+    do JS.
+    """
+    try:
+        factor = float(carry_factor)
+    except (TypeError, ValueError):
+        factor = 1.0
+    if not factor > 0:
+        factor = 1.0
+    total = 0
+    for unit, qty in (unit_counts or {}).items():
+        try:
+            total += UNIT_CARRY.get(unit, 0) * int(qty)
+        except (TypeError, ValueError):
+            continue
+    return int(math.floor(total * factor + 0.50000000001))
+
+
 def scavenge_elasticity(carry, opt, wait=0.0):
     """
     d ln(saque/h) / d ln(carga) de uma opção que o bot reenvia `wait` s depois
@@ -169,6 +197,41 @@ def squad_event(village_id, option_id, squad, opt, carry_factor):
             "premium": bool(squad.get("is_premium")),
         }
     except (KeyError, TypeError, ValueError):
+        return None
+    return json.dumps(payload, sort_keys=True)
+
+
+def sent_squad_event(village_id, option_id, unit_counts, carry_max, opt, carry_factor, now):
+    """
+    Mensagem `TWB_GATHER_SQUAD` de uma coleta que o bot ACABOU de mandar
+    (`src: "sent"`). Existe porque `squad_event` nunca disparou em campo: o
+    bot só lê a tela de coleta quando as coletas já voltaram (0 de 278 opções
+    em andamento nas 75 leituras de 03/11), então a coleta em andamento nunca
+    passava por ele.
+
+    É o que o bot fez, não o que o servidor paga: `loot` e `return` saem da
+    carga NOMINAL (o mínimo que o servidor guardou em 03/11, com fator 1), e
+    por isso `haul_scavenge_measured` não a aceita como prova da bandeira.
+    """
+    try:
+        units = {u: int(n) for u, n in (unit_counts or {}).items() if int(n)}
+        nominal = calc_max_loot(units, 1)
+        lf = float(opt.get("loot_factor") or 0)
+        if not nominal or not lf:
+            return None
+        payload = {
+            "src": "sent", "squad": "%s:%s:%d" % (village_id, option_id, int(now)),
+            "option": int(option_id),
+            "return": int(now + scavenge_duration(nominal, opt)),
+            "carry_max": int(carry_max), "nominal": nominal,
+            "loot": int(math.floor(nominal * lf + 0.5)), "lf": lf,
+            "exp": float(opt.get("duration_exponent") or 0.45),
+            "init": float(opt.get("duration_initial_seconds") or 1800),
+            "dfac": float(opt.get("duration_factor") or 1),
+            "factor": float(carry_factor) if carry_factor is not None else None,
+            "premium": False,
+        }
+    except (AttributeError, TypeError, ValueError):
         return None
     return json.dumps(payload, sort_keys=True)
 
@@ -221,9 +284,13 @@ def haul_scavenge_measured(squads):
     """
     True se alguma coleta registrada voltou com saque acima da carga nominal
     (fator > 1); senão o `HAUL_SCAVENGE` medido à mão. Coletas com fator 1 não
-    refutam nada: a aldeia pode não ter a bandeira.
+    refutam nada: a aldeia pode não ter a bandeira. A linha do envio
+    (`src: "sent"`) não conta: o saque dela é a conta do bot, não a do
+    servidor (13º padrão).
     """
     for _, _, sq in (squads or {}).values():
+        if sq.get("src") == "sent":
+            continue
         nominal, lf = sq.get("nominal") or 0, sq.get("lf") or 0
         if nominal and lf and not sq.get("premium") and sq.get("loot", 0) > nominal * lf * 1.005:
             return True
@@ -279,9 +346,13 @@ def haul_inputs(vids, events, full, now, managed=None):
     for ts, vid, carry in events.get("farm") or []:
         if ts >= now - FARM_WINDOW:
             farm[vid] = farm.get(vid, 0) + carry
-    squads = {}
+    # A mesma coleta pode ter a linha do envio e a da tela (se o bot a vir em
+    # andamento depois de um reinício), com chaves diferentes. Aldeia com
+    # linha de envio usa só essas; a da tela fica para quem não tem.
+    squads, sent = {}, {}
     for ts, vid, sq in (events.get("squads") or {}).values():
-        squads.setdefault(vid, []).append(sq)
+        (sent if sq.get("src") == "sent" else squads).setdefault(vid, []).append(sq)
+    squads.update(sent)
     since = events.get("squads_since")
     span = max(0.0, now - max(since, now - SCAV_WINDOW)) if since else 0.0
     out = {}

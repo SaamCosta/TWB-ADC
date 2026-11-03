@@ -9628,6 +9628,159 @@ em 242 commits **deste** repo. O repo novo deve ser commitado com o endereço
 `DataReader.config_grab().get(...)`) dão **500**. O testador que abrir o
 painel antes do primeiro run cai nisso.
 
+## 8.84 `P-BAND-VALOR` — campo do dry-run e a 2ª etapa do saque (2026-11-03)
+
+Continuação da §8.82. O prompt da fase mandava registrar na "§8.83", que
+nasceu no meio do caminho com o `P-PUBLICO`; este é o número seguinte.
+
+### 1. A 2ª etapa não foi medida, e não podia ser
+
+Rodaram quatro processos com o código do `21f8ba8` (31/10 19:30, 01/11 21:34,
+02/11 16:08 e 03/11 07:55). Nenhum dos quatro `twb_*.log` tem uma linha
+`TWB_GATHER_SQUAD`. Há dois motivos, e qualquer um bastava:
+
+- **O instrumento é cego em campo (15º padrão, o lado "nunca dispara").** A
+  linha nascia de uma coleta **em andamento** na tela que o bot lê. Mas o bot
+  só volta à tela de coleta de uma aldeia depois que as coletas dela voltaram.
+  Hoje foram 75 leituras e 278 linhas `Option: N Locked? False Is underway?`,
+  todas `False`. O teste da §8.82 passava porque montava a tela com as quatro
+  coletas em andamento, um estado que o bot nunca vê. Rodado contra a captura
+  real de 30/10, o registro funciona (4 linhas): o defeito é de onde ele
+  olha, não do parser.
+- **A 8/7 saiu da BBM 005 antes de qualquer coleta do bot.** Hoje ela está
+  com população 6/5, e a 8/7 voltou ao inventário (`flag_supply` tipo 8,
+  nível 7: 1). A ordem fixa da academia é `[7, 1, 2, 6, 8]`, e só os tipos 3 e
+  5 são manuais (`flag_manual_types`). Com 7, 1 e 2 sem oferta, o
+  `flag_logic` troca uma 8 pela melhor 6 que houver. A BBM 005 rodou às 18:32
+  de 30/10 no processo das 12:10 (ordem fixa), e as coletas de 12:51 só
+  voltavam ~23:20. O `session_latest.log` daquela sessão foi sobrescrito, então
+  isso é argumento de estrutura, não leitura de log (9º padrão). Mas a
+  conclusão não depende de quem tirou: **nenhuma coleta do bot saiu com a
+  bandeira de saque.**
+
+### 2. O que deu para medir sem a bandeira (1 GET, 17:56)
+
+Às 11:10 o bot mandou quatro coletas da BBM 005. O `carry_max` postado no
+modo avançado é a meta da divisão (`curr_haul`), sempre um pouco acima da
+carga das unidades. Um GET da tela com as coletas em andamento
+(`tools/probe_scavenge_carry.py`, pelo `WebWrapper`, sem POST):
+
+| opção | unidades | postado | guardado | unidades × carga | saque (lf) |
+|---|---|---|---|---|---|
+| 1 | 1.864 leves | 149.145 | 149.120 | 149.120 | 14.912 (0,10) |
+| 2 | 627 machados, 667 leves | 59.658 | 59.630 | 59.630 | 14.908 (0,25) |
+| 3 | 2.982 machados | 29.829 | 29.820 | 29.820 | 14.910 (0,50) |
+| 4 | 115 lanças, 1.701 machados | 19.886 | 19.885 | 19.885 | 14.914 (0,75) |
+
+**O servidor não guarda o `carry_max` postado**, e o saque é o guardado ×
+`loot_factor`. Com fator 1 sobram três leituras:
+- ele recalcula com o fator;
+- ele limita o postado a unidades × carga × fator;
+- ele ignora o fator.
+
+Nas duas primeiras, mandar carga × fator ganha a bandeira. Na terceira,
+ninguém ganha, nem o navegador. Mandar acima da carga é aceito: os 4 POST de
+hoje mandaram até 28 a mais e saíram.
+
+**O `calcMaxLoot` foi capturado.** O `ScavengeScreen` o recebe de
+`Ig/TribalWars/Modules/Farming/LootCalculator`, no bundle estático
+`Farming.ec8d44.js` (asset do CDN, não é requisição da conta). A fórmula é
+`roundLoot(Σ carga × n × fator)`, com `roundLoot(t) = ~~(t + .50000000001)`,
+ou seja, arredonda meio para cima. Entram só as unidades com `can_attack`. A
+carga por unidade vem do 3º argumento do `ScavengeScreen` (lança 25, espada 15,
+machado 10, leve 80, pesada 50) e bate com `UNIT_CARRY`.
+
+### 3. O que mudou
+
+- **`carry_max` como o JS** (`TroopManager.squad_carry_max` →
+  `flag_planner.calc_max_loot`), nos modos avançado e básico, com o
+  `unit_carry_factor` da tela que acabou de chegar. Com fator 1 é exatamente
+  o que o servidor guardou hoje, então **nada muda no que ele paga sem a
+  bandeira**. Com a bandeira, o bot deixa de depender de o servidor
+  recalcular.
+- **Registro no envio.** Cada coleta aceita (um por um, básico e lote
+  premium) deixa `TWB_GATHER_SQUAD` com `src: "sent"`, que traz o postado, a
+  carga nominal, o saque e a volta pela carga **nominal**. A recusa não deixa
+  linha. É o que o bot fez, não o que o servidor paga: dá o saque/h ao
+  planejador, mas `haul_scavenge_measured` **não** a aceita como prova (13º
+  padrão). Uma aldeia com os dois tipos de linha usa só as do envio, para não
+  contar a mesma coleta duas vezes. O registro pela tela continua lá: é de
+  graça, e pega o caso raro do bot vendo uma coleta em andamento.
+- `HAUL_SCAVENGE` continua `None`. A prova é uma leitura com fator > 1,
+  feita por `tools/probe_scavenge_carry.py`, que já imprime o veredito por
+  coleta: "PAGA", "NÃO paga" ou "fator 1: não separa".
+
+`tests/test_scavenge_carry.py` (7 casos), com a fixture verbatim
+`tests/fixtures/scavenge_carry_br143.json`. Ela traz o `LootCalculator`, os
+1º e 3º argumentos do `ScavengeScreen`, o `var village` sem nome nem jogador,
+e os 4 POST de hoje sem o `h`. Os casos provam: o porte bate com o JS e com o
+exemplo do fórum, o servidor guardou a carga e não o postado, os dois modos
+mandam o valor do JS com fator 1 e 1,08, a recusa não registra, a linha do
+envio dá saque/h mas não prova, e a linha da tela não soma de novo.
+Mutantes numa cópia: `curr_haul` de volta, fator ignorado, arredondar para
+baixo, envio como prova, soma dupla, sem registro, saque com fator e básico sem
+fator. Todos são pegos. "Envio como prova" passou na primeira bateria, porque
+o saque do envio já sai nominal, e ganhou caso próprio.
+
+### 4. Campo do dry-run (§8.82.6)
+
+- **O plano roda.** `cache/flags.json` foi recalculado às 16:07 e o `/flags`
+  às 18:08, com 71 aldeias, `dry_run` e zero passos. O
+  `session_latest.log` tem 0 linhas `Bandeiras por valor (dry-run)`, e é o
+  esperado, porque a linha só sai quando nasce um passo novo.
+- **"Não medido":**
+  - **valor atual desconhecido em 20 aldeias**, todas com bandeira de moeda
+    (cunhagem não é medida). Elas ficam como estão;
+  - por tipo: moeda `None` nas 71; saque `None` nas 71 (57 "não farmou em 7
+    dias" + coleta, 14 só coleta); população `None` em 4 (no teto, sem saque
+    por população); produção e recrutamento medidos nas 71.
+- **O recrutamento cedido deixou de ser fonte.** O gerente está vencido em
+  todas as aldeias (`account_manager_cession`: "gerente vencido"), então o bot
+  recruta e mede a fila. A pendência da §9 perde o objeto enquanto o gerente
+  não voltar.
+- **Onde está o ganho preso:** 19 aldeias usam uma bandeira que vale 0 hoje.
+  São 15 de recrutamento (fila de 0% a 11% ocupada, nunca gargalo) e 4 de
+  população com folga. O plano não as troca porque a sobra do inventário é
+  3, 4 e 5 (manuais e defesa), 6 (níveis 1 a 4) e 8 (níveis 1 a 7). A 8 não
+  tem valor medido, então nada vence o 0. **Medir a coleta é o que destrava
+  essas 19**, mais que a cunhagem: as 20 de moeda já estão na bandeira que a
+  política quer.
+
+### 5. §8.81 e a Fase 4 das relíquias
+
+- **§8.81:** 0 linhas de `cancelado` e de `descartado da selecao automatica`.
+  O caso passou a existir às 17:54 de hoje, quando a 98660 foi conquistada
+  (`Conquest CONFIRMED`). O silêncio só vale depois do próximo início de
+  ciclo. ⏳
+- **BBM 068:** a Fogueira não está mais nela. O `relic_board` dela não tem
+  relíquia, e a "Fogueira Resistente" está entre as 9 paradas. Quem tirou não
+  aparece no log de hoje, e o de 30/10 a 02/11 foi sobrescrito. A conferência
+  da Fase 4 vale pelo que pedia: hoje, nas 4 leituras de Relics, saiu
+  `cobertura calculada bate com a visão geral do jogo`, com 9 equipadas e 0
+  inativas, e houve 0 WARNING. **Riscada.** O lado "relíquia inativa na
+  anfitriã" ganhou um caso novo: a Sela de má qualidade está inativa na 98660
+  por 22,2 h desde 17:59, ou seja, até ~16:12 de 04/11.
+
+### 6. Por que não "on" ainda
+
+O critério da §8.82 era a 2ª etapa medida e um dia de plano estável. Só a
+segunda metade está cumprida, e mal: hoje o plano é vazio, e os logs de 31/10 a
+02/11 não existem mais para mostrar que ele ficou vazio. Para medir a 1ª metade,
+a bandeira de saque precisa sobreviver a uma coleta do bot, e a ordem fixa a
+tira. Há dois jeitos:
+- **`world.flag_manual_types: [3, 5, 8]` no `config.json`.** A ordem fixa não
+  toca uma 8 equipada, e o plano por valor também não. É estreito e
+  reversível. **É a recomendação**;
+- **`flag_value.mode: "on"`.** O plano substitui a ordem fixa e hoje não troca
+  nada, então a 8 também ficaria. Mas liga um executor novo sem o critério
+  cumprido.
+
+As duas pedem a 8/7 de volta na BBM 005, à mão, e o processo novo rodando
+(o atual subiu às 07:55, antes deste código). Um detalhe a favor de medir
+**antes** de reiniciar: o código velho posta a meta (`curr_haul`), que fica
+entre a carga e a carga × fator. Assim a leitura separa as três hipóteses, e
+não só "paga/não paga".
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -9662,30 +9815,38 @@ abaixo.
 2026-10-30** (§8.81). A pergunta "o alvo já é nosso?" agora é feita no envio no
 horário do Hunter (no topo do `_run` e no segundo exato), na seleção
 automática e manual, no farm, e lê as visões gerais além do config. Falta o
-campo no próximo processo (sinais no fim da §8.81).
+campo (sinais no fim da §8.81). Em 03/11 eram 0 linhas, e o caso só passou a
+existir às 17:54, com a 98660 conquistada: conferir depois do próximo início de
+ciclo (§8.84.5).
 
 ~~**Bandeiras por valor**~~: ✅ **feito em dry-run em 2026-10-30** (§8.82). O
 que cada tipo afeta foi medido (produção aditiva, população = piso, saque
 entra na carga da coleta com fator 1,08), e o plano usa o modelo das
 relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
-- ⏳ **2ª etapa do saque na coleta, 31/10 de manhã.** A primeira coleta que o
-  bot mandar da BBM 005 (38997) com a 8/7 (as atuais voltam ~23:20 de 30/10)
-  diz se o servidor paga 1,08× com o `carry_max` **nominal** que o bot manda.
-  Ler o `loot_res` dela (linha `TWB_GATHER_SQUAD`, ou 1 GET da tela de
-  coleta) contra unidades × `UNIT_CARRY` × `loot_factor`. Se pagar 1,08×,
-  nada a mudar: o planejador passa a contar a coleta sozinho. Se pagar 1×, o
-  bot perde a bandeira na coleta: capturar o `calcMaxLoot` (bundle do
-  `ScavengeScreen`) e mandar `carry_max` = carga × `unit_carry_factor`, como o
-  JS manda.
-- **Campo do dry-run** no próximo processo (sinais na §8.82.6). Ligar
-  `flag_value.mode: "on"` só depois da etapa acima e de um dia de plano
-  estável no `/flags`.
+- ⏳ **2ª etapa do saque na coleta, metade feita em 03/11 (§8.84).** O
+  `calcMaxLoot` foi capturado e o bot já manda `carry_max` = carga × fator,
+  como o JS. O servidor não guarda o valor postado, e com fator 1 isso não
+  muda nada. Falta **uma** leitura com fator > 1, e duas coisas a impedem:
+  a ordem fixa tira a 8 (pela estrutura, foi ela que tirou a 8/7 da BBM 005
+  antes de qualquer coleta; o log daquele dia não existe mais),
+  e o registro pela tela nunca dispara. Passos: a 8/7 de volta na BBM 005 à
+  mão; `world.flag_manual_types: [3, 5, 8]` no `config.json` (decisão do
+  usuário, §8.84.6); com uma coleta do bot em andamento,
+  `python tools/probe_scavenge_carry.py 38997`. Se der "PAGA", fazer
+  `HAUL_SCAVENGE = True` em `core/flag_planner.py`.
+- ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
+  71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
+  de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
+  Ligar `flag_value.mode: "on"` depois da leitura acima e de um dia de plano
+  estável no `/flags` (agora as linhas `src: "sent"` dão o saque/h da coleta,
+  então o plano vai mudar quando a coleta for medida).
 - **Cunhagem por aldeia não é medida**, então a bandeira de moeda fica onde
-  está. Para dar valor a ela: contar as moedas da sessão automática (academia
-  antes e depois) ou registrar o que vai para o hub (`run_mint_route`).
-- **Recrutamento cedido ao gerente** dá "não medido" na bandeira 2 em 12 das
-  14 aldeias com tipo 2 ou 6. Para medir a fila do gerente, ver a tela do
-  prédio ou os relatórios `ReportAMemptyQueue`.
+  está (20 aldeias). Para dar valor a ela: contar as moedas da sessão
+  automática (academia antes e depois) ou registrar o que vai para o hub
+  (`run_mint_route`).
+- ~~**Recrutamento cedido ao gerente**~~: sem objeto desde que o gerente
+  venceu (§8.84.4). As 71 aldeias têm a fila medida. Volta a valer se o
+  gerente voltar.
 
 Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 - ~~**O planejador lê o cache do mundo antes de o ciclo relê-lo.**~~ ✅
@@ -9703,15 +9864,11 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 - **`unit_costs` só é lido onde o bot recruta**: nas aldeias com recrutamento
   cedido ao gerente (§8.68) o `cost_listener` nunca roda. A tabela padrão bate
   com o medido (lanceiro 50/30/10), então não muda o plano.
-- **Campo da Fase 4** (§8.80): ⏳ **2 de 3 conferidos em 30/10** no processo
-  das 12:10, o primeiro a rodar o código do `7358c42`/`dd853c2`. Às 12:10:59
-  saiu `Relics: fusões (dry-run): nenhuma possível (menos de 3 paradas livres
-  da mesma qualidade)`, e até as 13:3x não havia nenhum WARNING de Relics (o
-  `Relics: cobertura calculada bate com a visão geral do jogo` saiu nas três
-  leituras). **Falta** o quadro da BBM 068 (87765) depois que a Fogueira dela
-  ativar: às 12:57 o log dava "inativa por mais 7.6 h", ou seja, ~20:33–20:56
-  de 30/10. Procurar uma leitura de Relics depois disso sem divergência da BBM
-  068, e aí riscar.
+- ~~**Campo da Fase 4**~~ (§8.80): ✅ **riscado em 03/11** (§8.84.5). A Fogueira
+  saiu da BBM 068 antes de ativar ali, mas a conferência valeu pelo que pedia:
+  4 leituras de Relics com `cobertura calculada bate com a visão geral do jogo`
+  (9 equipadas, 0 inativas) e 0 WARNING. Fica um caso para o lado "inativa na
+  anfitriã": a Sela de má qualidade na 98660, inativa até ~16:12 de 04/11.
 - **Relíquia de "capacidade de saque"** (§8.80): nenhuma na conta. Se aparecer
   uma, medir numa aldeia coberta se a coleta e o farm carregam mais que o
   `UNIT_CARRY` diz (relatório de farm que volta cheio; a coleta mostra o saque
