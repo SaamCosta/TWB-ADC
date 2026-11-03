@@ -10395,8 +10395,24 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
        chegadas (`overview_villages&mode=incomings`) é premium: sem premium
        vem a visão de produção com `mode: incomings` no `game_data`, e saiu da
        captura. Ainda não visto: a linha de um ataque que **nenhuma** torre vai
-       detectar (deve vir sem o `-wt` e sem o sufixo no título). Falta a
-       `depois`, com
+       detectar (deve vir sem o `-wt` e sem o sufixo no título).
+       **Marca já detectada, capturada em 03/11 20:12** (`--label bbm011`):
+       ataque 1439754061 contra a BBM 011 (74690), saindo de (584|301), a 7,2
+       campos da BBM 002, ou seja, nascido dentro do alcance e marcado no envio.
+       Era um nobre sozinho de um jogador amigo, avisado por mensagem
+       ("vou mandar uns nobres só para matar"). Verbatim do widget:
+       `<span class=" tooltip" data-command-id="1439754061" title="Ataque
+       pequeno (1-1000 tropas)"><img src="…/graphic/command/attack_small.webp">
+       </span><span class=" tooltip" data-command-id="1439754061" title="Com
+       nobre"><img src="…/graphic/command/snob.webp"></span>`. Ou seja: depois
+       da detecção a classe `commandicon-wt` some, o ícone `attack.webp` vira
+       `attack_<tamanho>.webp`, e o nobre ganha um segundo `<span>` com
+       `snob.webp`. O `info_command` de novo não mostrou nada. É o caso do
+       item b ao vivo: o `OwnDefense` pedia apoio com teto de 23.198 pop
+       ("matar o maior ataque possível com nobre") para um ataque que a torre
+       dizia ter no máximo 1.000. A captura `depois` do ataque da BBM 064
+       continua valendo: é o outro caso, o do ataque que **entra** no alcance
+       no meio da rota. Falta a `depois`, com
        `--label depois --at "2026-11-08 23:00"`, e o `--compare antes depois`.
        O par vira fixture com guarda provada: o parser acha a marca no
        `depois` e não acha no `antes`. Se o `depois` vier igual, conferir antes
