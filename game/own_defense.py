@@ -374,7 +374,8 @@ class OwnDefenseManager:
                              village_label(vid), verdict.get("reason"))
             return result
         margin = int(cfg["arrival_margin_sec"] or 0)
-        defense = self._defense_state(cfg, vid, page, deadline, now)
+        defense = self._defense_state(cfg, vid, page, deadline, now,
+                                      units_cap=own_defense.window_units_cap(verdict))
         result["defense"] = self._defense_report(defense)
         result["deadline_at"] = deadline
         if defense["holds"] and not shield:
@@ -401,8 +402,10 @@ class OwnDefenseManager:
             village_label(vid), verdict.get("reason"),
             time.strftime("%H:%M:%S", time.localtime(deadline)),
             ("BLINDAGEM: sem teto, envio mínimo de %d pop" % floor) if shield else
-            ("teto: matar %d pop de ofensiva com nobre (atacantes vivos hoje: %s)"
-             % (defense["nuke_pop"], defense["survivors"])),
+            ("teto: matar %d pop de ofensiva com nobre%s (atacantes vivos hoje: %s)"
+             % (defense["nuke_pop"],
+                " (torre de vigia: até %d tropas)" % defense["nuke_units_cap"]
+                if defense["nuke_units_cap"] else "", defense["survivors"])),
             len(plan["lines"]))
         # Origem que já mandou para este alvo numa janela que ainda não acabou
         # só manda de novo com um pacote de verdade: a tropa que volta aos
@@ -445,14 +448,16 @@ class OwnDefenseManager:
                 if ok else "nenhuma aldeia própria chega antes do prazo."))
         return result
 
-    def _defense_state(self, cfg, vid, page, deadline, now):
+    def _defense_state(self, cfg, vid, page, deadline, now, units_cap=None):
         """
         O que defende a aldeia no fim da janela e se isso basta. Na aldeia:
         a linha Total da praça (a tropa dela mais o apoio já pousado). A
         caminho: o apoio que ESTE bot mandou (histórico) e que pousa dentro
         da janela -- apoio mandado à mão só conta depois de pousar, e a tropa
         da própria aldeia fora de casa (farm, coleta) não conta: as duas
-        faltas erram para o lado de mandar mais.
+        faltas erram para o lado de mandar mais. `units_cap` é o teto de tropas
+        que a torre de vigia mediu para a janela (`window_units_cap`): o
+        ataque a matar encolhe a ele.
         """
         state = Extractor.game_state(page) if page is not None else None
         village = (state.get("village") or {}) if isinstance(state, dict) else {}
@@ -474,7 +479,12 @@ class OwnDefenseManager:
                 inflight = own_defense._add(inflight, entry.get("troops"))
         luck = int(cfg.get("attacker_luck_pct") or 0)
         nuke_pop = int(cfg.get("nuke_pop") or 0) or own_defense.max_noble_nuke_pop()
-        nukes = own_defense.noble_nukes(nuke_pop, archers=self._archers)
+        nukes = own_defense.noble_nukes(nuke_pop, archers=self._archers, max_units=units_cap)
+        if units_cap:
+            # O que o log e o painel chamam de "pop de ofensiva" passa a ser o
+            # da maior composição que cabe no tamanho que a torre mediu.
+            nuke_pop = max(own_defense._pop({u: q for u, q in n.items() if u != "snob"})
+                           for n in nukes.values())
         # O simulador não conhece milícia; unidade fora da tabela dele cai fora.
         total = {u: q for u, q in own_defense._add(home or {}, inflight).items()
                  if u in Simulator.pool}
@@ -482,14 +492,16 @@ class OwnDefenseManager:
         return {"wall": wall, "home": home or {}, "home_read": home is not None,
                 "home_pop": own_defense._pop(home or {}), "inflight": inflight,
                 "inflight_pop": own_defense._pop(inflight), "total": total,
-                "nuke_pop": nuke_pop, "nukes": nukes, "luck_pct": luck,
+                "nuke_pop": nuke_pop, "nuke_units_cap": units_cap, "nukes": nukes,
+                "luck_pct": luck,
                 "holds": verdict["holds"], "survivors": verdict["survivors"]}
 
     @staticmethod
     def _defense_report(defense):
         """O que o painel mostra (sem as composições inteiras)."""
         return {k: defense[k] for k in ("wall", "home", "home_read", "home_pop", "inflight",
-                                        "inflight_pop", "nuke_pop", "luck_pct", "holds",
+                                        "inflight_pop", "nuke_pop", "nuke_units_cap",
+                                        "luck_pct", "holds",
                                         "survivors")}
 
     def _trimmer(self, shield, floor, current, defense, repeat=False):

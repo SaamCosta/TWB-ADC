@@ -39,7 +39,7 @@
       <div><dt>Ataques</dt><dd>{{ a.attack_rows | length }} · {{ asm.possible_nobles }} podem ser nobre{% if a.deadline_fmt %} · janela até {{ a.deadline_fmt }}{% endif %}</dd></div>
       {% if d %}
       <div><dt>Defesa</dt><dd>{{ pop(d.home_pop) }} na aldeia{% if not d.home_read %} <span class="twb-status twb-status--warning">praça ilegível</span>{% endif %} + {{ pop(d.inflight_pop) }} a caminho{% if d.after_pop is defined %} → {{ pop(d.after_pop) }} depois desta varredura{% endif %} · muralha {{ d.wall }}</dd></div>
-      <div><dt>Maior ataque com nobre</dt><dd>{{ pop(d.nuke_pop) }} pop, sorte +{{ d.luck_pct }}% · {% set surv = d.after_survivors if d.after_survivors is defined else d.survivors %}{% if (d.after_holds if d.after_holds is defined else d.holds) %}morre nas {{ surv | length }} composições{% else %}sobrevivem {% for n, q in (surv or {}).items() %}{{ n }} {{ pop(q) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd></div>
+      <div><dt>Maior ataque com nobre</dt><dd>{{ pop(d.nuke_pop) }} pop{% if d.nuke_units_cap %} (torre: até {{ pop(d.nuke_units_cap) }} tropas){% endif %}, sorte +{{ d.luck_pct }}% · {% set surv = d.after_survivors if d.after_survivors is defined else d.survivors %}{% if (d.after_holds if d.after_holds is defined else d.holds) %}morre nas {{ surv | length }} composições{% else %}sobrevivem {% for n, q in (surv or {}).items() %}{{ n }} {{ pop(q) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</dd></div>
       {% endif %}
       {% if a.bonus_pct %}<div><dt>Sinal da Aflição</dt><dd>apoio {{ a.bonus_pct }}% mais rápido</dd></div>{% endif %}
     </dl>

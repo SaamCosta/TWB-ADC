@@ -10372,8 +10372,26 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     tropa e podem começar sem autorização. Registrado, sem prioridade definida.
 30. **`P-TORRE-MARCA`** (pedido do usuário em 2026-11-03): o bot passa a ler a
     marca da torre de vigia (tamanho do exército e nobre) e a usá-la. **Grátis:**
-    a torre é prédio, e a marca vem nas telas que o bot já lê. Registrado, sem
-    prioridade definida.
+    a torre é prédio, e a marca vem nas telas que o bot já lê.
+    ✅ **Parser e item b feitos em 2026-11-04** (pedido do usuário):
+    `Extractor.watchtower_mark`, chamado por `incoming_commands`, põe em cada
+    comando `watchtower` ("detected" / "pending" / None), `size`
+    (small/medium/large) e `tower_noble`, ancorados no nome do arquivo do
+    ícone (`attack_<tamanho>`, `snob`, classe `commandicon-wt`), não no
+    título. Na defesa própria: "com nobre" da torre vence a conta de
+    distância/tempo (`assess`), e quando **todo** ataque da janela foi medido
+    e nenhum é grande, o ataque a matar encolhe ao maior tamanho marcado
+    (`window_units_cap` → `noble_nukes(max_units=)`; o tamanho é contagem de
+    tropas, então mil tropas de cavalaria pesam ~4.000 pop). Log e `/defense`
+    mostram "(torre de vigia: até N tropas)". ⚠️ "Detectado sem nobre → não é
+    nobre" ficou **desligado** (`core/own_defense.py::TRUST_TOWER_NO_NOBLE`):
+    a ausência do ícone num detectado ainda não foi vista no servidor, e
+    errar ali tira a defesa contra nobre de verdade. Ligar depois da captura
+    `depois` de 08/11, se ela mostrar um detectado sem `snob.webp`. Testes em
+    `tests/test_watchtower_mark.py`, com as duas linhas verbatim (antes e
+    depois da detecção) e prova por mutação da regex do tamanho. ⏳ Falta
+    campo: a linha `teto: matar N pop ... (torre de vigia: até N tropas)` no
+    próximo ataque marcado, depois de reiniciar o bot.
     **O caso que destrava.** O ataque 1460840129 contra a BBM 064 (88035) sai
     de (510|571), a 332,3 campos. A conta só fecha com aríete ou catapulta
     (30 min/campo): saída às 12:52:34 de 03/11, e o `OwnDefense` viu
@@ -10432,6 +10450,44 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
        mesmo sendo fake. Contar só ataque marcado médio/grande, ou sem marca.
        Ver no log desse dia se a evacuação saiu (`TWB_ZONE_EVACUATE`), para
        ter o caso real antes de mexer.
+31. **`P-APOIO-VOLTA`** (pedido do usuário em 2026-11-04): devolver sozinho o
+    apoio que a defesa própria mandou, depois que o último ataque da janela
+    pousou e nenhum outro ataque está chegando ao alvo. Hoje o apoio fica
+    estacionado até alguém retirar à mão. Registrado, sem prioridade definida.
+    Grátis (praça de reunião). Mexe em tropa real: CLAUDE.md pede cautela extra.
+    **O que já se sabe.** O formulário de retirada está no fixture
+    `place_units_support_away_br143.html` (08/10): `<form action="…
+    &screen=place&&action=withdraw_selected_unit_counts&mode=units&h=…">`, com
+    uma linha por apoio em `units_away` e um checkbox
+    `class="troop-request-selector" data-away-id="…"` por linha. O corpo do
+    POST é montado por JS e **não foi visto**. A tabela `units_away` se chama
+    "Tropas nas aldeias de outros jogadores"; o apoio entre aldeias
+    **próprias** pousado ainda não foi capturado (o docstring de
+    `Extractor.place_troop_locations` já registra a falta).
+    **Antes de codar (sondar, `twb-sondar`):**
+    1. o JS da praça (bundle da CDN, não toca a conta) para o formato do POST
+       de `withdraw_selected_unit_counts` (campos por `away_id` e unidade?);
+    2. a praça de uma origem com apoio pousado numa aldeia nossa (o próximo
+       envio do `OwnDefense` serve), para ver em que tabela ele aparece e se
+       há também o "mandar de volta" do lado do alvo (`units_home`).
+    **Desenho proposto.** Gatilho no mesmo `tick()` da defesa própria: alvo
+    com envio do histórico (`cache/defense/state.json`, `ok`, `arrival_at`
+    passado), `deadline_at` passado, e o widget do alvo sem nenhum ataque
+    chegando. Só volta o que **este bot** mandou (o histórico), nunca apoio
+    manual (o usuário joga na mesma conta), nunca alvo com blindagem ligada,
+    e com uma espera depois do pouso (ex.: 10 min) para um segundo ataque que
+    o widget ainda não mostrou. Ataque novo depois disso cai no fluxo normal
+    e manda de novo. Teto de retiradas por varredura (o "basta" da §8.69, ao
+    contrário).
+
+Pendência achada em 2026-11-04 (fora do escopo):
+- **Fixture com dado de terceiro e token no repo público.**
+  `tests/fixtures/place_units_support_away_br143.html` tem o nome de outro
+  jogador no rótulo da aldeia apoiada (linha 60) e o `h` sem redação no
+  `action` do formulário (linha 38). CLAUDE.md manda pseudônimo e `h`
+  redigido. O `h` é de sessão e já expirou, mas o nome fica no histórico do
+  git. Trocar os dois e conferir se `test_own_defense.py` /
+  `test_units_owned_total.py` dependem do texto.
 
 **Camada 2 — ativável por detecção** (`game_data.features.*.active`, custo
 zero; prazo em `premium&mode=feature_log`):

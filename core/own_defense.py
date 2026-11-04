@@ -25,6 +25,10 @@ quando NÃO pode:
   - falta MAIS tempo para chegar do que a viagem inteira de um nobre daquela
     distância (o comando já teria chegado se fosse nobre).
 Origem desconhecida conta como "pode ser": não se fabrica segurança.
+A exceção é a torre de vigia (§9 item 30): ataque que ela já viu traz o
+tamanho e o ícone de nobre (`Extractor.watchtower_mark`). "Com nobre" vence a
+física; "sem nobre" só vale com `TRUST_TOWER_NO_NOBLE`. O tamanho encolhe o
+teto do QUANTO BASTA (`window_units_cap`).
 
 A aldeia precisa de apoio quando há pelo menos `ceil(L/Q)` ataques que podem
 ser nobre. Antes do N-ésimo deles (N = nobres necessários) ela não cai, mesmo
@@ -67,6 +71,7 @@ teto: tudo o que chega a tempo vai, mas cada envio precisa ter pelo menos
 """
 import math
 
+from core.extractors import TOWER_SIZE_MAX_UNITS
 from core.world_config import WorldConfig
 from core.templates import UNIT_POP
 
@@ -136,15 +141,25 @@ def max_noble_nuke_pop():
     return FARM_MAX_POP - NOBLE_VILLAGE_MIN_BUILDING_POP - UNIT_POP.get("snob", 100)
 
 
-def noble_nukes(pop=None, archers=False):
-    """{nome: tropas} -- cada composição com `pop` de ofensiva e um nobre."""
+def noble_nukes(pop=None, archers=False, max_units=None):
+    """{nome: tropas} -- cada composição com `pop` de ofensiva e um nobre.
+
+    `max_units` é o teto de TROPAS que a torre de vigia mediu (o "pequeno" é
+    1-1000 tropas, contagem e não população). Com ele, cada composição
+    encolhe até caber nesse número de tropas, se a população for maior: mil
+    cavalarias leves pesam 4.000, mil machados 1.000. O nobre não sai da
+    conta das tropas ofensivas, o que erra para o lado de mandar mais."""
     pop = int(pop or 0) or max_noble_nuke_pop()
     shapes = dict(NUKE_SHAPES)
     if archers:
         shapes["arqueiros"] = ARCHER_SHAPE
     out = {}
     for name, shape in shapes.items():
-        troops = {u: int(pop * share / UNIT_POP.get(u, 1)) for u, share in shape.items()}
+        shape_pop = pop
+        if max_units:
+            units_per_pop = sum(share / UNIT_POP.get(u, 1) for u, share in shape.items())
+            shape_pop = min(pop, int(max_units / units_per_pop))
+        troops = {u: int(shape_pop * share / UNIT_POP.get(u, 1)) for u, share in shape.items()}
         troops["snob"] = 1
         out[name] = troops
     return out
@@ -211,6 +226,14 @@ def fit_package(available, defense, wall, simulate, nukes, luck_pct=25, steps=12
     return {u: q for u, q in ((u, int(math.ceil(q * hi))) for u, q in available.items()) if q > 0}
 
 NOBLE_TIME_TOLERANCE_SEC = 60
+
+# Ataque detectado pela torre SEM o ícone de nobre conta como "não é nobre"?
+# O ícone foi visto num ataque com nobre (BBM 011, 03/11); a ausência dele
+# num detectado ainda não foi vista no servidor. Errar aqui tira a defesa de
+# uma aldeia contra nobre de verdade, então fica desligado até a captura do
+# ataque da BBM 064 (agendada para 08/11, §9 item 30a) mostrar um detectado
+# sem nobre. O "com nobre" e o tamanho já valem.
+TRUST_TOWER_NO_NOBLE = False
 
 # Unidades que só vão de carona. Explorador defende 2 e serve para barrar o
 # reconhecimento do atacante -- útil junto da defesa, inútil sozinho. No
@@ -285,6 +308,12 @@ def assess(village, attacks, speeds, max_dist, drop_range, now):
         if origin and origin.get("x") is not None:
             distance = _dist(village["x"], village["y"], origin["x"], origin["y"])
         possible, why = noble_possible(distance, arrival - now, speeds, max_dist)
+        # A torre de vigia é medição do jogo e vence a conta de distância e
+        # tempo, que só diz se um nobre CABERIA (§9 item 30).
+        if attack.get("tower_noble") is True:
+            possible, why = True, "torre de vigia: com nobre (%s)" % attack.get("size")
+        elif attack.get("tower_noble") is False and TRUST_TOWER_NO_NOBLE:
+            possible, why = False, "torre de vigia: sem nobre (%s)" % attack.get("size")
         rows.append(dict(attack, distance=round(distance, 1) if distance is not None else None,
                          noble_possible=possible, noble_reason=why))
     possible = [r for r in rows if r["noble_possible"]]
@@ -307,6 +336,26 @@ def assess(village, attacks, speeds, max_dist, drop_range, now):
                        % (loyalty if loyalty is not None else "?", needed, len(possible),
                           needed)))
     return out
+
+
+def window_units_cap(verdict):
+    """
+    Teto de tropas do maior ataque da janela, pela torre de vigia, ou None
+    (sem teto). Só há teto quando TODO ataque da janela foi medido pela
+    torre e nenhum é grande: um ataque sem marca pode ser o ataque cheio.
+    Fora da janela não importa -- é a janela que o apoio precisa segurar.
+    """
+    caps = []
+    for row in (verdict or {}).get("attacks") or []:
+        if not row.get("in_window"):
+            continue
+        if row.get("watchtower") != "detected":
+            return None
+        cap = TOWER_SIZE_MAX_UNITS.get(row.get("size"))
+        if cap is None:
+            return None
+        caps.append(cap)
+    return max(caps) if caps else None
 
 
 def plan_defense(target, deadline_at, sources, speeds, now, bonus_pct=0, options=None,

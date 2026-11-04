@@ -60,6 +60,24 @@ FRIENDLY_COMMAND_TYPES = ("support", "relocate")
 # da aldeia de origem) ganhou o de nobre. É pista, nunca prova.
 INCOMING_LABEL_UNIT_RE = re.compile(r'graphic/unit/tiny/(\w+)\.\w+')
 
+# Marca da torre de vigia no ícone de um comando recebido (§9 item 30). Ao
+# contrário do ícone do rótulo acima, esta é detecção DO JOGO. Verbatim do
+# br143 (tests/test_watchtower_mark.py):
+#   - antes de a torre ver o ataque, o span do ícone ganha a classe
+#     `commandicon-wt` e o título "Ataque (será detectado por uma torre de
+#     vigia)", com o ícone genérico `graphic/command/attack.webp` (BBM 064,
+#     03/11 13:15);
+#   - depois, o ícone vira `graphic/command/attack_small.webp` ("Ataque
+#     pequeno (1-1000 tropas)") e o nobre ganha um segundo span com
+#     `graphic/command/snob.webp` ("Com nobre") (BBM 011, 03/11 20:12).
+# A âncora é o nome do arquivo, não o título: independe de idioma.
+TOWER_SIZE_RE = re.compile(r'graphic/command/attack_(small|medium|large)\.\w+')
+TOWER_NOBLE_RE = re.compile(r'graphic/command/snob\.\w+')
+TOWER_PENDING_RE = re.compile(r'class="[^"]*\bcommandicon-wt\b')
+# Teto de TROPAS (contagem, não população) de cada tamanho, do título do
+# jogo; o grande não tem teto.
+TOWER_SIZE_MAX_UNITS = {"small": 1000, "medium": 5000, "large": None}
+
 # `screen=info_player&mode=stats_own`: series "ricas" (recurso por dia) que o
 # jogo embute no HTML como `data.push({label: 'Saqueado', ..., details: [...]})`.
 # O label identifica a serie -- nao ha id no bloco, e a ORDEM nao e garantia
@@ -1020,6 +1038,7 @@ class Extractor:
             )
             attacker_match = re.search(r'screen=info_player[^"]*"[^>]*>([^<]+)</a>', block)
             label_unit = INCOMING_LABEL_UNIT_RE.search(block)
+            tower = Extractor.watchtower_mark(block)
             commands.append({
                 "command_id": id_match.group(1) if id_match else None,
                 "eta_seconds": max(0, eta_seconds),
@@ -1031,8 +1050,39 @@ class Extractor:
                 "command_type": Extractor.incoming_command_type(block),
                 # Pista tirada do rótulo -- ver INCOMING_LABEL_UNIT_RE.
                 "label_unit": label_unit.group(1) if label_unit else None,
+                # Torre de vigia -- ver watchtower_mark().
+                "watchtower": tower["watchtower"],
+                "size": tower["size"],
+                "tower_noble": tower["tower_noble"],
             })
         return commands
+
+    @staticmethod
+    def watchtower_mark(block):
+        """
+        A marca da torre de vigia numa linha de comando recebido:
+        {watchtower, size, tower_noble}.
+
+        - `watchtower`: "detected" (a torre já viu: ícone com tamanho),
+          "pending" (o jogo avisa que uma torre vai ver, `commandicon-wt`) ou
+          None (nenhuma torre vai ver, ou linha sem ícone).
+        - `size`: "small" / "medium" / "large" só quando detectado.
+        - `tower_noble`: True/False só quando detectado; None antes.
+
+        ⚠️ `tower_noble=False` é dedução: o ícone de nobre foi visto num
+        ataque com nobre (BBM 011, 03/11), e a ausência dele num ataque
+        detectado ainda não foi vista no servidor. A §4.4 diz que a torre
+        marca o nobre, e a captura agendada do ataque da BBM 064 (08/11) é a
+        primeira oportunidade de ver um detectado sem nobre.
+        """
+        if not isinstance(block, str):
+            return {"watchtower": None, "size": None, "tower_noble": None}
+        size = TOWER_SIZE_RE.search(block)
+        if size:
+            return {"watchtower": "detected", "size": size.group(1),
+                    "tower_noble": bool(TOWER_NOBLE_RE.search(block))}
+        pending = "pending" if TOWER_PENDING_RE.search(block) else None
+        return {"watchtower": pending, "size": None, "tower_noble": None}
 
     @staticmethod
     def village_loyalty(res):
