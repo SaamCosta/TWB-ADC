@@ -9781,6 +9781,168 @@ As duas pedem a 8/7 de volta na BBM 005, à mão, e o processo novo rodando
 entre a carga e a carga × fator. Assim a leitura separa as três hipóteses, e
 não só "paga/não paga".
 
+## 8.85 `P-BAND-VALOR` — a 8/7 de volta na BBM 005 e a moeda medida por aldeia (2026-11-04)
+
+Continuação da §8.84. Esta seção tem duas partes: o campo (a bandeira de saque
+de volta, §8.81 e relíquias) e o instrumento que faltava para a bandeira de
+moeda ter valor.
+
+### 1. O campo antes da fase
+
+- **A 8/7 nunca voltou para a BBM 005.** O `cache/managed/38997.json` dizia
+  `current_flag: [6, 5]` e `flag_supply` tipo 8 nível 7: 1, e
+  `world.flag_manual_types` seguia `[3, 5]`. Não havia o que procurar com
+  "quem tirou": o passo à mão da §8.84.6 não tinha sido dado. No processo de
+  03/11 houve 3 `Setting flag`, todas do tipo 4 (BBM 011, 064 e 072), e
+  nenhuma na BBM 005.
+- **O bot estava parado desde 01:35:45.** O PC entrou em suspensão às
+  01:37:53 (System, Kernel-Power 42) e voltou às 11:56. Não havia `twb.py`
+  vivo, e o log não tem linha de saída. O usuário religou às 13:09, com cookie
+  novo.
+- **Esse religar reescreveu o `session_latest.log`** (20º padrão). Os fatos de
+  03/11 desta seção foram lidos antes, às 13:05. Quem precisar do log daquele
+  dia não o tem mais.
+
+### 2. A 8/7 equipada e o 8 entre as manuais
+
+Com o usuário de acordo ("você faz tudo"), às 13:12 a 8/7 foi equipada pelo
+próprio `DefenceManager.flag_set`. Foi um POST `assign_flag` entre duas
+leituras de `screen=flags`, com 45 s entre as requisições. A releitura
+confirmou: `current [8, 7]`, a 8/7 no inventário de 1 para 0 e o cooldown
+ativo. Em seguida, `world.flag_manual_types: [3, 5, 8]` no `config.json`
+(original salvo fora do repo).
+
+**A ordem importa, e o que a resolveu foi o cooldown do jogo.** O ciclo carrega
+o `config.json` uma vez, no começo (`twb.py`, `config = self.config()` no
+laço), e o que o usuário religou às 13:09 já tinha `[3, 5]` na memória. Com a
+8 equipada e `[3, 5]`, o `flag_logic` da BBM 005 escolheria a 6/4, a mesma
+troca de 30/10. Mas a troca acabou de acontecer, então a tela mostra
+`timer cooldown`, e o `flag_logic` para em "Unable to set new flag … because
+of cool down" antes de mexer. Do ciclo seguinte em diante vale o `[3, 5, 8]`.
+
+A 6/5 que a BBM 005 soltou foi para a BBM 070 às 13:35 (`Setting flag 6
+level 5`). Foi a ordem fixa dando a bandeira à próxima aldeia que a pedia.
+
+⚠️ **O planejador não lê o `flag_manual_types`.** `core/flag_planner.MANUAL_TYPES`
+é `(3, 5)` fixo no código. Hoje não muda nada: a 8 tem valor desconhecido, e a
+aldeia com bandeira de valor desconhecido fica fora do plano. Quando
+`HAUL_SCAVENGE` virar `True`, o plano pode propor tirar a 8 da BBM 005, e o
+`DefenceManager` recusa (ela é manual). Fica um passo no `/flags` que nunca
+sai. Está na fila da §9.
+
+### 3. §8.81: o caso não foi exercitado
+
+No log de 03/11 houve 112 linhas `descartado da selecao automatica`, todas por
+`tribe_reservation`. Não houve nenhuma `cancelado`, `o mapa ainda diz barbara`,
+`ja e nosso` nem `visao geral relida`. **O silêncio não prova nada** (15º
+padrão), porque a 98660 não estava no pool como bárbara:
+- às 17:54:08 o próprio acompanhamento da conquista marcou `confirmed as ours
+  via village cache` e regravou o `cache/villages/98660.json` com o nosso
+  `owner` (5955651) às 17:54:30;
+- a primeira seleção depois disso rodou às 22:48:36. O
+  `cache/world/villages_br143.txt` tinha sido baixado às 22:48:24 e já dava a
+  98660 como do mesmo jogador.
+
+Também não havia trem nem reforço agendado contra ela. Para o guarda agir de
+verdade, a seleção precisa rodar entre a conquista e a atualização das fontes
+de mapa, ou uma conquista feita à mão precisa ficar esperando a visão geral.
+
+**Achado de passagem: o `FarmManager` conta a 98660 como farm.** Às 22:24 do dia
+03/11, "Low Profile Farm village 98660 attacked 6 times … saindo de low
+profile". À 00:17 eram "attacked 7 times", com saque e perdas maiores, logo
+depois do relatório `35517 -> BBM 072 (98660)` das 00:11, que é um terceiro
+atacando a nossa aldeia. Ou seja, a estatística de farm soma relatórios em que
+a nossa aldeia é o **alvo**, de qualquer origem. **Nenhum ataque do bot saiu
+contra a 98660 depois das 17:54** (0 POST e 0 linhas `Attacks` sobre ela). O
+estrago é só na estatística, e foi para a fila da §9.
+
+### 4. Moeda por aldeia: o registro que faltava
+
+A bandeira de moeda estava "não medida" nas 20 aldeias que a usam, porque o
+bot cunhava sem contar. No reporter (`twb_*.log`, 5 processos) não há uma
+linha de moeda sequer. Hoje quem cunha é:
+- o `SnobManager.coin_item`, 1 moeda por POST, nas aldeias que querem nobre ou
+  em `mint_only`;
+- o hub (`minting.routing_enabled`, hoje a BBM 002, 38409), com
+  `MintManager._mint_max` e a sessão automática de 8 h;
+- a cunhagem diária, **desligada** (`daily_auto_mint_enabled: false`);
+- o usuário, à mão, de forma invisível para o log (9º padrão).
+
+**A fonte é o contador da conta na academia.** As duas amostras verbatim do hub
+(`cache/mint/samples/`, 05/10 e 10/10) trazem "Limite atual de nobres: L",
+"Falta ainda para o limite L+1: F" e "Já guardadas para o limite L+1: G":
+- **05/10:** L = 50, F = 9, G = 42;
+- **10/10:** L = 59, F = 23, G = 37.
+
+Nas duas, F + G = L + 1: subir do limite L para L+1 custa L+1 moedas. Então o
+total cunhado pela conta é L(L+1)/2 + G, que dá 1.317 e 1.807. A diferença
+entre duas leituras é exata, inclusive quando cruza um limite. Com a sessão
+automática em andamento, a mesma tela diz "O que já foi coletado até agora: N
+Moedas de ouro" e "Fim: hoje/amanhã às HH:MM:SS". A data do fim vem do
+`serverDate` da própria página.
+
+O que mudou:
+- `pages/academy.py`: `coin_total` (com a conferência F + G = L + 1; contador
+  que não fecha vale `None`) e `auto_minting_progress`.
+- `core/coin_ledger.py` (novo): o evento `TWB_MINT` e `mint_inputs`, que dá
+  moedas/h por aldeia numa janela de 7 dias.
+  - `src: "post"` é a cunhagem por POST, e só entra se o contador da conta
+    **subiu** entre a tela lida e a resposta. É o que o servidor contou, não o
+    que o bot mandou (13º padrão).
+  - `src: "auto"` é a sessão do hub, e vale o maior número lido por sessão.
+  - `src: "total"` é só o contador.
+  - Aldeia sem registro vale **0** só se a conta não ganhou moeda fora do
+    registro (folga de 3 moedas ou 5%). Se ganhou, ou se não houve duas
+    leituras do contador, ela fica **desconhecida**. Abaixo de 24 h de
+    registro, tudo fica desconhecido.
+- `core/flag_planner.py`: o tipo 7 vale moedas/h × 83.000 (custo base da moeda
+  no br143, `mint_planner.BASE_COIN_COST`) × %, ou seja, o recurso que a
+  bandeira poupa. O `read_events` lê `TWB_MINT`.
+- `game/snobber.py`: `coin_item` registra pelo contador. Se o contador não se
+  lê ou não sobe, sai uma linha INFO e nada é registrado; sem essa linha, o
+  instrumento poderia nunca disparar em silêncio (15º padrão). A cunhagem
+  continua igual.
+- `game/mint_manager.py`: toda leitura da academia do hub registra a sessão e
+  o contador, e o `_mint_max` registra pelo contador. A sessão iniciada é
+  relida 10 min **antes** do fim (`AUTO_MINT_FINAL_READ`), e a leitura em
+  andamento volta logo depois do fim (`end + 60`), não 30 min depois. Custa 1
+  GET e uma volta do sono a mais por sessão de 8 h. A primeira resposta do
+  POST `action=coin` fica em `cache/mint/samples/coin_post*.html`, porque
+  nunca foi capturada.
+
+**Ainda não medido:** se a resposta do POST `action=coin` é a tela da academia
+com o contador. Se não for, toda cunhagem do `coin_item` cai no INFO "contador
+ilegível" e não entra, e as aldeias doadoras ficam desconhecidas, não zero. A
+primeira amostra responde.
+
+`tests/test_coin_ledger.py`, com 14 casos e a fixture verbatim
+`tests/fixtures/academy_coins_br143.json`. São recortes das duas amostras, com
+os acentos corrompidos que a gravação deixou, e os testes também rodam com os
+acentos certos. A tela com o botão Ativar é o `ACADEMY` do `test_mint.py`.
+Mutantes em memória, todos pegos:
+- a sessão somando leituras em vez de usar a maior;
+- moeda fora do registro virando zero;
+- sem contador virando zero;
+- POST sem subir contando;
+- contador sem a conferência;
+- hub voltando 8 h + 60;
+- hub ignorando o fim;
+- `coin_item` sem registro;
+- "amanhã" sem +1 dia.
+
+O "sem contador virando zero" passou na primeira bateria, porque o caso tinha
+só 8 h de registro e caía no piso de 24 h. Ganhou 30 h.
+
+Sem config nova. `twb-review` no diff: nenhum campo mutável novo; os `None` de
+rede/parse estão guardados (`res is None`, `coin_total(None)`); as `def` novas
+têm chamador; não há lista do jogo; o corpo de módulo só tem constantes e
+regex; não toca `attack`, `defence_manager` nem `pvp_conquest`. Suíte
+inteira: **125 arquivos, 0 falhas**.
+
+**Entra no próximo processo**, porque o que roda subiu às 13:09, antes destas
+edições. O primeiro valor do tipo 7 aparece 24 h depois do primeiro
+`TWB_MINT`.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -9815,35 +9977,41 @@ abaixo.
 2026-10-30** (§8.81). A pergunta "o alvo já é nosso?" agora é feita no envio no
 horário do Hunter (no topo do `_run` e no segundo exato), na seleção
 automática e manual, no farm, e lê as visões gerais além do config. Falta o
-campo (sinais no fim da §8.81). Em 03/11 eram 0 linhas, e o caso só passou a
-existir às 17:54, com a 98660 conquistada: conferir depois do próximo início de
-ciclo (§8.84.5).
+campo (sinais no fim da §8.81). ⏳ **Ainda não exercitado** (§8.85.3): a
+primeira seleção depois da conquista da 98660 rodou com as duas fontes de mapa
+já dando a aldeia como nossa. Para exercitar, a seleção tem que rodar entre a
+conquista e a atualização do mapa.
 
 ~~**Bandeiras por valor**~~: ✅ **feito em dry-run em 2026-10-30** (§8.82). O
 que cada tipo afeta foi medido (produção aditiva, população = piso, saque
 entra na carga da coleta com fator 1,08), e o plano usa o modelo das
 relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
-- ⏳ **2ª etapa do saque na coleta, metade feita em 03/11 (§8.84).** O
-  `calcMaxLoot` foi capturado e o bot já manda `carry_max` = carga × fator,
-  como o JS. O servidor não guarda o valor postado, e com fator 1 isso não
-  muda nada. Falta **uma** leitura com fator > 1, e duas coisas a impedem:
-  a ordem fixa tira a 8 (pela estrutura, foi ela que tirou a 8/7 da BBM 005
-  antes de qualquer coleta; o log daquele dia não existe mais),
-  e o registro pela tela nunca dispara. Passos: a 8/7 de volta na BBM 005 à
-  mão; `world.flag_manual_types: [3, 5, 8]` no `config.json` (decisão do
-  usuário, §8.84.6); com uma coleta do bot em andamento,
-  `python tools/probe_scavenge_carry.py 38997`. Se der "PAGA", fazer
-  `HAUL_SCAVENGE = True` em `core/flag_planner.py`.
+- ⏳ **2ª etapa do saque na coleta (§8.84, §8.85.2).** O bot manda
+  `carry_max` = carga × fator, como o JS. Desde 04/11 às 13:12 a 8/7 está na
+  BBM 005, e `world.flag_manual_types` é `[3, 5, 8]`. Falta a leitura: com a
+  primeira coleta do bot de lá em andamento (POST `send_squads&village=38997`
+  no `session_latest.log`), `python tools/probe_scavenge_carry.py 38997`. Se
+  der "PAGA", fazer `HAUL_SCAVENGE = True` em `core/flag_planner.py`, com
+  teste. Se der "NÃO paga", fazer `False`, e a 8 sai das manuais.
 - ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
   71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
   de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
   Ligar `flag_value.mode: "on"` depois da leitura acima e de um dia de plano
   estável no `/flags` (agora as linhas `src: "sent"` dão o saque/h da coleta,
   então o plano vai mudar quando a coleta for medida).
-- **Cunhagem por aldeia não é medida**, então a bandeira de moeda fica onde
-  está (20 aldeias). Para dar valor a ela: contar as moedas da sessão
-  automática (academia antes e depois) ou registrar o que vai para o hub
-  (`run_mint_route`).
+- ⏳ **Cunhagem por aldeia: instrumento feito em 04/11 (§8.85.4)**, e ainda sem
+  campo. O `TWB_MINT` entra no próximo processo. Conferir três coisas:
+  - a primeira `cache/mint/samples/coin_post*.html`. Se for
+    `coin_post_unconfirmed`, ou se aparecer INFO "contador da conta ilegível"
+    no `coin_item`, a resposta do POST não traz o contador, e é preciso ler a
+    academia depois de cunhar;
+  - a leitura final do hub (`src: "auto"`, ~10 min antes do fim);
+  - 24 h depois, o `/flags` com o tipo 7 medido nas 20 aldeias, ou
+    "desconhecido" com o motivo.
+- **O planejador não lê `world.flag_manual_types`** (§8.85.2): o
+  `MANUAL_TYPES = (3, 5)` dele é fixo. Com a 8 manual e medida, ele proporia
+  tirar a 8 da BBM 005, e o `DefenceManager` recusaria. Ler a lista do config
+  no `plan_for_village` antes de `HAUL_SCAVENGE` virar `True`.
 - ~~**Recrutamento cedido ao gerente**~~: sem objeto desde que o gerente
   venceu (§8.84.4). As 71 aldeias têm a fila medida. Volta a valer se o
   gerente voltar.
@@ -9882,7 +10050,13 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
   paladino alcança. Medir antes de mexer: o mesmo ataque simulado com e sem o
   +30% contra um relatório real de defesa numa aldeia coberta.
 
-Pendências achadas na §8.81 (fora do escopo):
+Pendências achadas na §8.81 e na §8.85 (fora do escopo):
+- **O `FarmManager` soma como farm o relatório em que a nossa aldeia é o
+  alvo** (§8.85.3). A 98660, conquistada às 17:54 de 03/11, saiu de "low
+  profile" às 22:24 e somou o ataque de um terceiro (`35517 -> BBM 072`) às
+  00:17. O bot não atacou a aldeia, então o estrago é só estatístico. Mas uma
+  aldeia nossa atacada por outros parece um farm bom. Filtrar por origem nossa
+  e por alvo fora de `REGISTRY.ids`.
 - **Apoio do `DefenceManager` com "viagem desconhecida".** No processo de
   30/10, das 12:10 às 13:35, saíram 21 linhas `Support X -> Y liberado: eta
   …h mas viagem desconhecida, enviando`, 7 delas para a BBM 067 (atacada, eta

@@ -5,7 +5,9 @@ import json
 import logging
 import re
 
+from core import coin_ledger
 from core.extractors import Extractor
+from pages import academy
 
 
 class SnobManager:
@@ -230,7 +232,8 @@ class SnobManager:
         if self.has_enough(data, request=request):
             get_post = f"game.php?village={self.village_id}&screen=snob&action=coin"
             data = {"coin_mint_count": "1", "count": "1", "h": self.wrapper.last_h}
-            self.wrapper.post_url(url=get_post, data=data)
+            res = self.wrapper.post_url(url=get_post, data=data)
+            self._report_mint(result, res)
             return True
         else:
             # is_incomplete e' "a aldeia esta' poupando para um nobre": com
@@ -240,6 +243,30 @@ class SnobManager:
             if request:
                 self.is_incomplete = True
             return False
+
+    def _report_mint(self, before_html, res):
+        """
+        `TWB_MINT` da moeda cunhada aqui (§8.85), pelo contador da conta na
+        academia antes (a tela lida) e depois (a resposta do POST). Sem o
+        contador nos dois lados não há linha: o que entra é o que o servidor
+        contou. Nunca impede a cunhagem.
+        """
+        try:
+            after_html = res.text if res is not None else None
+            before, after = academy.coin_total(before_html), academy.coin_total(after_html)
+            msg = coin_ledger.mint_event("post", before=before, after=after)
+            if msg:
+                self.wrapper.reporter.report(self.village_id, "TWB_MINT", msg)
+            elif after_html is not None and (before is None or after is None):
+                # 15º padrão: sem esta linha, um markup diferente na resposta
+                # faria o registro nunca disparar, em silêncio.
+                self.logger.info("Moeda: contador da conta ilegível (antes %s, depois %s), "
+                                 "cunhagem não registrada", before, after)
+            elif after_html is not None:
+                self.logger.info("Moeda: o contador da conta não subiu (%s -> %s), "
+                                 "cunhagem não registrada", before, after)
+        except Exception as exc:  # noqa: BLE001 -- instrumento, não pode custar a moeda
+            self.logger.debug("Moeda: registro falhou: %r", exc)
 
     def has_enough(self, build_item, request=True):
         """

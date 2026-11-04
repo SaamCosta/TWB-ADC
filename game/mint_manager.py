@@ -37,6 +37,7 @@ import os
 import re
 import time
 
+from core import coin_ledger
 from core import mint_store
 from core.village_label import village_label
 from core.filemanager import FileManager
@@ -58,6 +59,10 @@ ITEM_LABELS = {
 }
 
 AUTO_MINT_SECONDS = 8 * 3600
+# A sessão do hub é relida este tanto ANTES do fim (§8.85): é a leitura que
+# dá as moedas dela ao plano das bandeiras. A seguinte cai logo depois do fim
+# e renova a sessão, então custa 1 GET a mais por sessão.
+AUTO_MINT_FINAL_READ = 10 * 60
 FLAG_BONUS_DEFAULT_SECONDS = 48 * 3600
 # Sessão do hub que não deu para confirmar, ou leitura que falhou: tenta de
 # novo depois disto, não a cada checkpoint (são dezenas por ciclo).
@@ -509,19 +514,44 @@ class MintManager:
             html = self.wrapper.last_response.text if self.wrapper.last_response is not None else html
 
         state = academy.auto_minting_state(html)
+        progress = self._report_session(hub, html)
         if state == "can_start":
             ok, note = self._start_auto_mint(hub)
             if ok:
-                hub_state.update(next_at=now + AUTO_MINT_SECONDS + 60, started_at=int(now))
+                hub_state.update(next_at=now + AUTO_MINT_SECONDS - AUTO_MINT_FINAL_READ,
+                                 started_at=int(now))
                 logger.info("Cunhagem: sessão automática de 8 h iniciada no hub %s (%s)", village_label(hub), note)
             else:
                 logger.warning("Cunhagem: sessão automática do hub %s não iniciou: %s", village_label(hub), note)
         elif state == "no_start_button":
-            # Provavelmente já em andamento (markup não capturado ainda):
-            # reconfere em 30 min em vez de supor 8 h.
-            hub_state.update(next_at=now + 1800)
+            # Em andamento (a tabela da sessão, amostra de 10/10): reconfere em
+            # 30 min, ou logo depois do fim, o que vier antes.
+            next_at = now + 1800
+            if progress and progress.get("end"):
+                next_at = min(next_at, max(now + 60, progress["end"] + 60))
+            hub_state.update(next_at=next_at)
             self._save_sample("snob_no_start_button", html)
         mint_store.save_state(self.state)
+
+    def _report(self, vid, msg):
+        """Uma linha `TWB_MINT` (§8.85); o instrumento nunca derruba a cunhagem."""
+        if not msg:
+            return
+        try:
+            self.wrapper.reporter.report(vid, "TWB_MINT", msg)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Cunhagem: registro TWB_MINT falhou: %r", e)
+
+    def _report_session(self, vid, html):
+        """Moedas da sessão automática em andamento, e o contador da conta."""
+        progress = academy.auto_minting_progress(html)
+        total = academy.coin_total(html)
+        if progress:
+            self._report(vid, coin_ledger.mint_event(
+                "auto", coins=progress["coins"], end=progress.get("end"), total=total))
+        else:
+            self._report(vid, coin_ledger.mint_event("total", total=total))
+        return progress
 
     def _mint_max(self, vid, html):
         """Cunha o "(N)" da academia de uma vez. Devolve quantas mandou."""
@@ -535,7 +565,12 @@ class MintManager:
         if res is None:
             logger.warning("Cunhagem: cunhagem de %d moeda(s) em %s sem resposta", n, village_label(vid))
             return 0
-        logger.info("Cunhagem: %d moeda(s) cunhada(s) de uma vez em %s", n, village_label(vid))
+        before, after = academy.coin_total(html), academy.coin_total(res.text)
+        msg = coin_ledger.mint_event("post", before=before, after=after)
+        self._save_sample("coin_post" if msg else "coin_post_unconfirmed", res.text)
+        self._report(vid, msg)
+        logger.info("Cunhagem: %d moeda(s) cunhada(s) de uma vez em %s (contador da conta %s -> %s)",
+                    n, village_label(vid), before, after)
         return n
 
     def _start_auto_mint(self, vid):

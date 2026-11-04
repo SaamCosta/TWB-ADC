@@ -20,6 +20,7 @@ confirmado). O `MintManager` salva a primeira resposta de cada tipo em
 """
 import json
 import re
+import time
 
 STORAGE_ITEM_RE = re.compile(r"train\.storage_item\s*=\s*(\{.+?\})")
 FILL_MAX_RE = re.compile(r'id="coin_mint_fill_max"[^>]*>\s*\((\d+)\)')
@@ -82,3 +83,58 @@ def current_flag(html):
     if not match:
         return ()
     return int(match.group(1)), int(match.group(2))
+
+
+# Contador da CONTA na academia (§8.85), amostras de 05/10 e 10/10 do hub:
+#   <td>Limite atual de nobres:</td><td>59</td>
+#   <td>Falta ainda para o limite de nobres 60:</td> <td class="nowrap">23 moedas de ouro</td>
+#   <td>Já guardadas para o limite de nobres 60:</td> <td class="nowrap">37 moedas de ouro</td>
+# Subir do limite L para L+1 custa L+1 moedas (9 + 42 = 51 no limite 50;
+# 23 + 37 = 60 no limite 59), então o total cunhado é L(L+1)/2 + guardadas.
+LIMIT_RE = re.compile(r"Limite atual de nobres:\s*</td>\s*<td>\s*(\d+)\s*</td>")
+STORED_RE = re.compile(
+    r"guardadas para o limite de nobres (\d+):\s*</td>\s*<td[^>]*>\s*(\d+) moedas")
+MISSING_RE = re.compile(
+    r"Falta ainda para o limite de nobres (\d+):\s*</td>\s*<td[^>]*>\s*(\d+) moedas")
+# Sessão automática em andamento (amostras dos mesmos dias):
+#   O que já foi coletado até agora:   24 Moedas de ouro </div> <div>Fim: hoje às 20:03:20</div>
+AUTO_COINS_RE = re.compile(r"coletado at\S* agora:\s*(\d+)\s+Moedas de ouro")
+AUTO_END_RE = re.compile(r"Fim:\s*(hoje|amanh\S*)\s+\S+\s+(\d{1,2}):(\d{2}):(\d{2})")
+SERVER_DATE_RE = re.compile(r'id="serverDate">\s*(\d{2})/(\d{2})/(\d{4})')
+
+
+def coin_total(html):
+    """
+    Moedas que a CONTA já cunhou, pelo contador da academia, ou None se a tela
+    não o traz (ou se ele não fecha: falta + guardadas tem que dar L+1).
+    """
+    html = html or ""
+    limit, stored, missing = LIMIT_RE.search(html), STORED_RE.search(html), MISSING_RE.search(html)
+    if not (limit and stored and missing):
+        return None
+    lim = int(limit.group(1))
+    if int(stored.group(1)) != lim + 1 or int(missing.group(1)) != lim + 1:
+        return None
+    if int(stored.group(2)) + int(missing.group(2)) != lim + 1:
+        return None
+    return lim * (lim + 1) // 2 + int(stored.group(2))
+
+
+def auto_minting_progress(html):
+    """
+    {"coins": moedas da sessão automática até agora, "end": fim (epoch local)}
+    ou None sem sessão na tela. O fim vem relativo ("hoje"/"amanhã às"), então
+    a data é a `serverDate` da própria página; `end` fica None sem ela.
+    """
+    html = html or ""
+    coins = AUTO_COINS_RE.search(html)
+    if not coins:
+        return None
+    out = {"coins": int(coins.group(1)), "end": None}
+    end, day = AUTO_END_RE.search(html), SERVER_DATE_RE.search(html)
+    if end and day:
+        d, m, y = (int(g) for g in day.groups())
+        hh, mm, ss = (int(g) for g in end.groups()[1:])
+        base = time.mktime((y, m, d, hh, mm, ss, 0, 0, -1))
+        out["end"] = int(base + (86400 if end.group(1) != "hoje" else 0))
+    return out

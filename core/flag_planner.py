@@ -26,9 +26,11 @@ não lido do texto):
   na BBM 062 (fazenda 17, +6%): 3.227 = piso(3.045 x 1,06); 3.045 é a fazenda
   17 sem bandeira (BBM 055, sombra do `game_data`). Só vale com a aldeia no
   teto de população; aí a tropa a mais rende o saque por população da aldeia.
-- **7, custo de moeda**: custo = nominal x (1 - d) (§8.80, BBM 002). Quanto a
-  aldeia cunha por hora o bot não registra (a sessão automática cunha sem
-  contar), então o valor é DESCONHECIDO e a bandeira de moeda fica onde está.
+- **7, custo de moeda**: custo = nominal x (1 - d) (§8.80, BBM 002). Valor =
+  moedas/h da aldeia x custo base x %: o recurso que a bandeira poupa. As
+  moedas vêm de `TWB_MINT` (`core/coin_ledger`, §8.85), conferidas pelo
+  contador da conta na academia; sem 24 h de registro, ou com moeda da conta
+  fora do registro, é DESCONHECIDO.
 - **8, capacidade de saque**: farm e coleta. Farm: a carga mandada
   (`TWB_FARM`) vezes a fração dos relatórios que voltaram cheios (só esses
   carregariam mais; os outros não estão limitados pela carga). Coleta: o JS
@@ -59,6 +61,7 @@ import os
 import re
 import time
 
+from core import coin_ledger
 from core import relic_planner as RP
 from core.templates import UNIT_CARRY, UNIT_POP
 
@@ -238,12 +241,13 @@ def sent_squad_event(village_id, option_id, unit_counts, carry_max, opt, carry_f
 
 def read_events(log_dir, now, window=max(FARM_WINDOW, SCAV_WINDOW)):
     """
-    `TWB_FARM` e `TWB_GATHER_SQUAD` do reporter dentro de `window`:
+    `TWB_FARM`, `TWB_GATHER_SQUAD` e `TWB_MINT` do reporter dentro de `window`:
     {"farm": [(ts, vid, carry)], "squads": {squad_id: (ts_visto, vid, dict)},
-     "squads_since": primeiro registro de coleta (o instrumento começou ali)}.
+     "squads_since": primeiro registro de coleta (o instrumento começou ali),
+     "mint": [(ts, vid, dict)]}.
     """
     since = now - window
-    out = {"farm": [], "squads": {}, "squads_since": None}
+    out = {"farm": [], "squads": {}, "squads_since": None, "mint": []}
     for path in glob.glob(os.path.join(log_dir, "twb_*.log")):
         try:
             if os.path.getmtime(path) < since:
@@ -277,6 +281,13 @@ def read_events(log_dir, now, window=max(FARM_WINDOW, SCAV_WINDOW)):
                     if out["squads_since"] is None or ts < out["squads_since"]:
                         out["squads_since"] = ts
                     out["squads"].setdefault(sq.get("squad"), (ts, vid, sq))
+                elif event == "TWB_MINT":
+                    try:
+                        ev = json.loads(msg)
+                    except ValueError:
+                        continue
+                    if isinstance(ev, dict):
+                        out["mint"].append((ts, vid, ev))
     return out
 
 
@@ -416,7 +427,10 @@ def flag_rate(flag_type, inputs, haul_scavenge=None):
     if flag_type == DEFENCE_TYPE:
         return 0.0, "defesa: só sob ataque, pelo caminho de defesa"
     if flag_type == COIN_TYPE:
-        return None, "cunhagem: o bot não registra quanto cada aldeia cunha por hora"
+        coin_h = inputs.get("coin_h")
+        if coin_h is None:
+            return None, inputs.get("coin_why") or "cunhagem: nenhum registro de moeda (TWB_MINT) ainda"
+        return coin_h * coin_ledger.COIN_BASE_TOTAL / 100.0, inputs.get("coin_why")
     if flag_type == 1:
         if not inputs.get("base_prod_h"):
             return None, "produção desconhecida (%s)" % (inputs.get("base_source") or "sem nível de mina")
@@ -706,9 +720,11 @@ class InputCache:
                                    unit_costs=unit_costs, village_prod=village_prod,
                                    base_production=base_production)
         haul = haul_inputs(vids, events, full, now, managed)
+        coins = coin_ledger.mint_inputs(vids, events.get("mint"), now)
         for vid in vids:
             entry = inputs.setdefault(vid, {})
             entry.update(haul.get(vid) or {})
+            entry.update(coins.get(vid) or {})
             data = managed.get(vid) or {}
             pop = data.get("population") or {}
             entry["pop"], entry["pop_max"] = pop.get("used"), pop.get("max")
@@ -719,7 +735,8 @@ class InputCache:
         self.data = {"managed": managed, "inputs": inputs,
                      "haul_scavenge": haul_scavenge_measured(events.get("squads")),
                      "squads": len(events.get("squads") or {}),
-                     "squads_since": events.get("squads_since")}
+                     "squads_since": events.get("squads_since"),
+                     "mints": len(events.get("mint") or [])}
         self.at = now
         return self.data
 
