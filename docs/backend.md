@@ -10051,6 +10051,13 @@ ainda mostram o código velho (`haul_scavenge: None`, zero passos).
 - 72 aldeias: 21 com valor desconhecido (20 de moeda, que esperam o
   `TWB_MINT`) e 18 com valor 0.
 
+**Decisão do usuário, 04/11 às 17:24:** `flag_value.mode: "on"` e
+`world.flag_manual_types: [3, 5]`, ou seja, o 8 voltou à ordem normal. O bot
+foi religado por WMI às 17:24:46, com o código do `feaa4a0`. Antes de parar,
+o Hunter não tinha nenhuma saída nos 130 min seguintes. Em "on", a ordem fixa
+deixa de agir em tempo de paz (o caminho de defesa segue igual). Com o piso de
+50/h, a primeira avaliação não deve trocar nada.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -10098,13 +10105,10 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
   os 8% inteiros, e a coleta não fica mais longa (a duração sai da carga
   nominal). `HAUL_SCAVENGE = True`, e o tipo 8 vale o saque/h sem a
   elasticidade.
-- ⏳ **Ligar `flag_value.mode: "on"` é decisão do usuário** (§8.85.7). Com o
-  saque medido, o plano tem 8 passos e +109/h no total, desde que o 8 saia de
-  `world.flag_manual_types` (hoje `[3, 5, 8]`, posto só para proteger a
-  medição). Nenhum passo passa o piso de 50/h, então "on" hoje só para a ordem
-  fixa. Junto com o "on", tirar o 8 das manuais: em "on" a BBM 005 mantém a
-  8/7 pelo valor (169,6/h). Em `dry_run`, a ordem fixa trocaria a 8/7 pela 6/4
-  assim que o cooldown acabar.
+- ⏳ **`flag_value.mode: "on"` ligado em 04/11 às 17:24** (§8.85.7), com o 8
+  fora das manuais. Falta o campo: a primeira avaliação com `act=True` (os
+  freios seguram os 8 passos, todos abaixo de 50/h), a BBM 005 mantendo a 8/7
+  e a primeira troca de verdade quando o tipo 7 for medido.
 - ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
   71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
   de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
