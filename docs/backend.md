@@ -9783,9 +9783,10 @@ não só "paga/não paga".
 
 ## 8.85 `P-BAND-VALOR` — a 8/7 de volta na BBM 005 e a moeda medida por aldeia (2026-11-04)
 
-Continuação da §8.84. Esta seção tem duas partes: o campo (a bandeira de saque
-de volta, §8.81 e relíquias) e o instrumento que faltava para a bandeira de
-moeda ter valor.
+Continuação da §8.84. Esta seção tem quatro partes: o campo (§8.81 e
+relíquias), a bandeira de saque medida com fator > 1 (**paga, e sem alongar a
+coleta**), o instrumento que faltava para a bandeira de moeda ter valor, e o
+plano com o saque medido.
 
 ### 1. O campo antes da fase
 
@@ -9823,14 +9824,59 @@ of cool down" antes de mexer. Do ciclo seguinte em diante vale o `[3, 5, 8]`.
 A 6/5 que a BBM 005 soltou foi para a BBM 070 às 13:35 (`Setting flag 6
 level 5`). Foi a ordem fixa dando a bandeira à próxima aldeia que a pedia.
 
-⚠️ **O planejador não lê o `flag_manual_types`.** `core/flag_planner.MANUAL_TYPES`
-é `(3, 5)` fixo no código. Hoje não muda nada: a 8 tem valor desconhecido, e a
-aldeia com bandeira de valor desconhecido fica fora do plano. Quando
-`HAUL_SCAVENGE` virar `True`, o plano pode propor tirar a 8 da BBM 005, e o
-`DefenceManager` recusa (ela é manual). Fica um passo no `/flags` que nunca
-sai. Está na fila da §9.
+O planejador não lia o `flag_manual_types`: `core/flag_planner.MANUAL_TYPES`
+era `(3, 5)` fixo. Com `HAUL_SCAVENGE` em `True`, ele proporia tirar a 8 da BBM
+005, e o `DefenceManager` recusaria. ✅ Corrigido na mesma fase (§8.85.6).
 
-### 3. §8.81: o caso não foi exercitado
+### 3. A bandeira de saque paga na coleta do bot, e não alonga a coleta
+
+A BBM 005 mandou as 4 coletas entre 16:42:35 e 16:43:25, com o processo das
+13:09 (código do `8393fa7`). As 4 linhas `TWB_GATHER_SQUAD` têm `src: "sent"`
+e `factor: 1.08`. O `carry_max` postado foi `calcMaxLoot(unidades, 1,08)`, por
+exemplo 1.896 leves → 151.680 × 1,08 = 163.814. Às ~16:46, com as coletas em
+andamento, `tools/probe_scavenge_carry.py 38997` (1 GET, sem POST, 3,5 h
+depois da sondagem anterior) deu "PAGA a bandeira" nas 4:
+
+| opção | unidades | nominal | guardado | saque prometido | saque nominal |
+|---|---|---|---|---|---|
+| 1 | 1.896 leves | 151.680 | 163.814 | 16.381 (lf 0,10) | 15.168 |
+| 2 | 591 machados, 684 leves | 60.630 | 65.480 | 16.370 (0,25) | 15.158 |
+| 3 | 3.034 machados | 30.340 | 32.767 | 16.384 (0,50) | 15.170 |
+| 4 | 115 lanças, 1.735 machados | 20.225 | 21.843 | 16.382 (0,75) | 15.169 |
+
+Das três leituras da §8.84.2, a que vale é: **o servidor guarda o postado
+quando ele cabe em carga × fator**. Em 03/11, com fator 1, ele tinha
+limitado o postado a carga × 1. O processo era o novo, que posta
+`carga × fator`, então a leitura não separa "recalcula" de "limita". Para o
+bot, as duas dão o mesmo resultado.
+
+**E a coleta não ficou mais longa.** O `return_time` do servidor menos a hora
+do envio deu 47.808 / 47.779 / 47.813 / 47.809 s. A fórmula do JS com a carga
+**nominal** dá 47.808 / 47.780 / 47.814 / 47.810 s. Com a carga × 1,08 daria
+51.108 / 51.077 / 51.114 / 51.110 s, ou seja, ~3.300 s a mais. A duração sai
+da carga nominal, então a bandeira rende o percentual **inteiro** do saque/h.
+A elasticidade que o planejador aplicava ao tipo 8 (+8% de carga rendendo
+~1-2% por hora, `scavenge_elasticity`) estava errada para ela. Continua certa
+para a população, onde a tropa a mais aumenta a carga nominal.
+
+O que mudou:
+- `HAUL_SCAVENGE = True`;
+- o tipo 8 passa a usar `scav_loot_h`, o saque/h das coletas registradas, e
+  não mais `scav_rate_h`, a mesma taxa com elasticidade (que o tipo 6 segue
+  usando);
+- `tests/test_scavenge_carry.py::test_flag_paid_and_duration_stays_nominal_0411`,
+  com o estado real em `tests/fixtures/scavenge_carry_br143.json` →
+  `paid_0411`. A fixture traz as 4 coletas da tela (só `unit_carry_factor` e
+  `options`, sem nome de aldeia nem de jogador), os 4 POST sem o `h` e as
+  linhas do envio. O teste confere: postado = guardado = carga × 1,08; saque =
+  guardado × lf; duração = a da carga nominal, a ±2 s; a da carga com fator
+  maior em > 3.000 s; e a linha da tela prova. Mutantes: o tipo 8 de volta à
+  elasticidade e o `HAUL_SCAVENGE` de volta a `None`, os dois pegos.
+- Os três testes de "a linha do envio não prova" tinham ficado vazios com o
+  `True` (prova e não-prova davam o mesmo resultado). Agora rodam com
+  `HAUL_SCAVENGE = None`, dentro de `try/finally`.
+
+### 4. §8.81: o caso não foi exercitado
 
 No log de 03/11 houve 112 linhas `descartado da selecao automatica`, todas por
 `tribe_reservation`. Não houve nenhuma `cancelado`, `o mapa ainda diz barbara`,
@@ -9856,7 +9902,30 @@ a nossa aldeia é o **alvo**, de qualquer origem. **Nenhum ataque do bot saiu
 contra a 98660 depois das 17:54** (0 POST e 0 linhas `Attacks` sobre ela). O
 estrago é só na estatística, e foi para a fila da §9.
 
-### 4. Moeda por aldeia: o registro que faltava
+### 5. Relíquias: a Sela saiu da 98660 antes de ativar
+
+A conferência pedida era "uma leitura de Relics, depois de ~16:12, sem
+divergência e com a Sela ativa na 98660". Não deu para fazer assim:
+- às 13:10 e 13:19 a Sela estava inativa na 98660 (3,0 h e 2,8 h);
+- às 16:24 (leitura disparada por um `ReportRelicUnlocked`) ela aparece
+  **parada** ("melhor anfitriã BBM 048 vale 28/h"). As paradas caíram de 11 para
+  4, e o Machado de má qualidade passou a estar inativo na BBM 073 (91742) por
+  mais 11,1 h.
+
+O bot fez **0 POST de relíquia** no processo de hoje. Então quem tirou a Sela e
+mexeu nas paradas foi o usuário ou o jogo (9º padrão: o bot não mexeu). A
+leitura das 16:24 vale pelo resto do que se pedia: `cobertura calculada bate
+com a visão geral do jogo`, com 9 equipadas, 1 inativa e 0 WARNING. O lado
+"inativa → ativa na anfitriã" segue sem ser visto, e ganhou um caso novo: o
+Machado na BBM 073, até ~03:30 de 05/11.
+
+À parte: **`relics.fuse` está `true` no `config.json`**, e a §9 dizia
+"desligada" (16º padrão: a nota é memória, o arquivo é o fato). Às 13:10 o plano
+propôs fundir Roda, Serrote e Machado de má qualidade, com resultado "relíquia
+aleatória Resistente (sem valor)", e a execução não fundiu (0/2 no dia). Às
+13:19 já não havia fusão possível.
+
+### 6. Moeda por aldeia: o registro que faltava
 
 A bandeira de moeda estava "não medida" nas 20 aldeias que a usam, porque o
 bot cunhava sem contar. No reporter (`twb_*.log`, 5 processos) não há uma
@@ -9943,6 +10012,45 @@ inteira: **125 arquivos, 0 falhas**.
 edições. O primeiro valor do tipo 7 aparece 24 h depois do primeiro
 `TWB_MINT`.
 
+**Também nesta fase:** o `plan()` e o `plan_for_village()` recebem
+`manual_types`, e o `DefenceManager.flag_value_logic` passa
+`self.flag_manual_types`, que é a mesma lista da guarda dele. O padrão segue
+`(3, 5)`. Teste: `test_flag_value.py::test_plan_respects_configured_manual_types`,
+com controle, e o mutante "ignora a lista" é pego.
+
+### 7. O plano com o saque medido
+
+Calculado fora do bot às ~17:00, só lendo o disco. Foram as mesmas entradas do
+`InputCache` (191 coletas registradas, `haul_scavenge: True`), o `WorldConfig`
+do br143 e o inventário da leitura de bandeiras mais nova (BBM 006, 16:49).
+O processo que roda é o das 13:09, então o `/flags` e o `cache/flags.json`
+ainda mostram o código velho (`haul_scavenge: None`, zero passos).
+
+- **Com `flag_manual_types: [3, 5, 8]`** (o de agora): **0 passos**. A 8 é
+  manual, então o plano não dá as que sobram.
+- **Com `[3, 5]`** (o 8 de volta à ordem normal): **8 passos, +109/h no
+  total**. Todos tiram uma bandeira de recrutamento (valor 0: a fila nunca é
+  gargalo) e põem uma 8 da sobra:
+
+| aldeia | de | para | ganho/h |
+|---|---|---|---|
+| BBM 051 (57580) | 2/5 | 8/6 | +43 |
+| BBM 053 (78755) | 2/4 | 8/6 | +40 |
+| BBM 059 (84243) | 2/2 | 8/5 | +8 |
+| BBM 068 (87765) | 2/6 | 8/4 | +6 |
+| BBM 054 (81571) | 2/4 | 8/4 | +6 |
+| BBM 063 (82671) | 2/4 | 8/3 | +3 |
+| BBM 062 (84620) | 2/2 | 8/3 | +2 |
+| BBM 067 (88755) | 6/7 | 8/2 | +1 |
+
+- **Nenhum passa no piso `min_gain_h: 50`.** Ligar "on" hoje não troca nada.
+  O efeito seria só parar a ordem fixa, que hoje deu a 2/1 à BBM 073 e a 6/5 à
+  BBM 070, as duas com valor 0 medido.
+- **A BBM 005 vale 169,6/h com a 8/7** (21,2/h por ponto), e nada no
+  inventário bate isso. Com `[3, 5]` o plano a mantém, porque a 8/7 não sai.
+- 72 aldeias: 21 com valor desconhecido (20 de moeda, que esperam o
+  `TWB_MINT`) e 18 com valor 0.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -9969,15 +10077,15 @@ sondagem do servidor antes, e os P3 (A26-13, 15 a 21). A ordem está no fim da �
 
 **Relíquias (`P-RELIQUIA`, §8.74): ✅ fechado em 2026-10-30.** Fases 0, 1
 (§8.75), 2 (§8.77), 3 (§8.78, equipar e mover, ligada em campo), 4 (§8.79,
-fundir, desligada: nada vale ainda) e 5 (§8.80, efeitos no cálculo: nenhum
-muda, o bot já lê tudo da tela com o bônus). Sobram as pendências pequenas
-abaixo.
+fundir; `relics.fuse` está `true` no `config.json` desde antes de 04/11,
+§8.85.5) e 5 (§8.80, efeitos no cálculo: nenhum muda, o bot já lê tudo da
+tela com o bônus). Sobram as pendências pequenas abaixo.
 
 ~~**O furo do trem contra aldeia nossa**~~ (fim da §8.77): ✅ **feito em
 2026-10-30** (§8.81). A pergunta "o alvo já é nosso?" agora é feita no envio no
 horário do Hunter (no topo do `_run` e no segundo exato), na seleção
 automática e manual, no farm, e lê as visões gerais além do config. Falta o
-campo (sinais no fim da §8.81). ⏳ **Ainda não exercitado** (§8.85.3): a
+campo (sinais no fim da §8.81). ⏳ **Ainda não exercitado** (§8.85.4): a
 primeira seleção depois da conquista da 98660 rodou com as duas fontes de mapa
 já dando a aldeia como nossa. Para exercitar, a seleção tem que rodar entre a
 conquista e a atualização do mapa.
@@ -9986,20 +10094,24 @@ conquista e a atualização do mapa.
 que cada tipo afeta foi medido (produção aditiva, população = piso, saque
 entra na carga da coleta com fator 1,08), e o plano usa o modelo das
 relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
-- ⏳ **2ª etapa do saque na coleta (§8.84, §8.85.2).** O bot manda
-  `carry_max` = carga × fator, como o JS. Desde 04/11 às 13:12 a 8/7 está na
-  BBM 005, e `world.flag_manual_types` é `[3, 5, 8]`. Falta a leitura: com a
-  primeira coleta do bot de lá em andamento (POST `send_squads&village=38997`
-  no `session_latest.log`), `python tools/probe_scavenge_carry.py 38997`. Se
-  der "PAGA", fazer `HAUL_SCAVENGE = True` em `core/flag_planner.py`, com
-  teste. Se der "NÃO paga", fazer `False`, e a 8 sai das manuais.
+- ~~**2ª etapa do saque na coleta**~~ ✅ **medida em 04/11 (§8.85.3)**: paga
+  os 8% inteiros, e a coleta não fica mais longa (a duração sai da carga
+  nominal). `HAUL_SCAVENGE = True`, e o tipo 8 vale o saque/h sem a
+  elasticidade.
+- ⏳ **Ligar `flag_value.mode: "on"` é decisão do usuário** (§8.85.7). Com o
+  saque medido, o plano tem 8 passos e +109/h no total, desde que o 8 saia de
+  `world.flag_manual_types` (hoje `[3, 5, 8]`, posto só para proteger a
+  medição). Nenhum passo passa o piso de 50/h, então "on" hoje só para a ordem
+  fixa. Junto com o "on", tirar o 8 das manuais: em "on" a BBM 005 mantém a
+  8/7 pelo valor (169,6/h). Em `dry_run`, a ordem fixa trocaria a 8/7 pela 6/4
+  assim que o cooldown acabar.
 - ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
   71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
   de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
   Ligar `flag_value.mode: "on"` depois da leitura acima e de um dia de plano
   estável no `/flags` (agora as linhas `src: "sent"` dão o saque/h da coleta,
   então o plano vai mudar quando a coleta for medida).
-- ⏳ **Cunhagem por aldeia: instrumento feito em 04/11 (§8.85.4)**, e ainda sem
+- ⏳ **Cunhagem por aldeia: instrumento feito em 04/11 (§8.85.6)**, e ainda sem
   campo. O `TWB_MINT` entra no próximo processo. Conferir três coisas:
   - a primeira `cache/mint/samples/coin_post*.html`. Se for
     `coin_post_unconfirmed`, ou se aparecer INFO "contador da conta ilegível"
@@ -10008,10 +10120,8 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
   - a leitura final do hub (`src: "auto"`, ~10 min antes do fim);
   - 24 h depois, o `/flags` com o tipo 7 medido nas 20 aldeias, ou
     "desconhecido" com o motivo.
-- **O planejador não lê `world.flag_manual_types`** (§8.85.2): o
-  `MANUAL_TYPES = (3, 5)` dele é fixo. Com a 8 manual e medida, ele proporia
-  tirar a 8 da BBM 005, e o `DefenceManager` recusaria. Ler a lista do config
-  no `plan_for_village` antes de `HAUL_SCAVENGE` virar `True`.
+- ~~**O planejador não lê `world.flag_manual_types`**~~ ✅ corrigido em 04/11
+  (§8.85.6): o `DefenceManager` passa a lista ao plano.
 - ~~**Recrutamento cedido ao gerente**~~: sem objeto desde que o gerente
   venceu (§8.84.4). As 71 aldeias têm a fila medida. Volta a valer se o
   gerente voltar.
@@ -10035,8 +10145,10 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 - ~~**Campo da Fase 4**~~ (§8.80): ✅ **riscado em 03/11** (§8.84.5). A Fogueira
   saiu da BBM 068 antes de ativar ali, mas a conferência valeu pelo que pedia:
   4 leituras de Relics com `cobertura calculada bate com a visão geral do jogo`
-  (9 equipadas, 0 inativas) e 0 WARNING. Fica um caso para o lado "inativa na
-  anfitriã": a Sela de má qualidade na 98660, inativa até ~16:12 de 04/11.
+  (9 equipadas, 0 inativas) e 0 WARNING. O lado "inativa → ativa na anfitriã"
+  segue sem ser visto: a Sela saiu da 98660 antes de ativar, e não foi o bot
+  (§8.85.5). O caso novo é o Machado de má qualidade na BBM 073 (91742), inativo
+  até ~03:30 de 05/11.
 - **Relíquia de "capacidade de saque"** (§8.80): nenhuma na conta. Se aparecer
   uma, medir numa aldeia coberta se a coleta e o farm carregam mais que o
   `UNIT_CARRY` diz (relatório de farm que volta cheio; a coleta mostra o saque
@@ -10052,7 +10164,7 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
 
 Pendências achadas na §8.81 e na §8.85 (fora do escopo):
 - **O `FarmManager` soma como farm o relatório em que a nossa aldeia é o
-  alvo** (§8.85.3). A 98660, conquistada às 17:54 de 03/11, saiu de "low
+  alvo** (§8.85.4). A 98660, conquistada às 17:54 de 03/11, saiu de "low
   profile" às 22:24 e somou o ataque de um terceiro (`35517 -> BBM 072`) às
   00:17. O bot não atacou a aldeia, então o estrago é só estatístico. Mas uma
   aldeia nossa atacada por outros parece um farm bom. Filtrar por origem nossa

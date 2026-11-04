@@ -878,7 +878,8 @@ class DefenceManager:
             result = flag_planner.plan_for_village(
                 self.village_id, own, self.flag_supply, self.flag_effects,
                 now=now, world=self.value_world,
-                vids=set(self.my_other_villages or {}) or None)
+                vids=set(self.my_other_villages or {}) or None,
+                manual_types=self.flag_manual_types)
         except Exception as exc:  # noqa: BLE001 -- plano nunca derruba o ciclo
             self.logger.warning("Bandeiras por valor: plano falhou em %s: %r",
                                 village_label(self.village_id), exc)

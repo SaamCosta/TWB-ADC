@@ -36,11 +36,13 @@ não lido do texto):
   carregariam mais; os outros não estão limitados pela carga). Coleta: o JS
   do jogo (`Scavenging.dd2ec0.js`) fixa a carga no envio por
   `calcMaxLoot(unidades, village.unit_carry_factor)`. Se a bandeira entra
-  nesse fator é o que `HAUL_SCAVENGE` guarda; as coletas lidas na tela
-  (`TWB_GATHER_SQUAD`, saque lido / carga nominal) medem sozinhas, e as do
-  envio (`src: "sent"`) dão o saque/h da aldeia. E o tempo
-  da coleta cresce com a carga (expoente 0,45 sobre carga², ver
-  `scavenge_elasticity`): +8% de carga rende bem menos que +8% por hora.
+  nesse fator é o que `HAUL_SCAVENGE` guarda (medido: entra, §8.85); as
+  coletas lidas na tela (`TWB_GATHER_SQUAD`, saque lido / carga nominal) medem
+  sozinhas, e as do envio (`src: "sent"`) dão o saque/h da aldeia. A duração
+  da coleta sai da carga NOMINAL (o fator não a alonga, medido em 04/11 na
+  BBM 005), então a bandeira rende o percentual inteiro do saque/h, sem a
+  elasticidade. A elasticidade (`scavenge_elasticity`, expoente 0,45 sobre
+  carga²) vale para tropa a mais, que é o caso da população (tipo 6).
 - **3 e 5** (ataque, sorte): manuais, o bot nunca põe nem tira.
   **4** (defesa): só pelo caminho de ataque; fora dele vale 0.
 
@@ -82,17 +84,15 @@ MANUAL_TYPES = (3, 5)
 DEFENCE_TYPE = 4
 COIN_TYPE = 7
 
-# A bandeira de saque aumenta a coleta QUE O BOT MANDA? Metade medida em
-# 30/10: com a 8/7 equipada à mão na BBM 005, a tela de coleta leu
-# `unit_carry_factor` 1,08 (1 em todas as leituras sem a bandeira), então o
-# jogo aplica a bandeira à carga da coleta. Em 03/11 (§8.84): o servidor NÃO
-# guarda o `carry_max` postado (o bot mandou 149.145 para 1.864 leves e ele
-# guardou 149.120 = 1.864 x 80, com fator 1), e o bot passou a mandar
-# `calc_max_loot(unidades, fator)` como o JS. Falta ver uma coleta do bot com
-# fator > 1 pagar a mais na tela; até lá, None. As linhas do envio (`src:
-# "sent"`) não servem de prova, só as da tela (`squad_event`) ou este valor
-# posto à mão depois de uma leitura (`tools/probe_scavenge_carry.py`).
-HAUL_SCAVENGE = None
+# A bandeira de saque aumenta a coleta QUE O BOT MANDA? Sim, medido em 04/11
+# (§8.85): com a 8/7 na BBM 005, o bot mandou as 4 coletas com
+# `calc_max_loot(unidades, 1,08)` e `tools/probe_scavenge_carry.py` leu, com
+# elas em andamento, `carry_max` = carga x 1,08 guardado nas 4 (151.680 ->
+# 163.814 na opção 1) e o saque prometido 8% acima do nominal (16.381 contra
+# 15.168). Antes (03/11, §8.84) o servidor tinha guardado a carga das unidades
+# e não o postado, com fator 1. As linhas do envio (`src: "sent"`) não provam
+# nada sozinhas; a prova é esta leitura.
+HAUL_SCAVENGE = True
 
 POP_CAPPED = 0.98
 SCAV_MIN_SPAN = 6 * 3600
@@ -476,10 +476,12 @@ def _haul_parts(inputs, haul_scavenge):
         scav = 0.0
     elif haul_scavenge is None:
         why.append("coleta: não medido se a bandeira de saque entra nela")
-    elif inputs.get("scav_rate_h") is None:
+    elif inputs.get("scav_loot_h") is None:
         why.append("coleta: menos de %d h de registro" % (SCAV_MIN_SPAN // 3600))
     else:
-        scav = inputs["scav_rate_h"] / 100.0
+        # Saque/h inteiro, sem elasticidade: o fator não alonga a coleta (a
+        # duração sai da carga nominal, §8.85).
+        scav = inputs["scav_loot_h"] / 100.0
     return farm, scav, why
 
 
@@ -524,12 +526,16 @@ def flag_value(flag, inputs, effects=None, haul_scavenge=None):
 
 # -- plano ----------------------------------------------------------------------
 
-def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.0, labels=None):
+def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.0, labels=None,
+         manual_types=None):
     """
     `villages` = {vid: {"current": [t, l] | None, "can_change": bool,
     "under_attack": bool}}; `supply` = {tipo: {nível: quantidade}} que SOBRA.
+    `manual_types` = `world.flag_manual_types` (padrão `MANUAL_TYPES`): o
+    plano não tira nem dá esses tipos, como o `DefenceManager`.
     Devolve {"steps": [...], "values": {vid: {...}}}.
     """
+    manual = {int(t) for t in (MANUAL_TYPES if manual_types is None else manual_types)}
     supply = {int(t): {int(l): int(n) for l, n in (lv or {}).items() if int(n) > 0}
               for t, lv in (supply or {}).items()}
     values = {}
@@ -547,7 +553,7 @@ def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.
                        "why": why, "rates": rates}
     eligible = {vid for vid, v in (villages or {}).items()
                 if v.get("can_change", True) and not v.get("under_attack")
-                and (current[str(vid)] is None or current[str(vid)][0] not in MANUAL_TYPES)
+                and (current[str(vid)] is None or current[str(vid)][0] not in manual)
                 and values[str(vid)]["value"] is not None}
     eligible = {str(v) for v in eligible}
     steps = []
@@ -556,7 +562,7 @@ def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.
         for vid in sorted(eligible):
             here = values[vid]["value"] or 0.0
             for t, levels in supply.items():
-                if t in MANUAL_TYPES or t == DEFENCE_TYPE:
+                if t in manual or t == DEFENCE_TYPE:
                     continue
                 for lvl, n in levels.items():
                     if n <= 0:
@@ -574,7 +580,7 @@ def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.
         gain, vid, t, lvl, val = best
         supply[t][lvl] -= 1
         old = current[vid]
-        if old and old[0] not in MANUAL_TYPES:
+        if old and old[0] not in manual:
             supply.setdefault(old[0], {})
             supply[old[0]][old[1]] = supply[old[0]].get(old[1], 0) + 1
         steps.append({
@@ -760,7 +766,7 @@ def village_table(managed, own_vid=None, own=None):
 
 
 def plan_for_village(vid, own, supply, effects=None, root=".", now=None, world=None,
-                     cache=None, labels=None, vids=None):
+                     cache=None, labels=None, vids=None, manual_types=None):
     """
     O plano da conta visto pela aldeia `vid`, que acabou de ler o inventário:
     `own` = {"current", "can_change", "under_attack", "pop", "pop_max"} dela,
@@ -785,7 +791,8 @@ def plan_for_village(vid, own, supply, effects=None, root=".", now=None, world=N
     if labels is None:
         labels = {v: "%s (%s)" % (m.get("name"), v) for v, m in data["managed"].items()
                   if m.get("name")}
-    result = plan(table, supply, inputs, effects, data["haul_scavenge"], labels=labels)
+    result = plan(table, supply, inputs, effects, data["haul_scavenge"], labels=labels,
+                  manual_types=manual_types)
     result["step"] = next((s for s in result["steps"] if s["vid"] == str(vid)), None)
     result["own"] = result["values"].get(str(vid))
     result["haul_scavenge"] = data["haul_scavenge"]

@@ -130,13 +130,19 @@ def test_scavenge_counts_only_when_a_bot_squad_paid_more():
     village = json.loads(FX["scavenge_village"])
     sq = village["options"]["1"]["scavenging_squad"]
     nominal_only = {1: (0, "1", json.loads(FP.squad_event("1", 1, sq, opts()["1"], 1.08)))}
-    check(FP.haul_scavenge_measured(nominal_only) is FP.HAUL_SCAVENGE, "saque nominal não prova nada")
     paid = dict(sq, unit_id=2, loot_res={"wood": 4150, "stone": 4150, "iron": 4150})
     more = {2: (0, "1", json.loads(FP.squad_event("1", 1, paid, opts()["1"], 1.08)))}
-    check(FP.haul_scavenge_measured(more) is True, "saque 1,08x: entra")
-    inputs = {"farm_carry_h": 0.0, "farm_full": 0.2, "scav_rate_h": 1000.0}
+    # Sem o valor posto à mão (True desde §8.85), senão os dois dão True.
+    saved, FP.HAUL_SCAVENGE = FP.HAUL_SCAVENGE, None
+    try:
+        check(FP.haul_scavenge_measured(nominal_only) is None, "saque nominal não prova nada")
+        check(FP.haul_scavenge_measured(more) is True, "saque 1,08x: entra")
+    finally:
+        FP.HAUL_SCAVENGE = saved
+    inputs = {"farm_carry_h": 0.0, "farm_full": 0.2, "scav_loot_h": 1000.0, "scav_rate_h": 140.0}
     check(FP.flag_rate(8, inputs, haul_scavenge=None)[0] is None, "não medido: desconhecido")
-    check(FP.flag_rate(8, inputs, haul_scavenge=True)[0] == 10.0, "medido: 1%% da taxa com elasticidade")
+    check(FP.flag_rate(8, inputs, haul_scavenge=True)[0] == 10.0,
+          "medido: 1%% do saque/h inteiro, sem a elasticidade (§8.85)")
     check(FP.flag_rate(8, inputs, haul_scavenge=False)[0] == 0.0, "refutado: só o farm (0)")
 
 
@@ -185,10 +191,10 @@ def test_haul_inputs_from_recorded_squads():
 def base_inputs():
     return {
         "a": {"recruit_busy": {"barracks": 0.1}, "recruit_h": {"barracks": 50.0},
-              "farm_carry_h": 0.0, "farm_full": 0.2, "scav_rate_h": 90000.0},
+              "farm_carry_h": 0.0, "farm_full": 0.2, "scav_loot_h": 90000.0},
         "b": {"base_prod_h": {"wood": 4800.0, "stone": 4800.0, "iron": 4800.0}},
-        "c": {"farm_carry_h": 0.0, "scav_rate_h": 90000.0},
-        "d": {"scav_rate_h": 90000.0},
+        "c": {"farm_carry_h": 0.0, "scav_loot_h": 90000.0},
+        "d": {"scav_loot_h": 90000.0},
     }
 
 
@@ -207,6 +213,18 @@ def test_plan_moves_spare_haul_to_zero_value_recruit():
     check(p2["steps"] == [], "saque não medido: nada troca")
 
 
+def test_plan_respects_configured_manual_types():
+    # §8.85: com a 8 em `world.flag_manual_types`, o plano não tira a 8 da
+    # aldeia (BBM 005 em 04/11) nem dá as 8 que sobram, como o DefenceManager.
+    villages = {"a": {"current": [8, 1]}, "x": {"current": [2, 2]}}
+    inputs = {"a": {"scav_loot_h": 90000.0}, "x": {"scav_loot_h": 90000.0, "recruit_busy": {}}}
+    p = FP.plan(villages, {"8": {"7": 1}}, inputs, haul_scavenge=True)
+    check(len(p["steps"]) == 1 and p["steps"][0]["to"] == [8, 7], "controle (3, 5): a 8/7 sai: %s" % p["steps"])
+    p = FP.plan(villages, {"8": {"7": 1}}, inputs, haul_scavenge=True, manual_types=[3, 5, 8])
+    check(p["steps"] == [], "com a 8 manual: nada sai, nada entra: %s" % p["steps"])
+    check(p["values"]["a"]["value"] is not None, "o valor dela continua visível no plano")
+
+
 def test_plan_chain_returns_dropped_flag_to_supply():
     inputs = {"x": {"base_prod_h": {"wood": 4800.0, "stone": 4800.0, "iron": 4800.0}},
               "y": {"base_prod_h": {"wood": 1000.0, "stone": 1000.0, "iron": 1000.0}}}
@@ -219,7 +237,7 @@ def test_plan_chain_returns_dropped_flag_to_supply():
 def test_plan_ignores_villages_outside_the_account():
     managed = {"a": {"flags": {"flag_state_confirmed": True, "current_flag": [2, 2]}},
                "lost": {"flags": {"flag_state_confirmed": True, "current_flag": [2, 2]}}}
-    inputs = {"a": dict(base_inputs()["a"], scav_rate_h=1000.0), "lost": base_inputs()["a"]}
+    inputs = {"a": dict(base_inputs()["a"], scav_loot_h=1000.0), "lost": base_inputs()["a"]}
     cache = FakeCache(managed, inputs)
     p = FP.plan_for_village("a", {"current": [2, 2], "can_change": True}, {8: {7: 1}},
                             cache=cache, now=NOW, vids=["a"])
@@ -410,6 +428,7 @@ for fn in [
     test_gather_reports_every_squad_underway,
     test_haul_inputs_from_recorded_squads,
     test_plan_moves_spare_haul_to_zero_value_recruit,
+    test_plan_respects_configured_manual_types,
     test_plan_chain_returns_dropped_flag_to_supply,
     test_brakes,
     test_plan_ignores_villages_outside_the_account,

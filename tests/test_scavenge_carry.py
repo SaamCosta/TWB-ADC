@@ -154,6 +154,45 @@ def test_server_keeps_unit_carry_not_the_posted_value():
               "opção %s: saque = carga guardada x loot_factor" % opt)
 
 
+def test_flag_paid_and_duration_stays_nominal_0411():
+    """§8.85: a 8/7 na BBM 005, as 4 coletas do bot e a tela com elas em andamento."""
+    day = FX["paid_0411"]
+    factor = day["unit_carry_factor"]
+    check(factor == 1.08, "a tela leu o fator da bandeira")
+    check(len(day["posted"]) == 4, "4 POST")
+    for line in day["posted"]:
+        q = urllib.parse.parse_qs(line.split(" ", 1)[1])
+        opt = q["squad_requests[0][option_id]"][0]
+        units = {k.split("][")[-1].rstrip("]"): int(v[0]) for k, v in q.items()
+                 if "[unit_counts]" in k and int(v[0])}
+        sq = day["options"][opt]["scavenging_squad"]
+        got = {u: int(n) for u, n in sq["unit_counts"].items() if int(n)}
+        check(got == units, "opção %s: as unidades são as postadas" % opt)
+        posted_cm = int(q["squad_requests[0][candidate_squad][carry_max]"][0])
+        nominal, with_factor = FP.calc_max_loot(units, 1), FP.calc_max_loot(units, factor)
+        check(posted_cm == with_factor == sq["carry_max"],
+              "opção %s: postado = guardado = carga x 1,08 (%s, %s, %s)" % (
+                  opt, posted_cm, sq["carry_max"], with_factor))
+        lf = FX["scavenge_options"][opt]["loot_factor"]
+        loot = sum(sq["loot_res"].values())
+        check(loot == int(sq["carry_max"] * lf + 0.5), "opção %s: saque = guardado x loot_factor" % opt)
+        check(loot > nominal * lf * 1.07, "opção %s: 8%% acima do nominal" % opt)
+        # A duração sai da carga NOMINAL: o fator não alonga a coleta.
+        elapsed = sq["return_time"] - day["sent"][opt]["sent_line_ts"]
+        opt_t = FX["scavenge_options"][opt]
+        d_nominal = FP.scavenge_duration(nominal, opt_t)
+        d_factor = FP.scavenge_duration(with_factor, opt_t)
+        check(abs(elapsed - d_nominal) <= 2, "opção %s: duração %d = a da carga nominal %.0f" % (
+            opt, elapsed, d_nominal))
+        check(d_factor - elapsed > 3000, "opção %s: a da carga com fator daria %.0f" % (opt, d_factor))
+        check(FP.haul_scavenge_measured({"x": (0, "38997", json.loads(FP.squad_event(
+            "38997", opt, sq, opt_t, factor)))}) is True, "opção %s: a linha da tela prova" % opt)
+    check(FP.HAUL_SCAVENGE is True, "o valor medido está no código")
+    rate, _ = FP.flag_rate(8, {"farm_carry_h": 0.0, "scav_loot_h": 1000.0, "scav_rate_h": 140.0},
+                           haul_scavenge=FP.HAUL_SCAVENGE)
+    check(rate == 10.0, "1%% do saque/h inteiro, sem a elasticidade: %s" % rate)
+
+
 # -- o bot ------------------------------------------------------------------------
 
 HOME = {"spear": 115, "sword": 0, "axe": 5310, "spy": 45, "light": 2531, "heavy": 0,
@@ -211,18 +250,24 @@ def test_sent_lines_feed_the_rate_but_never_prove_the_flag():
             fh.write("%d - 38997 - TWB_GATHER_SQUAD - %s\n" % (ts, msg))
     ev = FP.read_events(tmp, NOW)
     check(len(ev["squads"]) == 3, "3 envios lidos: %d" % len(ev["squads"]))
-    check(FP.haul_scavenge_measured(ev["squads"]) is FP.HAUL_SCAVENGE,
-          "linha de envio com carry_max x 1,08 não prova a bandeira")
-    # Mesmo que um dia a linha do envio traga saque acima do nominal (a conta
-    # do bot, não a do servidor), ela não vira prova (13º padrão).
-    inflated = dict(json.loads(FP.sent_squad_event("38997", 1, {"light": 1864}, 161050, opt, 1.08, NOW)))
-    inflated["loot"] = round(inflated["nominal"] * 1.08 * inflated["lf"])
-    check(FP.haul_scavenge_measured({"x": (NOW, "38997", inflated)}) is FP.HAUL_SCAVENGE,
-          "envio com saque x 1,08 não prova a bandeira")
-    proof = dict(inflated)
-    proof.pop("src")
-    check(FP.haul_scavenge_measured({"x": (NOW, "38997", proof)}) is True,
-          "controle: a mesma linha vinda da tela prova")
+    # Sem o valor posto à mão (True desde §8.85), senão prova e não-prova
+    # dão o mesmo True e os três casos abaixo não distinguem nada.
+    saved, FP.HAUL_SCAVENGE = FP.HAUL_SCAVENGE, None
+    try:
+        check(FP.haul_scavenge_measured(ev["squads"]) is None,
+              "linha de envio com carry_max x 1,08 não prova a bandeira")
+        # Mesmo que um dia a linha do envio traga saque acima do nominal (a conta
+        # do bot, não a do servidor), ela não vira prova (13º padrão).
+        inflated = dict(json.loads(FP.sent_squad_event("38997", 1, {"light": 1864}, 161050, opt, 1.08, NOW)))
+        inflated["loot"] = round(inflated["nominal"] * 1.08 * inflated["lf"])
+        check(FP.haul_scavenge_measured({"x": (NOW, "38997", inflated)}) is None,
+              "envio com saque x 1,08 não prova a bandeira")
+        proof = dict(inflated)
+        proof.pop("src")
+        check(FP.haul_scavenge_measured({"x": (NOW, "38997", proof)}) is True,
+              "controle: a mesma linha vinda da tela prova")
+    finally:
+        FP.HAUL_SCAVENGE = saved
     out = FP.haul_inputs(["38997"], ev, ({}, 0.25), NOW)["38997"]
     check(out["scav_loot_h"] and out["scav_loot_h"] > 0, "saque/h da coleta sai das linhas de envio")
     # A mesma aldeia com uma linha da tela: o saque/h usa só as do envio.
@@ -250,6 +295,7 @@ def test_sent_event_without_option_table_is_silent():
 for fn in [
     test_port_matches_the_captured_js,
     test_server_keeps_unit_carry_not_the_posted_value,
+    test_flag_paid_and_duration_stays_nominal_0411,
     test_advanced_gather_posts_js_carry_max,
     test_basic_gather_posts_js_carry_max,
     test_sent_squads_are_recorded_and_refused_are_not,
