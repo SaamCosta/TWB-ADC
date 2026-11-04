@@ -10058,6 +10058,136 @@ o Hunter não tinha nenhuma saída nos 130 min seguintes. Em "on", a ordem fixa
 deixa de agir em tempo de paz (o caminho de defesa segue igual). Com o piso de
 50/h, a primeira avaliação não deve trocar nada.
 
+## 8.86 `P-BAND-VALOR` — campo da cunhagem e do "on", e o hub que não seria lido (2026-11-04)
+
+Continuação da §8.85. A fase foi pensada para rodar com 24 h de `TWB_MINT`,
+mas começou às 19:09 de 04/11, com o processo das 17:24 (código do `feaa4a0`)
+no ar havia 1 h 45 min. O que dependia de tempo ficou para a próxima fase: o
+tipo 7 medido, que só existe a partir de ~17:55 de 05/11, e as relíquias, que
+precisam passar das ~03:30 de 05/11. O que já dava para conferir mostrou um
+furo, e o furo foi corrigido.
+
+### 1. A resposta do POST da moeda traz o contador
+
+No `twb_1793823892.log` há duas linhas `TWB_MINT`, as duas do `coin_item`:
+- BBM 016 (34597), 17:55:15: `{"src": "post", "coins": 1, "before": 4887, "after": 4888}`;
+- BBM 018 (39472), 18:08:42: `before 4888, after 4889`.
+
+O `session_latest.log` não teve nenhum "Moeda: contador da conta ilegível"
+nem "não subiu". Portanto, **a resposta do POST `action=coin` é a tela da
+academia com o contador**, e o `coin_item` registra sem precisar reler a
+academia. Não existe `coin_post*.html` em `cache/mint/samples/` porque essa
+amostra é gravada só pelo `_mint_max` do hub, e o hub não foi lido no processo
+das 17:24 (item 2). A amostra continua a ser tirada na primeira cunhagem de
+lote do hub. Para o `coin_item`, as duas linhas acima já respondem à pergunta.
+
+### 2. A sessão do hub iniciada pelo processo antigo não seria lida
+
+O `cache/mint/state.json` tinha `hub: {started_at: 13:18:31, next_at:
+21:19:31}`, sem mais nada. A sessão de 8 h foi iniciada pelo processo das
+13:09, **anterior** à leitura final da §8.85.6, e ele marcou a volta para
+**fim + 60 s**. O `MintManager` carrega esse estado do disco uma vez, no
+`__init__`, e o processo novo herdou a volta das 21:19:31. Às 21:19 a sessão
+já acabou, e a tela não mostra mais "O que já foi coletado até agora". Na
+amostra de 10/10, a sessão cunha moeda a moeda, "assim que houver recursos
+suficientes", e o contador da conta sobe ao longo dela. Além disso, entre
+17:46 e 19:07, 7 doadoras mandaram ao hub ~677 mil de madeira e ~48 mil de
+ferro. O efeito seria:
+- as moedas dessa sessão entrariam no contador e em nenhuma linha `auto`;
+- o `mint_inputs` as veria como "moeda fora do registro";
+- todas as aldeias sem registro próprio ficariam **desconhecidas**, e não
+  zero, até a leitura das 17:55 sair da janela de 7 dias.
+
+Seria uma semana sem o tipo 7, que é o que esta linha de trabalho espera.
+
+**Correção:** `MintManager._hub_due`. A volta ao hub nunca passa da leitura
+final (início + 8 h − 10 min) **se essa leitura ainda não foi feita**. O
+`read_at`, novo no estado do hub, é gravado em toda leitura. Os dois que leem a
+volta passam pela função: o `_tick_hub` e o `next_due`, que encurta o sono. O
+`read_at` é gravado na **tentativa**, e não no sucesso. Gravado no sucesso,
+uma leitura final que falhasse na rede faria a volta cair no passado, e o hub
+seria relido a cada tick. Com a gravação na tentativa, a falha custa a sessão,
+como antes, e não vira rajada de GET.
+
+Teste: `test_coin_ledger.py::test_hub_herdado_sem_leitura_final_rele_antes_do_fim`,
+com o estado do disco (início, fim + 60, sem `read_at`) deslocado para a
+sessão da fixture de 10/10. O teste confere:
+- o `next_due` dá a leitura final;
+- 1 s antes, não lê;
+- na hora, registra `auto` 24 / fim / total 1807;
+- 5 min depois, não relê;
+- controle: com `read_at` depois da final, vale o `next_at`.
+
+Os dois mutantes, "ignora a leitura final" e "sem `read_at`" (que relê a cada
+tick), são pegos. Suíte: **125 arquivos, 0 falhas**.
+
+**Religado às 19:37:45 por WMI (pid 2580).** O trem bárbaro contra a 100124
+tinha o 4º nobre (51540) marcado para 19:36:49. Esperei o `schedules.json`
+marcá-lo `sent` e conferi que não havia outra saída pendente antes de parar.
+Esse religar reescreveu o `session_latest.log` (20º padrão). Os fatos do
+processo das 17:24 citados aqui foram lidos antes. O reporter (`twb_*.log`)
+continua inteiro.
+
+<!-- LEITURA_FINAL_HUB -->
+
+### 3. O "on": uma avaliação, nenhuma troca
+
+O processo das 17:24 tem uma linha só de `flag_value_logic(act=True)` com
+passo:
+
+> 17:35:21 Bandeiras por valor (agindo): BBM 063 (82671) trocaria tipo 2 nível
+> 4 (0/h) por tipo 8 nível 3 (2/h): +2/h -- ganho 2/h abaixo do piso de 50/h
+
+O `cache/flags.json` → `exec` tem só `streak` (`82671`, contagem 1), sem
+`history` e sem `days`. O `note_read` conta a leitura antes do freio, e o piso
+segura antes de a contagem importar, então o comportamento é o desenhado.
+Houve **0 `Setting flag`** no processo. A BBM 005 segue em `[8, 7]`
+(`cache/managed/38997.json`), e o `value_plan` dela ainda é o do dry-run das
+16:39, porque ela não rodou no processo novo antes do religar.
+
+O plano mais novo (19:29, `haul_scavenge: True`) tem os mesmos 8 passos da
+§8.85.7, com os números um pouco mais baixos: BBM 051 +39, 053 +37, 059 +20,
+068 +6, 063 +6, 054 +4, 062 +2, 067 +1. O tipo 7 está "1 h de registro, o
+piso é 24 h" nas 72 aldeias, como o desenho da §8.85.6 prevê.
+
+### 4. O custo de uma troca, para quando o piso for decidido
+
+- **O cooldown é de 24 h, lido do jogo:** `FlagsScreen.cooldown_hours = '24'`
+  na `screen=flags` capturada às 13:09 de 04/11
+  (`cache/debug/flags_38997_probe.html`), igual à de 05/10. Antes, a doc dizia
+  "24 h" sem fonte.
+- Nesse tempo, a aldeia que trocou não consegue pôr a bandeira de defesa
+  (tipo 4) quando um ataque chega. Esse é o custo real da troca.
+- **Quem é atacado:** nos relatórios do `cache/reports` dos últimos 7 dias,
+  com destino nosso e origem de fora, são 7 aldeias e 16 ataques:
+  - BBM 068 (87765): 4;
+  - BBM 069 (88481): 4;
+  - BBM 072 (98660): 3;
+  - BBM 073 (91742): 2;
+  - BBM 012 (41140), BBM 020 (32056) e BBM 011 (74690): 1 cada.
+
+  É piso, não contagem: só entram os relatórios que o `ReportManager` leu.
+- Dos 8 passos, **só a BBM 068 está nessa lista**, e o passo dela vale +6/h.
+- Os dois maiores (+39 e +37) são de aldeias sem ataque registrado na semana.
+  Com o piso de 50/h, nenhum passo sai.
+- O tamanho do ganho: +39/h em 24 h são ~940 de recurso. É pouco perto dos
+  169,6/h que a 8/7 rende na BBM 005.
+
+A decisão fica para depois do tipo 7. As 20 aldeias de moeda podem mudar o
+plano inteiro, porque podem liberar ou pedir bandeiras 7, e decidir o piso com
+o plano de hoje seria decidir sobre o conjunto errado (11º padrão). A proposta
+está na §9.
+
+### 5. O que não deu para ver
+
+- **Relíquias:** o Machado de má qualidade na BBM 073 fica inativo até ~03:30
+  de 05/11. Nenhuma leitura possível ainda.
+- **§8.81:** 0 linhas de `o mapa ainda diz barbara`, `ja e nosso` e `visao
+  geral relida` no processo das 17:24. Não houve conquista nova. Não
+  exercitado.
+- **O tipo 7 medido:** a primeira linha `TWB_MINT` é das 17:55:15 de 04/11, e
+  o piso de 24 h termina às ~17:55 de 05/11.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -10106,24 +10236,35 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
   nominal). `HAUL_SCAVENGE = True`, e o tipo 8 vale o saque/h sem a
   elasticidade.
 - ⏳ **`flag_value.mode: "on"` ligado em 04/11 às 17:24** (§8.85.7), com o 8
-  fora das manuais. Falta o campo: a primeira avaliação com `act=True` (os
-  freios seguram os 8 passos, todos abaixo de 50/h), a BBM 005 mantendo a 8/7
-  e a primeira troca de verdade quando o tipo 7 for medido.
+  fora das manuais. ✅ A primeira avaliação com `act=True` foi vista
+  (§8.86.3): BBM 063 +2/h, segurada pelo piso, 0 `Setting flag`, e a BBM 005
+  com a 8/7. Falta a primeira troca de verdade, que depende do tipo 7 medido e
+  do piso.
+- **Piso `min_gain_h`: decidir com o tipo 7 medido** (§8.86.4). O custo de uma
+  troca é o cooldown de 24 h (`FlagsScreen.cooldown_hours`), em que a aldeia
+  não põe a bandeira de defesa. Em 7 dias, 7 aldeias foram atacadas, e dos 8
+  passos de hoje só a BBM 068 está entre elas (passo de +6/h). Proposta, que
+  é decisão do usuário: baixar o piso para ~20/h e não trocar por valor em
+  aldeia atacada nos últimos 7 dias. Com o plano de hoje, isso daria 3 trocas
+  (+39, +37, +20/h). Antes, refazer a conta com o plano que tiver o tipo 7.
 - ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
   71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
   de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
   Ligar `flag_value.mode: "on"` depois da leitura acima e de um dia de plano
   estável no `/flags` (agora as linhas `src: "sent"` dão o saque/h da coleta,
   então o plano vai mudar quando a coleta for medida).
-- ⏳ **Cunhagem por aldeia: instrumento feito em 04/11 (§8.85.6)**, e ainda sem
-  campo. O `TWB_MINT` entra no próximo processo. Conferir três coisas:
-  - a primeira `cache/mint/samples/coin_post*.html`. Se for
-    `coin_post_unconfirmed`, ou se aparecer INFO "contador da conta ilegível"
-    no `coin_item`, a resposta do POST não traz o contador, e é preciso ler a
-    academia depois de cunhar;
-  - a leitura final do hub (`src: "auto"`, ~10 min antes do fim);
-  - 24 h depois, o `/flags` com o tipo 7 medido nas 20 aldeias, ou
-    "desconhecido" com o motivo.
+- ⏳ **Cunhagem por aldeia: instrumento feito em 04/11 (§8.85.6), campo em
+  andamento (§8.86).**
+  - ✅ A resposta do POST do `coin_item` traz o contador: há 2 `TWB_MINT`
+    `post` (4887 → 4888 → 4889) e 0 "ilegível".
+  - ✅ A sessão do hub iniciada pelo processo antigo não seria lida (volta
+    depois do fim). Corrigido com `MintManager._hub_due`; religado às 19:37.
+  - Falta a amostra `coin_post*.html` do `_mint_max` do hub, que sai na
+    primeira cunhagem de lote dele.
+  - Falta, a partir de ~17:55 de 05/11, o `/flags` com o tipo 7 medido nas
+    20 aldeias, ou "desconhecido" com o motivo. Se vier "a conta ganhou N
+    moeda(s) que o bot não registrou", procurar a sessão do hub que faltou
+    antes de culpar a mão do usuário.
 - ~~**O planejador não lê `world.flag_manual_types`**~~ ✅ corrigido em 04/11
   (§8.85.6): o `DefenceManager` passa a lista ao plano.
 - ~~**Recrutamento cedido ao gerente**~~: sem objeto desde que o gerente

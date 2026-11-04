@@ -289,6 +289,39 @@ def test_hub_que_inicia_a_sessao_marca_a_leitura_final():
 
 
 @_with_tmp_store
+def test_hub_herdado_sem_leitura_final_rele_antes_do_fim():
+    # §8.86: o estado do disco de 04/11, deixado por um processo anterior à
+    # leitura final (sessão iniciada às 13:18:31, volta às 21:19:31 = fim + 60,
+    # sem `read_at`). Os números são os do `cache/mint/state.json`, deslocados
+    # para o fim da sessão da fixture.
+    page = _page("running_1010", accented=True)
+    end = academy.auto_minting_progress(page)["end"]
+    started = end - 8 * 3600
+    final = end - mint_manager.AUTO_MINT_FINAL_READ
+    inherited = {"vid": "38409", "started_at": started, "next_at": end + 60}
+
+    mgr = _hub(HubWrapper(page))
+    mgr.state = {"hub": dict(inherited)}
+    mgr.route = {"hub": "38409"}
+    assert mgr.next_due() == final
+    mgr._tick_hub(final - 1)
+    assert mgr.wrapper.reporter.lines == []
+    mgr._tick_hub(final)
+    [(_, _, data)] = mgr.wrapper.reporter.lines
+    assert json.loads(data) == {"src": "auto", "coins": 24, "end": end, "total": 1807}
+    # Feita a leitura final, não relê a cada tick até o fim.
+    mgr._tick_hub(final + 300)
+    assert len(mgr.wrapper.reporter.lines) == 1
+    assert mgr.next_due() == end + 60
+
+    # Controle: leitura final já feita (read_at depois dela) vale o next_at.
+    mgr = _hub(HubWrapper(page))
+    mgr.state = {"hub": dict(inherited, read_at=final + 1)}
+    mgr._tick_hub(final + 300)
+    assert mgr.wrapper.reporter.lines == []
+
+
+@_with_tmp_store
 def test_mint_max_do_hub_registra_pelo_contador():
     # O "(N)" ao lado do campo, no markup do ACADEMY verbatim (lá é "(1)").
     before = _page("started_0510", accented=True) + '<a href="#" id="coin_mint_fill_max">(3)</a>'

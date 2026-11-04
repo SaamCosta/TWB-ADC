@@ -278,7 +278,7 @@ class MintManager:
             candidates.append(float(campaign["ends_at"]))
         hub_state = self.state.get("hub") or {}
         if self.route and cfg.get("hub_auto_mint", True):
-            candidates.append(float(hub_state.get("next_at") or now))
+            candidates.append(self._hub_due(hub_state) or now)
         if cfg.get("daily_auto_mint_enabled"):
             due, _ = daily_due(now, cfg.get("daily_auto_mint_time", "22:30"),
                                (self.state.get("daily") or {}).get("complete_date"))
@@ -496,12 +496,12 @@ class MintManager:
         if hub not in self.found_villages:
             return
         hub_state = self.state.setdefault("hub", {})
-        if hub_state.get("vid") == hub and now < float(hub_state.get("next_at") or 0):
+        if hub_state.get("vid") == hub and now < self._hub_due(hub_state):
             return
 
         res = self.wrapper.get_url("game.php?village=%s&screen=snob" % hub)
         html = res.text if res is not None else None
-        hub_state.update(vid=hub, next_at=now + HUB_RETRY_SECONDS)
+        hub_state.update(vid=hub, next_at=now + HUB_RETRY_SECONDS, read_at=int(now))
         cost = academy.coin_cost(html)
         if not cost:
             logger.warning("Cunhagem: academia do hub %s não leu; tento em 15 min", village_label(hub))
@@ -532,6 +532,23 @@ class MintManager:
             hub_state.update(next_at=next_at)
             self._save_sample("snob_no_start_button", html)
         mint_store.save_state(self.state)
+
+    @staticmethod
+    def _hub_due(hub_state):
+        """
+        Quando reler o hub: o `next_at`, mas nunca depois da leitura final da
+        sessão que o bot iniciou, se ela ainda não foi feita (§8.86). O estado
+        vem do disco: a sessão de 13:18 de 04/11 foi iniciada por um processo
+        anterior à leitura final, com volta marcada para depois do fim, e as
+        moedas dela não entrariam no registro.
+        """
+        due = float(hub_state.get("next_at") or 0)
+        started = float(hub_state.get("started_at") or 0)
+        if started:
+            final = started + AUTO_MINT_SECONDS - AUTO_MINT_FINAL_READ
+            if due > final and float(hub_state.get("read_at") or 0) < final:
+                due = final
+        return due
 
     def _report(self, vid, msg):
         """Uma linha `TWB_MINT` (§8.85); o instrumento nunca derruba a cunhagem."""
