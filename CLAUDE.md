@@ -101,6 +101,12 @@ Fluxo de push: `git add . → git commit -m "msg" → git push origin master`
   `bot_output.log`. Testes em `tests/test_bot_manager.py`, mais um smoke com
   processo real em `tests/smoke_bot_manager.py` (fora do glob da suíte de
   propósito: abre console de verdade; rodar na mão ao mexer em `BotManager`).
+- **Sessão do jogo (§8.87):** a extensão `browser_extension/` lê o `sid`
+  (HttpOnly, só `chrome.cookies` o lê) e posta em `POST /api/session` do
+  painel, que só aceita loopback + o `Origin` da extensão (id fixo pela `key`
+  do manifest) e prova com `_session_works` antes de gravar
+  `cache/session.json`. O bot adota `sid` novo no início do ciclo
+  (`WebWrapper.adopt_newer_session`). `cache/cookies.txt` segue como reserva.
 - **Cache (`cache/`)** — todo estado runtime persiste em JSON por diretório
   (`cache/attacks`, `cache/conquest`, `cache/managed`, `cache/zones.json`,
   `cache/hunter/schedules.json`, `cache/pvp_conquest`, etc). `.gitignore` cobre

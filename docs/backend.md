@@ -10241,20 +10241,154 @@ está na §9.
 - **O tipo 7 medido:** a primeira linha `TWB_MINT` é das 17:55:15 de 04/11, e
   o piso de 24 h termina às ~17:55 de 05/11.
 
+## 8.87 `P-PUBLICO` — Fase 2: a sessão do jogo sem copiar e colar (2026-11-04)
+
+O prompt da fase pedia "§8.84", que já existia (`P-BAND-VALOR`); este é o
+número seguinte.
+
+**Objetivo:** o testador entra no jogo no navegador e o bot recebe a sessão
+sem abrir o DevTools nem colar o cabeçalho `cookie:`.
+
+### 1. O que foi medido, candidato por candidato
+
+- **O `sid` é HttpOnly. Medido de duas formas.** (a) Sondagem do servidor
+  (`cache/_probe_cookie_flags.py`, `_probe_cookie_anon.py`, nomes e
+  atributos, nunca valores): uma tela de jogo logada **não** regrava o `sid`
+  (só `global_village_id` vem em `Set-Cookie`), e visita anônima ao portal e
+  ao mundo também não o cria (o portal grava `PHPSESSID` `HttpOnly`, e o mundo
+  manda para `/page/session-expired`). Ou seja, o `sid` nasce só no login, que
+  eu não posso fazer. (b) No navegador, pela própria extensão: o
+  `chrome.cookies` devolve os atributos que o servidor gravou, e o painel os
+  registra em `cache/session_intake.json`. Resultado de 04/11 23:29:
+  `sid` = **HttpOnly, Secure, host-only em `br143.tribalwars.com.br`, cookie
+  de sessão**; `br_auth` = HttpOnly, Secure, domínio `.tribalwars.com.br`,
+  persistente. São só esses dois que o navegador manda para o `game.php`, e
+  bastam (o `cid` não vai).
+- **(a) Tampermonkey `GM_cookie`: descartado.** A documentação diz que cookie
+  `httpOnly` é suportado "at the BETA versions of Tampermonkey only for now"
+  ([GM_cookie.list](https://www.tampermonkey.net/documentation.php?q=GM_cookie)),
+  e no Chrome MV3 o Tampermonkey ainda exige "Allow User Scripts" ou o modo do
+  desenvolvedor. O testador instalaria o beta, ligaria a chave e o script, e
+  ainda dependeria de uma API marcada como experimental.
+- **(c) Banco de cookies do navegador: fechado para Chrome e Edge.** O
+  `Local State` dos dois nesta máquina (Chrome 156, Edge 156) tem
+  `os_crypt.app_bound_encrypted_key`: os cookies estão cifrados com
+  app-bound encryption, que só o próprio navegador (com o serviço de elevação
+  dele) decifra. Contornar isso é técnica de *infostealer*, e não vou montar.
+  O Firefox guarda em claro (`cookies.sqlite`), mas o perfil daqui não tem
+  nenhum cookie do Tribal Wars: o usuário joga no Chrome, e um caminho só
+  para Firefox não atende o caso comum.
+- **(b) Extensão mínima (Manifest V3, `chrome.cookies`): escolhida.** Lê o
+  `sid` HttpOnly (medido acima) no navegador em que o usuário joga, e manda
+  para o painel local. O Chrome 156 não bloqueou o `fetch` do service worker
+  para `127.0.0.1` (o *Local Network Access* não pediu nada): 200 no log do
+  painel.
+
+### 2. O que foi feito
+
+- **`browser_extension/`** (Chrome, Edge e afins): `manifest.json`,
+  `background.js`, `popup.html/js`, `LEIA-ME.md`. Permissões: `cookies`,
+  `storage`, `alarms`; host só os 27 mercados do Tribal Wars (lidos do
+  seletor de idioma do `www.tribalwars.net`) e `127.0.0.1`/`localhost`. Há um
+  único `fetch` de envio, para `http://127.0.0.1:<porta>/api/session`.
+  - **Automático:** `chrome.cookies.onChanged` com `sid` novo num mundo →
+    espera 3 s (o login grava vários cookies) → envia. Ao instalar e ao abrir
+    o navegador, envia a sessão das abas de jogo abertas. Painel fechado:
+    tenta de novo a cada minuto (`alarms`). Não reenvia `sid` já aceito (guarda
+    só um sha256 de `host|sid`).
+  - **Popup:** mundo da aba, painel no ar ou não, "Enviar sessão agora",
+    porta (padrão 5000) e a chave do automático.
+  - **Id fixo:** o `manifest.json` carrega a chave pública (`key`), então a
+    extensão carregada sem compactação tem sempre o id
+    `gikdfeagglngbcaibghlkgmeaeemchdj`. A chave privada não foi guardada:
+    só serviria para empacotar `.crx`, e o id vem da pública.
+- **`POST /api/session`** (`webmanager/server.py`) com a lógica em
+  `core/session_intake.py`. A porta é mais estreita que o resto do painel:
+  - `Host` loopback (127.0.0.1, localhost, [::1]): contra DNS rebinding;
+  - `Origin` exatamente `chrome-extension://<o id acima>`. Página nenhuma
+    consegue mandar esse `Origin`, e outra extensão manda o id dela. Sem
+    `Origin` é recusado (o resto do painel deixa passar `curl`; aqui não há
+    cliente legítimo sem navegador, e quem tem terminal tem o `cookies.txt`);
+  - corpo `application/json`, que formulário HTML não envia sem preflight;
+  - URL `https://<mundo>.<mercado>/...` (sem `www.`, sem porta, sem
+    subdomínio a mais), `sid` presente, nomes e valores de cookie limpos;
+  - `config.json` de outro mundo → recusa sem ir ao jogo. Sem `config.json`
+    (primeiro uso, Fase 3), qualquer mundo serve.
+  - **Prova antes de gravar:** `WebWrapper._session_works`, o mesmo teste do
+    bot, sem o sono de 3–7 s e sem a espera de captcha (a classe
+    `_IntakeWrapper` faz como o `_PanelWrapper` do fórum de apoio: captcha
+    volta `None` na hora, e a resposta diz "resolva o captcha"). Recusada,
+    o `session.json` que existia fica intacto.
+  - O `cache/session.json` ganha `source: "extension"` e
+    `browser_user_agent` (o `navigator.userAgent`): a Fase 3 pode montar o
+    `config.json` com mundo, endpoint e user-agent sem perguntar nada. O
+    resultado (sem valores) vai para `cache/session_intake.json`, lido pelo
+    `GET /api/session`.
+- **Bot (`core/request.py`, `twb.py`):**
+  - a espera por sessão (`_wait_for_session`) vigia também o
+    `cache/session.json`: `sid` diferente do que o `start()` já recusou e do
+    mesmo mundo → um GET de prova. A mensagem de espera fala da extensão;
+  - **`adopt_newer_session()`**, no início de cada ciclo: com o bot rodando,
+    `sid` novo no arquivo (relogin no navegador) → um GET de prova; se falhar,
+    volta ao jar e aos cabeçalhos de antes (a página de sessão vencida apaga
+    o `x-csrf-token`) e não testa aquele `sid` de novo. Mesmo `sid` = zero
+    requisição;
+  - `WebWrapper.headers` virou cópia por instância (1º padrão: o painel já
+    criava um wrapper com outro user-agent no mesmo processo, e o dict era da
+    classe).
+
+### 3. O teste real
+
+Com o painel de teste na porta 5057 e o bot de produção rodando (processo das
+21:24, código antigo, não reiniciado), o usuário carregou a extensão no Chrome
+e clicou "Enviar sessão agora" numa aba do br143:
+- painel: `POST /api/session` 200, "sessao do br143 aceita e gravada", com os
+  atributos acima;
+- `tests/smoke_session_intake.py` (fora do glob da suíte), com o código novo
+  do `WebWrapper` e o user-agent do config: `adopt_newer_session()` com o jar
+  anterior → `False` sem requisição (o `sid` do Chrome era o mesmo que o bot
+  já usava, hash `6d04de02`), overview logado; `start()` lendo o
+  `session.json` que veio da extensão → `True`.
+
+**O que não foi exercitado em campo:** o envio automático no login
+(`onChanged`) e a adoção de um `sid` **diferente** com o bot rodando. Os dois
+pedem um relogin, que derrubaria a sessão do bot de produção, que roda com o
+código antigo e não adotaria. Estão cobertos por teste de lógica
+(`test_session_and_captcha.py`: espera vendo o arquivo, adoção, recusa que
+volta ao jar, outro mundo ignorado) e ficam para o primeiro relogin com o bot
+já reiniciado no código novo: no `session_latest.log`, `Sessao nova do
+cache/session.json adotada (fonte: extension)`.
+
+### 4. Testes
+
+`tests/test_session_intake.py` (novo): mundo de qualquer mercado e recusa de
+portal/http/porta/sufixo falso; porta (loopback, origem, JSON); payload; mundo
+do config; `accept` com wrapper falso (user-agent do config × do navegador,
+captcha, mundo errado sem requisição); o id recalculado da `key` do manifest e
+as permissões iguais a `TW_DOMAINS`; a rota recusando antes de provar e sem
+devolver valor de cookie. `test_session_and_captcha.py` ganhou 6 casos.
+Suíte 126 de 126 aqui; `python tools/export_public.py --test` com
+`browser_extension` no `INCLUDE`: trava limpa e 125 de 125 na árvore limpa.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
 1. ✅ Fase 1 (2026-11-02): auditoria, `tools/export_public.py`, árvore limpa
    verde.
-2. Fase 2: entrada de cookie sem copiar e colar. O `sid` é HttpOnly, então
-   `document.cookie` não o lê. Candidatos: userscript com `GM_cookie`, extensão
-   mínima com `chrome.cookies` mandando para o painel local, ou leitura do
-   banco de cookies do navegador. Sondar o que de fato lê o `sid` antes de
-   escolher.
+2. ✅ Fase 2 (2026-11-04, §8.87): extensão `browser_extension/` →
+   `POST /api/session` do painel → `cache/session.json`, provado antes de
+   gravar; o bot adota a sessão nova no início do ciclo. Falta ver em campo o
+   envio automático no relogin e a adoção de `sid` diferente (sinal no fim da
+   §8.87.3), depois de reiniciar o bot no código novo.
 3. Fase 3: webmanager: tirar o texto desnecessário, organizar a tela de
-   configuração e criar o primeiro uso sem `config.json` (os 500 da §8.83).
-4. Fase 4: README novo (instalação, cookie, painel) e o placeholder `nlc1` do
-   `config.example.json`.
+   configuração e criar o primeiro uso sem `config.json` (os 500 da §8.83). O
+   `cache/session.json` vindo da extensão já traz `server`, `endpoint` e
+   `browser_user_agent`, que é tudo o que o `TWB.manual_config()` pergunta no
+   console.
+4. Fase 4: README novo (instalação, extensão, painel; o passo a passo curto
+   está em `browser_extension/LEIA-ME.md`), o placeholder `nlc1` do
+   `config.example.json`, e o texto de `new_world_setup.py` que ainda manda
+   "dar a string de cookie ao bot".
 5. Fase 5: criar o repo público (commit `noreply`), apontar o
    `core/updater.py` para ele, e decidir com o usuário o destino deste fork
    público (apagar, ou manter com o vínculo já exposto no histórico).

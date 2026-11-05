@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "TWB - sessao para o bot",
+  "version": "1.0.0",
+  "description": "Manda a sessao do Tribal Wars deste navegador para o painel local do TWB (127.0.0.1). Nada sai da sua maquina.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApQX3EmSGcx8I/VHAtzJF1JyEgOC/Pk+gmn7MDRnTevToZDN4xPh16qa0GK38nKY3I6//fdp3lO1niJsEDl9R1KbEt2DirlZxoyaFANBBDpmRKYnv8+W2Dwpx0zmPGEGysRIDQ1hLHvp8UjtjI38Svud4wmJRcYAU/k6zG2f/zret+GUeZM7iNHnh8NA81f8qe1wWq0JGjBvUTKmrcKEZbxhTCTXO5+sXFP3LWA1M9bePlNJlcYTLypScbIFvyfNpu20n46unfU0r7+YzVRx9aZ/5lSouXne0yW/sR4MpITkW0oGiBGF6w99blN8dhX+8fSIfyE9AZKjfp42K1Ix0TwIDAQAB",
+  "permissions": [
+    "cookies",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "https://*.tribalwars.ae/*",
+    "https://*.plemena.com/*",
+    "https://*.divokekmeny.cz/*",
+    "https://*.tribalwars.dk/*",
+    "https://*.tribalwars.nl/*",
+    "https://*.tribalwars.net/*",
+    "https://*.tribalwars.co.uk/*",
+    "https://*.tribalwars.us/*",
+    "https://*.guerretribale.fr/*",
+    "https://*.die-staemme.de/*",
+    "https://*.fyletikesmaxes.gr/*",
+    "https://*.klanhaboru.hu/*",
+    "https://*.tribals.it/*",
+    "https://*.tribalwars.com/*",
+    "https://*.plemiona.pl/*",
+    "https://*.tribalwars.com.br/*",
+    "https://*.tribalwars.com.pt/*",
+    "https://*.tribalwars.works/*",
+    "https://*.triburile.ro/*",
+    "https://*.voynaplemyon.com/*",
+    "https://*.divoke-kmene.sk/*",
+    "https://*.vojnaplemen.si/*",
+    "https://*.guerrastribales.es/*",
+    "https://*.tribalwars.se/*",
+    "https://*.staemme.ch/*",
+    "https://*.tribalwars.asia/*",
+    "https://*.klanlar.org/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "TWB - sessao"
+  }
+}

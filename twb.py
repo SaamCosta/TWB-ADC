@@ -1240,6 +1240,10 @@ class TWB:
                 # §8.71: o tick de eventos fica parado ate a conquista do
                 # inicio deste ciclo rodar (ver `_events_armed` mais abaixo).
                 self._events_armed = False
+                # §8.87: sessao nova que a extensao do navegador mandou ao
+                # painel com o bot rodando (relogin). Sem requisicao quando o
+                # sid do cache/session.json e o mesmo da memoria.
+                self.wrapper.adopt_newer_session()
                 config = self.config()
                 if self.phase_forecast is None:
                     self.phase_forecast = PhaseForecast()

@@ -57,6 +57,7 @@ IDENTITY_FILE = os.path.join(ROOT, "cache", "export_identity.json")
 
 INCLUDE = [
     "core", "game", "pages", "templates", "tests", "webmanager", "readme",
+    "browser_extension",
     "twb.py", "manager.py", "new_world_setup.py",
     "config.example.json", "requirements.txt", "installer.bat", "start.bat",
     "README.md", "ConfigReadme.md", "CHANGELOG.md", "LICENSE.md", ".gitignore",

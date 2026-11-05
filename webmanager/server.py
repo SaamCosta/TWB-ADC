@@ -36,6 +36,11 @@ def reject_cross_origin_writes():
     """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return None
+    if request.path == "/api/session":
+        # A extensao do navegador posta com `Origin: chrome-extension://<id>`,
+        # que nunca e igual ao Host. A rota faz uma checagem MAIS estreita
+        # (so aquele id, so loopback, so JSON): core/session_intake.py.
+        return None
     origin = request.headers.get("Origin")
     if origin is None:
         # Sem Origin: ou e um cliente nao-navegador (curl), ou um navegador
@@ -188,6 +193,52 @@ def start_bot():
 def stop_bot():
     bm.stop()
     return jsonify(bm.status())
+
+@app.route('/api/session', methods=['POST'])
+def receive_session():
+    """
+    Sessao do jogo vinda da extensao `browser_extension/` (§8.87). Prova com
+    o mesmo teste do bot e so entao grava `cache/session.json`; o bot rodando
+    a adota no inicio do proximo ciclo, e o bot esperando, em ate 15 s.
+    Nunca loga nem devolve valor de cookie.
+    """
+    import logging
+    import time
+    from core import session_intake
+    from core.filemanager import FileManager
+
+    refusal = session_intake.request_refusal(
+        request.headers.get("Origin"), request.host, request.content_type)
+    if refusal:
+        return jsonify({"ok": False, "error": refusal}), 403
+    data, error = session_intake.parse_payload(request.get_json(silent=True))
+    if error:
+        return jsonify({"ok": False, "error": error}), 400
+    ok, message = session_intake.accept(data, DataReader.config_grab())
+    flags = session_intake.flags_summary(data["flags"])
+    logging.getLogger("SessionIntake").info(
+        "Extensao: %s -> %s [%s]", data["server"], message, flags)
+    FileManager.save_json_file({
+        "at": int(time.time()),
+        "server": data["server"],
+        "ok": ok,
+        "message": message,
+        "cookies": sorted(data["cookies"]),
+        "flags": data["flags"],
+    }, "cache/session_intake.json")
+    return jsonify({"ok": ok, "message": message, "server": data["server"],
+                    "flags": flags}), (200 if ok else 409)
+
+
+@app.route('/api/session', methods=['GET'])
+def session_intake_status():
+    """Para o popup da extensao saber que o painel esta no ar. So o ultimo
+    resultado (mundo, ok, mensagem), nenhum valor de cookie."""
+    from core.filemanager import FileManager
+    last = FileManager.load_json_file("cache/session_intake.json") or {}
+    return jsonify({"panel": "twb", "last": {k: last.get(k) for k in
+                                             ("at", "server", "ok", "message")}})
+
 
 @app.route('/bot/status', methods=['GET'])
 def bot_status():

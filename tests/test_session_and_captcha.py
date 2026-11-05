@@ -381,6 +381,129 @@ def test_start_nao_reprova_o_mesmo_texto():
           "o mesmo cookie recusado foi testado %d vezes" % len(wrapper.web.gets))
 
 
+# ------------------------------------------- sessao vinda da extensao (§8.87)
+
+def test_espera_aceita_sessao_gravada_pelo_painel():
+    # O painel prova e grava cache/session.json com o bot esperando; o bot
+    # tem que ver o sid novo sem ninguem tocar no cookies.txt.
+    wrapper, fm, clock, guard, notif = build(
+        [FakeResponse(url=LOGIN_URL), FakeResponse()],
+        files={}, session_json={"cookies": {"sid": "velho"}})
+    wrapper.COOKIE_POLL_SECONDS = 5
+    polls = {"n": 0}
+    original_load = fm.load_json_file
+
+    def load_late(path):
+        if path == "cache/session.json":
+            polls["n"] += 1
+            if polls["n"] == 4:
+                fm.json[path] = {"server": "br143", "source": "extension",
+                                 "browser_user_agent": "UA do navegador",
+                                 "cookies": {"sid": "novo", "cid": "1"}}
+        return original_load(path)
+
+    fm.load_json_file = load_late
+    try:
+        ok = wrapper.start()
+    finally:
+        restore()
+    check(ok is True, "a espera nao aceitou a sessao que o painel gravou")
+    check(wrapper.web.cookies.as_dict() == {"sid": "novo", "cid": "1"},
+          "jar errado: %r" % (wrapper.web.cookies.as_dict(),))
+    check(len(wrapper.web.gets) == 2,
+          "esperava 2 GETs (velho recusado, novo aceito), houve %d" % len(wrapper.web.gets))
+    saved = fm.json.get("cache/session.json", {})
+    check(saved.get("source") == "extension" and saved.get("browser_user_agent") == "UA do navegador",
+          "a regravacao perdeu a procedencia: %r" % (saved,))
+
+
+def test_espera_ignora_sessao_de_outro_mundo():
+    wrapper, fm, clock, guard, _ = build(
+        [FakeResponse(url=LOGIN_URL)], files={}, session_json=None)
+    wrapper.COOKIE_POLL_SECONDS = 1
+    fm.json["cache/session.json"] = None
+    original_read = fm.read_file
+
+    def read(path, encoding=None):
+        if path == WebWrapper.COOKIE_FILE:
+            if fm.reads.count(path) == 1:
+                fm.json["cache/session.json"] = {"server": "br142", "cookies": {"sid": "x"}}
+            elif fm.reads.count(path) >= 3:
+                raise KeyboardInterrupt
+        return original_read(path, encoding=encoding)
+
+    fm.read_file = read
+    try:
+        try:
+            wrapper.start()
+        except KeyboardInterrupt:
+            pass
+    finally:
+        restore()
+    check(wrapper.web.gets == [], "testou sessao de outro mundo: %r" % (wrapper.web.gets,))
+
+
+def test_adota_sessao_nova_com_bot_rodando():
+    wrapper, fm, clock, guard, _ = build([FakeResponse()])
+    wrapper.web.cookies.update({"sid": "velho", "cid": "1"})
+    fm.json["cache/session.json"] = {"server": "br143", "cookies": {"sid": "velho", "cid": "1"}}
+    try:
+        same = wrapper.adopt_newer_session()
+        gets_same = len(wrapper.web.gets)
+        fm.json["cache/session.json"] = {"server": "br143", "source": "extension",
+                                         "cookies": {"sid": "novo", "cid": "1"}}
+        adopted = wrapper.adopt_newer_session()
+    finally:
+        restore()
+    check(same is False and gets_same == 0, "mesmo sid custou requisicao")
+    check(adopted is True, "sessao nova nao foi adotada")
+    check(wrapper.web.cookies.as_dict().get("sid") == "novo", "jar segue com o velho")
+    check(fm.json["cache/session.json"].get("source") == "extension",
+          "regravacao perdeu a procedencia")
+
+
+def test_sessao_nova_recusada_volta_para_a_anterior():
+    # A recusa nao pode deixar o bot sem sessao nem com o csrf apagado (a
+    # pagina de sessao vencida nao tem csrf-token, e post_process o remove).
+    wrapper, fm, clock, guard, _ = build([FakeResponse(url=LOGIN_URL, text="portal")])
+    wrapper.web.cookies.update({"sid": "velho"})
+    wrapper.headers["x-csrf-token"] = "bom"
+    fm.json["cache/session.json"] = {"server": "br143", "cookies": {"sid": "ruim"}}
+    try:
+        first = wrapper.adopt_newer_session()
+        again = wrapper.adopt_newer_session()
+    finally:
+        restore()
+    check(first is False and again is False, "sessao recusada foi adotada")
+    check(wrapper.web.cookies.as_dict() == {"sid": "velho"},
+          "jar nao voltou: %r" % (wrapper.web.cookies.as_dict(),))
+    check(wrapper.headers.get("x-csrf-token") == "bom", "csrf nao voltou")
+    check(len(wrapper.web.gets) == 1, "o sid recusado foi testado de novo (%d GETs)"
+          % len(wrapper.web.gets))
+    check(fm.json["cache/session.json"]["cookies"] == {"sid": "ruim"},
+          "a recusa regravou o session.json")
+
+
+def test_adocao_ignora_outro_mundo():
+    wrapper, fm, clock, guard, _ = build([FakeResponse()])
+    wrapper.web.cookies.update({"sid": "velho"})
+    fm.json["cache/session.json"] = {"server": "br142", "cookies": {"sid": "outro"}}
+    try:
+        adopted = wrapper.adopt_newer_session()
+    finally:
+        restore()
+    check(adopted is False and wrapper.web.gets == [], "adotou sessao de outro mundo")
+
+
+def test_headers_por_instancia():
+    # Primeiro padrao: o painel cria wrappers proprios com outro user-agent.
+    a = WebWrapper(ENDPOINT, server="br143", endpoint=ENDPOINT)
+    b = WebWrapper(ENDPOINT, server="br143", endpoint=ENDPOINT)
+    a.headers["user-agent"] = "so do a"
+    check(b.headers["user-agent"] != "so do a", "headers compartilhado entre instancias")
+    check(WebWrapper.headers["user-agent"] != "so do a", "headers da classe mudou")
+
+
 # ---------------------------------------------------------------- captcha
 
 def test_captcha_get_retoma_sozinho():

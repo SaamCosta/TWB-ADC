@@ -60,6 +60,17 @@ class WebWrapper:
 
     def __init__(self, url, server=None, endpoint=None, reporter_enabled=False, reporter_constr=None):
         self.web = requests.session()
+        # Copia por instancia (primeiro padrao): `headers` no corpo da classe
+        # e um dict so para o processo inteiro, e o painel cria wrappers
+        # proprios (forum de apoio, sessao da extensao, §8.87) com outro
+        # user-agent e outro Origin.
+        self.headers = dict(self.headers)
+        # Campos a mais gravados no cache/session.json junto da sessao
+        # (§8.87: de onde veio e o user-agent do navegador que logou).
+        self.session_extra = {}
+        # sid do cache/session.json que ja foi testado e recusado em
+        # `adopt_newer_session`, para nao gastar um GET por ciclo nele.
+        self._rejected_sid = None
         self.auth_endpoint = url
         self.server = server
         self.endpoint = endpoint
@@ -371,13 +382,70 @@ class WebWrapper:
                 cookies[key] = value
         return cookies
 
+    SESSION_FILE = "cache/session.json"
+    # Campos do cache/session.json que nao sao a sessao em si e passam de uma
+    # gravacao para a outra (a Fase 3 le o user-agent do navegador dali).
+    SESSION_EXTRA_KEYS = ("source", "browser_user_agent")
+
     def _persist_session(self):
         """Grava a sessao **ja provada**. Nunca chamar antes do teste passar."""
-        FileManager.save_json_file({
+        data = {
             'endpoint': self.endpoint,
             'server': self.server,
             'cookies': {c.name: c.value for c in self.web.cookies}
-        }, "cache/session.json")
+        }
+        for key in self.SESSION_EXTRA_KEYS:
+            if self.session_extra.get(key):
+                data[key] = self.session_extra[key]
+        FileManager.save_json_file(data, self.SESSION_FILE)
+
+    def _take_extra(self, session_data):
+        self.session_extra = {k: session_data[k] for k in self.SESSION_EXTRA_KEYS
+                              if session_data.get(k)}
+
+    def _jar_sids(self):
+        # Iterar, e nao `cookies.get("sid")`: o jar pode ter o mesmo nome em
+        # dois dominios (o global_village_id ja aparece assim) e o `get`
+        # levanta CookieConflictError.
+        return {c.value for c in self.web.cookies if c.name == "sid"}
+
+    def adopt_newer_session(self):
+        """Troca para a sessao do `cache/session.json` se ela for outra.
+
+        §8.87: a extensao do navegador manda a sessao nova para o painel, que
+        a prova e grava ali, com o bot rodando. Sem isto o bot seguiria com o
+        `sid` velho na memoria ate reiniciar -- e o jogo derruba o velho
+        quando o jogador loga de novo. Chamado no inicio de cada ciclo.
+
+        Nao custa requisicao quando o `sid` do arquivo e o mesmo da memoria.
+        Quando e outro, um GET de prova; se falhar, volta ao jar e aos
+        cabecalhos de antes e nao tenta aquele `sid` de novo.
+        """
+        data = FileManager.load_json_file(self.SESSION_FILE)
+        cookies = (data or {}).get("cookies") or {}
+        new_sid = cookies.get("sid")
+        if not new_sid or new_sid in self._jar_sids() or new_sid == self._rejected_sid:
+            return False
+        if data.get("server") and self.server and data["server"] != self.server:
+            return False
+        previous_cookies = {c.name: c.value for c in self.web.cookies}
+        previous_headers = dict(self.headers)
+        previous_extra = self.session_extra
+        self._take_extra(data)
+        if self._session_works(cookies):
+            self.logger.info("Sessao nova do %s adotada (fonte: %s)",
+                             self.SESSION_FILE, data.get("source") or "arquivo")
+            return True
+        self.logger.warning(
+            "A sessao nova do %s nao autenticou; seguindo com a anterior",
+            self.SESSION_FILE)
+        self._rejected_sid = new_sid
+        self.session_extra = previous_extra
+        self.web.cookies.clear()
+        self.web.cookies.update(previous_cookies)
+        self.headers.clear()
+        self.headers.update(previous_headers)
+        return False
 
     def _session_works(self, cookies):
         """Carrega os cookies e diz se eles dao uma pagina de jogo logada.
@@ -415,9 +483,14 @@ class WebWrapper:
 
         Um arquivo nao tem limite de linha e pode ser escrito de fora do
         processo -- inclusive com o bot ja rodando e esperando.
+
+        §8.87: o caminho normal agora e a extensao do navegador
+        (`browser_extension/`), que manda a sessao ao painel; o painel a prova
+        e grava no `cache/session.json`, que a espera tambem vigia.
         """
-        session_data = FileManager.load_json_file("cache/session.json")
+        session_data = FileManager.load_json_file(self.SESSION_FILE)
         if session_data and session_data.get("cookies"):
+            self._take_extra(session_data)
             if self._session_works(session_data["cookies"]):
                 self.logger.info("Game Endpoint: %s", self.endpoint)
                 return True
@@ -425,6 +498,7 @@ class WebWrapper:
 
         raw = FileManager.read_file(self.COOKIE_FILE, encoding="utf-8-sig")
         if raw and raw.strip():
+            self.session_extra = {}
             if self._session_works(self._parse_cookie_string(raw)):
                 self.logger.info(
                     "Sessao carregada de %s. Game Endpoint: %s",
@@ -439,8 +513,10 @@ class WebWrapper:
     def _session_instructions(self):
         return (
             "Sem sessao utilizavel.\n"
-            "Cole a string de cookie do navegador (o cabecalho 'cookie:' inteiro) "
-            "no arquivo:\n"
+            "Com a extensao do bot no navegador (pasta browser_extension) e o "
+            "painel aberto, entre no jogo: a sessao chega sozinha.\n"
+            "Sem a extensao: cole a string de cookie do navegador (o cabecalho "
+            "'cookie:' inteiro) no arquivo:\n"
             "    %s\n"
             "Salve como UTF-8 e o bot comeca sozinho em ate %ds -- nao precisa "
             "reiniciar.\n"
@@ -449,21 +525,48 @@ class WebWrapper:
             % (FileManager.get_path(self.COOKIE_FILE), self.COOKIE_POLL_SECONDS)
         )
 
+    def _session_file_sid(self):
+        data = FileManager.load_json_file(self.SESSION_FILE) or {}
+        return ((data.get("cookies") or {}).get("sid")), data
+
     def _wait_for_session(self, tried=None):
-        """Espera um cookie utilizavel aparecer em `cache/cookies.txt`."""
+        """Espera um cookie utilizavel aparecer em `cache/cookies.txt` ou,
+        vindo da extensao pelo painel, em `cache/session.json` (§8.87)."""
         message = self._session_instructions()
         print(message)
-        self.logger.warning("Esperando uma sessao (cole o cookie em %s)", self.COOKIE_FILE)
+        self.logger.warning(
+            "Esperando uma sessao (extensao do navegador, ou cookie em %s)",
+            self.COOKIE_FILE)
         Notification.send(
-            "TWB esta sem sessao: cole a string de cookie em cache/cookies.txt")
+            "TWB esta sem sessao: entre no jogo com a extensao do bot, ou cole "
+            "o cookie em cache/cookies.txt")
         last_reminder = time.time()
+        # O sid que estava no arquivo quando a espera comecou ja foi recusado
+        # pelo `start()`; so um sid diferente vale um GET.
+        tried_sid, _ = self._session_file_sid()
         while True:
             time.sleep(self.COOKIE_POLL_SECONDS)
+            sid, session_data = self._session_file_sid()
+            other_world = (session_data.get("server") and self.server
+                           and session_data["server"] != self.server)
+            if sid and sid != tried_sid and not other_world:
+                tried_sid = sid
+                self._take_extra(session_data)
+                if self._session_works(session_data["cookies"]):
+                    self.logger.info(
+                        "Sessao aceita (%s). Game Endpoint: %s",
+                        session_data.get("source") or self.SESSION_FILE,
+                        self.endpoint)
+                    Notification.send("TWB: sessao aceita, iniciando.")
+                    return True
+                self.logger.warning(
+                    "A sessao nova do %s nao autenticou", self.SESSION_FILE)
             raw = FileManager.read_file(self.COOKIE_FILE, encoding="utf-8-sig")
             # `raw != tried` evita reprovar em laco o mesmo texto ja recusado --
             # cada tentativa custa uma requisicao ao jogo.
             if raw and raw.strip() and raw != tried:
                 tried = raw
+                self.session_extra = {}
                 if self._session_works(self._parse_cookie_string(raw)):
                     self.logger.info(
                         "Sessao aceita. Game Endpoint: %s", self.endpoint)

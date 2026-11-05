@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>TWB - sessao</title>
+<style>
+  body { font: 13px system-ui, sans-serif; width: 300px; margin: 12px; color: #222; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  .row { margin: 6px 0; }
+  .muted { color: #666; }
+  .ok { color: #2e7d32; }
+  .bad { color: #c62828; }
+  button { width: 100%; padding: 6px; margin-top: 6px; }
+  input[type=number] { width: 70px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1e1e1e; color: #ddd; }
+    .muted { color: #999; }
+    .ok { color: #81c784; }
+    .bad { color: #e57373; }
+  }
+</style>
+</head>
+<body>
+  <h1>TWB - sessao para o bot</h1>
+  <div class="row" id="world">Procurando o jogo nesta aba...</div>
+  <div class="row muted" id="panel"></div>
+  <button id="send" disabled>Enviar sessao agora</button>
+  <div class="row" id="result"></div>
+  <hr>
+  <div class="row">
+    <label><input type="checkbox" id="auto"> Enviar sozinho ao entrar no jogo</label>
+  </div>
+  <div class="row">
+    <label>Porta do painel: <input type="number" id="port" min="1" max="65535"></label>
+  </div>
+  <div class="row muted">Os cookies so vao para 127.0.0.1, o painel do bot nesta maquina.</div>
+  <script src="popup.js"></script>
+</body>
+</html>
