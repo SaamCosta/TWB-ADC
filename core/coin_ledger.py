@@ -32,6 +32,10 @@ MINT_MIN_SPAN = 24 * 3600
 # leituras (a sessão do hub é lida até ~10 min antes do fim).
 UNSEEN_MIN = 3
 UNSEEN_FRAC = 0.05
+# Sessão automática do hub (`mint_manager.AUTO_MINT_SECONDS`): o início sai do
+# fim lido na tela, que vem segundos depois do clique (§8.86: 15 s), daí a folga.
+SESSION_SECONDS = 8 * 3600
+SESSION_START_SLACK = 5 * 60
 
 
 def mint_event(src, coins=None, before=None, after=None, end=None, total=None):
@@ -88,14 +92,27 @@ def mint_inputs(vids, events, now, window=MINT_WINDOW, min_span=MINT_MIN_SPAN):
     for (vid, _), n in sessions.items():
         coins[vid] = coins.get(vid, 0) + n
     totals = account_totals(events)
+    # Sessão que começou antes da primeira leitura do contador tem moedas de
+    # antes dela: contá-la inteira faria a "moeda fora do registro" negativa e
+    # esconderia a cunhagem à mão (§8.86: 33 da sessão, 31 delas antes da
+    # primeira leitura). A conferência começa depois do fim da última dessas.
+    if totals:
+        early = [end for (_, end), _ in sessions.items()
+                 if end and end - SESSION_SECONDS < totals[0][0] - SESSION_START_SLACK]
+        if early:
+            cut = max(early)
+            totals = [(ts, total) for ts, total in totals if ts >= cut]
     growth = totals[-1][1] - totals[0][1] if len(totals) >= 2 else None
     # Moedas registradas dentro do intervalo coberto pelo contador. A sessão
-    # automática conta inteira (a leitura do fim cai dentro dele).
+    # automática que começou nele conta inteira (a leitura do fim cai dentro).
     if growth is not None:
         t0, t1 = totals[0][0], totals[-1][0]
+        # `<=` no começo: a primeira leitura costuma ser o "antes" do próprio
+        # POST, e a moeda dele já está no crescimento.
         inside = sum(int(ev.get("coins") or 0) for ts, _, ev in events
-                     if ev.get("src") == "post" and t0 < ts <= t1)
-        inside += sum(n for (vid, _), n in sessions.items())
+                     if ev.get("src") == "post" and t0 <= ts <= t1)
+        inside += sum(n for (_, end), n in sessions.items()
+                      if not end or end - SESSION_SECONDS >= t0 - SESSION_START_SLACK)
         unseen = growth - inside
     else:
         unseen = None

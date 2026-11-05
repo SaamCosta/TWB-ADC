@@ -135,6 +135,54 @@ def test_sem_contador_ou_com_pouco_registro_e_desconhecido():
     assert coin_ledger.mint_inputs(["44683"], [], NOW)["44683"]["coin_h"] is None
 
 
+# As linhas TWB_MINT reais de 04/11 (twb_1793823892.log e twb_1793831869.log),
+# na ordem. A sessão do hub começou às 13:18 (processo anterior ao registro) e
+# rendeu 33; o contador só passou a ser lido às 17:55, e até o fim dela subiu 12
+# (10 por POST, 2 da sessão). As 31 de antes não estão no crescimento (§8.86).
+REAL_0411 = [
+    (1793825715, "34597", {"after": 4888, "before": 4887, "coins": 1, "src": "post"}),
+    (1793826522, "39472", {"after": 4889, "before": 4888, "coins": 1, "src": "post"}),
+    (1793832691, "52755", {"after": 4891, "before": 4890, "coins": 1, "src": "post"}),
+    (1793833761, "51540", {"after": 4892, "before": 4891, "coins": 1, "src": "post"}),
+    (1793833793, "51540", {"after": 4893, "before": 4892, "coins": 1, "src": "post"}),
+    (1793834541, "54895", {"after": 4894, "before": 4893, "coins": 1, "src": "post"}),
+    (1793834574, "54895", {"after": 4895, "before": 4894, "coins": 1, "src": "post"}),
+    (1793835386, "57689", {"after": 4897, "before": 4895, "coins": 2, "src": "post"}),
+    (1793836169, "55553", {"after": 4899, "before": 4898, "coins": 1, "src": "post"}),
+    (1793837342, "38409", {"coins": 33, "end": 1793837926, "src": "auto", "total": 4899}),
+    (1793838049, "38409", {"src": "total", "total": 4899}),
+]
+REAL_NOW = 1793825715 + 25 * 3600
+
+
+def test_sessao_iniciada_antes_do_contador_nao_esconde_moeda():
+    vids = ["38409", "34597", "44683"]
+    # Só o registro real: depois do fim da sessão há uma leitura do contador,
+    # então a aldeia sem registro não é zero medido, é desconhecida.
+    out = coin_ledger.mint_inputs(vids, REAL_0411, REAL_NOW)
+    assert out["44683"]["coin_h"] is None and "contador" in out["44683"]["coin_why"], out["44683"]
+    assert abs(out["38409"]["coin_h"] - 33 / 25.0) < 1e-9
+    assert abs(out["34597"]["coin_h"] - 1 / 25.0) < 1e-9
+    # Uma cunhagem registrada depois: o contador fecha, zero medido.
+    later = REAL_0411 + [(1793845000, "34597", {"src": "post", "coins": 1, "before": 4899, "after": 4900})]
+    assert coin_ledger.mint_inputs(vids, later, REAL_NOW)["44683"]["coin_h"] == 0.0
+    # 6 moedas à mão no meio: a conta inteira (4887 -> 4906 = 19 contra 11 + 33)
+    # daria -25 e "zero"; a partir do fim da sessão, são 6 fora do registro.
+    hand = REAL_0411 + [(1793845000, "34597", {"src": "post", "coins": 1, "before": 4905, "after": 4906})]
+    out = coin_ledger.mint_inputs(vids, hand, REAL_NOW)
+    assert out["44683"]["coin_h"] is None and "6 moeda" in out["44683"]["coin_why"], out["44683"]
+
+
+def test_post_da_primeira_leitura_conta_dentro():
+    # O "antes" do primeiro POST é a primeira leitura do contador: a moeda dele
+    # está no crescimento e tem que estar no registrado (senão, +1 fora sempre).
+    # 5 moedas, acima da folga de 3.
+    events = [(NOW - 30 * 3600, "41123", {"src": "post", "coins": 5, "before": 100, "after": 105}),
+              (NOW - 3600, "38409", {"src": "total", "total": 105})]
+    out = coin_ledger.mint_inputs(["44683"], events, NOW)
+    assert out["44683"]["coin_h"] == 0.0, out
+
+
 def test_valor_da_bandeira_de_moeda():
     inputs = {"coin_h": 2.0, "coin_why": None}
     rate, _ = flag_planner.flag_rate(7, inputs)
