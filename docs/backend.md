@@ -10064,8 +10064,9 @@ Continuação da §8.85. A fase foi pensada para rodar com 24 h de `TWB_MINT`,
 mas começou às 19:09 de 04/11, com o processo das 17:24 (código do `feaa4a0`)
 no ar havia 1 h 45 min. O que dependia de tempo ficou para a próxima fase: o
 tipo 7 medido, que só existe a partir de ~17:55 de 05/11, e as relíquias, que
-precisam passar das ~03:30 de 05/11. O que já dava para conferir mostrou um
-furo, e o furo foi corrigido.
+precisam passar das ~03:30 de 05/11. O que já dava para conferir mostrou
+dois furos no registro da moeda, os dois corrigidos: o hub não seria lido
+(§8.86.2), e a primeira sessão esconderia moeda feita à mão (§8.86.2b).
 
 ### 1. A resposta do POST da moeda traz o contador
 
@@ -10128,7 +10129,55 @@ Esse religar reescreveu o `session_latest.log` (20º padrão). Os fatos do
 processo das 17:24 citados aqui foram lidos antes. O reporter (`twb_*.log`)
 continua inteiro.
 
-<!-- LEITURA_FINAL_HUB -->
+**A leitura final veio na hora.** As 3 leituras do hub em sequência:
+- 21:08:50: `{"src": "auto", "coins": 33, "end": 21:18:46, "total": 4899}`, e
+  a volta em fim + 60;
+- 21:20:49: `total` 4899;
+- 21:21:02: sessão nova iniciada, com a leitura final marcada para 05:10:38
+  de 05/11.
+
+O fim lido na tela (21:18:46) vem 15 s depois do `started_at` (13:18:31),
+porque o bot grava a hora do tick e o jogo, a do clique.
+
+### 2b. A sessão contada inteira escondia moeda feita à mão
+
+Com os dados reais, a conta não fechava pelo outro lado. Do primeiro
+contador (17:55:15, 4887) até a leitura final (4899) a conta ganhou **12**
+moedas: 10 por POST, de 7 aldeias, e 2 da sessão (os saltos 4889 → 4890 e
+4897 → 4898 entre dois POST). As outras **31** das 33 da sessão foram cunhadas
+entre 13:18 e 17:55, antes de haver contador. O `mint_inputs` somava a sessão
+inteira ao "registrado" e chegava a 12 − 43 = **−31** de moeda fora do
+registro. Com esse valor, o usuário poderia cunhar até 31 moedas à mão sem que
+nenhuma aldeia saísse do "zero medido". O comentário do código ("a leitura do
+fim cai dentro") supunha que a sessão começa depois da primeira leitura, e a
+primeira sessão da história do registro não começou.
+
+**Correção (`core/coin_ledger.mint_inputs`):** a sessão cujo início (fim − 8 h,
+com folga de 5 min) é anterior à primeira leitura do contador tem moedas de
+antes dela. A conferência passa a começar na primeira leitura depois do fim
+da última dessas sessões. Até haver duas leituras depois do fim, aldeia sem
+registro fica "sem duas leituras do contador", e não zero. O hub continua
+creditado com a sessão inteira. Por isso, no primeiro dia, a taxa dele sai um
+pouco alta: as 33 moedas são divididas pelas horas desde 17:55.
+
+**De passagem:** o POST cujo "antes" é a primeira leitura do contador ficava
+fora do registrado (`t0 < ts`), mas a moeda dele entrava no crescimento: era
++1 de moeda fora do registro, sempre. Agora é `t0 <= ts`.
+
+Testes:
+- `test_sessao_iniciada_antes_do_contador_nao_esconde_moeda`, com as 11
+  linhas `TWB_MINT` reais de 04/11:
+  - só o registro real: aldeia sem registro "sem duas leituras";
+  - com um POST registrado depois: zero medido;
+  - com 6 moedas à mão no meio: "a conta ganhou 6", onde a conta inteira daria
+    −25 e zero.
+- `test_post_da_primeira_leitura_conta_dentro`: 5 moedas, acima da folga de 3.
+  Com 3, o mutante passava.
+
+Mutantes: "sem o corte", "sessão inteira dentro" e "POST da 1ª leitura fora",
+os três pegos. Suíte: **125 arquivos, 0 falhas**. O bot foi religado de novo
+às **21:24:49 (pid 15600)**, com o Hunter sem nada pendente, para o plano de
+amanhã às ~17:55 já sair com esta conta.
 
 ### 3. O "on": uma avaliação, nenhuma troca
 
@@ -10138,16 +10187,20 @@ passo:
 > 17:35:21 Bandeiras por valor (agindo): BBM 063 (82671) trocaria tipo 2 nível
 > 4 (0/h) por tipo 8 nível 3 (2/h): +2/h -- ganho 2/h abaixo do piso de 50/h
 
-O `cache/flags.json` → `exec` tem só `streak` (`82671`, contagem 1), sem
-`history` e sem `days`. O `note_read` conta a leitura antes do freio, e o piso
+O processo das 19:37 teve mais uma: BBM 067 (88755), 6/7 → 8/2, +1/h, abaixo
+do piso. O `cache/flags.json` → `exec` tem só `streak`, com 82671, 84620 e
+88755 e contagem 1 em cada, sem `history` e sem `days`. O `note_read` conta a leitura antes do freio, e o piso
 segura antes de a contagem importar, então o comportamento é o desenhado.
 Houve **0 `Setting flag`** no processo. A BBM 005 segue em `[8, 7]`
 (`cache/managed/38997.json`), e o `value_plan` dela ainda é o do dry-run das
 16:39, porque ela não rodou no processo novo antes do religar.
 
-O plano mais novo (19:29, `haul_scavenge: True`) tem os mesmos 8 passos da
-§8.85.7, com os números um pouco mais baixos: BBM 051 +39, 053 +37, 059 +20,
-068 +6, 063 +6, 054 +4, 062 +2, 067 +1. O tipo 7 está "1 h de registro, o
+O plano das 19:29 (`haul_scavenge: True`) tem os mesmos 8 passos da §8.85.7,
+com os números um pouco mais baixos: BBM 051 +39, 053 +37, 059 +20, 068 +6,
+063 +6, 054 +4, 062 +2, 067 +1. O plano das 21:23 dá 051 +36, 053 +34, 059
++19, 062 +11, 068 +5, 063 +4, 054 +4 e 067 +3. O valor oscila ~10% em 2 h, e
+o `stable_reads` não segura isso, porque ele confere o passo e não o tamanho
+do ganho. O tipo 7 está "1 h de registro, o
 piso é 24 h" nas 72 aldeias, como o desenho da §8.85.6 prevê.
 
 ### 4. O custo de uma troca, para quando o piso for decidido
@@ -10245,8 +10298,9 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
   não põe a bandeira de defesa. Em 7 dias, 7 aldeias foram atacadas, e dos 8
   passos de hoje só a BBM 068 está entre elas (passo de +6/h). Proposta, que
   é decisão do usuário: baixar o piso para ~20/h e não trocar por valor em
-  aldeia atacada nos últimos 7 dias. Com o plano de hoje, isso daria 3 trocas
-  (+39, +37, +20/h). Antes, refazer a conta com o plano que tiver o tipo 7.
+  aldeia atacada nos últimos 7 dias. Com o plano de hoje, isso daria 2 trocas
+  (BBM 051 e 053, +36 e +34/h), e a BBM 059 (19 a 20/h) ficaria no limite.
+  Antes, refazer a conta com o plano que tiver o tipo 7.
 - ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
   71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
   de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
@@ -10258,7 +10312,11 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
   - ✅ A resposta do POST do `coin_item` traz o contador: há 2 `TWB_MINT`
     `post` (4887 → 4888 → 4889) e 0 "ilegível".
   - ✅ A sessão do hub iniciada pelo processo antigo não seria lida (volta
-    depois do fim). Corrigido com `MintManager._hub_due`; religado às 19:37.
+    depois do fim). Corrigido com `MintManager._hub_due`, religado às 19:37,
+    e lida às 21:08:50 (`auto` 33).
+  - ✅ A sessão que começou antes do primeiro contador dava −31 de moeda fora
+    do registro e escondia cunhagem à mão. Corrigido no `mint_inputs`
+    (§8.86.2b), religado às 21:24.
   - Falta a amostra `coin_post*.html` do `_mint_max` do hub, que sai na
     primeira cunhagem de lote dele.
   - Falta, a partir de ~17:55 de 05/11, o `/flags` com o tipo 7 medido nas
