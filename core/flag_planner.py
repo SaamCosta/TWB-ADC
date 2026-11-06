@@ -100,6 +100,9 @@ FARM_WINDOW = 7 * 86400
 SCAV_WINDOW = 7 * 86400
 FARM_FULL_MIN_REPORTS = 5
 FULL_RETURN = 0.99
+# Ataques guardados para o freio "atacada há pouco" (§8.88). A janela do
+# freio é `flag_value.attack_block_h`; esta só precisa cobri-la.
+ATTACK_WINDOW = 8 * 86400
 
 _REPORTER_RE = re.compile(r"^(\d+) - (\d+) - (TWB_\w+) - (.*)$")
 _FARM_RE = re.compile(r"Attacking (\d+) -> (\d+) \((\{.*\})\)")
@@ -346,6 +349,57 @@ def farm_full_fraction(reports_dir):
     return {o: (f, n) for o, (f, n) in per.items()}, overall
 
 
+def attacked_at(root, own, now, window=ATTACK_WINDOW):
+    """
+    {vid: hora do ataque mais novo visto} das aldeias da conta (§8.88). Duas
+    fontes, as duas pisos: a varredura da defesa própria (`attacked_seen`, o
+    mesmo "ataque chegando" que põe a bandeira de defesa, inclusive o que não
+    gera relatório lido) e os relatórios de ataque de fora no `cache/reports`
+    (que tem buracos: teto de arquivos e `ReportManager.MAX_PAGES`; os ataques
+    da BBM 068 contados em 04/11 já tinham saído dele em 05/11).
+    """
+    own = {str(v) for v in own or ()}
+    out = {}
+
+    def note(vid, ts):
+        try:
+            ts = float(ts)
+        except (TypeError, ValueError):
+            return
+        if str(vid) in own and now - window <= ts <= now + 86400:
+            out[str(vid)] = max(out.get(str(vid), 0.0), ts)
+
+    try:
+        with open(os.path.join(root, "cache", "defense", "state.json"), "r", encoding="utf-8") as fh:
+            seen = (json.load(fh) or {}).get("attacked_seen") or {}
+    except (OSError, ValueError, AttributeError):
+        seen = {}
+    for vid, ts in (seen.items() if isinstance(seen, dict) else ()):
+        note(vid, ts)
+    for path in glob.glob(os.path.join(root, "cache", "reports", "*.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                rep = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(rep, dict) or rep.get("type") != "attack":
+            continue
+        if str(rep.get("dest")) not in own or str(rep.get("origin")) in own:
+            continue
+        extra = rep.get("extra") if isinstance(rep.get("extra"), dict) else {}
+        note(rep.get("dest"), extra.get("when"))
+    return out
+
+
+def attack_block_reason(vid, attacked, now, hours):
+    """Motivo para não trocar por valor (aldeia atacada há < `hours` h) ou None."""
+    ts = (attacked or {}).get(str(vid))
+    if ts and now - ts < hours * 3600:
+        return "atacada há %.0f h: sem troca por valor por %.0f h depois do ataque" % (
+            (now - ts) / 3600.0, hours)
+    return None
+
+
 def haul_inputs(vids, events, full, now, managed=None):
     """
     {vid: {"farm_carry_h", "farm_full", "scav_loot_h", "scav_rate_h",
@@ -532,7 +586,8 @@ def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.
     `villages` = {vid: {"current": [t, l] | None, "can_change": bool,
     "under_attack": bool}}; `supply` = {tipo: {nível: quantidade}} que SOBRA.
     `manual_types` = `world.flag_manual_types` (padrão `MANUAL_TYPES`): o
-    plano não tira nem dá esses tipos, como o `DefenceManager`.
+    plano não tira nem dá esses tipos, como o `DefenceManager`. Aldeia com
+    `blocked` (atacada há pouco, §8.88) fica fora, como a sob ataque.
     Devolve {"steps": [...], "values": {vid: {...}}}.
     """
     manual = {int(t) for t in (MANUAL_TYPES if manual_types is None else manual_types)}
@@ -551,8 +606,10 @@ def plan(villages, supply, inputs, effects=None, haul_scavenge=None, min_gain=1.
             rates[t] = {"rate": None if r is None else round(r, 2), "why": w}
         values[vid] = {"current": cur, "value": None if val is None else round(val, 1),
                        "why": why, "rates": rates}
+        if v.get("blocked"):
+            values[vid]["blocked"] = v["blocked"]
     eligible = {vid for vid, v in (villages or {}).items()
-                if v.get("can_change", True) and not v.get("under_attack")
+                if v.get("can_change", True) and not v.get("under_attack") and not v.get("blocked")
                 and (current[str(vid)] is None or current[str(vid)][0] not in manual)
                 and values[str(vid)]["value"] is not None}
     eligible = {str(v) for v in eligible}
@@ -614,6 +671,10 @@ DEFAULTS = {
     "stable_reads": 2,
     "max_changes_per_day": 3,
     "undo_block_h": 48.0,
+    # Sem troca por valor em aldeia atacada há menos disto (§8.88): durante o
+    # cooldown de 24 h da troca ela não põe a bandeira de defesa. Decisão do
+    # usuário em 05/11: qualquer ataque, 7 dias.
+    "attack_block_h": 168.0,
 }
 
 
@@ -651,10 +712,16 @@ def note_read(exec_state, vid, step, now):
     return count
 
 
-def evaluate(step, exec_state, cfg, now):
-    """(pode sair?, motivo) do passo da aldeia, pelos freios."""
+def evaluate(step, exec_state, cfg, now, attacked=None):
+    """
+    (pode sair?, motivo) do passo da aldeia, pelos freios. `attacked` =
+    {vid: hora do ataque mais novo} (`attacked_at`).
+    """
     if not step:
         return False, "nada a fazer"
+    blocked = attack_block_reason(step["vid"], attacked, now, cfg["attack_block_h"])
+    if blocked:
+        return False, blocked
     if step["gain_h"] < cfg["min_gain_h"]:
         return False, "ganho %.0f/h abaixo do piso de %.0f/h" % (step["gain_h"], cfg["min_gain_h"])
     before = step.get("value_before_h") or 0.0
@@ -727,6 +794,7 @@ class InputCache:
                                    base_production=base_production)
         haul = haul_inputs(vids, events, full, now, managed)
         coins = coin_ledger.mint_inputs(vids, events.get("mint"), now)
+        attacked = attacked_at(root, vids, now)
         for vid in vids:
             entry = inputs.setdefault(vid, {})
             entry.update(haul.get(vid) or {})
@@ -742,7 +810,8 @@ class InputCache:
                      "haul_scavenge": haul_scavenge_measured(events.get("squads")),
                      "squads": len(events.get("squads") or {}),
                      "squads_since": events.get("squads_since"),
-                     "mints": len(events.get("mint") or [])}
+                     "mints": len(events.get("mint") or []),
+                     "attacked": attacked}
         self.at = now
         return self.data
 
@@ -766,7 +835,8 @@ def village_table(managed, own_vid=None, own=None):
 
 
 def plan_for_village(vid, own, supply, effects=None, root=".", now=None, world=None,
-                     cache=None, labels=None, vids=None, manual_types=None):
+                     cache=None, labels=None, vids=None, manual_types=None,
+                     attack_block_h=DEFAULTS["attack_block_h"]):
     """
     O plano da conta visto pela aldeia `vid`, que acabou de ler o inventário:
     `own` = {"current", "can_change", "under_attack", "pop", "pop_max"} dela,
@@ -788,6 +858,9 @@ def plan_for_village(vid, own, supply, effects=None, root=".", now=None, world=N
         # disco, e no plano ela "reservaria" a bandeira que sobra.
         keep = {str(v) for v in vids} | {str(vid)}
         table = {v: t for v, t in table.items() if v in keep}
+    attacked = data.get("attacked") or {}
+    for v, t in table.items():
+        t["blocked"] = attack_block_reason(v, attacked, now, attack_block_h)
     if labels is None:
         labels = {v: "%s (%s)" % (m.get("name"), v) for v, m in data["managed"].items()
                   if m.get("name")}
@@ -798,6 +871,7 @@ def plan_for_village(vid, own, supply, effects=None, root=".", now=None, world=N
     result["haul_scavenge"] = data["haul_scavenge"]
     result["squads"] = data["squads"]
     result["computed_at"] = int(now)
+    result["attacked"] = attacked
     return result
 
 

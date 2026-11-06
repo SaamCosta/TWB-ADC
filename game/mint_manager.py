@@ -521,6 +521,7 @@ class MintManager:
                 hub_state.update(next_at=now + AUTO_MINT_SECONDS - AUTO_MINT_FINAL_READ,
                                  started_at=int(now))
                 logger.info("Cunhagem: sessão automática de 8 h iniciada no hub %s (%s)", village_label(hub), note)
+                self._report_start(hub, now)
             else:
                 logger.warning("Cunhagem: sessão automática do hub %s não iniciou: %s", village_label(hub), note)
         elif state == "no_start_button":
@@ -569,6 +570,20 @@ class MintManager:
         else:
             self._report(vid, coin_ledger.mint_event("total", total=total))
         return progress
+
+    def _report_start(self, vid, now):
+        """
+        A sessão recém-iniciada no registro, com 0 moedas (§8.88). Sem esta
+        linha, as moedas dela sobem o contador da conta durante 8 h sem nada
+        que as explique, e o `coin_ledger` põe as aldeias sem registro em
+        "desconhecido". O fim vem da tela que voltou do início (a mesma
+        "Fim: ..." da leitura final); sem ela, início + 8 h.
+        """
+        res = self.wrapper.last_response
+        progress = self._report_session(vid, res.text) if res is not None else None
+        if not (progress and progress.get("end")):
+            self._report(vid, coin_ledger.mint_event(
+                "auto", coins=0, end=int(now) + AUTO_MINT_SECONDS))
 
     def _mint_max(self, vid, html):
         """Cunha o "(N)" da academia de uma vez. Devolve quantas mandou."""

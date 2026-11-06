@@ -13,7 +13,8 @@ reporter, e o que entra é o que o SERVIDOR contou, não o que o bot mandou
   depois > antes; sem contador nos dois lados não há linha.
 - `src: "auto"`: a sessão automática, pelo "O que já foi coletado até agora"
   da academia do hub, com o fim da sessão. Vale o maior número lido por
-  sessão (aldeia, fim).
+  sessão (aldeia, fim). Desde §8.88 a sessão deixa uma linha também no
+  início (moedas 0), e assim o registro sabe que ela está em andamento.
 - `src: "total"`: só o contador da conta, numa leitura sem cunhagem.
 
 O contador da conta (`pages.academy.coin_total`) é o que separa "a aldeia não
@@ -36,6 +37,9 @@ UNSEEN_FRAC = 0.05
 # fim lido na tela, que vem segundos depois do clique (§8.86: 15 s), daí a folga.
 SESSION_SECONDS = 8 * 3600
 SESSION_START_SLACK = 5 * 60
+# Leitura que fecha a sessão: o hub relê 10 min antes do fim
+# (`mint_manager.AUTO_MINT_FINAL_READ`), mais folga para o tick atrasar.
+SESSION_FINAL_READ = 15 * 60
 
 
 def mint_event(src, coins=None, before=None, after=None, end=None, total=None):
@@ -67,6 +71,32 @@ def account_totals(events):
     return sorted(out)
 
 
+def hub_sessions(events):
+    """
+    Sessões automáticas lidas: [{"vid", "end", "coins", "last_ts", "closed"}].
+    Leituras da mesma aldeia com fins a até `SESSION_START_SLACK` são a mesma
+    sessão: o início (§8.88) e a leitura final leem o "Fim" da mesma tela.
+    Vale o maior número lido. Fechada = lida perto do fim (`SESSION_FINAL_READ`)
+    ou sem fim conhecido (o registro antigo, que contava inteira).
+    """
+    out = []
+    for ts, vid, ev in sorted(events or [], key=lambda e: (str(e[1]), e[2].get("end") or 0, e[0])):
+        if ev.get("src") != "auto":
+            continue
+        end = ev.get("end")
+        last = out[-1] if out else None
+        if (last and last["vid"] == str(vid) and end and last["end"]
+                and abs(end - last["end"]) <= SESSION_START_SLACK):
+            last["coins"] = max(last["coins"], int(ev.get("coins") or 0))
+            last["last_ts"] = max(last["last_ts"], ts)
+        else:
+            out.append({"vid": str(vid), "end": end, "coins": int(ev.get("coins") or 0),
+                        "last_ts": ts})
+    for s in out:
+        s["closed"] = not s["end"] or s["last_ts"] >= s["end"] - SESSION_FINAL_READ
+    return out
+
+
 def mint_inputs(vids, events, now, window=MINT_WINDOW, min_span=MINT_MIN_SPAN):
     """
     {vid: {"coin_h": moedas/h ou None, "coin_why": motivo}} a partir das
@@ -82,37 +112,47 @@ def mint_inputs(vids, events, now, window=MINT_WINDOW, min_span=MINT_MIN_SPAN):
     since = min(ts for ts, _, _ in events)
     span = now - since
     coins = {}
-    sessions = {}
     for ts, vid, ev in events:
         if ev.get("src") == "post":
             coins[vid] = coins.get(vid, 0) + int(ev.get("coins") or 0)
-        elif ev.get("src") == "auto":
-            key = (vid, ev.get("end"))
-            sessions[key] = max(sessions.get(key, 0), int(ev.get("coins") or 0))
-    for (vid, _), n in sessions.items():
-        coins[vid] = coins.get(vid, 0) + n
+    sessions = hub_sessions(events)
+    for s in sessions:
+        coins[s["vid"]] = coins.get(s["vid"], 0) + s["coins"]
     totals = account_totals(events)
     # Sessão que começou antes da primeira leitura do contador tem moedas de
     # antes dela: contá-la inteira faria a "moeda fora do registro" negativa e
     # esconderia a cunhagem à mão (§8.86: 33 da sessão, 31 delas antes da
     # primeira leitura). A conferência começa depois do fim da última dessas.
     if totals:
-        early = [end for (_, end), _ in sessions.items()
-                 if end and end - SESSION_SECONDS < totals[0][0] - SESSION_START_SLACK]
+        early = [s["end"] for s in sessions
+                 if s["end"] and s["end"] - SESSION_SECONDS < totals[0][0] - SESSION_START_SLACK]
         if early:
             cut = max(early)
             totals = [(ts, total) for ts, total in totals if ts >= cut]
-    growth = totals[-1][1] - totals[0][1] if len(totals) >= 2 else None
+    # Sessão aberta (em andamento, ou cuja leitura final não houve) cunha sem
+    # o bot saber quanto: o contador sobe e nada no registro explica. Contada,
+    # a sessão em andamento punha as aldeias sem registro em "desconhecido"
+    # durante quase toda sessão de 8 h (§8.88). A janela dela fica fora da
+    # conferência, nos dois lados: o crescimento e o registrado.
+    opaque = [(s["end"] - SESSION_SECONDS - SESSION_START_SLACK, s["end"] + SESSION_START_SLACK)
+              for s in sessions if not s["closed"]]
+
+    def hidden(a, b):
+        return any(a < hi and b > lo for lo, hi in opaque)
+
+    pairs = [(a, b) for a, b in zip(totals, totals[1:]) if not hidden(a[0], b[0])]
+    growth = sum(b[1] - a[1] for a, b in pairs) if pairs else None
     # Moedas registradas dentro do intervalo coberto pelo contador. A sessão
-    # automática que começou nele conta inteira (a leitura do fim cai dentro).
+    # automática fechada que começou nele conta inteira (a leitura do fim cai
+    # dentro).
     if growth is not None:
         t0, t1 = totals[0][0], totals[-1][0]
         # `<=` no começo: a primeira leitura costuma ser o "antes" do próprio
         # POST, e a moeda dele já está no crescimento.
         inside = sum(int(ev.get("coins") or 0) for ts, _, ev in events
-                     if ev.get("src") == "post" and t0 <= ts <= t1)
-        inside += sum(n for (_, end), n in sessions.items()
-                      if not end or end - SESSION_SECONDS >= t0 - SESSION_START_SLACK)
+                     if ev.get("src") == "post" and t0 <= ts <= t1 and not hidden(ts, ts))
+        inside += sum(s["coins"] for s in sessions if s["closed"] and (
+            not s["end"] or s["end"] - SESSION_SECONDS >= t0 - SESSION_START_SLACK))
         unseen = growth - inside
     else:
         unseen = None

@@ -301,7 +301,8 @@
     "min_gain_pct": 10,
     "stable_reads": 2,
     "max_changes_per_day": 3,
-    "undo_block_h": 48
+    "undo_block_h": 48,
+    "attack_block_h": 168
   },
   "minting": {
     "hub_village": null,

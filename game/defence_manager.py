@@ -879,7 +879,8 @@ class DefenceManager:
                 self.village_id, own, self.flag_supply, self.flag_effects,
                 now=now, world=self.value_world,
                 vids=set(self.my_other_villages or {}) or None,
-                manual_types=self.flag_manual_types)
+                manual_types=self.flag_manual_types,
+                attack_block_h=cfg["attack_block_h"])
         except Exception as exc:  # noqa: BLE001 -- plano nunca derruba o ciclo
             self.logger.warning("Bandeiras por valor: plano falhou em %s: %r",
                                 village_label(self.village_id), exc)
@@ -888,7 +889,7 @@ class DefenceManager:
         exec_state = state.setdefault("exec", {})
         step = result["step"]
         seen = flag_planner.note_read(exec_state, self.village_id, step, now)
-        ok, why = flag_planner.evaluate(step, exec_state, cfg, now)
+        ok, why = flag_planner.evaluate(step, exec_state, cfg, now, result.get("attacked"))
         state["plan"] = {
             "computed_at": result["computed_at"], "mode": self.value_mode,
             "by": str(self.village_id), "steps": result["steps"][:40],

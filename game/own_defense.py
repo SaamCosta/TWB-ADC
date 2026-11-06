@@ -91,6 +91,8 @@ def load_state():
 
 
 FORCE_TTL = 24 * 3600
+# Quanto guardar o `attacked_seen`: a janela das bandeiras é de 7 dias.
+ATTACKED_SEEN_KEEP = 8 * 86400
 
 
 def load_force(now=None):
@@ -143,6 +145,9 @@ class OwnDefenseManager:
         self.origins = dict(state.get("origins") or {})
         self.attempts = dict(state.get("attempts") or {})
         self.history = list(state.get("history") or [])
+        # {vid: última varredura com ataque chegando} -- o "atacada nos
+        # últimos 7 dias" das bandeiras por valor (§8.88) lê daqui.
+        self.attacked_seen = dict(state.get("attacked_seen") or {})
         self._force_seen = None
         # (aldeia, prazo) já avisados no Telegram sem envio -- a revarredura
         # de 10 em 10 min não pode repetir o mesmo aviso.
@@ -284,6 +289,8 @@ class OwnDefenseManager:
         self._force_seen = tuple(sorted(force.items()))
         attacked = [v for v in villages if v["incomings"] > 0 or v["vid"] in force]
         attacked_ids = {v["vid"] for v in villages if v["incomings"] > 0}
+        for vid in attacked_ids:
+            self.attacked_seen[str(vid)] = int(now)
         speeds, max_dist, drop_range = self._world(config)
         report = []
         for village in attacked:
@@ -564,10 +571,13 @@ class OwnDefenseManager:
         self.origins = {k: v for k, v in self.origins.items()
                         if now - int((v or {}).get("seen_at") or now) < 2 * 86400}
         self.attempts = {k: v for k, v in self.attempts.items() if now - float(v) < 86400}
+        self.attacked_seen = {k: v for k, v in self.attacked_seen.items()
+                              if now - float(v) < ATTACKED_SEEN_KEEP}
         state = {
             "scanned_at": now, "reason": reason, "incomings": self.last_incomings,
             "villages_seen": len(villages), "attacked": report,
             "origins": self.origins, "attempts": self.attempts, "history": self.history,
+            "attacked_seen": self.attacked_seen,
         }
         try:
             FileManager.create_directory(FileManager.get_path("cache/defense"))

@@ -10370,6 +10370,241 @@ devolver valor de cookie. `test_session_and_captcha.py` ganhou 6 casos.
 Suíte 126 de 126 aqui; `python tools/export_public.py --test` com
 `browser_extension` no `INCLUDE`: trava limpa e 125 de 125 na árvore limpa.
 
+## 8.88 `P-BAND-VALOR` — o tipo 7 medido, a sessão do hub em andamento e o freio por ataque (2026-11-05)
+
+Continuação da §8.86, rodada às 21:00 de 05/11. O prompt pedia "a próxima seção
+livre depois da 8.86", mas a 8.87 já existia (`P-PUBLICO`).
+
+### 1. O campo
+
+**Processos.** O das 21:24 de 04/11 (pid 15600) foi até ~00:07. Outro subiu às
+00:27:02 (`twb_1793849222.log`) e teve a última linha às 02:04. O PC
+**suspendeu às 02:21:08 e voltou às 09:49:35** (Kernel-Power 42 e 107 no log do
+Sistema). O bot que roda agora subiu às 09:54:35 (pid 3880), e eu não o
+religuei. O `session_latest.log` só tem dados a partir daí. Às 21:24:40 entrou
+em **bot protection** (a segunda do dia; a primeira foi às 14:13). Nesta fase
+não fiz nenhuma requisição ao jogo.
+
+**(1) O hub.** Sequência das sessões:
+- **Sessão das 21:21 de 04/11:** não teve leitura final. A leitura das 05:10
+  caiu com o PC suspenso. O contador subiu 2 entre 22:09 (4901) e 10:05
+  (4903). As 2 moedas são da sessão: sem envio das doadoras de madeira durante
+  a noite, a produção do próprio hub em 8 h (~13,8 mil/h, cerca de 110 mil)
+  paga ~1,7 moeda ao custo dele (64,7 mil com os 22%).
+- **10:05:38:** a primeira cunhagem de lote do `_mint_max` (1 moeda,
+  4903 → 4904). A amostra é `cache/mint/samples/coin_post.html` (confirmada,
+  não `unconfirmed`). Logo depois, a sessão das 10:05 começou.
+- **17:57:03:** leitura final dessa sessão, `auto` 29, com fim às 18:05:43.
+  **A conta fecha exata:** de 4904 a 4938 são 34 = 29 + 5 POST.
+- **18:11:14:** começou a sessão seguinte, com leitura final às 02:01:14 de
+  06/11.
+
+**(2) O tipo 7 está medido**, com 27 h de registro e "a conta não ganhou moeda
+fora do registro". Foram 3 moedas fora do registro: as 2 da sessão sem
+leitura final e 1 da sessão em andamento (o 4946 → 4947 entre 19:52 e 20:00).
+É exatamente a folga (`3 > 3` é falso), ou seja, o valor estava **no limite**
+(item 2). Quem cunhou no período:
+- **13 aldeias pelo `coin_item`**, com 1 a 4 moedas cada. O tipo 7 vale
+  30,8/h por ponto percentual por moeda/dia (830 de recurso por moeda × %,
+  em 27 h).
+- **O hub (BBM 002) vale 42.700/h com a 7/7** (2,32 moedas/h). O número está
+  inflado: a sessão das 13:18 de 04/11 conta inteira, e 31 das 33 moedas dela
+  são de antes do registro (§8.86.2b). Sem elas, são ~21.700/h, de longe a
+  bandeira mais valiosa da conta. O plano nunca a tira.
+- **As doadoras valem 0, e não por amostra curta.** As 14 aldeias que mandaram
+  recurso ao hub hoje (BBM 001, 006, 007, 008, 009, 010, 012, 013, 014, 015,
+  021, 046, 048 e 051) não cunham: o recurso delas vira moeda no hub, com os
+  22% dele. Nenhuma das 13 que cunham pelo `coin_item` é doadora. Dez doadoras
+  carregam uma bandeira 7 (a ordem fixa dava "academia → cunhagem"), e a 7/7
+  da BBM 010 é uma delas. Isso é estrutural (o argumento do 9º padrão).
+
+**(3) O "on".** Houve 2 `Setting flag` no processo, os dois do caminho de
+defesa (4/4 na BBM 052 e na BBM 066, com ataque chegando). Por valor, nenhuma
+troca. Os freios agiram assim:
+- o piso segurou 5 passos pequenos (BBM 065 +18, 059 +13, 062 +7, 063 +4 e
+  042 +29);
+- o `stable_reads` segurou 8 passos acima do piso, todos "visto em 1 de 2":
+  BBM 005 +348, 011 +369, 034 +611, 036 +333, 038 +393, 043 +129, 045 +231 e
+  um da BBM 042 depois.
+
+**A BBM 005 manteve a 8/7.** Mas às 13:45 o plano propôs tirá-la (8/7 a 84/h
+→ 1/1 a 432/h). O saque/h dela caiu de 21,2 para ~15/h por ponto desde
+04/11, e a 1/1 vale 360/h ali. No plano das 21:00 ela não tem passo, porque a
+1/1 que sobra foi para outra aldeia antes. Não é manual (`[3, 5]`), então o
+plano pode tirá-la quando a conta fechar. Fica registrado porque a 8/7 foi
+devolvida a ela de propósito na §8.85.2.
+
+**(4) Relíquias.** A leitura das 20:32 tem 9 equipadas, 0 inativas e
+`cobertura calculada bate com a visão geral do jogo`. O **Machado de má
+qualidade (249455) está no inventário** desde a primeira leitura do dia
+(09:55), e o `exec.history` do `cache/relics.json` não tem nenhuma ação com
+ele nem com a 91742. Ou seja, saiu da BBM 073 antes de ativar e o bot não
+mexeu (9º padrão), como a Sela na §8.85.5. O lado "inativa → ativa na
+anfitriã" **continua sem ser visto**.
+
+**(5) §8.81:** 0 linhas `o mapa ainda diz barbara`, `ja e nosso` ou `visao
+geral relida`. Não houve conquista nova. Não exercitado.
+
+### 2. A sessão do hub em andamento contava como moeda fora do registro
+
+O `mint_inputs` só conhecia a sessão pela leitura final. Durante as 8 h, as
+moedas dela sobem o contador da conta e nada no registro as explica. Na
+sessão das 10:05 foram 29. Com a folga de 3, as aldeias sem registro passavam
+a "desconhecido: a conta ganhou N moeda(s) que o bot não registrou (à mão?)"
+logo depois das primeiras moedas, e voltavam a zero só depois da leitura
+final. As sessões vão quase emendadas, então **o tipo 7 das 55 aldeias sem
+cunhagem só valeria zero na primeira hora de cada sessão**. O plano piscaria
+entre "trocar a 7 das doadoras" e "não trocar" no ritmo do hub. É o caso que o
+prompt mandou procurar antes de culpar a mão do usuário.
+
+**Correção:**
+- **`MintManager._report_start`:** a sessão iniciada entra no registro com 0
+  moedas (`src: "auto"`). O fim vem da tela que volta do início (a mesma
+  "Fim: ..." da leitura final, medida na amostra `auto_mint_started.html`:
+  `{'coins': 0, 'end': ...}`). Sem a tela, o fim é início + 8 h.
+- **`coin_ledger.hub_sessions`:** junta as leituras da mesma sessão quando os
+  fins ficam a até 5 min um do outro. A sessão é fechada se foi lida a até
+  15 min do fim (a leitura final é 10 min antes) ou se não tem fim (o
+  registro antigo).
+- **`mint_inputs`:** a janela de uma sessão **aberta**, em andamento ou sem
+  leitura final, sai da conferência dos dois lados. Os pares de leituras do
+  contador que a tocam não entram no crescimento, e os POST dentro dela não
+  entram no registrado. As moedas lidas da sessão continuam creditadas ao hub.
+  Moeda à mão dentro dessa janela fica invisível até a leitura final. Fora
+  dela, continua aparecendo.
+
+A sessão das 18:11 começou sem a linha de início. Até a leitura final dela
+(02:01), as aldeias sem registro podem cair em "desconhecido". Esse é o lado
+seguro: elas saem do plano e nada troca.
+
+**Testes** (`test_coin_ledger.py`, com as 20 linhas `TWB_MINT` reais de 04/11
+21:58 a 05/11 20:00):
+- o campo reproduzido: zero com 3 fora do registro;
+- +3 da sessão até o POST seguinte: "6 moeda(s)" sem a linha de início, e zero
+  com ela;
+- 6 à mão entre 17:57 e 18:02 (fora da janela): "8 moeda(s)";
+- uma leitura no meio da sessão (4) continua fora do registrado;
+- a sessão das 21:21 com início e sem leitura final: os 2 dela saem da conta;
+- a leitura final com o fim 20 s diferente do início: é a mesma sessão,
+  fechada, e 6 à mão dentro dela aparecem;
+- o início no `_tick_hub` real (`["total", "auto"]`, fim da tela) e sem a
+  tela (início + 8 h).
+
+Mutantes, todos pegos: "sem janela opaca", "POST da janela conta", "sem juntar
+fins", "fechada só depois do fim" e "aberta conta no registrado". O último
+passou na primeira bateria, porque as sessões abertas dos testes tinham 0
+moedas. Ganhou o caso da leitura no meio.
+
+### 3. O plano com o tipo 7, e o piso
+
+O plano das 21:00 (`cache/flags.json`, calculado pela BBM 048) tinha **31
+passos, +9.792/h**. O desenho é este:
+- **as doadoras e as que não cunham largam a 7.** BBM 019, 013, 001, 014, 009,
+  003, 007, 010, 008, 017, 006, 015 e 029 passam para 1 (+400 a +755/h) ou
+  para 8 (+17 a +152/h);
+- **as que cunham pelo `coin_item` pegam a 7 ou sobem de nível.** BBM 034
+  +1.019, 032 +604, 043 +739, 016 +493, 039 +339, 036 +276, 037 +241, 038
+  +238, 050 +232, 045 +195 e 040 +148;
+- a BBM 011 trocaria a 4/7 de defesa por 1/1 (+389).
+
+A direção não depende do tamanho da amostra: 7 numa doadora vale 0 por
+construção, e uma aldeia que cunha 1 moeda a cada 3 dias já paga a 7/1 (10%
+de 83 mil = 8.300 por moeda) acima da produção dela. Os **tamanhos** são de
+27 h e 1 a 4 moedas por aldeia, e vão mexer conforme a janela chega a 7 dias.
+
+**Na execução, a troca é uma corrente.** Do inventário sobram bandeiras 2, 3,
+4, 5, 6 e 8, e **nenhuma 1 ou 7** (`flag_supply` da BBM 048 às 21:00). Cada
+7 que vai para uma aldeia que cunha precisa antes sair de uma doadora, e cada
+1 que vai para uma doadora sai de uma aldeia que cunha. O `flag_value_logic`
+confere o inventário real antes do POST ("não sobra mais no inventário"). Por
+isso as primeiras trocas possíveis são as das doadoras para 8. Com 3 trocas
+por dia e 48 h sem desfazer, a corrente leva mais de 10 dias.
+
+**O piso (§8.86.4), refeito com este plano:** 25 passos passam de 50/h. Entre
+20 e 50 há um só (BBM 015, +49,7). Abaixo de 20 ficam os 5 pequenos da 8. O
+piso deixou de ser a decisão que importa. **Decisão do usuário, 05/11 ~21:20:
+manter 50/h.**
+
+**O ataque.** Contado no `cache/reports` como na §8.86.4 (ataque de fora
+contra a nossa, nos últimos 7 dias): 9 aldeias e 13 ataques.
+- **BBM 012, 020 e 011:** 3 nobres cada, em 03/11. As três têm passo, de
+  +426, +612 e +389/h.
+- **BBM 072:** 3 de leve. **BBM 073:** 2 de leve.
+- **BBM 051:** 2 só de exploradores.
+- **BBM 069, 048 e 066:** 1 cada.
+
+A mesma conta da §8.86.4, feita um dia depois na mesma fonte, perdeu os 4
+ataques da BBM 068 e 3 dos 4 da BBM 069: o `cache/reports` tem teto de 1.000
+arquivos (`bot.max_cached_reports`), 582 deles de comércio, e o mais antigo
+ataque guardado é de 30/10. **A fonte que o código leria não guarda 7 dias**
+(24º padrão: medir na fonte que o código lê, e ela é pior do que parecia).
+**Decisão do usuário: sem troca por valor em aldeia atacada nos últimos 7
+dias, qualquer ataque.**
+
+### 4. O freio por ataque
+
+- **`OwnDefenseManager`:** guarda `attacked_seen` = {aldeia: última varredura
+  com ataque chegando} em `cache/defense/state.json`, por 8 dias. É o mesmo
+  sinal da visão geral (`incomings > 0`), que pega todo ataque, até o que não
+  gera relatório lido, e a aldeia recém-conquistada. Só existe com
+  `own_defense.enabled` (ligado aqui).
+- **`flag_planner.attacked_at`:** {aldeia: ataque mais novo} das duas fontes.
+  São dois pisos: a varredura começa vazia agora, e os relatórios cobrem
+  ~6 dias.
+- **`plan()`:** a aldeia `blocked` fica fora da troca, como a sob ataque. A
+  bandeira dela não entra na corrente, e o plano não promete o que não sai.
+  O motivo vai para `values[vid]["blocked"]`.
+- **`evaluate(..., attacked)`:** o mesmo freio no passo da própria aldeia.
+- **Config:** `flag_value.attack_block_h` (padrão 168), em
+  `config.example.json` e `helpfile.py`. O `build.version` **não** foi bumpado:
+  a chave tem padrão no código, e bumpar dispararia o merge no `config.json`
+  vivo só por ela.
+
+**Limite:** sem as duas fontes (defesa própria desligada e relatório fora do
+cache), o freio não vê o ataque e deixa a troca passar.
+
+**O plano com o freio**, calculado fora do bot às ~21:40 com o código novo, o
+`WorldConfig` e o inventário da BBM 048: **29 passos, +9.261/h**, e 9 aldeias
+bloqueadas (88481, 41140, 32056, 98660, 74690, 91742, 40808, 57580 e 69630).
+Saem os passos da BBM 012, 020 e 011.
+
+**Testes:**
+- `test_flag_value.py`: as duas fontes, com o formato do `cache/reports` dos
+  nobres de 03/11 (nossa contra nossa, alvo de fora, outro tipo, fora da
+  janela, arquivo quebrado); o plano dando a 8/7 a quem não foi atacada, com
+  controle; o freio em 167 h e em 169 h, ataque em outra aldeia, a janela da
+  config; o `plan_for_village` sem passo com o ataque e com o passo 8 dias
+  depois; o `DefenceManager` sem POST, e com POST quando a janela da config é
+  de 48 h;
+- `test_own_defense.py`: a varredura guarda a BBM 048 da fixture, apaga a de
+  9 dias e o processo seguinte relê.
+
+Mutantes pegos: plano ignorando o bloqueio, freio sem o ataque,
+`plan_for_village` sem marcar, sem a varredura, nossa contra nossa contando,
+`DefenceManager` sem a janela da config, sem gravar e sem vencer o
+`attacked_seen`.
+
+`twb-review` no diff:
+- não há campo mutável novo de classe (o `attacked_seen` nasce no
+  `__init__`);
+- o `last_response` está guardado (`is not None`);
+- as `def` novas têm chamador;
+- o `values` ganhou a chave `blocked`, que o `/flags` não mostra ainda e que
+  não colide com método de dict (8º padrão);
+- o corpo de módulo só tem constantes;
+- o `defence_manager.py` foi tocado só no caminho de bandeira, que roda fora
+  do ramo sob ataque.
+
+Suíte: **126 arquivos, 0 falhas**.
+
+**Religado às 21:39:31 por WMI (pid 14864).** Antes de parar:
+- a bot protection das 21:24:40 já tinha saído às 21:37:04 (o usuário
+  resolveu o captcha);
+- a varredura da defesa própria tinha terminado, com 4 aldeias e nenhum envio;
+- o Hunter não tinha saída pendente.
+
+O processo subiu sem erro.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -10425,16 +10660,22 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
 - ⏳ **`flag_value.mode: "on"` ligado em 04/11 às 17:24** (§8.85.7), com o 8
   fora das manuais. ✅ A primeira avaliação com `act=True` foi vista
   (§8.86.3): BBM 063 +2/h, segurada pelo piso, 0 `Setting flag`, e a BBM 005
-  com a 8/7. Falta a primeira troca de verdade, que depende do tipo 7 medido e
-  do piso.
-- **Piso `min_gain_h`: decidir com o tipo 7 medido** (§8.86.4). O custo de uma
-  troca é o cooldown de 24 h (`FlagsScreen.cooldown_hours`), em que a aldeia
-  não põe a bandeira de defesa. Em 7 dias, 7 aldeias foram atacadas, e dos 8
-  passos de hoje só a BBM 068 está entre elas (passo de +6/h). Proposta, que
-  é decisão do usuário: baixar o piso para ~20/h e não trocar por valor em
-  aldeia atacada nos últimos 7 dias. Com o plano de hoje, isso daria 2 trocas
-  (BBM 051 e 053, +36 e +34/h), e a BBM 059 (19 a 20/h) ficaria no limite.
-  Antes, refazer a conta com o plano que tiver o tipo 7.
+  com a 8/7. Falta a primeira troca de verdade. Com o tipo 7 medido (§8.88.3)
+  são 29 passos (+9.261/h). É uma corrente (não sobra 1 nem 7 no inventário),
+  e as primeiras trocas possíveis são as das doadoras de 7 para 8. Sinal no
+  log: `Setting flag` depois de "Bandeiras por valor (agindo)", e o
+  `exec.history` no `cache/flags.json`.
+- ~~**Piso `min_gain_h`**~~ ✅ **decidido em 05/11 (§8.88.3): fica em 50/h.**
+  Com o tipo 7, só a BBM 015 cai entre 20 e 50. ✅ **Sem troca por valor em
+  aldeia atacada nos últimos 7 dias** (`flag_value.attack_block_h: 168`, §8.88.4),
+  lendo o `attacked_seen` da defesa própria e o `cache/reports`.
+- ⏳ **A BBM 005 pode perder a 8/7** (§8.88.1): às 13:45 o plano propôs
+  8/7 (84/h) → 1/1 (432/h), e o `stable_reads` segurou. Ela não é manual. Se
+  o usuário quiser a 8/7 lá de qualquer jeito, o caminho é o 8 nas manuais
+  (§8.85), que tira o 8 do plano inteiro.
+- **Pendências do freio por ataque:** mostrar `values[vid]["blocked"]` no
+  `/flags`. Medir quantas aldeias o `attacked_seen` acrescenta ao `cache/reports`
+  na primeira semana.
 - ~~**Campo do dry-run**~~ ✅ conferido em 03/11 (§8.84.4): o plano roda, tem
   71 aldeias e zero passos, e 20 delas estão com valor atual não medido (todas
   de moeda). A 8 sem valor é o que prende 19 aldeias numa bandeira que vale 0.
@@ -10451,12 +10692,20 @@ relíquias. As "3 trocas" deram lugar ao critério da §8.82.4. Pendências:
   - ✅ A sessão que começou antes do primeiro contador dava −31 de moeda fora
     do registro e escondia cunhagem à mão. Corrigido no `mint_inputs`
     (§8.86.2b), religado às 21:24.
-  - Falta a amostra `coin_post*.html` do `_mint_max` do hub, que sai na
-    primeira cunhagem de lote dele.
-  - Falta, a partir de ~17:55 de 05/11, o `/flags` com o tipo 7 medido nas
-    20 aldeias, ou "desconhecido" com o motivo. Se vier "a conta ganhou N
-    moeda(s) que o bot não registrou", procurar a sessão do hub que faltou
-    antes de culpar a mão do usuário.
+  - ✅ A amostra `coin_post.html` saiu às 10:05 de 05/11 (confirmada,
+    4903 → 4904).
+  - ✅ O tipo 7 está medido desde ~17:55 de 05/11 (§8.88.1): 13 aldeias cunham
+    pelo `coin_item` e as doadoras valem 0.
+  - ✅ A sessão do hub **em andamento** contava como moeda fora do registro e
+    poria o tipo 7 em "desconhecido" quase o dia inteiro. Corrigido com a
+    linha de início e a janela aberta fora da conferência (§8.88.2).
+  - ⏳ **Conferir em campo:** depois da leitura final das 02:01 de 06/11, a
+    sessão seguinte deve deixar `TWB_MINT {"src": "auto", "coins": 0, "end": ...}`
+    no início, e o tipo 7 das aldeias sem registro deve ficar em zero
+    durante a sessão, e não "desconhecido".
+  - Sessão do hub sem leitura final (PC suspenso, bot parado) fica de fora da
+    conferência. A moeda à mão nessa janela não aparece. É o preço de não
+    perder uma semana de tipo 7 por uma noite desligada.
 - ~~**O planejador não lê `world.flag_manual_types`**~~ ✅ corrigido em 04/11
   (§8.85.6): o `DefenceManager` passa a lista ao plano.
 - ~~**Recrutamento cedido ao gerente**~~: sem objeto desde que o gerente
@@ -10484,8 +10733,9 @@ Pendências pequenas das relíquias, achadas nas Fases 3 (§8.78) e 4 (§8.79):
   4 leituras de Relics com `cobertura calculada bate com a visão geral do jogo`
   (9 equipadas, 0 inativas) e 0 WARNING. O lado "inativa → ativa na anfitriã"
   segue sem ser visto: a Sela saiu da 98660 antes de ativar, e não foi o bot
-  (§8.85.5). O caso novo é o Machado de má qualidade na BBM 073 (91742), inativo
-  até ~03:30 de 05/11.
+  (§8.85.5). O Machado de má qualidade também saiu da BBM 073 antes de
+  ativar (§8.88.1): em 05/11 estava no inventário, sem nenhuma ação do bot
+  no `exec.history`. Segue sem caso para conferir.
 - **Relíquia de "capacidade de saque"** (§8.80): nenhuma na conta. Se aparecer
   uma, medir numa aldeia coberta se a coleta e o farm carregam mais que o
   `UNIT_CARRY` diz (relatório de farm que volta cheio; a coleta mostra o saque

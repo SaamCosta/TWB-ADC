@@ -173,6 +173,120 @@ def test_sessao_iniciada_antes_do_contador_nao_esconde_moeda():
     assert out["44683"]["coin_h"] is None and "6 moeda" in out["44683"]["coin_why"], out["44683"]
 
 
+# As linhas TWB_MINT reais de 04/11 21:58 a 05/11 20:00 (twb_1793838294.log e
+# twb_1793883288.log). O PC suspendeu às 02:21 e voltou às 09:49, então a
+# sessão do hub das 21:21 não teve leitura final (+2 no contador, 22:09 ->
+# 10:05). A sessão das 10:05 foi lida às 17:57 (29), e a das 18:11 estava em
+# andamento: o 4946 -> 4947 entre 19:52 e 20:00 é dela (§8.88).
+REAL_0511 = [
+    (1793840295, "68082", {"after": 4900, "before": 4899, "coins": 1, "src": "post"}),
+    (1793840942, "57033", {"after": 4901, "before": 4900, "coins": 1, "src": "post"}),
+    (1793883938, "38409", {"after": 4904, "before": 4903, "coins": 1, "src": "post"}),
+    (1793883938, "38409", {"src": "total", "total": 4904}),
+    (1793886441, "56822", {"after": 4905, "before": 4904, "coins": 1, "src": "post"}),
+    (1793896911, "39292", {"after": 4908, "before": 4907, "coins": 1, "src": "post"}),
+    (1793903474, "34597", {"after": 4923, "before": 4922, "coins": 1, "src": "post"}),
+    (1793904419, "39472", {"after": 4925, "before": 4924, "coins": 1, "src": "post"}),
+    (1793911212, "52755", {"after": 4938, "before": 4937, "coins": 1, "src": "post"}),
+    (1793912223, "38409", {"coins": 29, "end": 1793912743, "src": "auto", "total": 4938}),
+    (1793912520, "51540", {"after": 4939, "before": 4938, "coins": 1, "src": "post"}),
+    (1793913096, "38409", {"src": "total", "total": 4939}),
+    (1793913435, "54895", {"after": 4940, "before": 4939, "coins": 1, "src": "post"}),
+    (1793913467, "54895", {"after": 4941, "before": 4940, "coins": 1, "src": "post"}),
+    (1793914774, "55647", {"after": 4942, "before": 4941, "coins": 1, "src": "post"}),
+    (1793916611, "61947", {"after": 4943, "before": 4942, "coins": 1, "src": "post"}),
+    (1793917036, "58039", {"after": 4944, "before": 4943, "coins": 1, "src": "post"}),
+    (1793919094, "61990", {"after": 4945, "before": 4944, "coins": 1, "src": "post"}),
+    (1793919125, "61990", {"after": 4946, "before": 4945, "coins": 1, "src": "post"}),
+    (1793919654, "68082", {"after": 4948, "before": 4947, "coins": 1, "src": "post"}),
+]
+# O início da sessão das 18:11 como o `_report_start` o registraria: a tela que
+# volta do início traz o "Fim" (aqui, 20 s depois de início + 8 h, como na §8.86).
+END_C = 1793913074 + 8 * 3600 + 20
+START_C = (1793913097, "38409", {"src": "auto", "coins": 0, "end": END_C, "total": 4939})
+# E o da sessão das 21:21, se o registro já existisse.
+START_A = (1793838063, "38409", {"src": "auto", "coins": 0, "end": 1793838062 + 8 * 3600 + 20,
+                                 "total": 4899})
+
+
+def _shift(events, since, n):
+    """O contador da conta `n` acima a partir de `since`: moeda que ninguém registrou."""
+    out = []
+    for ts, vid, ev in events:
+        ev = dict(ev)
+        if ts >= since:
+            for key in ("before", "after", "total"):
+                if ev.get(key) is not None:
+                    ev[key] += n
+        out.append((ts, vid, ev))
+    return out
+
+
+def test_sessao_do_hub_em_andamento_nao_e_moeda_fora_do_registro():
+    vids = ["38409", "44683"]
+    now = 1793919654 + 1800
+    real = REAL_0411 + REAL_0511
+    # O campo de 05/11 às 21:00: 3 fora do registro (2 da sessão sem leitura
+    # final, 1 da em andamento), no limite da folga: zero medido.
+    out = coin_ledger.mint_inputs(vids, real, now)
+    assert out["44683"]["coin_h"] == 0.0, out["44683"]
+    # A sessão em andamento cunha mais 3 até o próximo POST: sem o início no
+    # registro, as aldeias sem registro viram "desconhecido" (o furo).
+    more = real + [(now, "57033", {"src": "post", "coins": 1, "before": 4951, "after": 4952})]
+    out = coin_ledger.mint_inputs(vids, more, now)
+    assert out["44683"]["coin_h"] is None and "6 moeda" in out["44683"]["coin_why"], out["44683"]
+    # Com o início no registro, a janela da sessão aberta sai da conferência.
+    out = coin_ledger.mint_inputs(vids, more + [START_C], now)
+    assert out["44683"]["coin_h"] == 0.0, out["44683"]
+    # O hub fica com o que foi lido: 33 + 29 + 1 POST + 0 da sessão aberta.
+    assert out["38409"]["coins"] == 63, out["38409"]
+    # Moeda à mão FORA da janela continua aparecendo: 6 entre 17:57 e 18:02
+    # (sessão das 10:05 já fechada) somam aos 2 da sessão sem leitura final.
+    hand = _shift(more, 1793912520, 6) + [START_C]
+    out = coin_ledger.mint_inputs(vids, hand, now)
+    assert out["44683"]["coin_h"] is None and "8 moeda" in out["44683"]["coin_why"], out["44683"]
+    # Uma leitura no meio da sessão (4 até agora) é do hub, mas a sessão
+    # segue aberta: não entra no registrado, ou esconderia os mesmos 8.
+    mid = (now - 60, "38409", {"src": "auto", "coins": 4, "end": END_C, "total": 4957})
+    out = coin_ledger.mint_inputs(vids, hand + [mid], now)
+    assert out["44683"]["coin_h"] is None and "8 moeda" in out["44683"]["coin_why"], out["44683"]
+    assert out["38409"]["coins"] == 33 + 29 + 1 + 4
+
+
+def test_sessao_sem_leitura_final_fica_fora_da_conferencia():
+    vids = ["44683"]
+    now = 1793919654 + 1800
+    # 2 à mão às 13:41 + os 2 da sessão das 21:21 = 4, acima da folga.
+    base = _shift(REAL_0411 + REAL_0511, 1793896911, 2) + [START_C]
+    out = coin_ledger.mint_inputs(vids, base, now)
+    assert out["44683"]["coin_h"] is None and "4 moeda" in out["44683"]["coin_why"], out["44683"]
+    # Com o início da sessão das 21:21 no registro e sem leitura final, ela
+    # fica aberta e o 22:09 -> 10:05 sai da conta: sobram os 2 à mão.
+    [a] = [s for s in coin_ledger.hub_sessions([START_A]) if s["end"] == START_A[2]["end"]]
+    assert not a["closed"]
+    out = coin_ledger.mint_inputs(vids, base + [START_A], now)
+    assert out["44683"]["coin_h"] == 0.0, out["44683"]
+
+
+def test_sessao_lida_no_fim_volta_a_conferencia():
+    vids = ["38409", "44683"]
+    # A leitura final da sessão das 18:11 (10 min antes do fim; o fim lido
+    # nela vem 20 s depois do registrado no início, a mesma sessão): 10 moedas,
+    # contador 4957. Com ela, a janela volta a ser conferida.
+    final = (END_C - 600, "38409", {"src": "auto", "coins": 10, "end": END_C + 20, "total": 4957})
+    now = END_C + 60
+    events = REAL_0411 + REAL_0511 + [START_C, final]
+    sessions = [s for s in coin_ledger.hub_sessions(events) if s["end"] and s["end"] >= END_C - 300]
+    assert len(sessions) == 1 and sessions[0]["closed"] and sessions[0]["coins"] == 10, sessions
+    out = coin_ledger.mint_inputs(vids, events, now)
+    assert out["44683"]["coin_h"] == 0.0, out["44683"]
+    assert out["38409"]["coins"] == 33 + 29 + 1 + 10
+    # 6 à mão dentro da janela dela aparecem depois da leitura final.
+    hand = events[:-1] + [(final[0], "38409", dict(final[2], total=4963))]
+    out = coin_ledger.mint_inputs(vids, hand, now)
+    assert out["44683"]["coin_h"] is None and "8 moeda" in out["44683"]["coin_why"], out["44683"]
+
+
 def test_post_da_primeira_leitura_conta_dentro():
     # O "antes" do primeiro POST é a primeira leitura do contador: a moeda dele
     # está no crescimento e tem que estar no registrado (senão, +1 fora sempre).
@@ -332,8 +446,21 @@ def test_hub_que_inicia_a_sessao_marca_a_leitura_final():
     mgr._tick_hub(NOW)
     assert any("start_auto_minting_session" in u for u in mgr.wrapper.posts), mgr.wrapper.posts
     assert mgr.state["hub"]["next_at"] == NOW + 8 * 3600 - mint_manager.AUTO_MINT_FINAL_READ
-    # Sessão ainda não aberta: só o contador da conta.
-    assert [json.loads(d)["src"] for _, _, d in mgr.wrapper.reporter.lines] == ["total"]
+    # Antes de abrir, só o contador; aberta, a sessão entra com 0 moedas e o
+    # fim da tela que voltou (§8.88), para o registro saber que ela corre.
+    lines = [json.loads(d) for _, _, d in mgr.wrapper.reporter.lines]
+    assert [ev["src"] for ev in lines] == ["total", "auto"], lines
+    end = academy.auto_minting_progress(_page("started_0510", accented=True))["end"]
+    assert lines[1] == {"src": "auto", "coins": 0, "end": end, "total": 1317}, lines[1]
+
+    # Resposta do início sem a tabela da sessão (ou nenhuma): o fim vira
+    # início + 8 h, e a linha sai do mesmo jeito.
+    for last in (Resp("<html>sem a tabela</html>"), None):
+        mgr = _hub(HubWrapper(start_page))
+        mgr.wrapper.last_response = last
+        mgr._report_start("38409", NOW)
+        lines = [json.loads(d) for _, _, d in mgr.wrapper.reporter.lines]
+        assert lines == [{"src": "auto", "coins": 0, "end": NOW + 8 * 3600, "total": None}], lines
 
 
 @_with_tmp_store

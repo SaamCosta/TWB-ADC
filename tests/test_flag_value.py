@@ -13,6 +13,8 @@ O que cada caso prova, com o dado de onde veio:
   e a coleta só entrando no valor quando uma coleta do bot paga a mais;
 - o plano (moeda e manual intocadas, desconhecido não troca, a bandeira
   largada volta à sobra) e os freios (piso, %, leituras, teto do dia, 48 h);
+- §8.88: sem troca por valor em aldeia atacada há menos de 7 dias (as duas
+  fontes, o plano, o freio e o `DefenceManager`);
 - `DefenceManager`: dry-run não posta e a ordem fixa segue agindo; ligado
   posta uma vez, lê o inventário antes se não estiver fresco, e não posta
   quando a bandeira mudou desde o plano ou quando o jogo recusa.
@@ -283,6 +285,81 @@ def test_brakes():
           "modo ilegível cai no padrão")
 
 
+# -- atacada há pouco (§8.88) -------------------------------------------------
+
+DAY = 86400.0
+
+
+def _write(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+
+def test_attacked_at_reads_defense_scan_and_reports():
+    root = tempfile.mkdtemp(prefix="flagattack_")
+    own = ["41140", "32056", "74690", "57580"]
+    # A varredura da defesa própria: 74690 com ataque chegando há 2 h, uma
+    # aldeia de fora e uma nossa de 9 dias atrás (fora da janela).
+    _write(os.path.join(root, "cache", "defense", "state.json"),
+           {"attacked_seen": {"74690": NOW - 2 * 3600, "11111": NOW - 3600, "57580": NOW - 9 * DAY}})
+    # O formato do `cache/reports` (ReportManager), como os 3 nobres de 03/11:
+    # ataque de fora contra a nossa, com a hora em `extra.when`.
+    rep = lambda origin, dest, when, kind="attack": {
+        "type": kind, "origin": origin, "dest": dest, "losses": {},
+        "extra": {"when": when, "units_sent": {"snob": 3}, "units_losses": {"snob": 3}}}
+    reports = {
+        "1": rep("25555", "41140", NOW - 2 * DAY),
+        "2": rep("25555", "74690", NOW - 3 * DAY),           # a varredura é mais nova
+        "3": rep("41140", "32056", NOW - DAY),               # nossa contra nossa: não
+        "4": rep("25555", "99999", NOW - DAY),               # alvo de fora: não
+        "5": rep("25555", "32056", NOW - DAY, "ReportSupport"),
+        "6": rep("25555", "57580", NOW - 10 * DAY),          # fora da janela
+    }
+    for name, data in reports.items():
+        _write(os.path.join(root, "cache", "reports", "%s.json" % name), data)
+    with open(os.path.join(root, "cache", "reports", "7.json"), "w") as fh:
+        fh.write("{quebrado")
+    got = FP.attacked_at(root, own, NOW)
+    check(got == {"41140": NOW - 2 * DAY, "74690": NOW - 2 * 3600}, "duas fontes, a mais nova: %s" % got)
+    check(FP.attacked_at(tempfile.mkdtemp(), own, NOW) == {}, "sem os arquivos: nada")
+
+
+def test_attack_block_in_plan_and_brake():
+    villages = {"a": {"current": [2, 2]}, "b": {"current": [2, 2], "blocked": "atacada há 50 h"}}
+    inputs = {"a": {"scav_loot_h": 1000.0, "recruit_busy": {}},
+              "b": {"scav_loot_h": 90000.0, "recruit_busy": {}}}
+    p = FP.plan(villages, {"8": {"7": 1}}, inputs, haul_scavenge=True)
+    check([s["vid"] for s in p["steps"]] == ["a"], "a 8/7 vai para a, não para a atacada: %s" % p["steps"])
+    check(p["values"]["b"]["blocked"] and p["values"]["b"]["value"] is not None, "o motivo aparece no plano")
+    villages["b"].pop("blocked")
+    p = FP.plan(villages, {"8": {"7": 1}}, inputs, haul_scavenge=True)
+    check([s["vid"] for s in p["steps"]] == ["b"], "controle: sem o ataque, vai para b")
+
+    step = {"vid": "b", "from": [2, 2], "to": [8, 7], "gain_h": 800.0, "value_before_h": 0.0}
+    st = {"streak": {"b": {"key": FP.step_key(step), "count": 2}}}
+    ok, why = FP.evaluate(step, st, cfg(), NOW, {"b": NOW - 167 * 3600})
+    check(not ok and "atacada" in why, "167 h depois do ataque: não sai (%s)" % why)
+    check(FP.evaluate(step, st, cfg(), NOW, {"b": NOW - 169 * 3600})[0], "169 h depois: sai")
+    check(FP.evaluate(step, st, cfg(), NOW, {"a": NOW})[0], "ataque em outra aldeia não conta")
+    check(FP.evaluate(step, st, cfg(), NOW)[0], "controle: sem ataque, sai")
+    check(not FP.evaluate(step, st, cfg(attack_block_h=200.0), NOW, {"b": NOW - 190 * 3600})[0],
+          "a janela vem da config")
+
+
+def test_plan_for_village_blocks_recently_attacked():
+    managed = {"a": {"flags": {"flag_state_confirmed": True, "current_flag": [2, 2]}}}
+    inputs = {"a": dict(base_inputs()["a"])}
+    cache = FakeCache(managed, inputs)
+    cache.data["attacked"] = {"a": NOW - 2 * DAY}
+    own = {"current": [2, 2], "can_change": True}
+    p = FP.plan_for_village("a", own, {8: {7: 1}}, cache=cache, now=NOW)
+    check(p["step"] is None and p["own"].get("blocked"), "atacada há 2 dias: sem passo")
+    check(p["attacked"] == {"a": NOW - 2 * DAY}, "o mapa segue para o freio")
+    p = FP.plan_for_village("a", own, {8: {7: 1}}, cache=cache, now=NOW + 6 * DAY)
+    check(p["step"] and p["step"]["to"] == [8, 7], "8 dias depois: o passo volta")
+
+
 # -- DefenceManager ---------------------------------------------------------
 
 class FakeCache:
@@ -406,6 +483,18 @@ def test_on_leaves_manual_and_locked_alone():
     check(not w.posts, "trava da cunhagem: nada")
 
 
+def test_on_does_not_post_in_recently_attacked_village():
+    d, w = make("on")
+    FP.INPUTS.data["attacked"] = {"38997": time.time() - 3 * DAY}
+    d.flag_value_logic(act=True)
+    check(not [p for p in w.posts if p[0] == "assign_flag"], "atacada há 3 dias: nenhum POST")
+    d, w = make("on")
+    FP.INPUTS.data["attacked"] = {"38997": time.time() - 3 * DAY}
+    d.value_cfg = cfg(mode="on", attack_block_h=48.0)
+    d.flag_value_logic(act=True)
+    check(len([p for p in w.posts if p[0] == "assign_flag"]) == 1, "janela de 48 h na config: troca")
+
+
 def test_update_routes_by_mode():
     for mode, expect_value in (("off", False), ("dry_run", True), ("on", True)):
         d, w = make(mode)
@@ -438,6 +527,10 @@ for fn in [
     test_on_does_not_post_when_flag_changed_since_plan,
     test_on_waits_for_stable_reads_and_counts_refusal_out,
     test_on_leaves_manual_and_locked_alone,
+    test_attacked_at_reads_defense_scan_and_reports,
+    test_attack_block_in_plan_and_brake,
+    test_plan_for_village_blocks_recently_attacked,
+    test_on_does_not_post_in_recently_attacked_village,
     test_update_routes_by_mode,
 ]:
     fn()

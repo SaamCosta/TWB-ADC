@@ -321,6 +321,36 @@ def test_gatilho():
         od.load_force = original
 
 
+def test_varredura_guarda_aldeia_atacada():
+    # §8.88: a aldeia com ataque chegando fica em `attacked_seen` (o freio das
+    # bandeiras por valor lê daqui), e a entrada vence em 8 dias.
+    print("test_varredura_guarda_aldeia_atacada")
+    import json
+    import tempfile
+    import game.own_defense as od
+    tmp = tempfile.mkdtemp(prefix="owndef_")
+    original = (od.STATE_PATH, od.load_force)
+    od.STATE_PATH = os.path.join(tmp, "state.json")
+    od.load_force = lambda now=None: {}
+    try:
+        now = 1793900000.0
+        wrapper = SimpleNamespace(account_pulse=SimpleNamespace(last={"incomings": 6}),
+                                  get_url=lambda url: SimpleNamespace(text=VILLAGES))
+        mgr = OwnDefenseManager(wrapper, clock=lambda: now)
+        mgr.origins, mgr.attempts, mgr.history = {}, {}, []
+        mgr.attacked_seen = {"71768": now - 9 * 86400, "53691": now - 86400}
+        mgr._world = lambda config: ({}, None, None)
+        mgr._defend = lambda *a, **k: {}
+        mgr.scan({"villages": {"71768": {}}}, "teste")
+        saved = json.load(open(od.STATE_PATH, encoding="utf-8"))
+        _check("BBM 048 sob ataque entra; 9 dias sai; 1 dia fica", saved["attacked_seen"],
+               {"40808": int(now), "53691": now - 86400})
+        _check("o processo seguinte relê", OwnDefenseManager(wrapper).attacked_seen,
+               saved["attacked_seen"])
+    finally:
+        od.STATE_PATH, od.load_force = original
+
+
 # -- teto e blindagem (2026-10-18) ---------------------------------------------
 
 TRANSIT = _fixture("place_units_transit_br143.html")
@@ -569,6 +599,7 @@ if __name__ == "__main__":
     test_support_respeita_prazo()
     test_support_limita_ao_que_esta_em_casa()
     test_gatilho()
+    test_varredura_guarda_aldeia_atacada()
     test_maior_ataque_com_nobre()
     test_teto_corta_ao_necessario()
     test_praca_total_e_transito()
