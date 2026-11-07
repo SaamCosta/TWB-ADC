@@ -10970,6 +10970,14 @@ Pendências achadas na §8.81 e na §8.85 (fora do escopo):
   `now − last_run` do eta, e eta vencido = sem ataque até a aldeia rodar de
   novo. Teste com o `cache/managed` da 066 de 05/11 (anonimizar o nome de
   origem). Provavelmente é a mesma causa do item abaixo.
+- **InFlight sem tabela de comandos no reinício de 07/11 10:19.** Foi o
+  primeiro `overview_villages&mode=commands&page=-1` do processo, pedido pela
+  BBM 075 (100124), conquistada em 06/11. A resposta veio 200 e sem
+  `commands_table`, enquanto as telas vizinhas (estatísticas, visão geral de
+  produção) responderam normais. Os logs arquivados de set/out têm 0 casos.
+  Contar quantas vezes repete no `session_latest.log`. Se repetir, salvar a
+  resposta e conferir se é a aldeia nova (grupo/filtro) ou bot protection
+  antes de mexer.
 - **O `session_latest.log` some a cada reinício** (§8.89.1): a causa da parada
   do bot em 05/11 23:56 se perdeu assim. Ao subir, renomear o anterior para
   `session_prev.log`, só sob `__main__` (20º padrão: a suíte importa o
