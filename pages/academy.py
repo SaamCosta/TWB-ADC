@@ -91,11 +91,15 @@ def current_flag(html):
 #   <td>Já guardadas para o limite de nobres 60:</td> <td class="nowrap">37 moedas de ouro</td>
 # Subir do limite L para L+1 custa L+1 moedas (9 + 42 = 51 no limite 50;
 # 23 + 37 = 60 no limite 59), então o total cunhado é L(L+1)/2 + guardadas.
+# `moedas?`: com 1 guardada ou 1 faltando a tela deve dizer "1 moeda" (§8.89).
+# É hipótese: o "antes" das 9 moedas do hub de 07/11 não leu com a conta em
+# 4951 (1 guardada), e nenhuma leitura do registro caiu em 0/1 guardada ou 1
+# faltando. O `MintManager` guarda a tela que não ler (`coin_pre_unreadable`).
 LIMIT_RE = re.compile(r"Limite atual de nobres:\s*</td>\s*<td>\s*(\d+)\s*</td>")
 STORED_RE = re.compile(
-    r"guardadas para o limite de nobres (\d+):\s*</td>\s*<td[^>]*>\s*(\d+) moedas")
+    r"guardadas para o limite de nobres (\d+):\s*</td>\s*<td[^>]*>\s*(\d+) moedas?\b")
 MISSING_RE = re.compile(
-    r"Falta ainda para o limite de nobres (\d+):\s*</td>\s*<td[^>]*>\s*(\d+) moedas")
+    r"Falta ainda para o limite de nobres (\d+):\s*</td>\s*<td[^>]*>\s*(\d+) moedas?\b")
 # Sessão automática em andamento (amostras dos mesmos dias):
 #   O que já foi coletado até agora:   24 Moedas de ouro </div> <div>Fim: hoje às 20:03:20</div>
 AUTO_COINS_RE = re.compile(r"coletado at\S* agora:\s*(\d+)\s+Moedas de ouro")

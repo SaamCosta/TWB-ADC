@@ -600,6 +600,14 @@ class MintManager:
         before, after = academy.coin_total(html), academy.coin_total(res.text)
         msg = coin_ledger.mint_event("post", before=before, after=after)
         self._save_sample("coin_post" if msg else "coin_post_unconfirmed", res.text)
+        if before is None:
+            # §8.89: 9 moedas do hub sem linha em 07/11 (antes None, depois
+            # 4960), e as aldeias sem registro iriam a "desconhecido" por 5
+            # dias. A tela que não leu é a que diz por quê (13º padrão).
+            self._save_sample("coin_pre_unreadable", html)
+            logger.warning("Cunhagem: contador da conta ilegível antes da cunhagem em %s; "
+                           "%d moeda(s) sem registro (tela em cache/mint/samples/"
+                           "coin_pre_unreadable.html)", village_label(vid), n)
         self._report(vid, msg)
         logger.info("Cunhagem: %d moeda(s) cunhada(s) de uma vez em %s (contador da conta %s -> %s)",
                     n, village_label(vid), before, after)

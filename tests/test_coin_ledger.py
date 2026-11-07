@@ -62,6 +62,21 @@ def test_contador_da_conta_nas_duas_amostras():
     assert academy.coin_total(_page("running_1010", accented=True)) == 1807
 
 
+def test_contador_com_uma_moeda_no_singular():
+    # §8.89: o "antes" das 9 moedas de 07/11 não leu com a conta em 4951
+    # (limite 99, 1 guardada). A tela deve dizer "1 moeda"; o singular nunca
+    # foi capturado, então isto é o recorte de 10/10 com o número trocado.
+    page = _page("running_1010", accented=True)
+    stored = page.replace("23 moedas de ouro", "59 moedas de ouro").replace(
+        "37 moedas de ouro", "1 moeda de ouro")
+    assert academy.coin_total(stored) == 59 * 60 // 2 + 1
+    missing = page.replace("23 moedas de ouro", "1 moeda de ouro").replace(
+        "37 moedas de ouro", "59 moedas de ouro")
+    assert academy.coin_total(missing) == 59 * 60 // 2 + 59
+    # O plural continua igual, e a conta que não fecha continua não valendo.
+    assert academy.coin_total(stored.replace("1 moeda de ouro", "2 moeda de ouro")) is None
+
+
 def test_contador_que_nao_fecha_nao_vale():
     html = _page("running_1010").replace("23 moedas de ouro", "22 moedas de ouro")
     assert academy.coin_total(html) is None
@@ -287,6 +302,68 @@ def test_sessao_lida_no_fim_volta_a_conferencia():
     assert out["44683"]["coin_h"] is None and "8 moeda" in out["44683"]["coin_why"], out["44683"]
 
 
+# As linhas TWB_MINT reais de 07/11 até 09:01 (twb_1794045557.log). O bot
+# ficou parado de ~00:30 de 06/11 às 06:59 de 07/11; a sessão das 18:11 de
+# 05/11 não teve leitura final, e às 07:09:50 o hub cunhou 9 de uma vez com o
+# "antes" ilegível ("contador da conta None -> 4960"), sem linha `post`.
+REAL_0711 = [
+    (1794046190, "38409", {"src": "total", "total": 4960}),
+    (1794046198, "38409", {"coins": 0, "end": 1794074997, "src": "auto", "total": 4960}),
+    (1794052877, "34597", {"after": 4980, "before": 4979, "coins": 1, "src": "post"}),
+]
+END_0711 = 1794074997
+# A leitura final da sessão das 07:09, como ela vai sair: 40 moedas, 4980 + 21.
+FINAL_0711 = (END_0711 - 600, "38409", {"src": "auto", "coins": 40, "end": END_0711, "total": 5001})
+# As 3 linhas de `cache/logs/twb_rebuilt.log` (§8.89): os inícios das duas
+# sessões da transição (leitura final marcada para 05:10:38 e 02:01:14, logo
+# início = leitura final + 10 min - 8 h) e o POST das 9 moedas, pelo "(9)" da
+# tela e pelo contador da resposta.
+REBUILT = [
+    (1793838038, "38409", {"src": "auto", "coins": 0, "end": 1793838038 + 8 * 3600, "rebuilt": "§8.89"}),
+    (1793913074, "38409", {"src": "auto", "coins": 0, "end": 1793913074 + 8 * 3600, "rebuilt": "§8.89"}),
+    (1794046190, "38409", {"src": "post", "coins": 9, "before": 4951, "after": 4960, "rebuilt": "§8.89"}),
+]
+
+
+def test_campo_de_07_11_e_o_registro_reconstruido():
+    vids = ["44683", "38409"]
+    real = REAL_0411 + REAL_0511 + REAL_0711
+    # Agora (09:02): o par 05/11 20:00 -> 07/11 07:09 (+12) encosta na janela
+    # da sessão aberta e sai da conta por acaso: zero.
+    out = coin_ledger.mint_inputs(vids, real, 1794052877 + 60)
+    assert out["44683"]["coin_h"] == 0.0, out["44683"]
+    # Depois da leitura final das ~15:00 a janela fecha e o par volta:
+    # 2 + 1 da §8.88 + 9 do hub + 3 da sessão das 18:11 = 15, até 12/11.
+    now = END_0711 - 540
+    out = coin_ledger.mint_inputs(vids, real + [FINAL_0711], now)
+    assert out["44683"]["coin_h"] is None and "15 moeda" in out["44683"]["coin_why"], out["44683"]
+    # Com o registro reconstruído: zero, e o hub fica com as 9.
+    out = coin_ledger.mint_inputs(vids, real + [FINAL_0711] + REBUILT, now)
+    assert out["44683"]["coin_h"] == 0.0, out["44683"]
+    assert out["38409"]["coins"] == 33 + 29 + 1 + 40 + 9, out["38409"]
+    # Só o POST não basta: os 3 da sessão das 18:11 e os 2 da de 04/11 passam da folga.
+    out = coin_ledger.mint_inputs(vids, real + [FINAL_0711] + REBUILT[2:], now)
+    assert out["44683"]["coin_h"] is None and "6 moeda" in out["44683"]["coin_why"], out["44683"]
+    # Moeda à mão dentro da sessão de hoje continua aparecendo na leitura final.
+    hand = real + REBUILT + [(FINAL_0711[0], "38409", dict(FINAL_0711[2], total=5007))]
+    out = coin_ledger.mint_inputs(vids, hand, now)
+    assert out["44683"]["coin_h"] is None and "6 moeda" in out["44683"]["coin_why"], out["44683"]
+
+
+def test_registro_reconstruido_e_lido_do_proprio_arquivo():
+    # O `read_events` lê todo `twb_*.log`: o `twb_rebuilt.log` entra sem o bot
+    # escrever nele, e a chave `rebuilt` não atrapalha.
+    tmp = tempfile.mkdtemp(prefix="twb-rebuilt-")
+    try:
+        with open(os.path.join(tmp, "twb_rebuilt.log"), "w", encoding="utf-8") as fh:
+            for ts, vid, ev in REBUILT:
+                fh.write("%d - %s - TWB_MINT - %s\n" % (ts, vid, json.dumps(ev, sort_keys=True)))
+        events = flag_planner.read_events(tmp, END_0711 - 540)["mint"]
+        assert sorted(events, key=lambda e: e[0]) == sorted(REBUILT, key=lambda e: e[0]), events
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_post_da_primeira_leitura_conta_dentro():
     # O "antes" do primeiro POST é a primeira leitura do contador: a moeda dele
     # está no crescimento e tem que estar no registrado (senão, +1 fora sempre).
@@ -504,6 +581,25 @@ def test_mint_max_do_hub_registra_pelo_contador():
     assert mgr._mint_max("38409", before) == 3
     [(_, _, data)] = mgr.wrapper.reporter.lines
     assert json.loads(data)["coins"] == 490
+
+
+@_with_tmp_store
+def test_mint_max_sem_contador_antes_guarda_a_tela():
+    # §8.89: o "antes" que não lê não deixa linha (o servidor não contou), mas
+    # a tela vai para `coin_pre_unreadable` para dizer por quê.
+    before = (_page("started_0510", accented=True).replace("Limite atual de nobres", "Limite")
+              + '<a href="#" id="coin_mint_fill_max">(9)</a>')
+    mgr = _hub(HubWrapper(before, after=_page("running_1010", accented=True)))
+    assert mgr._mint_max("38409", before) == 9
+    assert mgr.wrapper.reporter.lines == []
+    path = mint_manager.FileManager.get_path("cache/mint/samples/coin_pre_unreadable.html")
+    with open(path, "r", encoding="utf-8") as fh:
+        assert "coin_mint_fill_max" in fh.read()
+    # Com o "antes" legível, nenhuma tela de falha.
+    other = _hub(HubWrapper(_page("started_0510", accented=True), after=_page("running_1010", accented=True)))
+    os.remove(path)
+    other._mint_max("38409", _page("started_0510", accented=True) + '<a href="#" id="coin_mint_fill_max">(3)</a>')
+    assert not os.path.exists(path)
 
 
 if __name__ == "__main__":
