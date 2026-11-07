@@ -10783,8 +10783,41 @@ volta depois de toda parada longa. É a pendência "viagem desconhecida" da §9,
 agora com a causa.
 
 **O `session_latest.log` não sobrevive a um reinício.** A causa da parada de
-05/11 se perdeu assim. Guardar o anterior ao subir (`session_prev.log`) teria
-bastado.
+05/11 se perdeu assim. Feito no mesmo dia, no item 5.
+
+### 5. O log da sessão anterior fica guardado
+
+O usuário desliga o bot toda noite, e o `open(..., "w")` do `twb.py` apagava
+a sessão anterior a cada subida. A fase seguinte só tinha o log do dia
+corrente.
+
+**`core/session_log.rotate`**, chamado no topo do `twb.py`:
+- **Onde:** sob `__main__`, depois da trava de instância única e antes do
+  `open(..., "w")`. Um segundo bot recusado não gira o log do que está
+  rodando.
+- **Nome:** o anterior vira `session_prev_<AAAAMMDD_HHMMSS>.log`, com a hora
+  da **primeira linha** (o início daquela sessão, não a do reinício). Sem data
+  na primeira linha, vale o mtime. Hora repetida ganha `_1`.
+- **Limpeza:** ficam os 10 mais novos. Ela só olha o prefixo `session_prev_`,
+  então os logs nomeados à mão (`session_20261005_1850_campanha.log` etc.) não
+  são tocados.
+- **Falhas:** se o rename for recusado (painel lendo o arquivo, no Windows),
+  copia. Qualquer outro erro: o bot sobe como antes, só sem o log anterior.
+
+**Testes:**
+- `test_session_log.py`, num diretório temporário, cobre: hora da primeira
+  linha com bytes NUL, log vazio ou ausente, hora repetida, mtime, limpeza que
+  poupa os nomeados, cópia quando o rename é recusado e erro que não sobe;
+- `test_session_log_guard.py` ganhou a integração: o topo real do `twb.py`
+  rodado como script num tmp que já tem log.
+
+Mutante pego: o `twb.py` sem a chamada. O mutante "girar no import" não foi
+rodado, porque mexeria no log real que o bot tem aberto. Contra ele vale o
+teste do import que já existia: o `cache/logs` real seguiu sem nenhum
+`session_prev_` depois da suíte. Suíte: **127 arquivos, 0 falhas**.
+
+Vale a partir da próxima subida do bot. O processo de 10:19 roda o código
+anterior e não precisa ser religado: quem gira é o processo novo, ao subir.
 
 ## 9. Próximos passos
 
@@ -10978,10 +11011,9 @@ Pendências achadas na §8.81 e na §8.85 (fora do escopo):
   Contar quantas vezes repete no `session_latest.log`. Se repetir, salvar a
   resposta e conferir se é a aldeia nova (grupo/filtro) ou bot protection
   antes de mexer.
-- **O `session_latest.log` some a cada reinício** (§8.89.1): a causa da parada
-  do bot em 05/11 23:56 se perdeu assim. Ao subir, renomear o anterior para
-  `session_prev.log`, só sob `__main__` (20º padrão: a suíte importa o
-  `twb.py`).
+- ~~**O `session_latest.log` some a cada reinício**~~ ✅ **feito em 07/11
+  (§8.89.5):** o anterior fica em `cache/logs/session_prev_<início>.log`, os 10
+  mais novos.
 - **Apoio do `DefenceManager` com "viagem desconhecida".** No processo de
   30/10, das 12:10 às 13:35, saíram 21 linhas `Support X -> Y liberado: eta
   …h mas viagem desconhecida, enviando`, 7 delas para a BBM 067 (atacada, eta

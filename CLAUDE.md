@@ -380,7 +380,8 @@ puxa o fio.**
   1 de 18.** A nota anterior aqui dizia que a validação por log era impossível
   porque o `session_latest.log` tinha sido destruído; isso valia para a sessão
   antiga e deixou de valer assim que o bot subiu de novo — o arquivo é
-  reescrito a cada run. Resultado até agora: a **BBM 001** logou
+  reescrito a cada run (desde 07/11, §8.89.5, o anterior fica em
+  `cache/logs/session_prev_<início>.log`, os 10 mais novos). Resultado até agora: a **BBM 001** logou
   `Current village flag: -22% nos custos de moedas` (tipo 7, nível 7) e o bot
   **não trocou**, que é exatamente o previsto para as três aldeias de cunhagem
   manuais com as quais a política concorda. As outras 17 não rodaram: o ciclo

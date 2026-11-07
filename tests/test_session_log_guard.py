@@ -139,9 +139,43 @@ def test_tee_still_installs_when_run_as_main():
               f"{proc.stderr.decode('utf-8', 'replace')[:400]}")
 
 
+def test_main_keeps_the_previous_session_log():
+    """
+    §8.89.5: rodando como script, o log anterior vira session_prev_<inicio>.log
+    antes do open(...,"w"). Mesmo probe do teste acima, num tmp que ja tem um
+    session_latest.log -- nada do cache/logs real e tocado.
+    """
+    with open(os.path.join(ROOT, "twb.py"), encoding="utf-8") as fh:
+        header = fh.read().split("# --- End session log capture")[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        log_dir = os.path.join(tmp, "cache", "logs")
+        os.makedirs(log_dir)
+        with open(os.path.join(log_dir, "session_latest.log"), "w", encoding="utf-8") as fh:
+            fh.write("2026-11-07 06:59:14 - root - INFO - sessao anterior\n")
+        probe = os.path.join(tmp, "probe.py")
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(header + "\nprint('sessao nova')\n")
+        env = dict(os.environ, PYTHONPATH=ROOT)
+        proc = subprocess.run([sys.executable, probe], cwd=tmp,
+                              capture_output=True, timeout=60, env=env)
+        check(proc.returncode == 0,
+              f"o topo do twb.py falhou: {proc.stderr.decode('utf-8', 'replace')[:400]}")
+        prev = os.path.join(log_dir, "session_prev_20261107_065914.log")
+        check(os.path.exists(prev),
+              f"o log anterior nao foi guardado: {sorted(os.listdir(log_dir))}")
+        if os.path.exists(prev):
+            with open(prev, encoding="utf-8") as fh:
+                check("sessao anterior" in fh.read(), "o log guardado nao e o anterior")
+        with open(os.path.join(log_dir, "session_latest.log"), encoding="utf-8") as fh:
+            latest = fh.read()
+        check("sessao nova" in latest and "sessao anterior" not in latest,
+              "o session_latest.log nao comecou do zero")
+
+
 for fn in [
     test_importing_twb_does_not_truncate_the_session_log,
     test_tee_still_installs_when_run_as_main,
+    test_main_keeps_the_previous_session_log,
 ]:
     fn()
 

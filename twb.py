@@ -20,7 +20,8 @@ TWB - an open source Tribal Wars bot
 
 # --- Session log capture ---------------------------------------------------
 # Mirrors everything written to stdout/stderr into a single fixed-name file
-# (cache/logs/session_latest.log, overwritten each run) so a full record of
+# (cache/logs/session_latest.log, rewritten each run; the previous one is kept
+# as session_prev_<start>.log, core/session_log.py) so a full record of
 # the session -- including logger output, prints, and tracebacks from crashes
 # that happen before logging is configured (e.g. import-time SyntaxError) --
 # survives after the console window is closed. Placed before any project
@@ -94,6 +95,16 @@ if __name__ == "__main__":
 
     _LOG_DIR = _os.path.join(_os.path.dirname(_os.path.realpath(__file__)), "cache", "logs")
     _os.makedirs(_LOG_DIR, exist_ok=True)
+    # O log da sessão anterior vira session_prev_<início>.log antes do "w"
+    # abaixo (§8.89.5): a causa da parada de 05/11 se perdeu no reinício. Depois
+    # da trava, para um segundo bot recusado não girar o log do que roda. Falhar
+    # aqui só custa o log anterior, nunca o bot.
+    try:
+        from core.session_log import rotate as _rotate_session_log
+
+        _rotate_session_log(_LOG_DIR)
+    except Exception:
+        pass
     _session_log_file = open(
         _os.path.join(_LOG_DIR, "session_latest.log"), "w", encoding="utf-8", buffering=1
     )
