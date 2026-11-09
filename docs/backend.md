@@ -11567,6 +11567,19 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
        `depois` e não acha no `antes`. Se o `depois` vier igual, conferir antes
        de concluir: comando compartilhado com a tribo já vem marcado (§4.4), e
        a hora de entrada vem de uma conta de reta (hipótese de trajeto).
+       ⚠️ **Tentativa `depois` de 08/11 23:00:51 falhou por sessão perdida**
+       (tarefa agendada): o primeiro GET (`overview`) foi redirecionado para
+       `https://www.tribalwars.com.br/?session_expired=1` e o script parou
+       sozinho, sem o segundo GET. O bot não estava rodando (nenhum `twb.py`
+       vivo, usuário desliga à noite) e o `cache/session.json` mais novo era de
+       07/11 10:19:25, já expirado. Não tentei de novo (regra de taxa da conta).
+       Nada foi medido: o caso "detectado sem nobre" **segue sem prova** e
+       `TRUST_TOWER_NO_NOBLE` continua `False`. **A janela segue aberta até
+       10/11 11:02:12**: com sessão nova (abrir o jogo no navegador com a
+       extensão, ou subir o bot), rodar de novo
+       `python tools/capture_watchtower_mark.py --label depois`, depois
+       `--compare antes depois`. A pasta `cache/watchtower_mark/depois/`
+       ficou criada e vazia; a próxima captura grava nela.
     b. **Tamanho no "basta" da defesa própria** (§8.69): hoje o teto é a
        defesa que mata o maior ataque possível com nobre. Com a marca, ataque
        pequeno (≤ 1.000) e sem nobre não pede apoio, e a marca de nobre
