@@ -13,6 +13,9 @@ config.json.*
 # Snapshot antes de um merge por build.version (ex: config.pre44.bak). Mesmo
 # conteudo, mais um nome que as duas linhas acima tambem nao pegavam.
 config.*.bak
+# Mundo velho arquivado por new_world_setup.py: config inteira (sessao,
+# token do Telegram) e o cache do mundo.
+arquivo_*/
 # Rascunho de mensagem de commit
 _commitmsg.txt
 # C extensions

@@ -3,7 +3,10 @@
 **Projeto:** Automação avançada para mid/late game em Tribal Wars
 **Bot base:** [stefan2200/TWB](https://github.com/stefan2200/TWB)
 **Fork:** [SaamCosta/TWB-ADC](https://github.com/SaamCosta/TWB-ADC) (branch `master`)
-**Servidor ativo:** br143.tribalwars.com.br
+**Servidor ativo:** br147.tribalwars.com.br (desde 2026-11-24, §8.91). O
+br143 está arquivado em `arquivo_br143_20261124/` (config + cache inteiros,
+fora do git); as aldeias, ids e fixtures `br143` citados abaixo e na
+`docs/backend.md` são de lá. Troca de mundo: `python new_world_setup.py`.
 
 ## Fonte da verdade
 

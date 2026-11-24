@@ -10934,6 +10934,52 @@ Os relatórios lidos na subida mostram **2 nobres na BBM 002 (38409) às
 vazio), antes de o bot subir. Na varredura das 04:53 não havia mais ataque
 chegando nela. Regeneração do br143 é 1/h.
 
+## 8.91 Troca de mundo: br143 arquivado, pasta pronta para o br147 (2026-11-24)
+
+O usuário deixou o br143 e foi para o **br147** (aberto em 24/11; a extensão
+já tinha tentado mandar um `sid` do br147 às 04:54, recusado por mundo).
+
+**`new_world_setup.py` revisto.** Era de agosto e partia do template,
+preservando só `bot`, `reporting` e `notifications`. Contra a config viva
+isso jogaria fora ~50 ajustes do jogador (farm 45/1100, conquista, Hunter,
+defesa, bandeiras "on", cunhagem, Telegram). Agora **herda a config viva**
+(`build_new_config()`, pura, teste em `tests/test_new_world_setup.py`) e zera
+só o que é do mundo:
+- `server.*` (com `server_on_twstats: false`: mundo recém-aberto não está no
+  twstats; ligar à mão depois) e `villages`;
+- `conquest.area_of_interest` (coordenadas do br143);
+- `world.knight/flags/quests/boosters_enabled` em `None`, que o
+  `check_and_set` do `twb.py` redetecta no primeiro ciclo;
+- `profile_templates.*.units`, de volta ao nome do template (`off`/`def`).
+  **Esta era a armadilha:** a config do br143 tinha `off_no_archer` /
+  `def_no_archer` literais, e o br147 **tem arqueiro** (`<archer>1</archer>`
+  no `get_config`). Nome literal não passa pela resolução por arqueiro de
+  `core/templates.py`, então o bot nunca recrutaria um arqueiro, em silêncio.
+- chave nova do template entra (`flag_value.attack_block_h`) e
+  `build.version` fica igual à do template, para o merge não rodar de novo.
+
+Outras mudanças no script: `os.rename` em vez de `shutil.move` (no Windows,
+com arquivo aberto, o `shutil.move` copia e apaga e pode parar no meio);
+`CACHE_DIRS` em dia com `twb.py::start` (`farm_exclusions`, `cycles`);
+`cache/export_identity.json` levado ao cache novo com o `br147` como termo
+extra da exportação (o repo segue citando `br143`, que continua sendo o
+`world`); o plano sem `--apply` lista cada folha que muda; `--from-template`
+mantém o modo antigo. `arquivo_*/` entrou no `.gitignore` (é a config inteira,
+com sessão e token do Telegram).
+
+**Aplicado às 10:36**, com bot e painel parados: o mundo velho inteiro (6.015
+arquivos de `cache/`, `config.json` com 70 aldeias, `config.bak`) está em
+`arquivo_br143_20261124/`, nada apagado. A config nova é a viva com as
+trocas acima.
+
+**Mundo br147, pelo `get_config` público** (`interface.php`, sem conta):
+`speed 1.4`, `unit_speed 0.71`, `moral 2`, arqueiro, paladino (`knight 3`),
+torre de vigia, igreja (`church 1`), coleta, `fake_limit 1`, bônus noturno
+23h–7h, `millis_arrival 1`.
+
+**Falta:** o `sid` do br147. A extensão não reenvia sessão recusada por
+mundo (§9 item 32), então precisa do botão do popup com a aba do br147 ativa.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -11749,6 +11795,16 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     o widget ainda não mostrou. Ataque novo depois disso cai no fluxo normal
     e manda de novo. Teto de retiradas por varredura (o "basta" da §8.69, ao
     contrário).
+32. **`P-SESSAO-MUNDO`** (achado na troca br143 → br147, §8.91): a extensão
+    não reenvia sessão recusada por mundo errado. `background.js` só repete
+    pelo alarme quando o painel estava **fora do ar** (`pending`); a recusa
+    "o bot está configurado para o mundo X" das 04:54 de 24/11 (br147 com a
+    config ainda no br143) fica parada até um `sid` novo ou o botão do popup.
+    Na troca de mundo, o usuário entra no mundo novo **antes** de o bot ser
+    apontado para ele, então é exatamente o caso comum. Opção barata: guardar
+    também o host recusado por mundo e repetir pelo mesmo alarme (com o
+    `fingerprint` impedindo laço), ou o painel pedir de novo quando a config
+    muda de mundo.
 
 Pendência achada em 2026-11-04 (fora do escopo):
 - **Fixture com dado de terceiro e token no repo público.**

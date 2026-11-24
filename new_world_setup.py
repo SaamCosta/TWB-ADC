@@ -14,17 +14,32 @@ entrega um `cache/` limpo com uma `config.json` nova.
 
 SEGURANCA: nao faz nada sem `--apply`. Sem a flag, so imprime o plano.
 
+A config nova HERDA a config viva (2026-11-24, troca br143 -> br147): as
+preferencias do jogador (farm, conquista, Hunter, defesa, bandeiras, Telegram)
+nao sao estado do mundo, e partir do template jogava fora ~50 ajustes. O que e
+do mundo e zerado em `build_new_config()`: servidor, aldeias, area de
+interesse (coordenada do mundo velho), deteccoes automaticas (`world.*` em
+`None` para o bot redetectar) e as receitas de tropa dos perfis, que voltam
+ao nome generico do template ("off"/"def"), resolvido por arqueiro em
+`core/templates.py`. Um "off_no_archer" literal herdado num mundo com arqueiro
+nunca recruta arqueiro, em silencio. `--from-template` volta ao comportamento
+antigo (so `bot`, `reporting` e `notifications` sobrevivem).
+
 Uso:
-    python new_world_setup.py --world br144 \
-        --endpoint https://br144.tribalwars.com.br/game.php
-    python new_world_setup.py --world br144 --endpoint ... --apply
+    python new_world_setup.py --world br147 \
+        --endpoint https://br147.tribalwars.com.br/game.php
+    python new_world_setup.py --world br147 --endpoint ... --apply
+
+O arquivo `arquivo_<mundo>_<data>/` fica na raiz e esta no `.gitignore`: tem a
+config inteira (sessao, token do Telegram).
 
 Depois de rodar, ainda falta (nao da para automatizar):
-    1. Logar no mundo novo no navegador e dar a string de cookie ao bot na
-       primeira execucao -- `cache/session.json` nasce dali.
+    1. Painel no ar e o jogo aberto no mundo novo no Chrome: a extensao manda
+       o `sid` para `POST /api/session` e `cache/session.json` nasce dali.
     2. Conferir a config gerada antes de soltar o bot.
 """
 import argparse
+import copy
 import json
 import os
 import shutil
@@ -36,8 +51,20 @@ CACHE_DIRS = [
     "cache/attacks", "cache/reports", "cache/villages", "cache/world",
     "cache/logs", "cache/managed", "cache/hunter", "cache/zones",
     "cache/pvp_conquest", "cache/resource_sharing", "cache/statue",
-    "cache/inventory", "cache/premium",
+    "cache/inventory", "cache/premium", "cache/farm_exclusions",
+    "cache/cycles",
 ]
+
+# Arquivos de cache/ que sao da CONTA, nao do mundo: copiados para o cache
+# novo (o original fica no arquivo). `export_identity.json` e o que a
+# exportacao publica usa para anonimizar; o mundo novo entra nele como termo
+# extra, porque o repo continua citando o mundo velho.
+CARRY_FILES = ["export_identity.json"]
+
+# Deteccoes automaticas do mundo: `None` faz o bot redetectar no primeiro
+# ciclo (twb.py, check_and_set).
+WORLD_AUTODETECT = ["knight_enabled", "flags_enabled", "quests_enabled",
+                    "boosters_enabled"]
 
 # Secoes da config velha que sobrevivem a troca de mundo: sao preferencias da
 # maquina/do jogador, nao estado do mundo.
@@ -65,6 +92,82 @@ root = os.path.dirname(os.path.abspath(__file__))
 
 def p(path):
     return os.path.join(root, path)
+
+
+def _fill_missing(dst, tpl):
+    """Acrescenta em `dst` as chaves do template que faltam (recursivo)."""
+    for key, value in tpl.items():
+        if key not in dst:
+            dst[key] = copy.deepcopy(value)
+        elif (isinstance(value, dict) and isinstance(dst[key], dict)
+              and key != "villages"):
+            _fill_missing(dst[key], value)
+
+
+def build_new_config(old, template, world, endpoint, seller=False,
+                     inherit=True):
+    """
+    Config do mundo novo. Pura: nao le nem grava arquivo.
+
+    `inherit=True` parte da config viva e zera o que e do mundo; `False` parte
+    do template e so preserva KEEP_SECTIONS.
+    """
+    if inherit:
+        new = copy.deepcopy(old)
+        _fill_missing(new, template)
+        # Versao igual a do template: o merge do twb.py nao roda de novo.
+        new["build"] = copy.deepcopy(template["build"])
+        tpl_aoi = template.get("conquest", {}).get("area_of_interest")
+        if tpl_aoi is not None and "conquest" in new:
+            new["conquest"]["area_of_interest"] = copy.deepcopy(tpl_aoi)
+        for key in WORLD_AUTODETECT:
+            if key in new.get("world", {}):
+                new["world"][key] = None
+        for name, prof in new.get("profile_templates", {}).items():
+            tpl_prof = template.get("profile_templates", {}).get(name)
+            if tpl_prof and "units" in tpl_prof and isinstance(prof, dict):
+                prof["units"] = tpl_prof["units"]
+    else:
+        new = copy.deepcopy(template)
+        for section in KEEP_SECTIONS:
+            if section in old and section in new:
+                for key in new[section]:
+                    if key in old[section]:
+                        new[section][key] = old[section][key]
+    new["server"]["server"] = world
+    new["server"]["endpoint"] = endpoint
+    # Mundo recem-aberto ainda nao esta no twstats; ligar depois a mao.
+    new["server"]["server_on_twstats"] = False
+    new["villages"] = {}
+
+    if seller:
+        for (section, key), value in SELLER_OVERRIDES.items():
+            if section in new and key in new[section]:
+                new[section][key] = value
+            else:
+                print(f"  AVISO: {section}.{key} nao existe no template, ignorado")
+    return new
+
+
+def _leaf_diff(a, b, path=""):
+    """(caminho, antes, depois) de cada folha diferente entre dois dicts."""
+    out = []
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in sorted(set(a) | set(b), key=str):
+            out += _leaf_diff(a.get(key), b.get(key), f"{path}{key}.")
+    elif a != b:
+        out.append((path[:-1], a, b))
+    return out
+
+
+def carry_identity(ident, new_world, public_world="br999"):
+    """Acrescenta o mundo novo como termo extra da exportacao publica."""
+    ident = copy.deepcopy(ident)
+    terms = ident.setdefault("extra_terms", [])
+    if new_world != ident.get("world") and not any(
+            t.get("term") == new_world for t in terms):
+        terms.append({"term": new_world, "replacement": public_world})
+    return ident
 
 
 def _recent_log_write(seconds=2700):
@@ -103,6 +206,8 @@ def main():
                     help="ex: https://br144.tribalwars.com.br/game.php")
     ap.add_argument("--seller", action="store_true",
                     help="aplica o perfil de aldeia vendedora de PP")
+    ap.add_argument("--from-template", action="store_true",
+                    help="parte do template em vez de herdar a config viva")
     ap.add_argument("--apply", action="store_true",
                     help="sem isto, so imprime o plano")
     ap.add_argument("--force", action="store_true",
@@ -127,6 +232,16 @@ def main():
         total = sum(len(f) for _, _, f in os.walk(p("cache")))
         print(f"arquivos em cache/ a arquivar: {total}")
     print(f"perfil vendedor: {'SIM' if args.seller else 'nao'}")
+    print(f"config nova : {'template' if args.from_template else 'herda a viva'}")
+
+    template = json.load(open(p("config.example.json"), encoding="utf-8"))
+    new = build_new_config(old, template, args.world, args.endpoint,
+                           seller=args.seller, inherit=not args.from_template)
+    for path, before, after in _leaf_diff(old, new):
+        if path.split(".")[0] in ("villages", "notifications") or "token" in path:
+            continue
+        print(f"  muda: {path}: {json.dumps(before, ensure_ascii=False)[:50]}"
+              f" -> {json.dumps(after, ensure_ascii=False)[:50]}")
 
     if not args.apply:
         print("\n[plano apenas] rode de novo com --apply para executar.")
@@ -150,7 +265,15 @@ def main():
 
     os.makedirs(p(archive))
     if os.path.exists(p("cache")):
-        shutil.move(p("cache"), os.path.join(p(archive), "cache"))
+        # os.rename, e nao shutil.move: no Windows, com algum arquivo aberto
+        # (painel no ar), o shutil.move cai para copiar + apagar e pode parar
+        # no meio do apagar, deixando o mundo em dois lugares pela metade.
+        try:
+            os.rename(p("cache"), os.path.join(p(archive), "cache"))
+        except OSError as exc:
+            os.rmdir(p(archive))
+            sys.exit(f"ABORTADO: nao consegui mover cache/ ({exc}). Pare o "
+                     "painel (webmanager) e o bot e rode de novo; nada mudou.")
         print(f"  cache/ -> {archive}/cache/")
     shutil.copy2(p("config.json"), os.path.join(p(archive), "config.json"))
     print(f"  config.json -> {archive}/config.json")
@@ -161,32 +284,24 @@ def main():
         os.makedirs(p(d), exist_ok=True)
     print(f"  cache/ recriado vazio ({len(CACHE_DIRS)} diretorios)")
 
-    # Config nova a partir do template, preservando o que e da maquina.
-    new = json.load(open(p("config.example.json"), encoding="utf-8"))
-    new["server"]["server"] = args.world
-    new["server"]["endpoint"] = args.endpoint
-    for section in KEEP_SECTIONS:
-        if section in old and section in new:
-            for key in new[section]:
-                if key in old[section]:
-                    new[section][key] = old[section][key]
-    new["villages"] = {}
-
-    if args.seller:
-        for (section, key), value in SELLER_OVERRIDES.items():
-            if section in new and key in new[section]:
-                new[section][key] = value
-            else:
-                print(f"  AVISO: {section}.{key} nao existe no template, ignorado")
-        print("  perfil vendedor aplicado")
+    for name in CARRY_FILES:
+        src_file = os.path.join(p(archive), "cache", name)
+        if not os.path.exists(src_file):
+            continue
+        data = json.load(open(src_file, encoding="utf-8"))
+        if name == "export_identity.json":
+            data = carry_identity(data, args.world)
+        with open(p(f"cache/{name}"), "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, ensure_ascii=False)
+        print(f"  cache/{name} levado para o cache novo")
 
     with open(p("config.json"), "w", encoding="utf-8") as fh:
         json.dump(new, fh, indent=2, ensure_ascii=False)
     print("  config.json nova gravada")
 
     print("\nFalta a mao:")
-    print("  1. Logar no mundo novo no navegador; o bot pede a string de cookie")
-    print("     na primeira execucao e grava cache/session.json.")
+    print("  1. Painel no ar e o jogo aberto no mundo novo no Chrome: a extensao")
+    print("     manda o sid e grava cache/session.json.")
     print("  2. Conferir a config antes de soltar o bot.")
     print(f"  3. O mundo velho continua inteiro em {archive}/ -- nada foi apagado.")
 
