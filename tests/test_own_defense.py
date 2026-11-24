@@ -78,6 +78,14 @@ def test_lealdade_e_bonus():
     _check("sem widget = 100", Extractor.village_loyalty("<div id=\"show_effects\"></div>"), 100)
     broken = '<div id="show_mood"><div class="vis_item"><span>?</span></div></div>'
     _check("widget sem número = None", Extractor.village_loyalty(broken), None)
+    # Verbatim da BBM 010, 24/11: widget escondido e vazio no template = 100.
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures",
+                           "loyalty_widget_hidden_br143.html"), encoding="utf-8") as fh:
+        hidden = fh.read()
+    _check("widget escondido e vazio = 100", Extractor.village_loyalty(hidden), 100)
+    # Guarda: escondido mas COM número segue lendo o número.
+    _check("escondido com número", Extractor.village_loyalty(
+        hidden.replace("</h4>", '</h4><div class="vis_item"><span><b>40</b></span></div>')), 40)
     _check("Sinal da Aflição", Extractor.incoming_support_speed_bonus(OVERVIEW), 10)
 
 

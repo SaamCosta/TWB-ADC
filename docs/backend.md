@@ -10819,6 +10819,121 @@ teste do import que já existia: o `cache/logs` real seguiu sem nenhum
 Vale a partir da próxima subida do bot. O processo de 10:19 roda o código
 anterior e não precisa ser religado: quem gira é o processo novo, ao subir.
 
+## 8.90 Trem de nobres de verdade na BBM 010: torre, milissegundo e lealdade (2026-11-24)
+
+Pedido do usuário às 04:45: a BBM 010 (74689) estava recebendo nobres de um
+jogador com quem ele fez acordo, pouso às 05:38:58, e toda pendência que
+dependesse de ataque recebido devia ser resolvida nessa janela. O bot estava
+desligado (nenhum `twb.py` vivo) e a sessão salva era de 15/11.
+
+### 1. Sessão e captura
+
+Subi o painel; a extensão postou `sid` novo às 04:51:46. Um GET da visão
+geral (04:52:25, `cache/watchtower_mark/bbm010/overview.html`, fora do git):
+4 comandos, todos `watchtower: detected`, `size: small`, `tower_noble: True`,
+mesma origem, mesmo `data-endtime` (1795509538), ETA 2.793 s.
+
+### 2. Três pendências resolvidas pelo ataque
+
+- **§9.30, linha de campo da torre.** Bot subido pelo painel às 04:52:55
+  (pid 14120). Às 04:54:23: `OwnDefense: BBM 010 (74689) precisa de apoio
+  (...) teto: matar 4044 pop de ofensiva com nobre (torre de vigia: até 1000
+  tropas) (...) 0 origem(ns) candidata(s)`. É a linha que faltava. Sem
+  envio, e certo: a praça leu 0 tropa em casa (muralha 20), e só BBM 002,
+  005 e 011 chegariam a tempo, só com explorador (`só explorador chegaria a
+  tempo`). "Detectado sem nobre" continua sem prova (os 4 tinham `snob.webp`),
+  e `TRUST_TOWER_NO_NOBLE` segue `False`.
+- **§9.29 F0, milissegundo da chegada.** A linha do widget traz
+  `hoje às 05:38:58:<span class="grey small">237</span>`. Os 4 nobres:
+  237, 360, 460 e 592 ms. `incoming_commands` passa a devolver
+  `arrival_ms` (None quando a linha não tem o span). Fixture
+  `tests/fixtures/incoming_noble_train_br143.html` (as 4 linhas verbatim,
+  origem trocada por "Aldeia C"), teste `tests/test_incoming_train_ms.py`.
+- **Defeito novo: lealdade "?" com o widget escondido.** O log dizia
+  `lealdade ?: 1 nobre(s) tomam a aldeia`. A visão geral da BBM 010 traz o
+  widget no template, escondido e vazio:
+  `<div id="show_mood" class="vis moveable hidden_widget" style="display:none">`
+  só com o `<h4>Lealdade`. O `village_loyalty` só tratava "sem widget" como
+  100 e devolvia `None` aqui; a defesa então assumia o pior (1 nobre basta).
+  Agora widget com `hidden_widget` e sem `vis_item` = 100; escondido com
+  número segue lendo o número. Fixture `loyalty_widget_hidden_br143.html`,
+  casos novos em `test_own_defense.py`. Prova da guarda: o código anterior
+  devolveu `None` neste mesmo HTML (medido antes de corrigir). Aqui não mudou
+  a decisão (4 nobres fecham 100), mas em aldeia com 1 ataque superestimava.
+  Vale a partir da próxima subida do bot: o pid 14120 roda o código anterior.
+
+### 3. Evacuação (Feature 16) — tentativa de exercitar
+
+A evacuação só roda na vez da aldeia (`DefenceManager.update`, `urgent` com
+ETA < 1.800 s) e só move `snob`/`axe`. A BBM 010 era a 16ª na ordem
+"mais velha primeiro" (~5 min por aldeia), ou seja, depois do pouso. Com
+autorização do usuário: mtime do `cache/managed/74689.json` recuado para
+2023 (antes do laço começar, para ela rodar primeiro) e 5 bárbaros
+recrutados à mão no quartel (último às 05:17:22), para haver o que evacuar.
+O laço das 05:04 pulou **todas** as aldeias (`active_hours` global 6-23:
+`is outside its active hours`), então pus `active_hours: "0-0"` só na
+BBM 010 (janela com início = fim vale o dia todo; a config é relida a cada
+ciclo). No ciclo das 05:13 ela rodou primeiro (`Read game state` às
+05:14:54), e às 05:15:15 o Hunter **segurou a fase de defesa**: `segurando
+antes de defesa de BBM 010 (74689) -- saida em 295 s (janela de silencio)`,
+por causa do trem bárbaro da BBM 042 (saída 05:20:11). É o `Hunter.gate()`
+fazendo o que deve. Às 05:15:20 o usuário pediu para cancelar o trem e parei
+o bot. **A evacuação não foi exercitada.** O mtime e o `active_hours` da
+BBM 010 voltam ao normal no fim (ver o item 4).
+
+**Achado (vai para a §9.30c): a evacuação regional nunca dispararia aqui.**
+`Village._check_zone_evacuation` conta vizinho sob ataque pelo
+`under_attack` do `cache/managed/<vizinho>.json`, que só é regravado no fim
+da vez daquela aldeia. O da BBM 010 dizia `under_attack: False`, de 09/11.
+Os 17 vizinhos de zona dela nunca saberiam dos 4 nobres. A defesa própria
+já sabe disso de graça (`game_data.player.incomings` + visão geral das
+aldeias, §8.60); a Feature 12 deveria ler a mesma fonte.
+
+### 3b. O trem bárbaro cancelado
+
+O ciclo das 05:03 agendou um trem de 4 nobres contra a bárbara 99688
+(chegada 25/11 17:38:38): 3 da BBM 032 saíram às 05:13:27 (desvio +0,628 s),
+1 da BBM 042 sairia às 05:20:11. O usuário pediu para cancelar ("não quero
+correr riscos, cuide só da BBM 010"). Feito:
+- bot parado pelo painel às 05:15:20 (o da BBM 042 **não saiu**);
+- os 3 comandos cancelados à mão na visão geral da BBM 032 às 05:16:21,
+  dentro dos 10 min do jogo;
+- `cache/hunter/schedules.json` (com `core.file_lock`, relendo antes de
+  gravar): os 4 ataques `failed`, `fail_reason: cancelled_by_user`, o
+  schedule `cancelled`. Ataque `sent` ficaria contando como nobre no ar, e o
+  `pending` atrasado sairia pelo `late_barbarian_verdict` ao religar;
+- `cache/conquest/99688.json`: `train_scheduled` → `blocked`
+  (`blocked_reason: cancelled_by_user`), o mesmo status terminal que o
+  `_cancel_reserved_targets` usa.
+A reserva 147724 no quadro da tribo ficou: saiu **sem** o comentário de
+procedência (`criada SEM comentario`, aviso do próprio bot), então o bot não
+a remove; vence sozinha em 3 dias.
+
+### 4. O pouso (05:38:58)
+
+Bot parado; 3 GETs só de leitura, 90 s entre eles, a partir de 05:39:25
+(`cache/watchtower_mark/bbm010_pouso/`, fora do git):
+- **A BBM 010 continua nossa, lealdade 2.** Os 4 nobres tiraram 98 (média
+  24,5 por nobre, faixa 20–35). O widget agora vem visível e com número, e
+  o `village_loyalty` corrigido leu `2`.
+- Relatórios de defesa 266973056/058/061/068 (um por nobre). Rodei o
+  `ReportManager.attack_report` do bot, sem rede, no 266973068: origem
+  36477, destino BBM 010, `units_sent` {axe 300, light 36, snob 1},
+  `loyalty_after = 2.0` (`Lealdade: Descida 25 para 2`). O lado do defensor
+  sai certo pelo mesmo parser do atacante. `defence_units` veio vazio, e é
+  fato: os 5 bárbaros morreram no 1º nobre, este é o 4º.
+- O `config.json` voltou byte a byte ao de antes (`active_hours` da BBM 010
+  em `null` de novo). O mtime recuado do `cache/managed/74689.json` ficou:
+  só faz a BBM 010 rodar primeiro no próximo ciclo, e ela é a que mais
+  precisa.
+
+### 5. Achado fora do escopo
+
+Os relatórios lidos na subida mostram **2 nobres na BBM 002 (38409) às
+04:37:50**, lealdade 100 → 55 → 35, sem defesa em casa (`defence_units`
+vazio), antes de o bot subir. Na varredura das 04:53 não havia mais ataque
+chegando nela. Regeneração do br143 é 1/h.
+
 ## 9. Próximos passos
 
 **`P-PUBLICO` — publicar para testadores (§8.83), uma fase por chat:**
@@ -11501,6 +11616,9 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     praça de reunião e cancelamento. F0 (guardar o ms da chegada, que o
     `incoming_commands()` hoje joga fora) e F1 (`ServerClock`) não enviam
     tropa e podem começar sem autorização. Registrado, sem prioridade definida.
+    ✅ **F0 feito em 2026-11-24 (§8.90):** `incoming_commands` devolve
+    `arrival_ms`. Trem real medido na BBM 010: 4 nobres no mesmo segundo,
+    237/360/460/592 ms (100–132 ms entre um e outro).
 30. **`P-TORRE-MARCA`** (pedido do usuário em 2026-11-03): o bot passa a ler a
     marca da torre de vigia (tamanho do exército e nobre) e a usá-la. **Grátis:**
     a torre é prédio, e a marca vem nas telas que o bot já lê.
@@ -11520,9 +11638,10 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
     errar ali tira a defesa contra nobre de verdade. Ligar depois da captura
     `depois` de 08/11, se ela mostrar um detectado sem `snob.webp`. Testes em
     `tests/test_watchtower_mark.py`, com as duas linhas verbatim (antes e
-    depois da detecção) e prova por mutação da regex do tamanho. ⏳ Falta
-    campo: a linha `teto: matar N pop ... (torre de vigia: até N tropas)` no
-    próximo ataque marcado, depois de reiniciar o bot.
+    depois da detecção) e prova por mutação da regex do tamanho. ✅ **Campo
+    em 2026-11-24 (§8.90):** `teto: matar 4044 pop de ofensiva com nobre
+    (torre de vigia: até 1000 tropas)` na BBM 010, com 4 nobres pequenos
+    marcados. "Detectado sem nobre" **segue sem prova** (os 4 tinham nobre).
     **O caso que destrava.** O ataque 1460840129 contra a BBM 064 (88035) sai
     de (510|571), a 332,3 campos. A conta só fecha com aríete ou catapulta
     (30 min/campo): saída às 12:52:34 de 03/11, e o `OwnDefense` viu
@@ -11594,6 +11713,13 @@ A conta de hoje tem os três ativos (vencem 08/out), e isso não é o alvo. A
        mesmo sendo fake. Contar só ataque marcado médio/grande, ou sem marca.
        Ver no log desse dia se a evacuação saiu (`TWB_ZONE_EVACUATE`), para
        ter o caso real antes de mexer.
+       ⚠️ **Caso real de 24/11 (§8.90), problema anterior ao tamanho:** a
+       Feature 12 lê `under_attack` do `cache/managed` do vizinho, gravado só
+       no fim da vez dele. A BBM 010 com 4 nobres a 46 min tinha
+       `under_attack: False` (cache de 09/11): nenhum dos 17 vizinhos
+       evacuaria. Trocar a fonte por `game_data.player.incomings` + visão
+       geral das aldeias (a da defesa própria, §8.60) antes de afinar o
+       tamanho.
 31. **`P-APOIO-VOLTA`** (pedido do usuário em 2026-11-04): devolver sozinho o
     apoio que a defesa própria mandou, depois que o último ataque da janela
     pousou e nenhum outro ataque está chegando ao alvo. Hoje o apoio fica

@@ -1039,12 +1039,18 @@ class Extractor:
             attacker_match = re.search(r'screen=info_player[^"]*"[^>]*>([^<]+)</a>', block)
             label_unit = INCOMING_LABEL_UNIT_RE.search(block)
             tower = Extractor.watchtower_mark(block)
+            # Milissegundo da chegada (`hoje às 05:38:58:<span class="grey
+            # small">237</span>`), que o `data-endtime` (segundos) não tem.
+            # Trem de nobres pousa no mesmo segundo, 100-130 ms entre um e
+            # outro (BBM 010, 24/11): é o dado do F0 do P-SNIPE-TREM (§9.29).
+            ms_match = re.search(r'<span class="grey small">(\d{1,3})</span>', block)
             commands.append({
                 "command_id": id_match.group(1) if id_match else None,
                 "eta_seconds": max(0, eta_seconds),
                 # Timestamp absoluto de chegada (data-endtime); None quando a
                 # linha só trouxe o contador relativo.
                 "arrival_at": arrival_at,
+                "arrival_ms": int(ms_match.group(1)) if ms_match else None,
                 "origin": html.unescape(origin_match.group(1).strip()) if origin_match else None,
                 "attacker": attacker_match.group(1).strip() if attacker_match else None,
                 "command_type": Extractor.incoming_command_type(block),
@@ -1108,7 +1114,21 @@ class Extractor:
             return 100
         match = re.search(r'<div class="vis_item">\s*<span[^>]*>\s*<b>\s*(-?\d+)\s*</b>',
                           res[start:start + 2000])
-        return int(match.group(1)) if match else None
+        if match:
+            return int(match.group(1))
+        # O widget também vem no template ESCONDIDO e vazio, só com o título
+        # (BBM 010, 24/11, com 4 nobres a caminho e nenhum pousado ainda):
+        #   <div id="show_mood" class="vis moveable hidden_widget"
+        #        style="display:none"><h4>Lealdade <span ...></h4></div>
+        # Sem número é a mesma coisa que sem widget: 100. Antes isso dava
+        # None, e a defesa própria assumia "1 nobre toma a aldeia".
+        tag_end = res.find(">", start)
+        close = res.find("</div>", start)
+        opening = res[start:tag_end]
+        if ("hidden_widget" in opening and close != -1
+                and "vis_item" not in res[start:close]):
+            return 100
+        return None
 
     # Linha do widget do gerente -> nome do <select> dela (§8.68).
     AM_WIDGET_SELECTS = {
